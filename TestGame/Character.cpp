@@ -3,56 +3,95 @@
 
 Character::Character(int winWidth, int winHeight)
 {
-	_width = _texture.width / _maxFrames;
-	_height = _texture.height;
+    _idle = LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/Hero/Hero_Idle.png");
+    _walk = LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/Hero/Hero_Walk.png");
+	_attack = LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/Hero/Hero_Slash.png");
+    _texture = _idle;
+    _speed = 500.0f;
 
-	_screenPos = {
-		static_cast<float>(winWidth) / 2.0f - _scale * (0.5f * _width),
-		static_cast<float>(winHeight) / 2.0f - _scale * (0.5f * _height) };
+    _width = 32.f;                     // Explicit frame width
+    _height = _texture.height;
+    _maxFrames = _texture.width / _width;
 }
 
-Vector2 Character::GetWorldPos() { return _worldPos; }
-
-void Character::Tick(float deltaTime)
+void Character::Tick(float dt)
 {
-	_worldPosLastFrame = _worldPos;
+    _worldPosLastFrame = _worldPos;
 
-	Vector2 direction{};
+    Vector2 direction{};
 
-	if (IsKeyDown(KEY_A)) direction.x -= 1.0;
-	if (IsKeyDown(KEY_D)) direction.x += 1.0;
-	if (IsKeyDown(KEY_W)) direction.y -= 1.0;
-	if (IsKeyDown(KEY_S)) direction.y += 1.0;
+    if (IsKeyDown(KEY_A)) direction.x -= 1.f;
+    if (IsKeyDown(KEY_D)) direction.x += 1.f;
+    if (IsKeyDown(KEY_W)) direction.y -= 1.f;
+    if (IsKeyDown(KEY_S)) direction.y += 1.f;
 
-	if (Vector2Length(direction) != 0.0f)
-	{
-		//set worldPos = worldPos + direction            
-		_worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(direction), _speed));
-		direction.x < 0.0f ? _rightLeft = -1.0f : _rightLeft = 1.0f;
-		_texture = _walk;
-	}
-	else
-	{
-		_texture = _idle;
-	}
+    // Trigger attack
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !_attacking)
+    {
+        _attacking = true;
+        _texture = _attack;
 
-	_runningTime += deltaTime; //delta time function
-	if (_runningTime >= _updateTime)
-	{
-		_frame++;
-		_runningTime = 0.0f;
-		if (_frame > _maxFrames) _frame = 0; //resets the frame
+        _frame = 0;
+        _maxFrames = _texture.width / _width;
+        _updateTime = _attackUpdateTime;
+    }
 
-	}
+    // Movement (disabled while attacking)
+    if (!_attacking)
+    {
+        if (Vector2Length(direction) > 0.f)
+        {
+            _worldPos = Vector2Add(
+                _worldPos,
+                Vector2Scale(Vector2Normalize(direction), _speed * dt)
+            );
 
-	//draw character
-	Rectangle source{ _frame * _width, 0.0f, _rightLeft * _width , _height };
-	Rectangle dest{ _screenPos.x, _screenPos.y, _scale * _width , _scale * _height };
-	Vector2 origin{};
-	DrawTexturePro(_texture, source, dest, origin, 0.0f, WHITE);
-}
+            if (direction.x < 0.f)
+                _rightLeft = -1.f;
+            else if (direction.x > 0.f)
+                _rightLeft = 1.f;
 
-void Character::UndoMovement()
-{
-	_worldPos = _worldPosLastFrame;
+            _texture = _walk;
+        }
+        else
+        {
+            _texture = _idle;
+        }
+    }
+
+    // Animation update
+    _runningTime += dt;
+
+    if (_runningTime >= _updateTime)
+    {
+        _frame++;
+        _runningTime = 0.f;
+
+        if (_frame >= _maxFrames)
+        {
+            if (_attacking)
+            {
+                _attacking = false;
+                _texture = _idle;
+
+                _updateTime = 1.f / 8.f; // restore normal speed
+                _maxFrames = _texture.width / _width;
+            }
+
+            _frame = 0;
+        }
+    }
+
+    // Draw centered
+    float w = _width * _scale;
+    float h = _height * _scale;
+
+    Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
+    Rectangle dest{
+        (GetScreenWidth() - w) * 0.5f,
+        (GetScreenHeight() - h) * 0.5f,
+        w, h
+    };
+
+    DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
 }

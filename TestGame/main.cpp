@@ -1,7 +1,8 @@
 #include "raylib.h"
 #include "raymath.h"
 #include "Character.h"
-
+#include "Prop.h"
+#include "Enemy.h"
 int main()
 {
 	
@@ -15,19 +16,42 @@ int main()
 	const float mapScale = 5.5f;
 
 	Character hero{ windowWidth, windowHeight };
+
+	Texture2D pillarTex = LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/TileSet/Pillar.png");
+	Prop props[2]
+	{
+		Prop{ Vector2{500.0f, 500.0f}, pillarTex },
+		Prop{ Vector2{1300.0f, 700.0f}, pillarTex }
+	};
+
+	Enemy goblin
+	{ 
+		Vector2{500.0f, 300.0f}, 
+		LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/Enemy/EnemyIdle.png"), 
+		LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/Enemy/EnemyWalk.png") 
+	};
+
+	goblin.SetTarget(&hero);
+
 	SetTargetFPS(60);
 
 	while (!WindowShouldClose())
 	{
+		
 		BeginDrawing();
 		ClearBackground(WHITE);
-
+		mapPos = Vector2Scale(hero.GetWorldPos(), -1.0f);
 
 		//draw map
 		DrawTextureEx(map, mapPos, 0.0f, mapScale, WHITE);
+		
+		for (auto& prop : props)
+		{
+			prop.Render(hero.GetWorldPos());
+			
+		}
 
-		mapPos = Vector2Scale(hero.GetWorldPos(), -1.0f);
-		hero.Tick(GetFrameTime());
+		
 
 		// checking map bounds
 		if (hero.GetWorldPos().x < 0.0f || hero.GetWorldPos().y < 0.0f
@@ -36,6 +60,21 @@ int main()
 		{
 			hero.UndoMovement();
 		}
+
+		for (auto& prop : props)
+		{
+
+			if (CheckCollisionRecs(
+				prop.GetCollisionRec(),
+				hero.GetCollisionRec()))
+			{
+				hero.UndoMovement();
+			}
+		}
+		hero.Tick(GetFrameTime());
+		goblin.Tick(GetFrameTime(), hero.GetWorldPos());
+	
+		
 		
 		EndDrawing();
 	}
