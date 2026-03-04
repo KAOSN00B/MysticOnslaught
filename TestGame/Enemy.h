@@ -10,11 +10,14 @@ public:
     void Update(float dt, Vector2 heroWorldPos);
 
     void SetTarget(Character* character) { _target = character; }
+    void Init();
+    void DrawEnemy(Vector2 heroWorldPos);
+
 private:
 
     void HandleMovement(float dt);
     void HandleAttack();
-    void DrawEnemy(Vector2 heroWorldPos);
+
 	void HandleAnimation(float dt);
 
     Character* _target = nullptr;

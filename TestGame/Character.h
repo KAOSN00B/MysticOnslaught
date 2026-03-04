@@ -6,19 +6,19 @@ class Character : public BaseCharacter
 public:
     Character();
 
+    void Init();
     void Update(float dt);
 
     void DealDamage(BaseCharacter& enemy);
     virtual void Death() override;
-
-
+    void DrawPlayer();
 
 private:
 
     void HandleInput();
     void HandleMovement(float dt);
     void HandleAttack();
-    void DrawPlayer();
+    
     void HandleAnimation(float dt);
 
     Vector2 _direction{};

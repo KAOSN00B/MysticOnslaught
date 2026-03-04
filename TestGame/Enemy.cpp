@@ -4,24 +4,7 @@
 Enemy::Enemy(Vector2 pos)
 {
     _worldPos = pos;
-
-    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
-    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
-    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
-	_takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
-    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
-
-    _texture = _idleAnim;
-
-    _width = 32.f;
-    _height = _texture.height;
-    _health = 5;
-    _scale = 6.f;
-    _speed = 200.f;
-    _worldPos = pos;
     _homePos = pos;
-
-    _maxFrames = _texture.width / _width;
 }
 
 void Enemy::Update(float dt, Vector2 heroWorldPos)
@@ -99,6 +82,8 @@ void Enemy::HandleMovement(float dt)
 void Enemy::HandleAttack()
 {
     if (_dying) return;   // ← important
+
+    if (_target == nullptr) return;
 
     Vector2 toTarget = Vector2Subtract(_target->GetWorldPos(), _worldPos);
     float distance = Vector2Length(toTarget);
@@ -193,4 +178,22 @@ void Enemy::HandleAnimation(float dt)
             _frame = 0;
         }
     }
+}
+
+void Enemy::Init()
+{
+    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
+    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
+    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
+    _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
+    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
+    _texture = _idleAnim;
+
+    _width = 32.f;
+    _height = _texture.height;
+    _scale = 6.f;
+    _speed = 200.f;
+    _health = 5;
+
+    _maxFrames = _texture.width / _width;
 }

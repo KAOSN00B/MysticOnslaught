@@ -4,6 +4,7 @@
 class Prop
 {
 public:
+	Prop() = default;
 	Prop(Vector2 pos, Texture2D tex);
 	void Render(Vector2 heroWorldPos);
 	Rectangle GetCollisionRec();

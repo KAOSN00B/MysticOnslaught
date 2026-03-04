@@ -3,12 +3,16 @@
 
 Character::Character()
 {
+    _worldPos = Vector2Zero();
+}
+
+void Character::Init()
+{
     _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Idle.png");
     _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Walk.png");
     _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Slash.png");
     _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Death.png");
-	_takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_TakeDamage.png");
-
+    _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_TakeDamage.png");
     _texture = _idleAnim;
 
     _width = 32.f;
@@ -16,7 +20,6 @@ Character::Character()
     _scale = 6.f;
     _speed = 500.f;
     _health = 4;
-	/*_knockbackStrength = 2000.f;*/
 
     _maxFrames = _texture.width / _width;
 }
@@ -25,12 +28,10 @@ void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;
 
-    // physics/state timers always run
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateDeath(dt);
 
-    // Only block CONTROL, not animation/draw
     if (!_dying && !_takingDamage)
     {
         HandleInput();
@@ -38,11 +39,9 @@ void Character::Update(float dt)
         HandleAttack();
     }
 
-    // Animation + draw ALWAYS run so hurt/death anim can play
     HandleAnimation(dt);
     DrawPlayer();
-} 
-
+}
 
 void Character::HandleInput()
 {
@@ -56,12 +55,14 @@ void Character::HandleInput()
 
 void Character::HandleMovement(float dt)
 {
-    // Do not move while attacking, hurt, or dying
     if (_attacking || _takingDamage || _dying) return;
 
     if (Vector2Length(_direction) > 0)
     {
-        _worldPos = Vector2Add( _worldPos,  Vector2Scale(Vector2Normalize(_direction), _speed * dt));
+        _worldPos = Vector2Add(
+            _worldPos,
+            Vector2Scale(Vector2Normalize(_direction), _speed * dt)
+        );
 
         if (_direction.x < 0) _rightLeft = -1;
         if (_direction.x > 0) _rightLeft = 1;
@@ -76,7 +77,6 @@ void Character::HandleMovement(float dt)
 
 void Character::HandleAttack()
 {
-    // Cannot attack if hurt or dying
     if (_takingDamage || _dying) return;
 
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !_attacking)
@@ -115,9 +115,14 @@ void Character::DrawPlayer()
     float w = _width * _scale;
     float h = _height * _scale;
 
-    Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height};
+    Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
 
-    Rectangle dest{ (GetScreenWidth() - w) * 0.5f, (GetScreenHeight() - h) * 0.5f, w, h};
+    Rectangle dest{
+        (GetScreenWidth() - w) * 0.5f,
+        (GetScreenHeight() - h) * 0.5f,
+        w,
+        h
+    };
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
 }
@@ -133,14 +138,12 @@ void Character::HandleAnimation(float dt)
 
         if (_frame >= _maxFrames)
         {
-            // death animation stops on last frame
             if (_dying)
-            { 
+            {
                 _frame = _maxFrames - 1;
                 return;
             }
 
-            // damage animation finishes and returns to idle
             if (_takingDamage)
             {
                 _takingDamage = false;
@@ -153,7 +156,6 @@ void Character::HandleAnimation(float dt)
                 return;
             }
 
-            // attack animation finishes
             if (_attacking)
             {
                 _attacking = false;
@@ -163,20 +165,6 @@ void Character::HandleAnimation(float dt)
                 _maxFrames = _texture.width / _width;
             }
 
-            if (_attacking && _frame == 2)
-            {
-                Rectangle attackRec = GetCollisionRec();
-                attackRec.x += _rightLeft * 50;
-
-                DrawRectangleLines(
-                    attackRec.x,
-                    attackRec.y,
-                    attackRec.width,
-                    attackRec.height,
-                    RED
-                );
-            }
-
             _frame = 0;
         }
     }
@@ -184,6 +172,5 @@ void Character::HandleAnimation(float dt)
 
 void Character::Death()
 {
-    // stop movement and control but don't teleport
     _velocity = Vector2Zero();
 }
