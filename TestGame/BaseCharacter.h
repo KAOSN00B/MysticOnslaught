@@ -25,11 +25,11 @@ protected:
     void Draw(Vector2 screenPos);
 
     Texture2D _texture{};
-    Texture2D _idle{};
-    Texture2D _walk{};
-    Texture2D _attack{};
+    Texture2D _idleAnim{};
+    Texture2D _walkAnim{};
+    Texture2D _attackAnim{};
     Texture2D _takeDamageAnim{};
-    Texture2D _death{};
+    Texture2D _deathAnim{};
 
     Vector2 _worldPos{};
     Vector2 _worldPosLastFrame{};
@@ -54,5 +54,5 @@ protected:
     float _hitTimer = 0.f;
     bool _dying = false;
     float _deathTimer = 0.4f;
-	float _knockbackStrength = 900.f;
+
 };

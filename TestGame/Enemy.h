@@ -7,10 +7,9 @@ class Enemy : public BaseCharacter
 public:
     Enemy(Vector2 pos);
 
-    void Tick(float dt, Vector2 heroWorldPos);
+    void Update(float dt, Vector2 heroWorldPos);
 
     void SetTarget(Character* character) { _target = character; }
-
 private:
 
     void HandleMovement(float dt);

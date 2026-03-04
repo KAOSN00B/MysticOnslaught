@@ -57,20 +57,23 @@ int main()
 			|| hero.GetWorldPos().y + windowHeight  > map.height * mapScale)
 		{
 			hero.UndoMovement();
+			goblin.UndoMovement();
 		}
 
 		for (auto& prop : props)
 		{
 
-			if (CheckCollisionRecs(
-				prop.GetCollisionRec(),
-				hero.GetCollisionRec()))
+			if (CheckCollisionRecs(prop.GetCollisionRec(), hero.GetCollisionRec()))
 			{
 				hero.UndoMovement();
 			}
+			if (CheckCollisionRecs(prop.GetCollisionRec(), goblin.GetCollisionRec()))
+			{
+				goblin.UndoMovement();
+			}
 		}
-		hero.Tick(GetFrameTime());
-		goblin.Tick(GetFrameTime(), hero.GetWorldPos());
+		hero.Update(GetFrameTime());
+		goblin.Update(GetFrameTime(), hero.GetWorldPos());
 		hero.DealDamage(goblin);
 	
 		

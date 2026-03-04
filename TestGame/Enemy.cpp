@@ -5,13 +5,13 @@ Enemy::Enemy(Vector2 pos)
 {
     _worldPos = pos;
 
-    _idle = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
-    _walk = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
-    _attack = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
+    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
+    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
+    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
 	_takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
-    _death = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
+    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
 
-    _texture = _idle;
+    _texture = _idleAnim;
 
     _width = 32.f;
     _height = _texture.height;
@@ -24,28 +24,27 @@ Enemy::Enemy(Vector2 pos)
     _maxFrames = _texture.width / _width;
 }
 
-void Enemy::Tick(float dt, Vector2 heroWorldPos)
+void Enemy::Update(float dt, Vector2 heroWorldPos)
 {
     UpdateDeath(dt);
-
-    if (_dying)
-        return;
-
-    if (_target == nullptr)
-        return;
-
-    _attackCooldown -= dt;
 
     _worldPosLastFrame = _worldPos;
 
     ApplyVelocity(dt);
     UpdateHit(dt);
 
-    HandleMovement(dt);
-    HandleAttack();
+    if (!_dying)
+    {
+        if (_target == nullptr)
+            return;
+
+        _attackCooldown -= dt;
+
+        HandleMovement(dt);
+        HandleAttack();
+    }
 
     HandleAnimation(dt);
-
     DrawEnemy(heroWorldPos);
 }
 
@@ -80,9 +79,9 @@ void Enemy::HandleMovement(float dt)
         // Return home
         Vector2 toHome = Vector2Subtract(_homePos, _worldPos);
         float homeDistance = Vector2Length(toHome);
-        if (homeDistance < 5.f)
+        if (homeDistance < 5.f) // if too close to home will just stay where it is
         {
-            _texture = _idle;
+            _texture = _idleAnim;
             return;
         }
 		moveDir = Vector2Normalize(toHome);
@@ -91,7 +90,7 @@ void Enemy::HandleMovement(float dt)
     // Apply movement (this was missing)
     _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
 
-    _texture = _walk;
+    _texture = _walkAnim;
 
     if (moveDir.x < 0) _rightLeft = -1;
     if (moveDir.x > 0) _rightLeft = 1;
@@ -116,7 +115,7 @@ void Enemy::HandleAttack()
 
         _attackCooldown = _attackDelay;
 
-        _texture = _attack;
+        _texture = _attackAnim;
 
         _frame = 0;
         _runningTime = 0.f;
@@ -137,7 +136,7 @@ void Enemy::HandleAttack()
     if (!_target->IsAlive())
     {
         _attacking = false;
-        _texture = _idle;
+        _texture = _idleAnim;
         _updateTime = 1.f / 8.f;
         _maxFrames = _texture.width / _width;
         _frame = 0;
@@ -169,16 +168,24 @@ void Enemy::HandleAnimation(float dt)
 
     if (_runningTime >= _updateTime)
     {
-        _frame++;
         _runningTime = 0.f;
+        _frame++;
 
         if (_frame >= _maxFrames)
         {
+            // DEATH animation finishes
+            if (_dying)
+            {
+                _frame = _maxFrames - 1; // stay on last frame
+                return;
+            }
+
+            // ATTACK animation finishes
             if (_attacking)
             {
                 _attacking = false;
 
-                _texture = _idle;
+                _texture = _idleAnim;
                 _updateTime = 1.f / 10.f;
                 _maxFrames = _texture.width / _width;
             }

@@ -6,7 +6,7 @@ class Character : public BaseCharacter
 public:
     Character();
 
-    void Tick(float dt);
+    void Update(float dt);
 
     void DealDamage(BaseCharacter& enemy);
     virtual void Death() override;

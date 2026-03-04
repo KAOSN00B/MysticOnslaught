@@ -3,25 +3,25 @@
 
 Character::Character()
 {
-    _idle = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Idle.png");
-    _walk = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Walk.png");
-    _attack = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Slash.png");
-    _death = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Death.png");
+    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Idle.png");
+    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Walk.png");
+    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Slash.png");
+    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Death.png");
 	_takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_TakeDamage.png");
 
-    _texture = _idle;
+    _texture = _idleAnim;
 
     _width = 32.f;
     _height = _texture.height;
     _scale = 6.f;
     _speed = 500.f;
     _health = 4;
-	_knockbackStrength = 2000.f;
+	/*_knockbackStrength = 2000.f;*/
 
     _maxFrames = _texture.width / _width;
 }
 
-void Character::Tick(float dt)
+void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;
 
@@ -66,11 +66,11 @@ void Character::HandleMovement(float dt)
         if (_direction.x < 0) _rightLeft = -1;
         if (_direction.x > 0) _rightLeft = 1;
 
-        _texture = _walk;
+        _texture = _walkAnim;
     }
     else
     {
-        _texture = _idle;
+        _texture = _idleAnim;
     }
 }
 
@@ -84,7 +84,7 @@ void Character::HandleAttack()
         _attacking = true;
         _damageApplied = false;
 
-        _texture = _attack;
+        _texture = _attackAnim;
 
         _frame = 0;
         _runningTime = 0.f;
@@ -135,7 +135,7 @@ void Character::HandleAnimation(float dt)
         {
             // death animation stops on last frame
             if (_dying)
-            {
+            { 
                 _frame = _maxFrames - 1;
                 return;
             }
@@ -145,7 +145,7 @@ void Character::HandleAnimation(float dt)
             {
                 _takingDamage = false;
 
-                _texture = _idle;
+                _texture = _idleAnim;
                 _updateTime = 1.f / 8.f;
                 _maxFrames = _texture.width / _width;
 
@@ -158,9 +158,23 @@ void Character::HandleAnimation(float dt)
             {
                 _attacking = false;
 
-                _texture = _idle;
+                _texture = _idleAnim;
                 _updateTime = 1.f / 8.f;
                 _maxFrames = _texture.width / _width;
+            }
+
+            if (_attacking && _frame == 2)
+            {
+                Rectangle attackRec = GetCollisionRec();
+                attackRec.x += _rightLeft * 50;
+
+                DrawRectangleLines(
+                    attackRec.x,
+                    attackRec.y,
+                    attackRec.width,
+                    attackRec.height,
+                    RED
+                );
             }
 
             _frame = 0;

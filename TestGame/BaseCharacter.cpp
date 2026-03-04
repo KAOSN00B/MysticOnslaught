@@ -37,7 +37,7 @@ void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 
         _deathTimer = 0.4f;
 
-        _texture = _death;
+        _texture = _deathAnim;
         _frame = 0;
         _runningTime = 0.f;
 
@@ -66,7 +66,7 @@ void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
     if (Vector2Length(direction) > 0)
         direction = Vector2Normalize(direction);
 
-    _velocity = Vector2Scale(direction, _knockbackStrength);
+    _velocity = Vector2Scale(direction, 2000.f);
 }
 
 void BaseCharacter::ApplyVelocity(float dt)
@@ -87,6 +87,7 @@ void BaseCharacter::UpdateDeath(float dt)
 
     if (_deathTimer <= 0.f)
     {
+        
         Death();
     }
 }
