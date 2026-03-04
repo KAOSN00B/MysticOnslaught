@@ -15,7 +15,7 @@ int main()
 	Vector2 mapPos = { 0.0f, 0.0f };
 	const float mapScale = 5.5f;
 
-	Character hero{ windowWidth, windowHeight };
+	Character hero;
 
 	Texture2D pillarTex = LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/TileSet/Pillar.png");
 	Prop props[2]
@@ -26,9 +26,7 @@ int main()
 
 	Enemy goblin
 	{ 
-		Vector2{500.0f, 300.0f}, 
-		LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/Enemy/EnemyIdle.png"), 
-		LoadTexture("C:/Users/rober/Desktop/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/Enemy/EnemyWalk.png") 
+		Vector2{1000.0f, 500.0f}, 
 	};
 
 	goblin.SetTarget(&hero);
@@ -73,6 +71,7 @@ int main()
 		}
 		hero.Tick(GetFrameTime());
 		goblin.Tick(GetFrameTime(), hero.GetWorldPos());
+		hero.DealDamage(goblin);
 	
 		
 		

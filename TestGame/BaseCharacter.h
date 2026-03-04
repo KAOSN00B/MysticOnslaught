@@ -1,44 +1,58 @@
 #pragma once
-
-#ifndef BASECHARACTER_H
-#define BASECHARACTER_H
-
 #include "raylib.h"
 
 class BaseCharacter
 {
 public:
     BaseCharacter();
+
+    Rectangle GetCollisionRec() const;
+
+    virtual void TakeDamage(int damage, Vector2 attackerPos);
+    virtual void Death();
+
+    void ApplyVelocity(float dt);
+    void UpdateDeath(float dt);
     void UndoMovement();
-    Rectangle GetCollisionRec();
-	Vector2 GetWorldPos() const { return _worldPos; }
+    void UpdateHit(float dt);
+
+    bool IsAlive() const { return _health > 0; }
+
+    Vector2 GetWorldPos() const { return _worldPos; }
 
 protected:
-    // Textures
+
+    void Draw(Vector2 screenPos);
+
     Texture2D _texture{};
     Texture2D _idle{};
     Texture2D _walk{};
     Texture2D _attack{};
+    Texture2D _takeDamageAnim{};
+    Texture2D _death{};
 
-    // World data
     Vector2 _worldPos{};
     Vector2 _worldPosLastFrame{};
+    Vector2 _velocity{};
 
-    // Animation
-    float _runningTime = 0.f;
+    float _runningTime{};
     float _updateTime = 1.f / 8.f;
-	float _speed = 150.0f;
-    int _frame = 0;
-    int _maxFrames = 1;
 
+    int _frame{};
+    int _maxFrames{};
 
-    // Sprite info
-    float _width = 0.f;
-    float _height = 0.f;
+    float _width{};
+    float _height{};
     float _scale = 4.f;
 
     float _rightLeft = 1.f;
-    Vector2 _velocity = {0.f, 0.f};
-};
+    float _speed = 150.f;
 
-#endif 
+    int _health = 3;
+    bool _takingDamage = false;
+    bool _attacking = false;
+    float _hitTimer = 0.f;
+    bool _dying = false;
+    float _deathTimer = 0.4f;
+	float _knockbackStrength = 900.f;
+};

@@ -1,18 +1,13 @@
-#include "BaseCharacter.h"
+﻿#include "BaseCharacter.h"
 #include "raymath.h"
 
 BaseCharacter::BaseCharacter()
 {
-     _worldPos = Vector2Zero();
-     _worldPosLastFrame = Vector2Zero();
+    _worldPos = Vector2Zero();
+    _worldPosLastFrame = Vector2Zero();
 }
 
-void BaseCharacter::UndoMovement()
-{
-    _worldPos = _worldPosLastFrame;
-}
-
-Rectangle BaseCharacter::GetCollisionRec() 
+Rectangle BaseCharacter::GetCollisionRec() const
 {
     float w = _width * _scale * 0.5f;
     float h = _height * _scale * 0.4f;
@@ -25,3 +20,108 @@ Rectangle BaseCharacter::GetCollisionRec()
     };
 }
 
+void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
+{
+    if (_dying) return;
+
+    _health -= damage;
+
+    if (_health <= 0)
+    {
+        _health = 0;
+        _dying = true;
+
+        // cancel other states
+        _attacking = false;
+        _takingDamage = false;
+
+        _deathTimer = 0.4f;
+
+        _texture = _death;
+        _frame = 0;
+        _runningTime = 0.f;
+
+        _maxFrames = _texture.width / _width;
+        _updateTime = 1.f / 4.f;
+
+        return;
+    }
+
+    // cancel attack if hit
+    _attacking = false;
+
+    _takingDamage = true;
+    _hitTimer = 0.18f;
+
+    _texture = _takeDamageAnim;
+    _frame = 0;
+    _runningTime = 0.f;
+
+    _maxFrames = _texture.width / _width;
+    _updateTime = 1.f / 12.f;
+
+    // knockback
+    Vector2 direction = Vector2Subtract(_worldPos, attackerPos);
+
+    if (Vector2Length(direction) > 0)
+        direction = Vector2Normalize(direction);
+
+    _velocity = Vector2Scale(direction, _knockbackStrength);
+}
+
+void BaseCharacter::ApplyVelocity(float dt)
+{
+    _worldPos = Vector2Add(_worldPos, Vector2Scale(_velocity, dt));
+
+    _velocity = Vector2Scale(_velocity, 0.70f);
+
+    if (Vector2Length(_velocity) < 5.f)
+        _velocity = Vector2Zero();
+}
+
+void BaseCharacter::UpdateDeath(float dt)
+{
+    if (!_dying) return;
+
+    _deathTimer -= dt;
+
+    if (_deathTimer <= 0.f)
+    {
+        Death();
+    }
+}
+
+void BaseCharacter::Death()
+{
+    _worldPos = Vector2{ -1000.f, -1000.f };
+}
+
+
+void BaseCharacter::Draw(Vector2 screenPos)
+{
+    float w = _width * _scale;
+    float h = _height * _scale;
+
+    Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
+
+    Rectangle dest{ screenPos.x - w / 2.f, screenPos.y - h / 2.f, w, h};
+
+    DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
+}
+
+void BaseCharacter::UndoMovement()
+{
+    _worldPos = _worldPosLastFrame;
+}
+
+void BaseCharacter::UpdateHit(float dt)
+{
+    if (!_takingDamage) return;
+
+    _hitTimer -= dt;
+
+    if (_hitTimer <= 0.f)
+    {
+        _takingDamage = false;
+    }
+}
