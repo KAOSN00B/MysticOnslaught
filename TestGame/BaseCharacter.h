@@ -5,6 +5,7 @@ class BaseCharacter
 {
 public:
     BaseCharacter();
+    virtual ~BaseCharacter() = default;
 
     Rectangle GetCollisionRec() const;
 
@@ -12,10 +13,10 @@ public:
     virtual void Death();
 
     void ApplyVelocity(float dt);
-    void UpdateDeath(float dt);
     void UndoMovement();
     void UpdateHit(float dt);
 
+    bool UpdateDeath(float dt);
     bool IsAlive() const { return _health > 0; }
 
     Vector2 GetWorldPos() const { return _worldPos; }
@@ -30,6 +31,12 @@ protected:
     Texture2D _attackAnim{};
     Texture2D _takeDamageAnim{};
     Texture2D _deathAnim{};
+
+    Sound _footStepSound{};
+    Sound _hurtSound{};
+    Sound _deathSound{};
+    Sound _attackSound{};
+
 
     Vector2 _worldPos{};
     Vector2 _worldPosLastFrame{};
@@ -47,12 +54,15 @@ protected:
 
     float _rightLeft = 1.f;
     float _speed = 150.f;
+    float _stepTimer = 0.f;
+    float _stepDelay = 0.35f; // time between steps
 
     int _health = 3;
     bool _takingDamage = false;
     bool _attacking = false;
     float _hitTimer = 0.f;
     bool _dying = false;
+    bool _invincible = false;
     float _deathTimer = 0.4f;
 
 };

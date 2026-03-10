@@ -7,6 +7,7 @@ BaseCharacter::BaseCharacter()
     _worldPosLastFrame = Vector2Zero();
 }
 
+
 Rectangle BaseCharacter::GetCollisionRec() const
 {
     float w = _width * _scale * 0.5f;
@@ -22,9 +23,23 @@ Rectangle BaseCharacter::GetCollisionRec() const
 
 void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 {
+    if (_invincible) return;
+
     if (_dying) return;
 
     _health -= damage;
+
+    if(_health > 0)
+    {
+        float pitch = GetRandomValue(90, 120) / 80.f;
+        SetSoundPitch(_hurtSound, pitch);
+        SetSoundVolume(_hurtSound, .5f);
+        PlaySound(_hurtSound);
+    }
+    else
+    {
+        PlaySound(_deathSound);
+    }
 
     if (_health <= 0)
     {
@@ -43,7 +58,7 @@ void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 
         _maxFrames = _texture.width / _width;
         _updateTime = 1.f / 4.f;
-
+        
         return;
     }
 
@@ -79,21 +94,23 @@ void BaseCharacter::ApplyVelocity(float dt)
         _velocity = Vector2Zero();
 }
 
-void BaseCharacter::UpdateDeath(float dt)
+bool BaseCharacter::UpdateDeath(float dt)
 {
-    if (!_dying) return;
+    if (!_dying) return false;
 
     _deathTimer -= dt;
 
     if (_deathTimer <= 0.f)
     {
-        
         Death();
+        return true;
     }
+    return false;
 }
 
 void BaseCharacter::Death()
 {
+    
     _worldPos = Vector2{ -1000.f, -1000.f };
 }
 

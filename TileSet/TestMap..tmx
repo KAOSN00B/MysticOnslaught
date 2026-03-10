@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <map version="1.10" tiledversion="1.11.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="32" tileheight="32" infinite="0" nextlayerid="4" nextobjectid="16">
- <tileset firstgid="1" source="../../DungeonRPGTileSet.tsx"/>
+ <tileset firstgid="1" source="../../../DungeonRPGTileSet.tsx"/>
  <layer id="1" name="Collision" width="30" height="20">
   <data encoding="csv">
 3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,71,0,0,0,

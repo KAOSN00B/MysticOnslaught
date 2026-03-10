@@ -5,6 +5,7 @@
 #include "Prop.h"
 #include "Enemy.h"
 #include <vector>
+#include <string>
 
 class Engine
 {
@@ -16,9 +17,15 @@ public:
 private:
 
     void Init();
+    void SpawnWave();
     void Update(float dt);
     void Draw();
     void HandleCollisions();
+    void UpdateEnemyCount(float dt);
+    
+
+    int _enemyCountMultiplyer = 1;
+    int _wave = 0;
 
     const int _windowWidth = 1200;
     const int _windowHeight = 800;
@@ -32,6 +39,9 @@ private:
     Texture2D _pillarTex;
     Prop _props[2];
 
-    Enemy _goblin;
     std::vector<Rectangle> _collisionRects;
+    std::vector<Enemy> _enemies;
+    //std::vector<Prop> _props;
+    std::string _message = "Objective: Surivive";
+
 };

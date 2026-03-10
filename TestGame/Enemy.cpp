@@ -34,43 +34,13 @@ void Enemy::Update(float dt, Vector2 heroWorldPos)
 void Enemy::HandleMovement(float dt)
 {
     if (_attacking || _takingDamage || _dying) return;
+    if (_target == nullptr) return;
 
     Vector2 playerPos = _target->GetWorldPos();
     Vector2 toPlayer = Vector2Subtract(playerPos, _worldPos);
-    float playerDistance = Vector2Length(toPlayer);
 
-    Vector2 moveDir{};
+    Vector2 moveDir = Vector2Normalize(toPlayer);
 
-	// Detect player within chase range
-    if (!_hasTarget && playerDistance <= _findPlayerRange)
-    {
-        _hasTarget = true;
-	}
-
-	// If we have a target, but they go out of chase range, lose them
-    if (_hasTarget && playerDistance > _chaseRange)
-    {
-        _hasTarget = false;
-	}
-
-    if (_hasTarget)
-    {
-		moveDir = Vector2Normalize(toPlayer);
-    }
-    else
-    {
-        // Return home
-        Vector2 toHome = Vector2Subtract(_homePos, _worldPos);
-        float homeDistance = Vector2Length(toHome);
-        if (homeDistance < 5.f) // if too close to home will just stay where it is
-        {
-            _texture = _idleAnim;
-            return;
-        }
-		moveDir = Vector2Normalize(toHome);
-    }
-
-    // Apply movement (this was missing)
     _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
 
     _texture = _walkAnim;
@@ -193,7 +163,7 @@ void Enemy::Init()
     _height = _texture.height;
     _scale = 6.f;
     _speed = 200.f;
-    _health = 5;
+    _health = 1;
 
     _maxFrames = _texture.width / _width;
 }
