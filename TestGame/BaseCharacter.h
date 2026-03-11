@@ -15,6 +15,10 @@ public:
     void ApplyVelocity(float dt);
     void UndoMovement();
     void UpdateHit(float dt);
+	virtual void PlayFootStepSound();
+	virtual void PlayAttackSound();
+    virtual void PlayDeathSound();
+    virtual void PlayHurtSound();
 
     bool UpdateDeath(float dt);
     bool IsAlive() const { return _health > 0; }
@@ -58,6 +62,7 @@ protected:
     float _stepDelay = 0.35f; // time between steps
 
     int _health = 3;
+    int _maxHealth = 5;
     bool _takingDamage = false;
     bool _attacking = false;
     float _hitTimer = 0.f;

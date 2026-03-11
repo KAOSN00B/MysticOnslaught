@@ -6,6 +6,7 @@
 #include "Enemy.h"
 #include <vector>
 #include <string>
+#include <memory>
 
 class Engine
 {
@@ -40,7 +41,7 @@ private:
     Prop _props[2];
 
     std::vector<Rectangle> _collisionRects;
-    std::vector<Enemy> _enemies;
+    std::vector<std::unique_ptr<Enemy>> _enemies;
     //std::vector<Prop> _props;
     std::string _message = "Objective: Surivive";
 

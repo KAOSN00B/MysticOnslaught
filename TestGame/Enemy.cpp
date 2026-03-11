@@ -1,10 +1,52 @@
 ﻿#include "Enemy.h"
 #include "raymath.h"
-
+#include <iostream>
+// to do enemy sounds
+// enemy types
+// pickups (potions, bow/magic, bombs maybe?)
+//player health to display sprites (hearts?)
+//
 Enemy::Enemy(Vector2 pos)
 {
+
     _worldPos = pos;
     _homePos = pos;
+    
+}
+
+Enemy::~Enemy()
+{
+    UnloadTexture(_idleAnim);
+    UnloadTexture(_walkAnim);
+    UnloadTexture(_attackAnim);
+    UnloadTexture(_takeDamageAnim);
+    UnloadTexture(_deathAnim);
+
+    UnloadSound(_attackSound);
+    UnloadSound(_hurtSound);
+    UnloadSound(_deathSound);
+}
+
+void Enemy::Init()
+{
+    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
+    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
+    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
+    _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
+    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
+	_attackSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SwordSwipe2.wav");
+	_hurtSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SmallMonsterDamage.wav");
+	_deathSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerDeath.wav");
+    _texture = _idleAnim;
+
+    _width = 32.f;
+    _height = _texture.height;
+    _scale = 6.f;
+    _speed = 200.f;
+    _health = 3;
+    _maxHealth = 3;
+
+    _maxFrames = _texture.width / _width;
 }
 
 void Enemy::Update(float dt, Vector2 heroWorldPos)
@@ -77,6 +119,7 @@ void Enemy::HandleAttack()
 
         _maxFrames = _texture.width / _width;
         _updateTime = _attackUpdateTime;
+        PlayAttackSound();
     }
 
     if (_attacking && !_damageApplied && _frame == 2)
@@ -115,6 +158,10 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     Rectangle dest{ screenPos.x - w / 2.f, screenPos.y - h / 2.f, w, h};
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
+
+    if (_health != _maxHealth)
+        DrawHealthBar(screenPos, w, h);
+    
 }
 
 void Enemy::HandleAnimation(float dt)
@@ -150,20 +197,32 @@ void Enemy::HandleAnimation(float dt)
     }
 }
 
-void Enemy::Init()
+void Enemy::PlayAttackSound()
 {
-    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
-    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
-    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
-    _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
-    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
-    _texture = _idleAnim;
-
-    _width = 32.f;
-    _height = _texture.height;
-    _scale = 6.f;
-    _speed = 200.f;
-    _health = 1;
-
-    _maxFrames = _texture.width / _width;
+    float pitch = GetRandomValue(100, 140) / 100.f;
+    SetSoundPitch(_attackSound, pitch);
+    SetSoundVolume(_attackSound, .5f);
+    PlaySound(_attackSound);
 }
+
+void Enemy::DrawHealthBar(Vector2 screenPos, float w, float h)
+{
+    if (_health <= 0) return;
+
+    // ----- HEALTH BAR -----
+    float healthPercent = (float)_health / (float)_maxHealth; // converted to floats for proper division
+
+    float barWidth = w * 0.8f;
+    float barHeight = 6.f;
+
+    float barX = screenPos.x - barWidth / 2.f;
+    float barY = screenPos.y - h / 2.f - 12.f;
+
+    // background
+    DrawRectangle(barX, barY, barWidth, barHeight, RED);
+
+    // foreground (current health)
+    DrawRectangle(barX, barY, barWidth * healthPercent, barHeight, GREEN);
+}
+
+

@@ -9,7 +9,7 @@ public:
 	void Render(Vector2 heroWorldPos);
 	Rectangle GetCollisionRec();
 
-private:
+protected:
 	Texture2D _texture{};
 	Vector2 _worldPos{};
 	float _scale = 4.0f;

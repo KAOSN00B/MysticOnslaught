@@ -25,6 +25,7 @@ void Character::Init()
     _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Idle.png");
     _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Walk.png");
     _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Slash.png");
+    _dashAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Dash.png");
     _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Death.png");
     _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_TakeDamage.png");
     _footStepSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\FootSteps.wav");
@@ -113,11 +114,7 @@ void Character::HandleMovement(float dt)
 
         if (_stepTimer <= 0)
         {
-            float pitch = GetRandomValue(40, 70) / 50.f;
-            SetSoundPitch(_footStepSound, pitch);
-            SetSoundVolume(_footStepSound, 0.15f);
-            PlaySound(_footStepSound);
-
+            PlayFootStepSound();
             _stepTimer = _stepDelay;
         }
     }
@@ -145,10 +142,7 @@ void Character::HandleAttack()
         _maxFrames = _texture.width / _width;
         _updateTime = _attackUpdateTime;
 
-        float pitch = GetRandomValue(40, 70) / 100.f;
-        SetSoundPitch(_attackSound, pitch);
-        SetSoundVolume(_attackSound, 0.15f);
-        PlaySound(_attackSound);
+        PlayAttackSound();
     }
 
 }
@@ -177,6 +171,37 @@ void Character::DrawPlayer()
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
 
     Rectangle dest{ (GetScreenWidth() - w) * 0.5f, (GetScreenHeight() - h) * 0.5f, w, h };
+
+    
+    if (_playDashParticles)
+    {
+        Vector2 screenPos{
+            GetScreenWidth() / 2.f,
+            GetScreenHeight() / 2.f + h * 0.15f
+        };
+
+        float dashPercent = _dashTimer / _dashDuration;
+        float trailLength = 160.f * dashPercent;
+
+        Vector2 dashTrail = Vector2Scale(_dashDirection, -trailLength);
+
+        Vector2 perp{ -_dashDirection.y, _dashDirection.x };
+        Vector2 offset = Vector2Scale(perp, 18.f);
+
+        Color c = Fade(SKYBLUE, dashPercent);
+
+        DrawLineEx(screenPos,
+            Vector2Add(screenPos, dashTrail),
+            18, c);
+
+        DrawLineEx(Vector2Add(screenPos, offset),
+            Vector2Add(Vector2Add(screenPos, dashTrail), offset),
+            12, c);
+
+        DrawLineEx(Vector2Subtract(screenPos, offset),
+            Vector2Subtract(Vector2Add(screenPos, dashTrail), offset),
+            12, c);
+    }
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
 }
@@ -238,9 +263,11 @@ bool Character::Dashing(float dt)
     if (!_isDashing)
     {
         _invincible = false;
+        _playDashParticles = false;
         return false;
     }
 
+    _playDashParticles = true;
     _invincible = true;
 
     _dashTimer -= dt;
@@ -251,6 +278,7 @@ bool Character::Dashing(float dt)
     {
         _isDashing = false;
         _invincible = false;
+        _playDashParticles = false;
     }
 
     return true;

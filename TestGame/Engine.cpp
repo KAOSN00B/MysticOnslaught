@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include "raymath.h"
 
+
 Engine::Engine()
 {
 	Init();
@@ -10,7 +11,7 @@ Engine::~Engine()
 {
 	UnloadTexture(_map);
 	UnloadTexture(_pillarTex);
-	CloseAudioDevice();
+
 	CloseWindow();
 }
 
@@ -34,21 +35,20 @@ void Engine::Init()
 
 void Engine::SpawnWave()
 {
-	int enemyCount = 1 * _enemyCountMultiplyer;
+	int enemyCount = 4 * _enemyCountMultiplyer;
 
 	if (_enemies.empty())
 	{
-
 		for (int i = 0; i < enemyCount; i++)
 		{
 			float x = GetRandomValue(200, 1800);
 			float y = GetRandomValue(200, 1800);
 
-			Enemy enemy{ Vector2{ x, y } };
-			enemy.Init();
-			enemy.SetTarget(&_hero);
+			auto enemy = std::make_unique<Enemy>(Vector2{ x, y });
+			enemy->Init();
+			enemy->SetTarget(&_hero);
 
-			_enemies.push_back(enemy);
+			_enemies.push_back(std::move(enemy));
 		}
 
 		_enemyCountMultiplyer *= 2;
@@ -84,8 +84,8 @@ void Engine::Update(float dt)
 
 	for (auto& enemy : _enemies)
 	{
-		enemy.Update(dt, _hero.GetWorldPos());
-		_hero.DealDamage(enemy);
+		enemy->Update(dt, _hero.GetWorldPos());
+		_hero.DealDamage(*enemy);
 	}
 
 	HandleCollisions();
@@ -105,7 +105,7 @@ void Engine::Draw()
 	// 3. Draw enemy
 	for (auto& enemy : _enemies)
 	{
-		enemy.DrawEnemy(_hero.GetWorldPos());
+		enemy->DrawEnemy(_hero.GetWorldPos());
 	}
 
 	// 4. Draw player 
@@ -140,7 +140,7 @@ void Engine::HandleCollisions()
 		_hero.UndoMovement();
 		for (auto& enemy : _enemies)
 		{
-			enemy.UndoMovement();
+			enemy->UndoMovement();
 		}
 
 	}
@@ -152,8 +152,8 @@ void Engine::HandleCollisions()
 
 		for (auto& enemy : _enemies)
 		{
-			if (CheckCollisionRecs(prop.GetCollisionRec(), enemy.GetCollisionRec()))
-				enemy.UndoMovement();
+			if (CheckCollisionRecs(prop.GetCollisionRec(), enemy->GetCollisionRec()))
+				enemy->UndoMovement();
 		}
 	}
 }
@@ -162,7 +162,7 @@ void Engine::UpdateEnemyCount(float dt)
 {
 	for (int i = _enemies.size() - 1; i >= 0; i--)
 	{
-		if (_enemies[i].UpdateDeath(dt))
+		if (_enemies[i]->UpdateDeath(dt))
 		{
 			_enemies.erase(_enemies.begin() + i);
 		}
