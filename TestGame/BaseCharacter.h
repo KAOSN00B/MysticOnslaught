@@ -68,7 +68,7 @@ protected:
     bool _attacking = false;
     float _hitTimer = 0.f;
     bool _dying = false;
-    bool _invincible = false;
+    bool _hasIFrames = false;
     float _deathTimer = 0.4f;
 
 };

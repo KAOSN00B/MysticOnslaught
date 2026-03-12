@@ -6,13 +6,14 @@ Character::Character()
     _worldPos = Vector2Zero();
 }
 
-Character::~Character() //destructor to ensure no memoryleaks
+Character::~Character()
 {
     UnloadTexture(_idleAnim);
     UnloadTexture(_walkAnim);
     UnloadTexture(_attackAnim);
     UnloadTexture(_takeDamageAnim);
     UnloadTexture(_deathAnim);
+    UnloadTexture(_dashAnim);
 
     UnloadSound(_footStepSound);
     UnloadSound(_attackSound);
@@ -28,18 +29,23 @@ void Character::Init()
     _dashAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Dash.png");
     _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Death.png");
     _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_TakeDamage.png");
+
     _footStepSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\FootSteps.wav");
     _attackSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SwordSwipe.wav");
     _hurtSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerHurt.wav");
     _deathSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerDeath.wav");
+
     _texture = _idleAnim;
 
     _width = 32.f;
     _height = _texture.height;
     _scale = 6.f;
+
     _speed = 500.f;
+
     _health = 5;
     _maxHealth = 5;
+
     _attackPower = 2.f;
 
     _maxFrames = _texture.width / _width;
@@ -58,11 +64,17 @@ void Character::Update(float dt)
         HandleInput();
 
         if (!Dashing(dt))
-        {
             HandleMovement(dt);
-        }
 
         HandleAttack();
+    }
+
+    if (_hasIFrames)
+    {
+        _invincibleTimer -= dt;
+
+        if (_invincibleTimer <= 0)
+            _hasIFrames = false;
     }
 
     HandleAnimation(dt);
@@ -81,20 +93,24 @@ void Character::HandleInput()
     if (IsKeyPressed(KEY_SPACE) && !_isDashing && _dashCooldown <= 0.f)
     {
         _isDashing = true;
+        _dashInvincible = true;
 
         _dashTimer = _dashDuration;
         _dashCooldown = _dashCooldownTime;
 
-        _dashDirection = _direction;   // use current movement direction
+        _texture = _dashAnim;
+        _frame = 0;
+        _runningTime = 0.f;
+
+        _maxFrames = _texture.width / _width;
+        _updateTime = 1.f / 16.f;
+
+        _dashDirection = _direction;
 
         if (Vector2Length(_direction) > 0)
-        {
             _dashDirection = Vector2Normalize(_direction);
-        }
         else
-        {
-            _dashDirection = Vector2{ (float)_rightLeft, 0.f }; // dash facing direction
-        }
+            _dashDirection = Vector2{ (float)_rightLeft, 0.f };
     }
 }
 
@@ -104,14 +120,16 @@ void Character::HandleMovement(float dt)
 
     if (Vector2Length(_direction) > 0)
     {
-        _worldPos = Vector2Add( _worldPos, Vector2Scale(Vector2Normalize(_direction), _speed * dt) );
+        _worldPos = Vector2Add(
+            _worldPos,
+            Vector2Scale(Vector2Normalize(_direction), _speed * dt)
+        );
 
         if (_direction.x < 0) _rightLeft = -1;
         if (_direction.x > 0) _rightLeft = 1;
 
         _texture = _walkAnim;
 
-        // footstep timer
         _stepTimer -= dt;
 
         if (_stepTimer <= 0)
@@ -123,7 +141,7 @@ void Character::HandleMovement(float dt)
     else
     {
         _texture = _idleAnim;
-        _stepTimer = 0.f; // reset so next step triggers quickly
+        _stepTimer = 0.f;
     }
 }
 
@@ -146,13 +164,11 @@ void Character::HandleAttack()
 
         PlayAttackSound();
     }
-
 }
 
 void Character::DealDamage(BaseCharacter& enemy)
 {
     if (!_attacking || _damageApplied) return;
-
     if (_frame != 2) return;
 
     Rectangle attackRec = GetCollisionRec();
@@ -172,40 +188,42 @@ void Character::DrawPlayer()
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
 
-    Rectangle dest{ (GetScreenWidth() - w) * 0.5f, (GetScreenHeight() - h) * 0.5f, w, h };
+    Rectangle dest{
+        (GetScreenWidth() - w) * 0.5f,
+        (GetScreenHeight() - h) * 0.5f,
+        w,
+        h
+    };
 
-    
     if (_playDashParticles)
-    {
-        Vector2 screenPos{
-            GetScreenWidth() / 2.f,
-            GetScreenHeight() / 2.f + h * 0.15f
-        };
-
-        float dashPercent = _dashTimer / _dashDuration;
-        float trailLength = 160.f * dashPercent;
-
-        Vector2 dashTrail = Vector2Scale(_dashDirection, -trailLength);
-
-        Vector2 perp{ -_dashDirection.y, _dashDirection.x };
-        Vector2 offset = Vector2Scale(perp, 18.f);
-
-        Color c = Fade(SKYBLUE, dashPercent);
-
-        DrawLineEx(screenPos,
-            Vector2Add(screenPos, dashTrail),
-            18, c);
-
-        DrawLineEx(Vector2Add(screenPos, offset),
-            Vector2Add(Vector2Add(screenPos, dashTrail), offset),
-            12, c);
-
-        DrawLineEx(Vector2Subtract(screenPos, offset),
-            Vector2Subtract(Vector2Add(screenPos, dashTrail), offset),
-            12, c);
-    }
+        DashParticles(h);
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
+}
+
+void Character::DashParticles(float h)
+{
+    Vector2 screenPos{
+        GetScreenWidth() / 2.f,
+        GetScreenHeight() / 2.f + h * 0.15f
+    };
+
+    float dashPercent = _dashTimer / _dashDuration;
+    float trailLength = 160.f * dashPercent;
+
+    Vector2 dashTrail = Vector2Scale(_dashDirection, -trailLength);
+
+    Vector2 perp{ -_dashDirection.y, _dashDirection.x };
+    Vector2 offset = Vector2Scale(perp, 18.f);
+
+    Color c = Fade(SKYBLUE, dashPercent);
+
+    DrawLineEx(screenPos, Vector2Add(screenPos, dashTrail), 18, c);
+    DrawLineEx(Vector2Add(screenPos, offset),
+        Vector2Add(Vector2Add(screenPos, dashTrail), offset), 12, c);
+
+    DrawLineEx(Vector2Subtract(screenPos, offset),
+        Vector2Subtract(Vector2Add(screenPos, dashTrail), offset), 12, c);
 }
 
 void Character::HandleAnimation(float dt)
@@ -253,7 +271,6 @@ void Character::HandleAnimation(float dt)
 
 void Character::Death()
 {
-    
     _velocity = Vector2Zero();
 }
 
@@ -264,23 +281,32 @@ bool Character::Dashing(float dt)
 
     if (!_isDashing)
     {
-        _invincible = false;
         _playDashParticles = false;
+        _dashInvincible = false;
         return false;
     }
 
     _playDashParticles = true;
-    _invincible = true;
 
     _dashTimer -= dt;
 
-    _worldPos = Vector2Add( _worldPos, Vector2Scale(_dashDirection, _dashSpeed * dt));
+    _worldPos = Vector2Add(
+        _worldPos,
+        Vector2Scale(_dashDirection, _dashSpeed * dt)
+    );
 
     if (_dashTimer <= 0)
     {
         _isDashing = false;
-        _invincible = false;
+        _dashInvincible = false;
         _playDashParticles = false;
+
+        _texture = _idleAnim;
+        _frame = 0;
+        _runningTime = 0.f;
+
+        _maxFrames = _texture.width / _width;
+        _updateTime = 1.f / 8.f;
     }
 
     return true;
@@ -289,4 +315,15 @@ bool Character::Dashing(float dt)
 int Character::GetHealth() const
 {
     return _health;
+}
+
+void Character::TakeDamage(int damage, Vector2 attackerPos)
+{
+    if (_hasIFrames || _dashInvincible)
+        return;
+
+    _hasIFrames = true;
+    _invincibleTimer = 0.4f;
+
+    BaseCharacter::TakeDamage(damage, attackerPos);
 }

@@ -11,10 +11,13 @@ public:
     void Update(float dt);
 
     void DealDamage(BaseCharacter& enemy);
+    void TakeDamage(int damage, Vector2 attackerPos) override;
     virtual void Death() override;
 
     void DrawPlayer();
+    void DashParticles(float h);
     int GetHealth() const;
+    
 
 private:
 
@@ -34,7 +37,8 @@ private:
     bool _damageApplied = false;
     bool _isDashing = false;
     bool _dashAnimPlaying = false;
-    float _playDashParticles = false;
+    bool _playDashParticles = false;
+    bool _dashInvincible = false;
 
     float _attackUpdateTime = 1.f / 14.f;
     float _dashSpeed = 1500.f;
@@ -43,13 +47,9 @@ private:
 
     float _dashCooldown = 0.f;
     float _dashCooldownTime = 0.8f;
+    float _invincibleTimer = 0.f;
+    float _invincibleDuration = 0.4f;
  
-
-    int _dashFrame = 0;
-    float _dashAnimTimer = 0.f;
-    float _dashAnimSpeed = 1.f / 12.f;
-    int _dashMaxFrames = 0;
-
     // put proper dash animations in
     
 };

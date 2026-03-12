@@ -22,7 +22,7 @@ Rectangle BaseCharacter::GetCollisionRec() const
 
 void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 {
-	if (_invincible) return;
+	if (_hasIFrames) return;
 
 	if (_dying) return;
 
