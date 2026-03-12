@@ -38,7 +38,9 @@ void Character::Init()
     _height = _texture.height;
     _scale = 6.f;
     _speed = 500.f;
-    _health = 4;
+    _health = 5;
+    _maxHealth = 5;
+    _attackPower = 2.f;
 
     _maxFrames = _texture.width / _width;
 }
@@ -158,7 +160,7 @@ void Character::DealDamage(BaseCharacter& enemy)
 
     if (CheckCollisionRecs(attackRec, enemy.GetCollisionRec()))
     {
-        enemy.TakeDamage(1, _worldPos);
+        enemy.TakeDamage(_attackPower, _worldPos);
         _damageApplied = true;
     }
 }

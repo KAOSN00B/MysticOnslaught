@@ -61,8 +61,9 @@ protected:
     float _stepTimer = 0.f;
     float _stepDelay = 0.35f; // time between steps
 
-    int _health = 3;
-    int _maxHealth = 5;
+    float _health = 3.f;
+    float _maxHealth = 5.f;
+    float _attackPower = 1.f;
     bool _takingDamage = false;
     bool _attacking = false;
     float _hitTimer = 0.f;

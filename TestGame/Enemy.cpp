@@ -43,8 +43,9 @@ void Enemy::Init()
     _height = _texture.height;
     _scale = 6.f;
     _speed = 200.f;
-    _health = 3;
-    _maxHealth = 3;
+    _health = 2.f;
+    _maxHealth = 2.f;
+    _attackPower = 1.f;
 
     _maxFrames = _texture.width / _width;
 }
@@ -126,7 +127,7 @@ void Enemy::HandleAttack()
     {
         if (CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
         {
-            _target->TakeDamage(1, _worldPos);
+            _target->TakeDamage(_attackPower, _worldPos);
             _damageApplied = true;
         }
     }
