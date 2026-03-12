@@ -4,16 +4,20 @@
 #include <vector>
 #include <string>
 
-class MenuSystem
+class MainMenu
 {
 public:
 
     void Init();
     void Update();
     void Draw();
+    void DrawBanner(const char* text, int y, int fontSize,
+        Color bannerColor, Color textColor);
 
     bool StartPressed() const;
     bool QuitPressed() const;
+
+
 
 private:
 
@@ -23,7 +27,6 @@ private:
         Rectangle bounds;
         bool hovered = false;
     };
-
     std::vector<Button> _buttons;
 
     bool _startPressed = false;

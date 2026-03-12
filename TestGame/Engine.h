@@ -4,7 +4,8 @@
 #include "Character.h"
 #include "Prop.h"
 #include "Enemy.h"
-#include "MenuSystem.h"
+#include "MainMenu.h"
+#include "PauseAndGameOver.h"
 
 #include <vector>
 #include <string>
@@ -35,25 +36,39 @@ private:
 
     void UpdateGamePlay(float dt);
     void SpawnWave();
+    void SpawnEnemies();
     void HandleCollisions();
     void UpdateEnemyCount(float dt);
     void TriggerScreenShake(float strength, float duration);
+    void DrawWorld();
+    void DrawHUD();
+    void DrawWaveIntro();
 
 private:
 
     GameState _gameState = GameState::Menu;
 
     bool _shouldExit = false;
+    bool _waveStarting = true;
+    bool _playerDying = false;
+    bool _shouldClose = false;
 
     int _wave = 0;
 
     float _shakeTimer = 0.f;
     float _shakeStrength = 0.f;
+    float _gameTimer = 0.f;
 
     Vector2 _shakeOffset = { 0.f, 0.f };
 
     const int _windowWidth = 1200;
     const int _windowHeight = 800;
+
+    float _waveIntroTimer = 0.f;
+    float _waveIntroDuration = 2.5f;
+
+    float _gameOverTimer = 0.f;
+    float _gameOverDelay = 2.f;
 
     Texture2D _map{};
     Vector2 _mapPos{};
@@ -62,7 +77,8 @@ private:
     Texture2D _pillarTex{};
 
     Character _player;
-    MenuSystem _menu;
+    MainMenu _menu;
+    PauseAndGameOver _pauseUI;
 
     Prop _props[2];
 

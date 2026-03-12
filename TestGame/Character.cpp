@@ -334,3 +334,8 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
 
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
+
+void Character::SetWorldPos(Vector2 pos)
+{
+    _worldPos = pos;
+}

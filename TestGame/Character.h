@@ -16,7 +16,7 @@ public:
 
     void DrawPlayer();
     void DashParticles(float h);
-    
+    void SetWorldPos(Vector2 pos);
     
 
 private:
