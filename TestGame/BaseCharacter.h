@@ -12,6 +12,9 @@ public:
     virtual void TakeDamage(int damage, Vector2 attackerPos);
     virtual void Death();
 
+    int GetHealth() const;
+
+
     void ApplyVelocity(float dt);
     void UndoMovement();
     void UpdateHit(float dt);

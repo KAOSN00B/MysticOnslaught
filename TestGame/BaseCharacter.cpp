@@ -12,18 +12,12 @@ Rectangle BaseCharacter::GetCollisionRec() const
 	float w = _width * _scale * 0.5f;
 	float h = _height * _scale * 0.4f;
 
-	return Rectangle{
-		_worldPos.x - w / 2.f,
-		_worldPos.y - h / 2.f + (_height * _scale * 0.3f),
-		w,
-		h
-	};
+	return Rectangle{_worldPos.x - w / 2.f,_worldPos.y - h / 2.f 
+		+ (_height * _scale * 0.3f),w,h};
 }
 
 void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 {
-	if (_hasIFrames) return;
-
 	if (_dying) return;
 
 	_health -= damage;
@@ -38,7 +32,6 @@ void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 		_health = 0;
 		_dying = true;
 
-		// cancel other states
 		_attacking = false;
 		_takingDamage = false;
 
@@ -50,14 +43,11 @@ void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 
 		_maxFrames = _texture.width / _width;
 		_updateTime = 1.f / 4.f;
-		PlayDeathSound();
 
+		PlayDeathSound();
 		return;
 	}
 
-	
-
-	// cancel attack if hit
 	_attacking = false;
 
 	_takingDamage = true;
@@ -70,7 +60,6 @@ void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 	_maxFrames = _texture.width / _width;
 	_updateTime = 1.f / 12.f;
 
-	// knockback
 	Vector2 direction = Vector2Subtract(_worldPos, attackerPos);
 
 	if (Vector2Length(direction) > 0)
@@ -98,18 +87,21 @@ bool BaseCharacter::UpdateDeath(float dt)
 	if (_deathTimer <= 0.f)
 	{
 		Death();
-		
 		return true;
 	}
+
 	return false;
+}
+
+int BaseCharacter::GetHealth() const
+{
+	return _health;
 }
 
 void BaseCharacter::Death()
 {
-
 	_worldPos = Vector2{ -1000.f, -1000.f };
 }
-
 
 void BaseCharacter::Draw(Vector2 screenPos)
 {
@@ -138,8 +130,6 @@ void BaseCharacter::UpdateHit(float dt)
 	{
 		_takingDamage = false;
 	}
-
-
 }
 
 void BaseCharacter::PlayFootStepSound()

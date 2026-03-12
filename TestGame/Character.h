@@ -16,7 +16,7 @@ public:
 
     void DrawPlayer();
     void DashParticles(float h);
-    int GetHealth() const;
+    
     
 
 private:
@@ -49,6 +49,7 @@ private:
     float _dashCooldownTime = 0.8f;
     float _invincibleTimer = 0.f;
     float _invincibleDuration = 0.4f;
+
  
     // put proper dash animations in
     
