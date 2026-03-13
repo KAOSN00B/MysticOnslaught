@@ -27,8 +27,15 @@ void Engine::Init()
 	_map = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\TileSet\\Map.png");
 	_pillarTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\TileSet\\Pillar.png");
 
-	_props[0] = Prop{ Vector2{500.f, 500.f}, _pillarTex };
-	_props[1] = Prop{ Vector2{1300.f, 700.f}, _pillarTex };
+	_props.clear();
+
+	int propCount = GetRandomValue(30, 40);
+
+	for (int i = 0; i < propCount; i++)
+	{
+		Vector2 pos = GetRandomPropPosition();
+		_props.push_back(Prop{ pos, _pillarTex });
+	}
 
 	_wave = 0;
 
@@ -47,14 +54,27 @@ void Engine::SpawnWave()
 
 void Engine::SpawnEnemies()
 {
-	int enemyCount = 0 + (_wave * 2);
+	int enemyCount = _wave * 2;
+
+	float mapW = _map.width * _mapScale;
+	float mapH = _map.height * _mapScale;
 
 	for (int i = 0; i < enemyCount; i++)
 	{
-		float x = GetRandomValue(200, 1800);
-		float y = GetRandomValue(200, 1800);
+		Vector2 pos;
 
-		auto enemy = std::make_unique<Enemy>(Vector2{ x, y });
+		int attempts = 0;
+
+		do
+		{
+			pos.x = GetRandomValue(200, mapW - 200);
+			pos.y = GetRandomValue(200, mapH - 200);
+
+			attempts++;
+
+		} while (!IsSpawnPositionValid(pos) && attempts < 40);
+
+		auto enemy = std::make_unique<Enemy>(pos);
 		enemy->Init();
 		enemy->SetTarget(&_player);
 
@@ -319,8 +339,8 @@ void Engine::DrawHUD()
 
 	DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight() / 8, Fade(BLACK, 0.6f));
 
-	DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + 
-		GetScreenWidth() / 2 - 150,	60, fontSize, RAYWHITE);
+	DrawText(TextFormat("Time: %.1f", _gameTimer), 85 +
+		GetScreenWidth() / 2 - 150, 60, fontSize, RAYWHITE);
 
 	DrawText(("Wave: " + std::to_string(_wave)).c_str(),
 		20, 10, 30, RAYWHITE);
@@ -364,4 +384,74 @@ void Engine::DrawWaveIntro()
 		DrawText(waveText.c_str(), GetScreenWidth() / 2 - textWidth / 2,
 			GetScreenHeight() / 2 - 30, fontSize, YELLOW);
 	}
+}
+
+Vector2 Engine::GetRandomPropPosition()
+{
+	float mapW = _map.width * _mapScale;
+	float mapH = _map.height * _mapScale;
+
+	// shifted LEFT and UP
+	float minX = mapW * 0.05f;
+	float maxX = mapW * 0.72f;   // extended 40% right
+
+	float minY = mapH * 0.05f;
+	float maxY = mapH * 0.76f;
+
+	// spacing increased by ~40%
+	float minSpacing = 308.f;   // (220 * 1.4)
+
+	int attempts = 0;
+	const int maxAttempts = 50;
+
+	while (attempts < maxAttempts)
+	{
+		Vector2 pos;
+
+		pos.x = GetRandomValue((int)minX, (int)maxX);
+		pos.y = GetRandomValue((int)minY, (int)maxY);
+
+		bool tooClose = false;
+
+		for (auto& prop : _props)
+		{
+			if (Vector2Distance(pos, prop.GetWorldPos()) < minSpacing)
+			{
+				tooClose = true;
+				break;
+			}
+		}
+
+		if (!tooClose)
+			return pos;
+
+		attempts++;
+	}
+
+	Vector2 fallback;
+	fallback.x = GetRandomValue((int)minX, (int)maxX);
+	fallback.y = GetRandomValue((int)minY, (int)maxY);
+
+	return fallback;
+}
+
+bool Engine::IsSpawnPositionValid(Vector2 pos)
+{
+	float safeDistance = 120.f;
+
+	// avoid props
+	for (auto& prop : _props)
+	{
+		if (Vector2Distance(pos, prop.GetWorldPos()) < safeDistance)
+			return false;
+	}
+
+	// avoid other enemies
+	for (auto& enemy : _enemies)
+	{
+		if (Vector2Distance(pos, enemy->GetWorldPos()) < safeDistance)
+			return false;
+	}
+
+	return true;
 }

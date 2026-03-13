@@ -8,6 +8,7 @@ public:
 	Prop(Vector2 pos, Texture2D tex);
 	void Render(Vector2 heroWorldPos);
 	Rectangle GetCollisionRec();
+	Vector2 GetWorldPos() const { return _worldPos; }
 
 protected:
 	Texture2D _texture{};

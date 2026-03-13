@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "raylib.h"
@@ -43,6 +44,9 @@ private:
     void DrawWorld();
     void DrawHUD();
     void DrawWaveIntro();
+    
+    Vector2 GetRandomPropPosition();
+    bool IsSpawnPositionValid(Vector2 pos);
 
 private:
 
@@ -80,7 +84,7 @@ private:
     MainMenu _menu;
     PauseAndGameOver _pauseUI;
 
-    Prop _props[2];
+    std::vector<Prop> _props;
 
     std::vector<Rectangle> _collisionRects;
     std::vector<std::unique_ptr<Enemy>> _enemies;

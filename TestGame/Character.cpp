@@ -201,7 +201,7 @@ void Character::HandleAttack()
 
 void Character::DealDamage(BaseCharacter& enemy)
 {
-    if (!_attacking ) return;
+    if (!_attacking || _damageApplied) return;
     if (_frame != 2) return;
 
     Rectangle attackRec = GetCollisionRec();
