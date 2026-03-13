@@ -7,6 +7,7 @@
 #include "Enemy.h"
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
+#include "FireBallPickup.h"
 
 #include <vector>
 #include <string>
@@ -85,7 +86,7 @@ private:
     PauseAndGameOver _pauseUI;
 
     std::vector<Prop> _props;
-
+    std::vector<FireBallPickup> _fireballPickups;
     std::vector<Rectangle> _collisionRects;
     std::vector<std::unique_ptr<Enemy>> _enemies;
 

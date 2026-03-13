@@ -1,5 +1,6 @@
 #pragma once
 #include "BaseCharacter.h"
+#include "FireBallPickup.h"
 
 class Character : public BaseCharacter
 {
@@ -18,6 +19,8 @@ public:
     void DashParticles(float h);
     void SetWorldPos(Vector2 pos);
     void PlayHurtSound() override;
+
+    void UnlockFireball();
     
 
 private:
@@ -40,6 +43,7 @@ private:
     bool _dashAnimPlaying = false;
     bool _playDashParticles = false;
     bool _dashInvincible = false;
+    bool _hasFireball = false;
 
     float _attackUpdateTime = 1.f / 14.f;
     float _dashSpeed = 1500.f;

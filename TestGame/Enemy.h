@@ -39,9 +39,6 @@ private:
     float _attackDelay = 0.6f;
 
     Vector2 _homePos;
-    float _chaseRange = 700.f;
-	float _findPlayerRange = 350.f;
-	bool _hasTarget = false;
 
 
 };

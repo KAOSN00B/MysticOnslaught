@@ -37,6 +37,15 @@ void Engine::Init()
 		_props.push_back(Prop{ pos, _pillarTex });
 	}
 
+	// Spawn a test fireball pickup near the player
+	FireBallPickup pickup;
+
+	Vector2 spawnPos = Vector2Add(_player.GetWorldPos(), Vector2{ 1000.f, 1000.f });
+
+	pickup.Init(spawnPos);
+
+	_fireballPickups.push_back(pickup);
+
 	_wave = 0;
 
 	SpawnWave();
@@ -157,17 +166,14 @@ void Engine::UpdateGamePlay(float dt)
 		return;
 	}
 
-	// Update player FIRST so animation runs
 	_player.Update(dt);
 
-	// If player died start the dying phase
 	if (_player.GetHealth() <= 0 && !_playerDying)
 	{
 		_playerDying = true;
 		_gameOverTimer = _gameOverDelay;
 	}
 
-	// Handle death delay
 	if (_playerDying)
 	{
 		_gameOverTimer -= dt;
@@ -177,10 +183,9 @@ void Engine::UpdateGamePlay(float dt)
 			_gameState = GameState::GameOver;
 		}
 
-		return; // stop gameplay while dying
+		return;
 	}
 
-	// NORMAL GAMEPLAY BELOW HERE
 	if (_waveStarting)
 	{
 		_waveIntroTimer -= dt;
@@ -212,6 +217,24 @@ void Engine::UpdateGamePlay(float dt)
 				TriggerScreenShake(6.f, 0.07f);
 		}
 	}
+
+	// Fireball pickup collision
+	for (auto& pickup : _fireballPickups)
+	{
+		if (!pickup.IsActive()) continue;
+
+		if (CheckCollisionRecs(_player.GetCollisionRec(), pickup.GetCollisionRec()))
+		{
+			pickup.Destroy();
+			_player.UnlockFireball();
+		}
+	}
+
+	// Remove destroyed pickups
+	_fireballPickups.erase(
+		std::remove_if(_fireballPickups.begin(), _fireballPickups.end(),
+			[](FireBallPickup& p) { return !p.IsActive(); }),
+		_fireballPickups.end());
 
 	HandleCollisions();
 
@@ -287,7 +310,6 @@ void Engine::HandleCollisions()
 		|| _player.GetWorldPos().y + _windowHeight > _map.height * _mapScale)
 	{
 		_player.UndoMovement();
-
 	}
 
 	for (auto& prop : _props)
@@ -326,6 +348,9 @@ void Engine::DrawWorld()
 
 	for (auto& prop : _props)
 		prop.Render(Vector2Subtract(_player.GetWorldPos(), _shakeOffset));
+
+	for (auto& pickup : _fireballPickups)
+		pickup.Draw(shakenMapPos);
 
 	for (auto& enemy : _enemies)
 		enemy->DrawEnemy(Vector2Subtract(_player.GetWorldPos(), _shakeOffset));
@@ -391,15 +416,13 @@ Vector2 Engine::GetRandomPropPosition()
 	float mapW = _map.width * _mapScale;
 	float mapH = _map.height * _mapScale;
 
-	// shifted LEFT and UP
 	float minX = mapW * 0.05f;
-	float maxX = mapW * 0.72f;   // extended 40% right
+	float maxX = mapW * 0.72f;
 
 	float minY = mapH * 0.05f;
 	float maxY = mapH * 0.76f;
 
-	// spacing increased by ~40%
-	float minSpacing = 308.f;   // (220 * 1.4)
+	float minSpacing = 308.f;
 
 	int attempts = 0;
 	const int maxAttempts = 50;
@@ -407,7 +430,6 @@ Vector2 Engine::GetRandomPropPosition()
 	while (attempts < maxAttempts)
 	{
 		Vector2 pos;
-
 		pos.x = GetRandomValue((int)minX, (int)maxX);
 		pos.y = GetRandomValue((int)minY, (int)maxY);
 
@@ -439,14 +461,12 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
 {
 	float safeDistance = 120.f;
 
-	// avoid props
 	for (auto& prop : _props)
 	{
 		if (Vector2Distance(pos, prop.GetWorldPos()) < safeDistance)
 			return false;
 	}
 
-	// avoid other enemies
 	for (auto& enemy : _enemies)
 	{
 		if (Vector2Distance(pos, enemy->GetWorldPos()) < safeDistance)

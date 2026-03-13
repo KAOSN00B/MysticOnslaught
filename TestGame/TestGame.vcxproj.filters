@@ -42,6 +42,12 @@
     <ClCompile Include="PauseAndGameOver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="FireBallPickup.h">
+      <Filter>Header Files</Filter>
+    </ClCompile>
+    <ClCompile Include="FireBallPickup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Character.h">

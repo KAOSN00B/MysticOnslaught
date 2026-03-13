@@ -76,8 +76,8 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, const std::vector<std::unique
 
 void Enemy::HandleMovement(float dt, const std::vector<std::unique_ptr<Enemy>>& enemies)
 {
-    if (_attacking || _takingDamage || _dying) return;
     if (_target == nullptr) return;
+    if (_dying) return;
 
     Vector2 playerPos = _target->GetWorldPos();
     Vector2 toPlayer = Vector2Subtract(playerPos, _worldPos);
@@ -100,11 +100,17 @@ void Enemy::HandleMovement(float dt, const std::vector<std::unique_ptr<Enemy>>& 
         {
             Vector2 away = Vector2Subtract(_worldPos, enemy->_worldPos);
 
-            float strength = (60.f - dist) / 60.f; // stronger when closer
-            separation = Vector2Add(separation,
-                Vector2Scale(Vector2Normalize(away), strength));
+            if (Vector2Length(away) > 0.01f)
+            {
+                float strength = (60.f - dist) / 60.f;
+                separation = Vector2Add(separation,
+                    Vector2Scale(Vector2Normalize(away), strength));
+            }
         }
     }
+
+    // reduce separation influence so enemies don't freeze
+    separation = Vector2Scale(separation, 0.6f);
 
     moveDir = Vector2Add(moveDir, separation);
 
@@ -114,13 +120,15 @@ void Enemy::HandleMovement(float dt, const std::vector<std::unique_ptr<Enemy>>& 
     // store previous position
     Vector2 oldPos = _worldPos;
 
-    // move enemy
-    _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
+    // move enemy (only if not attacking or taking damage)
+    if (!_attacking && !_takingDamage)
+    {
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
+    }
 
-    // check if movement actually happened
     Vector2 movement = Vector2Subtract(_worldPos, oldPos);
 
-    if (Vector2Length(movement) > 1.0f)
+    if (Vector2Length(movement) > 0.01f)
     {
         _texture = _walkAnim;
 

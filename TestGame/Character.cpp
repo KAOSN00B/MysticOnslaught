@@ -223,11 +223,24 @@ void Character::DrawPlayer()
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ (GetScreenWidth() - w) * 0.5f, (GetScreenHeight() - h) * 0.5f, w, h };
 
+    // ---- Shadow ----
+    float shadowWidth = w * 0.40f;
+    float shadowHeight = h * 0.05f;
+
+    float shadowOffsetX = -_rightLeft * 3.f; // slight bias behind player
+    float shadowX = dest.x + w * 0.5f + shadowOffsetX;
+    float shadowY = dest.y + h - 2.f;
+
+    // soft shadow effect (two ellipses)
+    DrawEllipse(shadowX, shadowY, shadowWidth, shadowHeight, Color{ 0,0,0,70 });
+    DrawEllipse(shadowX, shadowY, shadowWidth * 0.7f, shadowHeight * 0.7f, Color{ 0,0,0,40 });
+
     if (_playDashParticles)
         DashParticles(h);
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
 }
+
 
 void Character::DashParticles(float h)
 {
@@ -347,4 +360,9 @@ void Character::PlayHurtSound()
     SetSoundPitch(_hurtSound, pitch);
     SetSoundVolume(_hurtSound, 0.15f);
     PlaySound(_hurtSound);
+}
+
+void Character::UnlockFireball()
+{
+    _hasFireball = true;
 }
