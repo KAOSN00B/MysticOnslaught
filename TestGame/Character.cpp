@@ -201,7 +201,7 @@ void Character::HandleAttack()
 
 void Character::DealDamage(BaseCharacter& enemy)
 {
-    if (!_attacking || _damageApplied) return;
+    if (!_attacking ) return;
     if (_frame != 2) return;
 
     Rectangle attackRec = GetCollisionRec();
@@ -212,6 +212,7 @@ void Character::DealDamage(BaseCharacter& enemy)
         enemy.TakeDamage(_attackPower, _worldPos);
         _damageApplied = true;
     }
+    _damageApplied = true;
 }
 
 void Character::DrawPlayer()
@@ -338,4 +339,12 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
 void Character::SetWorldPos(Vector2 pos)
 {
     _worldPos = pos;
+}
+
+void Character::PlayHurtSound()
+{
+    float pitch = GetRandomValue(85, 110) / 100.f;
+    SetSoundPitch(_hurtSound, pitch);
+    SetSoundVolume(_hurtSound, 0.15f);
+    PlaySound(_hurtSound);
 }

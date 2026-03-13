@@ -40,15 +40,18 @@ void Enemy::Init()
     _scale = 6.f;
     _speed = 200.f;
 
-    _health = 2.f;
-    _maxHealth = 2.f;
+    _health = 3.f;
+    _maxHealth = 3.f;
 
     _attackPower = 1.f;
 
     _maxFrames = _texture.width / _width;
+    _frame = GetRandomValue(0, _maxFrames - 1);
+    _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
+
 }
 
-void Enemy::Update(float dt, Vector2 heroWorldPos)
+void Enemy::Update(float dt, Vector2 heroWorldPos, const std::vector<std::unique_ptr<Enemy>>& enemies)
 {
     UpdateDeath(dt);
 
@@ -63,7 +66,7 @@ void Enemy::Update(float dt, Vector2 heroWorldPos)
 
         _attackCooldown -= dt;
 
-        HandleMovement(dt);
+        HandleMovement(dt, enemies);
         HandleAttack();
     }
 
@@ -71,7 +74,7 @@ void Enemy::Update(float dt, Vector2 heroWorldPos)
     DrawEnemy(heroWorldPos);
 }
 
-void Enemy::HandleMovement(float dt)
+void Enemy::HandleMovement(float dt, const std::vector<std::unique_ptr<Enemy>>& enemies)
 {
     if (_attacking || _takingDamage || _dying) return;
     if (_target == nullptr) return;
@@ -79,15 +82,55 @@ void Enemy::HandleMovement(float dt)
     Vector2 playerPos = _target->GetWorldPos();
     Vector2 toPlayer = Vector2Subtract(playerPos, _worldPos);
 
-    Vector2 moveDir{ 0.f, 0.f };
-    if (Vector2Length(toPlayer) > 0.01f) moveDir = Vector2Normalize(toPlayer);
+    Vector2 moveDir = Vector2Zero();
 
+    if (Vector2Length(toPlayer) > 0.01f)
+        moveDir = Vector2Normalize(toPlayer);
+
+    // --- separation force ---
+    Vector2 separation = Vector2Zero();
+
+    for (const auto& enemy : enemies)
+    {
+        if (enemy.get() == this) continue;
+
+        float dist = Vector2Distance(_worldPos, enemy->_worldPos);
+
+        if (dist < 60.f && dist > 0.f)
+        {
+            Vector2 away = Vector2Subtract(_worldPos, enemy->_worldPos);
+
+            float strength = (60.f - dist) / 60.f; // stronger when closer
+            separation = Vector2Add(separation,
+                Vector2Scale(Vector2Normalize(away), strength));
+        }
+    }
+
+    moveDir = Vector2Add(moveDir, separation);
+
+    if (Vector2Length(moveDir) > 0.01f)
+        moveDir = Vector2Normalize(moveDir);
+
+    // store previous position
+    Vector2 oldPos = _worldPos;
+
+    // move enemy
     _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
 
-    _texture = _walkAnim;
+    // check if movement actually happened
+    Vector2 movement = Vector2Subtract(_worldPos, oldPos);
 
-    if (moveDir.x < 0) _rightLeft = -1;
-    if (moveDir.x > 0) _rightLeft = 1;
+    if (Vector2Length(movement) > 1.0f)
+    {
+        _texture = _walkAnim;
+
+        if (moveDir.x < 0) _rightLeft = -1;
+        if (moveDir.x > 0) _rightLeft = 1;
+    }
+    else
+    {
+        _texture = _idleAnim;
+    }
 }
 
 void Enemy::HandleAttack()
@@ -226,4 +269,20 @@ void Enemy::DrawHealthBar(Vector2 screenPos, float w, float h)
 
     DrawRectangle(barX, barY, barWidth, barHeight, RED);
     DrawRectangle(barX, barY, barWidth * healthPercent, barHeight, GREEN);
+}
+
+void Enemy::PlayDeathSound()
+{
+    float pitch = GetRandomValue(140, 180) / 100.f;
+    SetSoundPitch(_deathSound, pitch);
+    SetSoundVolume(_deathSound, 0.5f);
+    PlaySound(_deathSound);
+}
+
+void Enemy::PlayHurtSound()
+{
+    float pitch = GetRandomValue(140, 180) / 100.f;
+    SetSoundPitch(_hurtSound, pitch);
+    SetSoundVolume(_hurtSound, 0.5f);
+    PlaySound(_hurtSound);
 }

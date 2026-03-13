@@ -17,6 +17,7 @@ public:
     void DrawPlayer();
     void DashParticles(float h);
     void SetWorldPos(Vector2 pos);
+    void PlayHurtSound() override;
     
 
 private:
@@ -50,7 +51,4 @@ private:
     float _invincibleTimer = 0.f;
     float _invincibleDuration = 0.4f;
 
- 
-    // put proper dash animations in
-    
 };

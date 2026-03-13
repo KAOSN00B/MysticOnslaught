@@ -75,7 +75,7 @@ bool PauseAndGameOver::DrawGameOver(int wave, float gameTimer)
     DrawText("GAME OVER", gap, GetScreenHeight() / 2 - 200,
         gameOverFont, RED);
 
-    DrawText("Press ENTER to return to play again", GetScreenWidth() / 2 - 250,
+    DrawText("Press ENTER  to play again", GetScreenWidth() / 2 - 250,
         (GetScreenHeight() * 3 / 4), fontSize, RAYWHITE);
 
     DrawText(TextFormat("Wave Reached: %d", wave), GetScreenWidth() / 2 - 120,

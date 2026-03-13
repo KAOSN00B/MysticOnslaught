@@ -182,7 +182,7 @@ void Engine::UpdateGamePlay(float dt)
 
 		for (auto& enemy : _enemies)
 		{
-			enemy->Update(dt, _player.GetWorldPos());
+			enemy->Update(dt, _player.GetWorldPos(), _enemies);
 
 			int prevHealth = enemy->GetHealth();
 
@@ -268,8 +268,6 @@ void Engine::HandleCollisions()
 	{
 		_player.UndoMovement();
 
-		for (auto& enemy : _enemies)
-			enemy->UndoMovement();
 	}
 
 	for (auto& prop : _props)
