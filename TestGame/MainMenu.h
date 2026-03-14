@@ -14,8 +14,9 @@ public:
     void DrawBanner(const char* text, int y, int fontSize,
         Color bannerColor, Color textColor);
 
-    bool StartPressed() const;
-    bool QuitPressed() const;
+    bool StartPressed()   const;
+    bool QuitPressed()    const;
+    bool HowToPressed()   const;
 
 
 
@@ -29,6 +30,7 @@ private:
     };
     std::vector<Button> _buttons;
 
-    bool _startPressed = false;
-    bool _quitPressed = false;
+    bool _startPressed  = false;
+    bool _quitPressed   = false;
+    bool _howToPressed  = false;
 };

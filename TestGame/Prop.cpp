@@ -14,7 +14,7 @@ void Prop::Render(Vector2 heroWorldPos)
 	DrawTextureEx(_texture, screenPos, 0.0f, _scale, WHITE);
 }
 
-Rectangle Prop::GetCollisionRec()
+Rectangle Prop::GetCollisionRec() const
 {
     float hitboxWidth = _texture.width * _scale;
     float hitboxHeight = _texture.height * _scale;

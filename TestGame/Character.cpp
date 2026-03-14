@@ -1,4 +1,5 @@
-﻿#include "Character.h"
+#include "Character.h"
+
 #include "raymath.h"
 
 Character::Character()
@@ -14,7 +15,12 @@ Character::Character()
     _takingDamage = false;
     _dying = false;
     _damageApplied = false;
+    _castingAbility = false;
     _playDashParticles = false;
+    _queuedCast = CastType::None;
+    _fireballAmmo  = 0;
+    _swordBeamAmmo = 0;
+    _freezeAmmo    = 0;
 
     _invincibleTimer = 0.f;
     _dashTimer = 0.f;
@@ -29,6 +35,7 @@ Character::~Character()
     UnloadTexture(_idleAnim);
     UnloadTexture(_walkAnim);
     UnloadTexture(_attackAnim);
+    UnloadTexture(_staffAnim);
     UnloadTexture(_takeDamageAnim);
     UnloadTexture(_deathAnim);
     UnloadTexture(_dashAnim);
@@ -44,6 +51,7 @@ void Character::Init()
     _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Idle.png");
     _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Walk.png");
     _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Slash.png");
+    _staffAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Staff.png");
     _dashAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Dash.png");
     _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Death.png");
     _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_TakeDamage.png");
@@ -74,7 +82,17 @@ void Character::Init()
     _takingDamage = false;
     _dying = false;
     _damageApplied = false;
+    _castingAbility = false;
     _playDashParticles = false;
+    _queuedCast = CastType::None;
+    _fireballAmmo    = 0;
+    _swordBeamAmmo   = 0;
+    _freezeAmmo      = 0;
+    _selectedAbility = 0;
+
+    _exp            = 0;
+    _level          = 0;
+    _expToNextLevel = 10;
 
     _invincibleTimer = 0.f;
     _dashTimer = 0.f;
@@ -100,7 +118,7 @@ void Character::Update(float dt)
         if (!Dashing(dt))
             HandleMovement(dt);
 
-        HandleAttack();
+        HandleAttackInput();
     }
 
     if (_hasIFrames)
@@ -134,6 +152,12 @@ void Character::HandleInput()
         if (IsKeyDown(KEY_S)) _direction.y += 1;
     }
 
+    // 1-2-3-4 selects active ability slot
+    if (IsKeyPressed(KEY_ONE))   _selectedAbility = 0;
+    if (IsKeyPressed(KEY_TWO))   _selectedAbility = 1;
+    if (IsKeyPressed(KEY_THREE)) _selectedAbility = 2;
+    if (IsKeyPressed(KEY_FOUR))  _selectedAbility = 3;
+
     if (IsKeyPressed(KEY_SPACE) && !_isDashing && _dashCooldown <= 0.f)
     {
         _isDashing = true;
@@ -156,7 +180,8 @@ void Character::HandleInput()
 
 void Character::HandleMovement(float dt)
 {
-    if (_attacking || _takingDamage || _dying) return;
+    if (_attacking || _castingAbility || _takingDamage || _dying)
+        return;
 
     if (Vector2Length(_direction) > 0.f)
     {
@@ -175,18 +200,19 @@ void Character::HandleMovement(float dt)
             _stepTimer = _stepDelay;
         }
     }
-    else
+    else if (!_attacking && !_castingAbility)
     {
         _texture = _idleAnim;
         _stepTimer = 0.f;
     }
 }
 
-void Character::HandleAttack()
+void Character::HandleAttackInput()
 {
-    if (_takingDamage || _dying) return;
+    if (_takingDamage || _dying)
+        return;
 
-    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !_attacking)
+    if (!_attacking && !_castingAbility && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
         _attacking = true;
         _damageApplied = false;
@@ -197,22 +223,35 @@ void Character::HandleAttack()
         _updateTime = _attackUpdateTime;
         PlayAttackSound();
     }
-}
 
-void Character::DealDamage(BaseCharacter& enemy)
-{
-    if (!_attacking || _damageApplied) return;
-    if (_frame != 2) return;
-
-    Rectangle attackRec = GetCollisionRec();
-    attackRec.x += _rightLeft * 50;
-
-    if (CheckCollisionRecs(attackRec, enemy.GetCollisionRec()))
+    // Right-click fires the currently selected ability slot (1=Fireball, 2=SwordBeam, 3=Freeze)
+    if (!_attacking && !_castingAbility && IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
     {
-        enemy.TakeDamage(_attackPower, _worldPos);
-        _damageApplied = true;
+        _castingAbility = true;
+        _queuedCast = CastType::None;
+
+        if (_selectedAbility == 0 && _fireballAmmo > 0)
+        {
+            _fireballAmmo--;
+            _queuedCast = CastType::Fireball;
+        }
+        else if (_selectedAbility == 1 && _swordBeamAmmo > 0)
+        {
+            _swordBeamAmmo--;
+            _queuedCast = CastType::SwordBeam;
+        }
+        else if (_selectedAbility == 2 && _freezeAmmo > 0)
+        {
+            _freezeAmmo--;
+            _queuedCast = CastType::Freeze;
+        }
+
+        _texture = _staffAnim;
+        _frame = 0;
+        _runningTime = 0.f;
+        _maxFrames = _texture.width / _width;
+        _updateTime = _staffCastUpdateTime;
     }
-    _damageApplied = true;
 }
 
 void Character::DrawPlayer()
@@ -223,24 +262,21 @@ void Character::DrawPlayer()
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ (GetScreenWidth() - w) * 0.5f, (GetScreenHeight() - h) * 0.5f, w, h };
 
-    // ---- Shadow ----
     float shadowWidth = w * 0.40f;
     float shadowHeight = h * 0.05f;
 
-    float shadowOffsetX = -_rightLeft * 3.f; // slight bias behind player
+    float shadowOffsetX = -_rightLeft * 3.f;
     float shadowX = dest.x + w * 0.5f + shadowOffsetX;
     float shadowY = dest.y + h - 2.f;
 
-    // soft shadow effect (two ellipses)
-    DrawEllipse(shadowX, shadowY, shadowWidth, shadowHeight, Color{ 0,0,0,70 });
-    DrawEllipse(shadowX, shadowY, shadowWidth * 0.7f, shadowHeight * 0.7f, Color{ 0,0,0,40 });
+    DrawEllipse(shadowX, shadowY, shadowWidth, shadowHeight, Color{ 0, 0, 0, 70 });
+    DrawEllipse(shadowX, shadowY, shadowWidth * 0.7f, shadowHeight * 0.7f, Color{ 0, 0, 0, 40 });
 
     if (_playDashParticles)
         DashParticles(h);
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
 }
-
 
 void Character::DashParticles(float h)
 {
@@ -295,6 +331,14 @@ void Character::HandleAnimation(float dt)
                 _maxFrames = _texture.width / _width;
             }
 
+            if (_castingAbility)
+            {
+                _castingAbility = false;
+                _texture = _idleAnim;
+                _updateTime = 1.f / 8.f;
+                _maxFrames = _texture.width / _width;
+            }
+
             _frame = 0;
         }
     }
@@ -330,7 +374,6 @@ bool Character::Dashing(float dt)
         _updateTime = 1.f / 8.f;
     }
 
-    
     return true;
 }
 
@@ -341,7 +384,8 @@ void Character::Death()
 
 void Character::TakeDamage(int damage, Vector2 attackerPos)
 {
-    if (_hasIFrames || _dashInvincible) return;
+    if (_hasIFrames || _dashInvincible)
+        return;
 
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
@@ -362,7 +406,78 @@ void Character::PlayHurtSound()
     PlaySound(_hurtSound);
 }
 
-void Character::UnlockFireball()
+void Character::AddFireballAmmo(int amount)  { _fireballAmmo  += amount; }
+int  Character::GetFireballAmmo()  const      { return _fireballAmmo; }
+
+void Character::AddSwordBeamAmmo(int amount) { _swordBeamAmmo += amount; }
+int  Character::GetSwordBeamAmmo() const      { return _swordBeamAmmo; }
+
+Character::CastType Character::ConsumeCastRequest()
 {
-    _hasFireball = true;
+    CastType queuedCast = _queuedCast;
+    _queuedCast = CastType::None;
+    return queuedCast;
+}
+
+bool Character::CanApplyMeleeDamage() const
+{
+    return _attacking && !_damageApplied && _frame == 2;
+}
+
+void Character::ConsumeMeleeDamageFrame()
+{
+    _damageApplied = true;
+}
+
+Rectangle Character::GetAttackCollisionRec() const
+{
+    Rectangle attackRec = GetCollisionRec();
+    attackRec.x += _rightLeft * 50.f;
+    return attackRec;
+}
+
+Vector2 Character::GetCastOrigin() const
+{
+    // Spawn slightly in front of the player so projectiles visually leave the body
+    return Vector2Add(_worldPos, Vector2{ _rightLeft * 50.f, 0.f });
+}
+
+Vector2 Character::GetFacingDirection() const
+{
+    return Vector2{ (float)_rightLeft, 0.f };
+}
+
+void Character::AddFreezeAmmo(int amount)    { _freezeAmmo    += amount; }
+int  Character::GetFreezeAmmo()    const      { return _freezeAmmo; }
+
+void Character::AddExp(int amount)
+{
+    if (_level >= _maxLevel)
+        return;
+
+    _exp += amount;
+
+    while (_exp >= _expToNextLevel && _level < _maxLevel)
+    {
+        _exp -= _expToNextLevel;
+        _level++;
+        _expToNextLevel *= 2;  // 10 → 20 → 40 → 80 ...
+
+        // Level-up bonuses: +1 max HP, heal 1, +1 attack power
+        _maxHealth += 1;
+        _attackPower += 1.f;
+        Heal(1);
+    }
+
+    // Clamp leftover EXP at max level
+    if (_level >= _maxLevel)
+        _exp = 0;
+}
+
+void Character::Heal(int amount)
+{
+    _health += amount;
+
+    if (_health > _maxHealth)
+        _health = _maxHealth;
 }

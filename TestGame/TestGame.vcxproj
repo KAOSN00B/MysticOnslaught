@@ -130,21 +130,39 @@
     <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="Engine.cpp" />
     <ClCompile Include="FireBallPickup.cpp" />
+    <ClCompile Include="FireballProjectile.cpp" />
+    <ClCompile Include="FreezePickup.cpp" />
+    <ClCompile Include="FreezeProjectile.cpp" />
+    <ClCompile Include="Game.cpp" />
+    <ClCompile Include="HealPickup.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Character.cpp" />
     <ClCompile Include="MainMenu.cpp" />
     <ClCompile Include="PauseAndGameOver.cpp" />
+    <ClCompile Include="Player.cpp" />
     <ClCompile Include="Prop.cpp" />
-    <ClCompile Include="FireBallPickup.h" />
+    <ClCompile Include="SwordBeamPickup.cpp" />
+    <ClCompile Include="SwordBeamProjectile.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AnimationUtils.h" />
     <ClInclude Include="BaseCharacter.h" />
     <ClInclude Include="Character.h" />
     <ClInclude Include="Enemy.h" />
     <ClInclude Include="Engine.h" />
+    <ClInclude Include="FireBallPickup.h" />
+    <ClInclude Include="FireballProjectile.h" />
+    <ClInclude Include="FreezePickup.h" />
+    <ClInclude Include="FreezeProjectile.h" />
+    <ClInclude Include="Game.h" />
+    <ClInclude Include="HealPickup.h" />
     <ClInclude Include="MainMenu.h" />
     <ClInclude Include="PauseAndGameOver.h" />
+    <ClInclude Include="Pickup.h" />
+    <ClInclude Include="Player.h" />
     <ClInclude Include="Prop.h" />
+    <ClInclude Include="SwordBeamPickup.h" />
+    <ClInclude Include="SwordBeamProjectile.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

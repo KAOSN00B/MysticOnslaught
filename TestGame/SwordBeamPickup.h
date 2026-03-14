@@ -1,11 +1,11 @@
 #pragma once
 #include "Pickup.h"
 
-class FireBallPickup : public Pickup
+class SwordBeamPickup : public Pickup
 {
 public:
-    FireBallPickup();
-    ~FireBallPickup() override = default;
+    SwordBeamPickup();
+    ~SwordBeamPickup() override = default;
 
     // Satisfies the base class pure virtual (defaults ammo to 1)
     void Init(Vector2 spawnPos)              override;
@@ -14,21 +14,19 @@ public:
 
     void       Draw(Vector2 worldOffset)    override;
     void       OnCollect(Character& player) override;
-    PickupType GetType()          const     override { return PickupType::FireBall; }
+    PickupType GetType()          const     override { return PickupType::SwordBeam; }
     Rectangle  GetCollisionRec()  const     override;
 
     int GetAmmoValue() const;
-
-    // Static shared texture — used by Engine HUD as well
     static Texture2D GetSharedTexture();
-    static void      UnloadSharedResources();
+    static void UnloadSharedResources();
 
 private:
     static void EnsureTextureLoaded();
 
-    float _scale     = 4.f;
+    float _radius    = 22.f;
     int   _ammoValue = 1;
 
     static Texture2D _sharedTexture;
-    static bool      _textureLoaded;
+    static bool _textureLoaded;
 };

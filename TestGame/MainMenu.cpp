@@ -9,11 +9,13 @@ void MainMenu::Init()
 
     int centerX = GetScreenWidth() / 2 - buttonWidth / 2;
 
-    _buttons.push_back({ "Start Game", { (float)centerX, 350.f, buttonWidth, buttonHeight } });
-    _buttons.push_back({ "Quit", { (float)centerX, 470.f, buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Start Game",   { (float)centerX, 300.f, buttonWidth, buttonHeight } });
+    _buttons.push_back({ "How To Play",  { (float)centerX, 410.f, buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Quit",         { (float)centerX, 520.f, buttonWidth, buttonHeight } });
 
-    _startPressed = false;
-    _quitPressed = false;
+    _startPressed  = false;
+    _quitPressed   = false;
+    _howToPressed  = false;
 }
 
 void MainMenu::Update()
@@ -26,11 +28,9 @@ void MainMenu::Update()
 
         if (button.hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
-            if (button.text == "Start Game")
-                _startPressed = true;
-
-            if (button.text == "Quit")
-                _quitPressed = true;
+            if (button.text == "Start Game")  _startPressed = true;
+            if (button.text == "Quit")        _quitPressed  = true;
+            if (button.text == "How To Play") _howToPressed = true;
         }
     }
 }
@@ -49,24 +49,24 @@ void MainMenu::Draw()
 
         if (button.text == "Start Game")
             color = GREEN;
+        else if (button.text == "How To Play")
+            color = BLUE;
         else
             color = RED;
 
-        // hover effect
         if (button.hovered)
             color = Fade(color, 0.85f);
 
-        // filled button
         DrawRectangleRec(button.bounds, color);
-
-        // button outline
         DrawRectangleLinesEx(button.bounds, 3, BLACK);
 
         int fontSize = 40;
         int textWidth = MeasureText(button.text.c_str(), fontSize);
 
-        DrawText( button.text.c_str(), button.bounds.x + button.bounds.width / 2 - textWidth / 2,
-            button.bounds.y + button.bounds.height / 2 - fontSize / 2,  fontSize, WHITE);
+        DrawText(button.text.c_str(),
+            button.bounds.x + button.bounds.width  / 2 - textWidth / 2,
+            button.bounds.y + button.bounds.height / 2 - fontSize  / 2,
+            fontSize, WHITE);
     }
 }
 
@@ -101,4 +101,9 @@ bool MainMenu::StartPressed() const
 bool MainMenu::QuitPressed() const
 {
     return _quitPressed;
+}
+
+bool MainMenu::HowToPressed() const
+{
+    return _howToPressed;
 }

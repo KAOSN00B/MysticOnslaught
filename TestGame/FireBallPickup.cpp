@@ -1,53 +1,90 @@
-﻿#include "FireBallPickup.h"
+#include "FireBallPickup.h"
+#include "Character.h"
 #include "raymath.h"
+
+Texture2D FireBallPickup::_sharedTexture{};
+bool      FireBallPickup::_textureLoaded = false;
 
 FireBallPickup::FireBallPickup()
 {
-    _damage = 2.f;
     _isActive = true;
-}
-
-FireBallPickup::~FireBallPickup()
-{
-    UnloadTexture(_texture);
 }
 
 void FireBallPickup::Init(Vector2 spawnPos)
 {
-    _worldPos = spawnPos;
+    Init(spawnPos, 1);
+}
 
-    _texture = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\FireBallPickup.png");
+void FireBallPickup::Init(Vector2 spawnPos, int ammoValue)
+{
+    EnsureTextureLoaded();
+    _worldPos   = spawnPos;
+    _ammoValue  = ammoValue;
+    _isActive   = true;
 }
 
 void FireBallPickup::Draw(Vector2 worldOffset)
 {
-    if (!_isActive) return;
+    if (!_isActive)
+        return;
 
-    Vector2 screenPos = Vector2Add(_worldPos, worldOffset); // world → screen
+    EnsureTextureLoaded();
 
-    //DrawTexture(_texture, (int)screenPos.x, (int)screenPos.y, WHITE);
-    DrawCircleV(Vector2Add(_worldPos, worldOffset), 20, ORANGE);
+    Vector2 screenPos = Vector2Add(_worldPos, worldOffset);
+    screenPos.x += GetScreenWidth()  / 2.f;
+    screenPos.y += GetScreenHeight() / 2.f;
+
+    Vector2 drawPos{
+        screenPos.x - (_sharedTexture.width  * _scale) * 0.5f,
+        screenPos.y - (_sharedTexture.height * _scale) * 0.5f
+    };
+
+    DrawTextureEx(_sharedTexture, drawPos, 0.f, _scale, WHITE);
 }
 
-Vector2 FireBallPickup::GetPosition() const
+void FireBallPickup::OnCollect(Character& player)
 {
-    return _worldPos;
-}
-
-bool FireBallPickup::IsActive() const
-{
-    return _isActive;
-}
-
-void FireBallPickup::Destroy()
-{
+    player.AddFireballAmmo(_ammoValue);
     _isActive = false;
- 
 }
 
-Rectangle FireBallPickup::GetCollisionRec()
+Rectangle FireBallPickup::GetCollisionRec() const
 {
-    float size = 40.f;
+    if (!_textureLoaded)
+        return Rectangle{ _worldPos.x - 32.f, _worldPos.y - 32.f, 64.f, 64.f };
 
-    return Rectangle{ _worldPos.x - size / 2,_worldPos.y - size / 2, size, size };
+    float w = _sharedTexture.width  * _scale;
+    float h = _sharedTexture.height * _scale;
+
+    return Rectangle{ _worldPos.x - w * 0.5f, _worldPos.y - h * 0.5f, w, h };
+}
+
+int FireBallPickup::GetAmmoValue() const
+{
+    return _ammoValue;
+}
+
+Texture2D FireBallPickup::GetSharedTexture()
+{
+    EnsureTextureLoaded();
+    return _sharedTexture;
+}
+
+void FireBallPickup::UnloadSharedResources()
+{
+    if (_textureLoaded)
+    {
+        UnloadTexture(_sharedTexture);
+        _sharedTexture  = Texture2D{};
+        _textureLoaded  = false;
+    }
+}
+
+void FireBallPickup::EnsureTextureLoaded()
+{
+    if (_textureLoaded)
+        return;
+
+    _sharedTexture = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\FireBallPickup.png");
+    _textureLoaded = true;
 }
