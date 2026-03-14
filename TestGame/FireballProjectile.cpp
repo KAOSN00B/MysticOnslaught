@@ -50,7 +50,7 @@ void FireballProjectile::Draw(Vector2 worldOffset) const
 
     float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
     Rectangle source = GetAnimationFrameRect(_sharedTexture, _frameWidth, _frameHeight, _frame);
-    float scale = 3.6f;
+    float scale = 7.2f;
     Rectangle dest{
         screenPos.x,
         screenPos.y,

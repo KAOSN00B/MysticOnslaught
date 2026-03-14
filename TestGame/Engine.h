@@ -66,6 +66,7 @@ private:
     void DrawEffects(Vector2 worldOffset);
     void SpawnCastEffect(Character::CastType castType);
     void SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vector2 direction);
+    void SpawnHealEffect();
     void BuildNavigationGrid();
     bool IsNavigationCellBlocked(int col, int row) const;
     int GetNavigationIndex(int col, int row) const;
@@ -88,6 +89,7 @@ private:
         Vector2 worldPos{};
         Vector2 offset{};
         Vector2 direction{ 1.f, 0.f };
+        Color tint = WHITE;
         float scale = 4.f;
         float frameTime = 1.f / 18.f;
         float runningTime = 0.f;
@@ -96,6 +98,7 @@ private:
         int frameCount = 1;
         int frame = 0;
         bool followPlayer = false;
+        bool followPlayerCenter = false;
         bool active = false;
     };
 
@@ -138,6 +141,7 @@ private:
     Texture2D _swordBeamHitTex{};
     Texture2D _freezeCastTex{};
     Texture2D _freezeHitTex{};
+    Texture2D _healEffectTex{};
 
     Character _player;
     MainMenu _menu;

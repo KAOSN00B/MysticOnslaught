@@ -31,6 +31,7 @@ Engine::~Engine()
     UnloadTexture(_swordBeamHitTex);
     UnloadTexture(_freezeCastTex);
     UnloadTexture(_freezeHitTex);
+    UnloadTexture(_healEffectTex);
     CloseWindow();
 }
 
@@ -53,6 +54,7 @@ void Engine::Init()
     _swordBeamHitTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Hit03.png");
     _freezeCastTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Ice_Shard_Cast.png");
     _freezeHitTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Ice_Shard_Hit.png");
+    _healEffectTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Health_Up.png");
 
     _props.clear();
     _pickups.clear();
@@ -309,6 +311,10 @@ void Engine::UpdateGamePlay(float dt)
         std::remove_if(_pickups.begin(), _pickups.end(),
             [](const std::unique_ptr<Pickup>& pickup) { return !pickup->IsActive(); }),
         _pickups.end());
+
+    int healEffectsToSpawn = _player.ConsumeHealEffectRequests();
+    for (int i = 0; i < healEffectsToSpawn; ++i)
+        SpawnHealEffect();
 
     HandleCollisions();
 
@@ -645,6 +651,7 @@ void Engine::HandlePlayerMeleeDamage()
         if (CheckCollisionRecs(attackRec, enemy->GetCollisionRec()))
         {
             enemy->TakeDamage(2, _player.GetWorldPos());
+            SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
             hitAny = true;
         }
     }
@@ -724,7 +731,9 @@ void Engine::DrawEffects(Vector2 worldOffset)
             continue;
 
         Vector2 worldPos = effect.followPlayer
-            ? Vector2Add(_player.GetCastOrigin(), Vector2{ effect.offset.x, effect.offset.y })
+            ? (effect.followPlayerCenter
+                ? Vector2Add(_player.GetWorldPos(), Vector2{ effect.offset.x, effect.offset.y })
+                : Vector2Add(_player.GetCastOrigin(), Vector2{ effect.offset.x, effect.offset.y }))
             : effect.worldPos;
 
         Vector2 screenPos = Vector2Add(worldPos, worldOffset);
@@ -741,7 +750,7 @@ void Engine::DrawEffects(Vector2 worldOffset)
         };
 
         DrawTexturePro(*effect.texture, source, dest,
-            Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, WHITE);
+            Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, effect.tint);
     }
 }
 
@@ -793,28 +802,56 @@ void Engine::SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vect
 
     switch (castType)
     {
+    case Character::CastType::None:
+        effect.texture = &_swordBeamHitTex;
+        effect.frameCount = 5;
+        effect.scale = 3.5f;
+        effect.tint = Color{ 255, 150, 150, 255 };
+        break;
+
     case Character::CastType::Fireball:
         effect.texture = &_fireballHitTex;
         effect.frameCount = 6;
         effect.scale = 4.f;
+        effect.tint = WHITE;
         break;
 
     case Character::CastType::SwordBeam:
         effect.texture = &_swordBeamHitTex;
         effect.frameCount = 5;
         effect.scale = 3.5f;
+        effect.tint = Color{ 150, 220, 255, 255 };
         break;
 
     case Character::CastType::Freeze:
         effect.texture = &_freezeHitTex;
         effect.frameCount = 5;
         effect.scale = 4.f;
+        effect.tint = Color{ 70, 110, 210, 255 };
         break;
 
     default:
         effect.active = false;
         break;
     }
+
+    if (effect.active)
+        _effects.push_back(effect);
+}
+
+void Engine::SpawnHealEffect()
+{
+    AnimatedEffect effect{};
+    effect.texture = &_healEffectTex;
+    effect.followPlayer = true;
+    effect.followPlayerCenter = true;
+    effect.offset = Vector2{ 0.f, -20.f };
+    effect.direction = Vector2{ 1.f, 0.f };
+    effect.tint = WHITE;
+    effect.frameCount = 13;
+    effect.frameTime = 1.f / 16.f;
+    effect.scale = 4.5f;
+    effect.active = (_healEffectTex.id != 0);
 
     if (effect.active)
         _effects.push_back(effect);

@@ -22,8 +22,8 @@ private:
     Vector2 _worldPos{};
     Vector2 _direction{};
     float _speed = 600.f;
-    float _width = 110.f;
-    float _height = 60.f;
+    float _width = 220.f;
+    float _height = 120.f;
     float _lifeTimer = 4.f;
     float _runningTime = 0.f;
     float _updateTime = 1.f / 18.f;

@@ -21,6 +21,7 @@ Character::Character()
     _fireballAmmo  = 0;
     _swordBeamAmmo = 0;
     _freezeAmmo    = 0;
+    _pendingHealEffects = 0;
 
     _invincibleTimer = 0.f;
     _dashTimer = 0.f;
@@ -89,6 +90,7 @@ void Character::Init()
     _swordBeamAmmo   = 0;
     _freezeAmmo      = 0;
     _selectedAbility = 0;
+    _pendingHealEffects = 0;
 
     _exp            = 0;
     _level          = 0;
@@ -229,6 +231,7 @@ void Character::HandleAttackInput()
     {
         _castingAbility = true;
         _queuedCast = CastType::None;
+        bool useSlashAnimation = false;
 
         if (_selectedAbility == 0 && _fireballAmmo > 0)
         {
@@ -239,6 +242,7 @@ void Character::HandleAttackInput()
         {
             _swordBeamAmmo--;
             _queuedCast = CastType::SwordBeam;
+            useSlashAnimation = true;
         }
         else if (_selectedAbility == 2 && _freezeAmmo > 0)
         {
@@ -246,11 +250,11 @@ void Character::HandleAttackInput()
             _queuedCast = CastType::Freeze;
         }
 
-        _texture = _staffAnim;
+        _texture = useSlashAnimation ? _attackAnim : _staffAnim;
         _frame = 0;
         _runningTime = 0.f;
         _maxFrames = _texture.width / _width;
-        _updateTime = _staffCastUpdateTime;
+        _updateTime = useSlashAnimation ? _attackUpdateTime : _staffCastUpdateTime;
     }
 }
 
@@ -447,6 +451,13 @@ Vector2 Character::GetFacingDirection() const
     return Vector2{ (float)_rightLeft, 0.f };
 }
 
+int Character::ConsumeHealEffectRequests()
+{
+    int pending = _pendingHealEffects;
+    _pendingHealEffects = 0;
+    return pending;
+}
+
 void Character::AddFreezeAmmo(int amount)    { _freezeAmmo    += amount; }
 int  Character::GetFreezeAmmo()    const      { return _freezeAmmo; }
 
@@ -480,4 +491,7 @@ void Character::Heal(int amount)
 
     if (_health > _maxHealth)
         _health = _maxHealth;
+
+    if (amount > 0)
+        _pendingHealEffects += amount;
 }

@@ -51,9 +51,9 @@ void SwordBeamProjectile::Draw(Vector2 worldOffset) const
     screenPos.x += GetScreenWidth() / 2.f;
     screenPos.y += GetScreenHeight() / 2.f;
 
-    float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
+    float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG + 90.f;
     Rectangle source = GetAnimationFrameRect(_sharedTexture, _frameWidth, _frameHeight, _frame);
-    float scale = 4.f;
+    float scale = 8.f;
     Rectangle dest{
         screenPos.x,
         screenPos.y,

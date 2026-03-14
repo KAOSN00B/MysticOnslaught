@@ -24,7 +24,7 @@ private:
     Vector2 _worldPos{};
     Vector2 _direction{};
     float _speed  = 650.f;
-    float _radius = 28.f;  // larger glow and collision
+    float _radius = 56.f;
     float _lifeTimer = 5.f;
     float _runningTime = 0.f;
     float _updateTime = 1.f / 16.f;

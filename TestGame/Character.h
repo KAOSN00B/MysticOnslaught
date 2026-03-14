@@ -39,6 +39,7 @@ public:
     Rectangle GetAttackCollisionRec() const;
     Vector2 GetCastOrigin() const;
     Vector2 GetFacingDirection() const;
+    int ConsumeHealEffectRequests();
 
     void AddExp(int amount);
     void Heal(int amount);
@@ -86,6 +87,7 @@ private:
     int _swordBeamAmmo = 0;
     int _freezeAmmo    = 0;
     CastType _queuedCast = CastType::None;
+    int _pendingHealEffects = 0;
 
     int _exp            = 0;
     int _level          = 0;
