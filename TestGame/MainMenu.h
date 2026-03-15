@@ -8,17 +8,15 @@ class MainMenu
 {
 public:
 
+    ~MainMenu();
+
     void Init();
     void Update();
     void Draw();
-    void DrawBanner(const char* text, int y, int fontSize,
-        Color bannerColor, Color textColor);
 
     bool StartPressed()   const;
     bool QuitPressed()    const;
     bool HowToPressed()   const;
-
-
 
 private:
 
@@ -29,6 +27,11 @@ private:
         bool hovered = false;
     };
     std::vector<Button> _buttons;
+
+    Texture2D _borderTex{};
+    Texture2D _bannerTex{};
+    Texture2D _playBtnTex{};
+    Texture2D _htpBtnTex{};
 
     bool _startPressed  = false;
     bool _quitPressed   = false;

@@ -50,6 +50,7 @@ Engine::~Engine()
     UnloadTexture(_freezeCastTex);
     UnloadTexture(_freezeHitTex);
     UnloadTexture(_healEffectTex);
+    _pauseUI.Unload();
     CloseWindow();
 }
 
@@ -72,6 +73,8 @@ void Engine::Init()
 
     SetSoundPitch (_pickupSound, 1.35f);
     SetSoundVolume(_pickupSound, 0.45f);
+
+    _pauseUI.Init();
 
     _menu.Init();
 
@@ -211,15 +214,7 @@ void Engine::Update(float dt)
     }
 
     case GameState::GameOver:
-    {
-        if (IsKeyPressed(KEY_ENTER))
-        {
-            StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
-            ResetRunState();
-            _gameState = GameState::Menu;
-        }
         break;
-    }
     }
 }
 
@@ -474,9 +469,11 @@ void Engine::Draw()
 
     case GameState::GameOver:
     {
-        if (_pauseUI.DrawGameOver(_wave, _gameTimer))
-            _shouldClose = true;
-
+        int goResult = _pauseUI.DrawGameOver(_wave, _gameTimer);
+        if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
+        if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _gameState = GameState::Play; }
+        else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
+        else if (goResult == 3) _shouldClose = true;
         break;
     }
 
@@ -719,23 +716,6 @@ void Engine::DrawAbilityBar()
     DrawText(hint, (int)(GetScreenWidth() / 2.f - hw / 2.f),
         (int)(slotY + slotSize + 2.f), 14, Fade(WHITE, 0.45f));
 
-    // Dash recharge bar — shown when not fully recharged
-    float dashPct = _player.GetDashCooldownPercent();
-    if (dashPct < 1.f)
-    {
-        const float dashBarW = totalW;
-        const float dashBarH = 8.f;
-        const float dashBarX = startX;
-        const float dashBarY = slotY - dashBarH - 6.f;
-
-        DrawRectangleRounded({ dashBarX, dashBarY, dashBarW, dashBarH }, 0.5f, 4, Fade(BLACK, 0.7f));
-        DrawRectangleRounded({ dashBarX, dashBarY, dashBarW * dashPct, dashBarH }, 0.5f, 4, SKYBLUE);
-
-        const char* dashLabel = "DASH";
-        int dlw = MeasureText(dashLabel, 12);
-        DrawText(dashLabel, (int)(dashBarX + dashBarW / 2.f - dlw / 2.f),
-            (int)(dashBarY - 14.f), 12, Fade(SKYBLUE, 0.8f));
-    }
 }
 
 void Engine::DrawWaveIntro()
@@ -1256,8 +1236,31 @@ void Engine::DrawHowToPlay()
     const int labelSz  = (int)(sh * 0.030f);   // ~32
     const int descSz   = (int)(sh * 0.024f);   // ~26
 
-    // ── Background ──────────────────────────────────────────────────────────
-    DrawRectangle(0, 0, (int)sw, (int)sh, DARKBROWN);
+    // ── Background — slow-scrolling checkerboard ────────────────────────────
+    {
+        const int   cell  = 80;
+        const Color dark  = Color{ 52, 38, 26, 255 };
+        const Color light = Color{ 72, 54, 36, 255 };
+
+        const int period = cell * 2;
+        float t    = (float)GetTime();
+        int   offX = (int)fmodf(t * 22.f, (float)period);
+        int   offY = (int)fmodf(t * 12.f, (float)period);
+        int   phaseX = offX / cell;
+        int   phaseY = offY / cell;
+        int   pixX   = offX % cell;
+        int   pixY   = offY % cell;
+
+        for (int gy = -1; gy <= (int)(sh / cell) + 1; gy++)
+        {
+            for (int gx = -1; gx <= (int)(sw / cell) + 1; gx++)
+            {
+                bool isDark = (((gx + phaseX) + (gy + phaseY)) % 2 + 2) % 2 == 0;
+                DrawRectangle(gx * cell - pixX, gy * cell - pixY,
+                    cell, cell, isDark ? dark : light);
+            }
+        }
+    }
 
     // ── Title banner ────────────────────────────────────────────────────────
     float titleBannerY = sh * 0.02f;

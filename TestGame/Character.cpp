@@ -173,11 +173,16 @@ void Character::HandleInput()
 
     if (IsKeyPressed(KEY_SPACE) && !_isDashing && _dashCooldown <= 0.f)
     {
+        // Cancel any ongoing attack or cast so movement isn't blocked after the dash
+        _attacking = false;
+        _castingAbility = false;
+        _damageApplied = false;
+
         _isDashing = true;
         _dashInvincible = true;
         _dashTimer = _dashDuration;
         _dashCooldown = _dashCooldownTime;
-        _velocity = Vector2Zero();  // clear any knockback so dash movement is clean
+        _velocity = Vector2Zero();
         _texture = _dashAnim;
         _frame = 0;
         _runningTime = 0.f;
@@ -303,6 +308,19 @@ void Character::DrawPlayer(Vector2 cameraPos)
     }
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
+
+    // Dash recharge bar — only visible while cooling down
+    if (_dashCooldown > 0.f)
+    {
+        float pct      = 1.f - (_dashCooldown / _dashCooldownTime);
+        float barW     = 52.f;
+        float barH     = 5.f;
+        float barX     = screenX + w * 0.5f - barW * 0.5f;
+        float barY     = screenY + h + 2.f;
+
+        DrawRectangleRounded({ barX, barY, barW, barH }, 0.5f, 4, Fade(BLACK, 0.75f));
+        DrawRectangleRounded({ barX, barY, barW * pct, barH }, 0.5f, 4, SKYBLUE);
+    }
 }
 
 void Character::DashParticles(float h, Vector2 playerScreenCenter)

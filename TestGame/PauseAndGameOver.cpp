@@ -1,23 +1,56 @@
 #include "PauseAndGameOver.h"
 
-// ── Shared helper: draw a rounded button and return true if clicked ───────────
-static bool DrawButton(const char* label, Rectangle btn, Color col)
+static const char* UI_BASE = "C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\UI\\";
+
+// ── Shared helper: draw a textured button, return true if clicked ─────────────
+static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color tint)
 {
-    Vector2 mouse = GetMousePosition();
-    bool hovered  = CheckCollisionPointRec(mouse, btn);
-    Color c       = hovered ? Fade(col, 0.75f) : Fade(col, 0.92f);
+    Vector2 mouse  = GetMousePosition();
+    bool hovered   = CheckCollisionPointRec(mouse, btn);
+    Color drawTint = hovered ? Fade(tint, 0.75f) : tint;
 
-    DrawRectangleRounded(btn, 0.22f, 6, c);
-    DrawRectangleRoundedLines(btn, 0.22f, 6, Fade(WHITE, 0.35f));
+    if (tex.id != 0)
+        DrawTexturePro(tex,
+            { 0.f, 0.f, (float)tex.width, (float)tex.height },
+            btn, {}, 0.f, drawTint);
+    else
+    {
+        DrawRectangleRounded(btn, 0.22f, 6, drawTint);
+        DrawRectangleRoundedLines(btn, 0.22f, 6, Fade(WHITE, 0.35f));
+    }
 
-    int fontSize  = 30;
-    int textW     = MeasureText(label, fontSize);
+    int fontSize = 30;
+    int textW    = MeasureText(label, fontSize);
     DrawText(label,
         (int)(btn.x + btn.width  / 2.f - textW    / 2.f),
         (int)(btn.y + btn.height / 2.f - fontSize / 2.f),
-        fontSize, WHITE);
+        fontSize, BLACK);
 
     return hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+PauseAndGameOver::~PauseAndGameOver()
+{
+    Unload();
+}
+
+void PauseAndGameOver::Init()
+{
+    if (_borderTex.id == 0)
+        _borderTex  = LoadTexture(TextFormat("%sPauseBoarder.png",     UI_BASE));
+    if (_btnTex.id == 0)
+        _btnTex     = LoadTexture(TextFormat("%sPlayButton.png",       UI_BASE));
+    if (_htpBtnTex.id == 0)
+        _htpBtnTex  = LoadTexture(TextFormat("%sHowToPlayButton.png",  UI_BASE));
+}
+
+void PauseAndGameOver::Unload()
+{
+    if (_borderTex.id  != 0) { UnloadTexture(_borderTex);  _borderTex  = {}; }
+    if (_btnTex.id     != 0) { UnloadTexture(_btnTex);     _btnTex     = {}; }
+    if (_htpBtnTex.id  != 0) { UnloadTexture(_htpBtnTex);  _htpBtnTex  = {}; }
 }
 
 // ── Pause ─────────────────────────────────────────────────────────────────────
@@ -31,8 +64,8 @@ int PauseAndGameOver::DrawPause()
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.65f));
 
     // Panel dimensions
-    const float btnW   = sw * 0.22f;    // ~422 px at 1920
-    const float btnH   = sh * 0.074f;   // ~80 px at 1080
+    const float btnW   = sw * 0.22f;
+    const float btnH   = sh * 0.074f;
     const float btnGap = sh * 0.018f;
     const float padV   = sh * 0.045f;
     const float titleH = sh * 0.075f;
@@ -42,75 +75,91 @@ int PauseAndGameOver::DrawPause()
     float panelX = sw / 2.f - panelW / 2.f;
     float panelY = sh / 2.f - panelH / 2.f;
 
-    DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(BLACK, 0.92f));
-    DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(WHITE, 0.35f));
+    // Draw border texture as the panel background (slightly oversized for visual frame)
+    float borderPad = sw * 0.012f;
+    if (_borderTex.id != 0)
+        DrawTexturePro(_borderTex,
+            { 0.f, 0.f, (float)_borderTex.width, (float)_borderTex.height },
+            { panelX - borderPad, panelY - borderPad,
+              panelW + borderPad * 2.f, panelH + borderPad * 2.f },
+            {}, 0.f, WHITE);
+    else
+    {
+        DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(BLACK, 0.92f));
+        DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(WHITE, 0.35f));
+    }
 
     // Title
     const char* title = "PAUSED";
     int titleSz = (int)(sh * 0.055f);
-    int titleW  = MeasureText(title, titleSz);
-    DrawText(title, (int)(sw / 2.f - titleW / 2.f), (int)(panelY + padV), titleSz, WHITE);
+    int titleWpx = MeasureText(title, titleSz);
+    DrawText(title, (int)(sw / 2.f - titleWpx / 2.f), (int)(panelY + padV), titleSz, BLACK);
 
     // Buttons
     float btnX = sw / 2.f - btnW / 2.f;
     float btnY = panelY + padV + titleH;
 
-    struct { const char* label; Color col; } btns[3] = {
-        { "Resume",      GREEN },
-        { "How To Play", BLUE  },
-        { "Quit Game",   RED   },
-    };
-
     int result = 0;
-    for (int i = 0; i < 3; i++)
-    {
-        if (DrawButton(btns[i].label, { btnX, btnY, btnW, btnH }, btns[i].col))
-            result = i + 1;
-        btnY += btnH + btnGap;
-    }
+
+    // Resume — green tint on play button
+    if (DrawButton(_btnTex, "Resume", { btnX, btnY, btnW, btnH }, Color{ 100, 210, 120, 255 }))
+        result = 1;
+    btnY += btnH + btnGap;
+
+    // How To Play — use the HTP button texture
+    if (DrawButton(_htpBtnTex, "How To Play", { btnX, btnY, btnW, btnH }, WHITE))
+        result = 2;
+    btnY += btnH + btnGap;
+
+    // Quit — red tint on play button
+    if (DrawButton(_btnTex, "Quit Game", { btnX, btnY, btnW, btnH }, Color{ 230, 80, 80, 255 }))
+        result = 3;
 
     return result;
 }
 
 // ── Game Over ─────────────────────────────────────────────────────────────────
-bool PauseAndGameOver::DrawGameOver(int wave, float gameTimer)
+// Returns: 0=nothing  1=play again  2=main menu  3=quit
+int PauseAndGameOver::DrawGameOver(int wave, float gameTimer)
 {
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
 
     ClearBackground(BLACK);
 
-    // "GAME OVER" title — centered horizontally, upper quarter
-    const char* title  = "GAME OVER";
-    int titleSz        = (int)(sw * 0.07f);   // scales with width
-    int titleW         = MeasureText(title, titleSz);
+    // Title
+    const char* title = "GAME OVER";
+    int titleSz       = (int)(sw * 0.07f);
+    int titleW        = MeasureText(title, titleSz);
     DrawText(title, (int)(sw / 2.f - titleW / 2.f), (int)(sh * 0.22f), titleSz, RED);
 
-    // Stats block — centered
+    // Stats
     int statSz = (int)(sh * 0.032f);
     const char* waveTxt = TextFormat("Wave Reached: %d", wave);
     const char* timeTxt = TextFormat("Time Survived: %.1f s", gameTimer);
-    int waveW = MeasureText(waveTxt, statSz);
-    int timeW = MeasureText(timeTxt, statSz);
+    DrawText(waveTxt, (int)(sw / 2.f - MeasureText(waveTxt, statSz) / 2.f), (int)(sh * 0.50f),               statSz, YELLOW);
+    DrawText(timeTxt, (int)(sw / 2.f - MeasureText(timeTxt, statSz) / 2.f), (int)(sh * 0.50f + statSz + 12), statSz, YELLOW);
 
-    float statsY = sh * 0.50f;
-    DrawText(waveTxt, (int)(sw / 2.f - waveW / 2.f), (int)statsY, statSz, YELLOW);
-    DrawText(timeTxt, (int)(sw / 2.f - timeW / 2.f), (int)(statsY + statSz + 12.f), statSz, YELLOW);
+    // Buttons — Play Again, Main Menu, Quit stacked centre-screen
+    const float btnW   = sw * 0.22f;
+    const float btnH   = sh * 0.074f;
+    const float btnGap = sh * 0.020f;
+    const float btnX   = sw / 2.f - btnW / 2.f;
+    float       btnY   = sh * 0.64f;
 
-    // Play-again prompt — centered, lower quarter
-    int subSz      = (int)(sh * 0.026f);
-    const char* sub = "Press ENTER to play again";
-    int subW       = MeasureText(sub, subSz);
-    DrawText(sub, (int)(sw / 2.f - subW / 2.f), (int)(sh * 0.75f), subSz, RAYWHITE);
+    struct { const char* label; Texture2D* tex; Color tint; } btns[3] = {
+        { "Play Again", &_btnTex,    Color{ 100, 210, 120, 255 } },
+        { "Main Menu",  &_htpBtnTex, WHITE                       },
+        { "Quit Game",  &_btnTex,    Color{ 230, 80,  80,  255 } },
+    };
 
-    // Quit button — bottom-right corner
-    float btnW = sw * 0.115f;
-    float btnH = sh * 0.055f;
-    float btnX = sw - btnW - sw * 0.016f;
-    float btnY = sh - btnH - sh * 0.028f;
+    int result = 0;
+    for (int i = 0; i < 3; i++)
+    {
+        if (DrawButton(*btns[i].tex, btns[i].label, { btnX, btnY, btnW, btnH }, btns[i].tint))
+            result = i + 1;
+        btnY += btnH + btnGap;
+    }
 
-    if (DrawButton("Quit Game", { btnX, btnY, btnW, btnH }, RED))
-        return true;
-
-    return false;
+    return result;
 }
