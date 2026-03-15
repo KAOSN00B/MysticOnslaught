@@ -52,7 +52,7 @@ private:
     void TriggerScreenShake(float strength, float duration);
     void DrawWorld();
     void DrawHUD();
-    void DrawHowToPlay(bool resumeMode = false);
+    void DrawHowToPlay();
     void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
     void DrawWaveIntro();
     void HandlePlayerMeleeDamage();
@@ -73,9 +73,14 @@ private:
     Vector2 GetNavigationTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const;
     bool FindNearestOpenCell(int& col, int& row) const;
     bool HasLineOfSight(Vector2 start, Vector2 end) const;
+    void RefreshNavigationField();
+    int GetClosestOpenNavigationIndex(int col, int row) const;
     void SpawnEnemyDrop(Vector2 worldPos);
     void SpawnTimedPickup();
     void DrawMiniMap();
+    void ResetRunState();
+    int GetActiveEnemyCount() const;
+    bool TryGetPooledEnemySpawn(Vector2 pos);
 
     Vector2 GetRandomPropPosition();
     bool IsSpawnPositionValid(Vector2 pos);
@@ -105,6 +110,7 @@ private:
     GameState _gameState = GameState::Menu;
 
     bool _shouldExit = false;
+    GameState _howToPlayFrom = GameState::Menu;
     bool _waveStarting = true;
     bool _playerDying = false;
     bool _shouldClose = false;
@@ -117,22 +123,34 @@ private:
     float _pickupSpawnTimer = 0.f;
 
     Vector2 _shakeOffset = { 0.f, 0.f };
+    Vector2 _cameraPos   = { 0.f, 0.f };
 
-    const int _windowWidth = 1200;
-    const int _windowHeight = 800;
+    const int _windowWidth = 1920;
+    const int _windowHeight = 1080;
 
     float _waveIntroTimer = 0.f;
     float _waveIntroDuration = 2.5f;
+    float _navRefreshTimer = 0.f;
+    float _navRefreshInterval = 0.2f;
 
     float _gameOverTimer = 0.f;
     float _gameOverDelay = 2.f;
+    float _fadeInTimer   = 0.f;
+
+    Sound _pickupSound{};
+    Sound _fireballCastSound{};
+    Sound _explosionSound{};
+    Sound _bladeBeamSound{};
+    Sound _buttonPressSound{};
 
     Texture2D _map{};
     Vector2 _mapPos{};
-    float _mapScale = 5.5f;
+    float _mapScale = 3.f;
     float _navCellSize = 72.f;
     int _navCols = 0;
     int _navRows = 0;
+    int _maxActiveEnemies = 16;
+    int _lastPlayerNavIndex = -1;
 
     Texture2D _pillarTex{};
     Texture2D _fireballCastTex{};
@@ -154,6 +172,7 @@ private:
     std::vector<FreezeProjectile>    _freezeProjectiles;
     std::vector<AnimatedEffect> _effects;
     std::vector<bool> _navBlocked;
+    std::vector<int>  _navDistance;
     std::vector<std::unique_ptr<Enemy>> _enemies;
 
     std::string _message = "Objective: Survive";

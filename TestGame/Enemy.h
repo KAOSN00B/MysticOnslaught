@@ -10,27 +10,33 @@ class Enemy : public BaseCharacter
 public:
     Enemy(Vector2 pos);
     ~Enemy() override;
+    static void UnloadSharedResources();
 
     void Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
-        const std::vector<std::unique_ptr<Enemy>>& enemies);
+        const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters);
+    void SetWaveScale(int wave);
 
     void SetTarget(Character* character) { _target = character; }
     void Init();
+    void ResetForSpawn(Vector2 pos);
     void DrawEnemy(Vector2 heroWorldPos);
     void ApplyBurn(float delay, int damage, Vector2 sourcePos);
     void ApplyFreeze(float duration);
     bool IsFrozen()     const { return _freezeTimer > 0.f; }
     int  GetExpValue()  const { return _expValue; }
     bool IsDying()      const { return _dying; }
+    bool IsActive()     const { return _isActive; }
+    void SetActive(bool active) { _isActive = active; }
     void Teleport(Vector2 pos) { _worldPos = pos; _worldPosLastFrame = pos; _velocity = Vector2Zero(); }
 	void PlayAttackSound() override;
     void PlayDeathSound() override;
     void PlayHurtSound() override;
 
 private:
+    static void EnsureSharedResourcesLoaded();
 
     void HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
-        const std::vector<std::unique_ptr<Enemy>>& enemies);
+        const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters);
     void HandleAttack();
     void UpdateBurns(float dt);
 
@@ -45,6 +51,7 @@ private:
     };
 
     Character* _target = nullptr;
+    bool _isActive = true;
 
     bool  _attacking    = false;
     bool  _damageApplied = false;
@@ -66,6 +73,16 @@ private:
 
     Vector2 _homePos;
     std::vector<PendingBurn> _pendingBurns;
+
+    static Texture2D _sharedIdleAnim;
+    static Texture2D _sharedWalkAnim;
+    static Texture2D _sharedAttackAnim;
+    static Texture2D _sharedTakeDamageAnim;
+    static Texture2D _sharedDeathAnim;
+    static Sound _sharedAttackSound;
+    static Sound _sharedHurtSound;
+    static Sound _sharedDeathSound;
+    static bool _sharedResourcesLoaded;
 
 
 };

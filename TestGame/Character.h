@@ -21,8 +21,8 @@ public:
     void TakeDamage(int damage, Vector2 attackerPos) override;
     virtual void Death() override;
 
-    void DrawPlayer();
-    void DashParticles(float h);
+    void DrawPlayer(Vector2 cameraPos);
+    void DashParticles(float h, Vector2 playerScreenCenter);
     void SetWorldPos(Vector2 pos);
     void PlayHurtSound() override;
 
@@ -40,6 +40,7 @@ public:
     Vector2 GetCastOrigin() const;
     Vector2 GetFacingDirection() const;
     int ConsumeHealEffectRequests();
+    float GetDashCooldownPercent() const { return (_dashCooldownTime > 0.f) ? 1.f - (_dashCooldown / _dashCooldownTime) : 1.f; }
 
     void AddExp(int amount);
     void Heal(int amount);
@@ -79,7 +80,7 @@ private:
     float _dashTimer = 0.f;
 
     float _dashCooldown = 0.f;
-    float _dashCooldownTime = 0.8f;
+    float _dashCooldownTime = 1.3f;
     float _invincibleTimer = 0.f;
     float _invincibleDuration = 0.4f;
 

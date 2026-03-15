@@ -9,6 +9,18 @@
 #include <limits>
 #include <queue>
 
+namespace
+{
+    int ClampInt(int value, int minValue, int maxValue)
+    {
+        if (value < minValue)
+            return minValue;
+        if (value > maxValue)
+            return maxValue;
+        return value;
+    }
+}
+
 Engine::Engine()
 {
     Init();
@@ -16,6 +28,7 @@ Engine::Engine()
 
 Engine::~Engine()
 {
+    Enemy::UnloadSharedResources();
     FireBallPickup::UnloadSharedResources();
     SwordBeamPickup::UnloadSharedResources();
     FreezePickup::UnloadSharedResources();
@@ -23,6 +36,11 @@ Engine::~Engine()
     FireballProjectile::UnloadSharedResources();
     SwordBeamProjectile::UnloadSharedResources();
     FreezeProjectile::UnloadSharedResources();
+    UnloadSound(_pickupSound);
+    UnloadSound(_fireballCastSound);
+    UnloadSound(_explosionSound);
+    UnloadSound(_bladeBeamSound);
+    UnloadSound(_buttonPressSound);
     UnloadTexture(_map);
     UnloadTexture(_pillarTex);
     UnloadTexture(_fireballCastTex);
@@ -43,8 +61,19 @@ void Engine::Init()
 
     SetExitKey(KEY_NULL);
 
+    _pickupSound      = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PickupSound.mp3");
+    _fireballCastSound= LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\GS1_Spell_Fire.mp3");
+    _explosionSound   = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\GS1_Spell_Explode.mp3");
+    _bladeBeamSound   = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\GS1_BladeBeam.mp3");
+    _buttonPressSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\ButtonPress.mp3");
+
+    SetSoundPitch (_buttonPressSound, 1.25f);
+    SetSoundVolume(_buttonPressSound, 0.35f);
+
+    SetSoundPitch (_pickupSound, 1.35f);
+    SetSoundVolume(_pickupSound, 0.45f);
+
     _menu.Init();
-    _player.Init();
 
     _map = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\TileSet\\Map.png");
     _pillarTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\TileSet\\Pillar.png");
@@ -64,7 +93,7 @@ void Engine::Init()
     _effects.clear();
     _enemies.clear();
 
-    int propCount = GetRandomValue(20, 30);
+    int propCount = GetRandomValue(7, 10);
 
     for (int i = 0; i < propCount; i++)
     {
@@ -74,14 +103,9 @@ void Engine::Init()
 
     BuildNavigationGrid();
 
-    auto starterPickup = std::make_unique<FireBallPickup>();
-    starterPickup->Init(Vector2Add(_player.GetWorldPos(), Vector2{ 1000.f, 1000.f }), 1);
-    _pickups.push_back(std::move(starterPickup));
-
     _pickupSpawnTimer = 60.f;
 
-    _wave = 0;
-    SpawnWave();
+    ResetRunState();
 }
 
 void Engine::SpawnWave()
@@ -94,7 +118,7 @@ void Engine::SpawnWave()
 
 void Engine::SpawnEnemies()
 {
-    int enemyCount = _wave * 2;
+    int enemyCount = std::min(_wave * 2, _maxActiveEnemies);
 
     float mapW = _map.width * _mapScale;
     float mapH = _map.height * _mapScale;
@@ -106,13 +130,17 @@ void Engine::SpawnEnemies()
 
         do
         {
-            pos.x = (float)GetRandomValue(200, (int)mapW - 200);
-            pos.y = (float)GetRandomValue(200, (int)mapH - 200);
+            pos.x = (float)GetRandomValue(300, (int)mapW - 300);
+            pos.y = (float)GetRandomValue(300, (int)mapH - 300);
             attempts++;
         } while (!IsSpawnPositionValid(pos) && attempts < 40);
 
+        if (TryGetPooledEnemySpawn(pos))
+            continue;
+
         auto enemy = std::make_unique<Enemy>(pos);
         enemy->Init();
+        enemy->SetWaveScale(_wave);
         enemy->SetTarget(&_player);
         _enemies.push_back(std::move(enemy));
     }
@@ -142,13 +170,17 @@ void Engine::Update(float dt)
         _menu.Update();
 
         if (_menu.StartPressed())
+        {
+            _fadeInTimer = 2.0f;
             _gameState = GameState::Play;
-
+        }
         if (_menu.QuitPressed())
             _shouldClose = true;
-
         if (_menu.HowToPressed())
+        {
+            _howToPlayFrom = GameState::Menu;
             _gameState = GameState::HowToPlay;
+        }
 
         break;
     }
@@ -157,8 +189,9 @@ void Engine::Update(float dt)
     {
         if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_BACKSPACE))
         {
-            _menu.Init();
-            _gameState = GameState::Menu;
+            if (_howToPlayFrom == GameState::Menu)
+                _menu.Init();
+            _gameState = _howToPlayFrom;
         }
         break;
     }
@@ -181,23 +214,8 @@ void Engine::Update(float dt)
     {
         if (IsKeyPressed(KEY_ENTER))
         {
-            _wave = 0;
-            _gameTimer = 0.f;
-            _playerDying = false;
-            _waveStarting = true;
-            _fireballProjectiles.clear();
-            _swordBeamProjectiles.clear();
-            _freezeProjectiles.clear();
-            _pickups.clear();
-            _enemies.clear();
-            _player.Init();
-
-            auto starterPickup = std::make_unique<FireBallPickup>();
-            starterPickup->Init(Vector2Add(_player.GetWorldPos(), Vector2{ 1000.f, 1000.f }), 1);
-            _pickups.push_back(std::move(starterPickup));
-            _pickupSpawnTimer = 60.f;
-
-            SpawnWave();
+            StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+            ResetRunState();
             _gameState = GameState::Menu;
         }
         break;
@@ -213,6 +231,9 @@ void Engine::UpdateGamePlay(float dt)
         return;
     }
 
+    if (_fadeInTimer > 0.f)
+        _fadeInTimer -= dt;
+
     _player.Update(dt);
 
     Character::CastType castType = _player.ConsumeCastRequest();
@@ -220,11 +241,15 @@ void Engine::UpdateGamePlay(float dt)
     if (castType == Character::CastType::Fireball)
     {
         SpawnCastEffect(castType);
+        StopSound(_fireballCastSound);
+        PlaySound(_fireballCastSound);
         SpawnFireballBurst();
     }
     else if (castType == Character::CastType::SwordBeam)
     {
         SpawnCastEffect(castType);
+        StopSound(_bladeBeamSound);
+        PlaySound(_bladeBeamSound);
         SpawnSwordBeam();
     }
     else if (castType == Character::CastType::Freeze)
@@ -271,11 +296,29 @@ void Engine::UpdateGamePlay(float dt)
             _pickupSpawnTimer = 60.f;
         }
 
-        if (_enemies.empty())
+        if (GetActiveEnemyCount() == 0)
             SpawnWave();
+
+        _navRefreshTimer -= dt;
+        int playerCol = ClampInt((int)(_player.GetWorldPos().x / _navCellSize), 0, std::max(0, _navCols - 1));
+        int playerRow = ClampInt((int)(_player.GetWorldPos().y / _navCellSize), 0, std::max(0, _navRows - 1));
+        int playerNavIndex = (_navCols > 0 && _navRows > 0) ? GetClosestOpenNavigationIndex(playerCol, playerRow) : -1;
+        if (_navRefreshTimer <= 0.f || playerNavIndex != _lastPlayerNavIndex)
+        {
+            RefreshNavigationField();
+            _navRefreshTimer = _navRefreshInterval;
+        }
+
+        std::vector<Vector2> propCenters;
+        propCenters.reserve(_props.size());
+        for (auto& prop : _props)
+            propCenters.push_back(prop.GetWorldPos());
 
         for (auto& enemy : _enemies)
         {
+            if (!enemy->IsActive())
+                continue;
+
             Vector2 navigationTarget = _player.GetWorldPos();
             bool hasNavigationTarget = false;
 
@@ -285,7 +328,7 @@ void Engine::UpdateGamePlay(float dt)
                 hasNavigationTarget = !Vector2Equals(navigationTarget, _player.GetWorldPos());
             }
 
-            enemy->Update(dt, _player.GetWorldPos(), navigationTarget, hasNavigationTarget, _enemies);
+            enemy->Update(dt, _player.GetWorldPos(), navigationTarget, hasNavigationTarget, _enemies, propCenters);
         }
 
         HandlePlayerMeleeDamage();
@@ -303,6 +346,8 @@ void Engine::UpdateGamePlay(float dt)
 
         if (CheckCollisionRecs(_player.GetCollisionRec(), pickup->GetCollisionRec()))
         {
+            StopSound(_pickupSound);
+            PlaySound(_pickupSound);
             pickup->OnCollect(_player);
         }
     }
@@ -318,7 +363,27 @@ void Engine::UpdateGamePlay(float dt)
 
     HandleCollisions();
 
-    _mapPos = Vector2Scale(_player.GetWorldPos(), -1.f);
+    {
+        float mapW = _map.width  * _mapScale;
+        float mapH = _map.height * _mapScale;
+
+        // _cameraPos = world position shown at screen centre
+        float camMinX = _windowWidth  / 2.f;
+        float camMaxX = mapW - _windowWidth  / 2.f;
+        float camMinY = _windowHeight / 2.f;
+        float camMaxY = mapH - _windowHeight / 2.f;
+
+        _cameraPos.x = _player.GetWorldPos().x;
+        _cameraPos.y = _player.GetWorldPos().y;
+        if (_cameraPos.x < camMinX) _cameraPos.x = camMinX;
+        if (_cameraPos.x > camMaxX) _cameraPos.x = camMaxX;
+        if (_cameraPos.y < camMinY) _cameraPos.y = camMinY;
+        if (_cameraPos.y > camMaxY) _cameraPos.y = camMaxY;
+
+        // _mapPos: top-left of map on screen, aligned with the object rendering convention
+        _mapPos.x = _windowWidth  / 2.f - _cameraPos.x;
+        _mapPos.y = _windowHeight / 2.f - _cameraPos.y;
+    }
 
     if (_shakeTimer > 0.f)
     {
@@ -349,37 +414,60 @@ void Engine::Draw()
         DrawWorld();
         DrawHUD();
         DrawWaveIntro();
+
+        if (_fadeInTimer > 0.f)
+        {
+            float alpha = _fadeInTimer / 2.0f;   // 1.0 → 0.0 over two seconds
+            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, alpha));
+        }
         break;
     }
 
     case GameState::Pause:
     {
         Vector2 shakenMapPos = Vector2Add(_mapPos, _shakeOffset);
+        Vector2 cameraRef    = Vector2Subtract(_cameraPos, _shakeOffset);
+        Vector2 worldOffset  = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
 
         DrawTextureEx(_map, shakenMapPos, 0.0f, _mapScale, WHITE);
 
         for (auto& prop : _props)
-            prop.Render(Vector2Subtract(_player.GetWorldPos(), _shakeOffset));
+            prop.Render(cameraRef);
 
         for (auto& pickup : _pickups)
-            pickup->Draw(shakenMapPos);
+            pickup->Draw(worldOffset);
 
         for (const auto& projectile : _fireballProjectiles)
-            projectile.Draw(shakenMapPos);
+            projectile.Draw(worldOffset);
 
         for (const auto& projectile : _swordBeamProjectiles)
-            projectile.Draw(shakenMapPos);
+            projectile.Draw(worldOffset);
 
         for (const auto& projectile : _freezeProjectiles)
-            projectile.Draw(shakenMapPos);
+            projectile.Draw(worldOffset);
 
-        DrawEffects(shakenMapPos);
+        DrawEffects(worldOffset);
 
         for (auto& enemy : _enemies)
-            enemy->DrawEnemy(Vector2Subtract(_player.GetWorldPos(), _shakeOffset));
+        {
+            if (!enemy->IsActive())
+                continue;
+            enemy->DrawEnemy(cameraRef);
+        }
 
-        _player.DrawPlayer();
-        DrawHowToPlay(true);
+        _player.DrawPlayer(cameraRef);
+
+        int pauseResult = _pauseUI.DrawPause();
+        if (pauseResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
+        if (pauseResult == 1)
+            _gameState = GameState::Play;
+        else if (pauseResult == 2)
+        {
+            _howToPlayFrom = GameState::Pause;
+            _gameState = GameState::HowToPlay;
+        }
+        else if (pauseResult == 3)
+            _shouldClose = true;
 
         break;
     }
@@ -397,20 +485,28 @@ void Engine::Draw()
         DrawHowToPlay();
         break;
     }
+
     }
 }
 
 void Engine::HandleCollisions()
 {
-    if (_player.GetWorldPos().x < 0.0f || _player.GetWorldPos().y < 0.0f
-        || _player.GetWorldPos().x + _windowWidth > _map.width * _mapScale
-        || _player.GetWorldPos().y + _windowHeight > _map.height * _mapScale)
+    float mapW = _map.width  * _mapScale;
+    float mapH = _map.height * _mapScale;
+
+    // Per-side player boundaries
+    const float marginLeft   = 76.f;
+    const float marginRight  = 96.f;
+    const float marginTop    = 42.f;   // let the player go a little higher
+    const float marginBottom = 320.f;  // two character heights — wall is drawn above the map edge
+
+    Vector2 pos = _player.GetWorldPos();
+    if (pos.x < marginLeft  || pos.x > mapW - marginRight
+     || pos.y < marginTop   || pos.y > mapH - marginBottom)
     {
         _player.UndoMovement();
     }
 
-    float mapW = _map.width  * _mapScale;
-    float mapH = _map.height * _mapScale;
     const float enemyMargin = 80.f;
 
     for (auto& prop : _props)
@@ -420,6 +516,8 @@ void Engine::HandleCollisions()
 
         for (auto& enemy : _enemies)
         {
+            if (!enemy->IsActive())
+                continue;
             if (CheckCollisionRecs(prop.GetCollisionRec(), enemy->GetCollisionRec()))
                 enemy->UndoMovement();
         }
@@ -428,6 +526,8 @@ void Engine::HandleCollisions()
     // Push enemies back inside map bounds
     for (auto& enemy : _enemies)
     {
+        if (!enemy->IsActive())
+            continue;
         if (enemy->IsDying()) continue;
         Vector2 pos = enemy->GetWorldPos();
         if (pos.x < enemyMargin || pos.y < enemyMargin ||
@@ -440,15 +540,18 @@ void Engine::HandleCollisions()
 
 void Engine::UpdateEnemyCount(float dt)
 {
-    for (int i = static_cast<int>(_enemies.size()) - 1; i >= 0; i--)
+    for (auto& enemy : _enemies)
     {
-        // Save position BEFORE UpdateDeath calls Death() which teleports to {-1000,-1000}
-        Vector2 dropPos = _enemies[i]->GetWorldPos();
-        if (_enemies[i]->UpdateDeath(dt))
+        if (!enemy->IsActive())
+            continue;
+
+        Vector2 dropPos = enemy->GetWorldPos();
+        if (enemy->UpdateDeath(dt))
         {
-            _player.AddExp(_enemies[i]->GetExpValue());
+            _player.AddExp(enemy->GetExpValue());
             SpawnEnemyDrop(dropPos);
-            _enemies.erase(_enemies.begin() + i);
+            enemy->SetActive(false);
+            enemy->Teleport(Vector2{ -5000.f, -5000.f });
         }
     }
 }
@@ -461,31 +564,42 @@ void Engine::TriggerScreenShake(float strength, float duration)
 
 void Engine::DrawWorld()
 {
+    // Map: top-left is _mapPos + shake
     Vector2 shakenMapPos = Vector2Add(_mapPos, _shakeOffset);
+
+    // Props / enemies / player: worldPos - cameraRef + screenCenter
+    Vector2 cameraRef = Vector2Subtract(_cameraPos, _shakeOffset);
+
+    // Pickups / projectiles / effects: worldPos + worldOffset + screenCenter
+    Vector2 worldOffset = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
 
     DrawTextureEx(_map, shakenMapPos, 0.0f, _mapScale, WHITE);
 
     for (auto& prop : _props)
-        prop.Render(Vector2Subtract(_player.GetWorldPos(), _shakeOffset));
+        prop.Render(cameraRef);
 
     for (auto& pickup : _pickups)
-        pickup->Draw(shakenMapPos);
+        pickup->Draw(worldOffset);
 
     for (const auto& projectile : _fireballProjectiles)
-        projectile.Draw(shakenMapPos);
+        projectile.Draw(worldOffset);
 
     for (const auto& projectile : _swordBeamProjectiles)
-        projectile.Draw(shakenMapPos);
+        projectile.Draw(worldOffset);
 
     for (const auto& projectile : _freezeProjectiles)
-        projectile.Draw(shakenMapPos);
+        projectile.Draw(worldOffset);
 
-    DrawEffects(shakenMapPos);
+    DrawEffects(worldOffset);
 
     for (auto& enemy : _enemies)
-        enemy->DrawEnemy(Vector2Subtract(_player.GetWorldPos(), _shakeOffset));
+    {
+        if (!enemy->IsActive())
+            continue;
+        enemy->DrawEnemy(cameraRef);
+    }
 
-    _player.DrawPlayer();
+    _player.DrawPlayer(cameraRef);
 }
 
 void Engine::DrawHUD()
@@ -496,7 +610,7 @@ void Engine::DrawHUD()
 
     DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + GetScreenWidth() / 2 - 150, 60, fontSize, RAYWHITE);
     DrawText(("Wave: " + std::to_string(_wave)).c_str(), 20, 10, 30, RAYWHITE);
-    DrawText(("Enemies Left: " + std::to_string(_enemies.size())).c_str(), 20, 60, 30, RAYWHITE);
+    DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
     DrawText(("Health: " + std::to_string(_player.GetHealth())).c_str(), GetScreenWidth() - 200, 20, 30, RAYWHITE);
 
     // EXP bar and level display
@@ -604,6 +718,24 @@ void Engine::DrawAbilityBar()
     int hw = MeasureText(hint, 14);
     DrawText(hint, (int)(GetScreenWidth() / 2.f - hw / 2.f),
         (int)(slotY + slotSize + 2.f), 14, Fade(WHITE, 0.45f));
+
+    // Dash recharge bar — shown when not fully recharged
+    float dashPct = _player.GetDashCooldownPercent();
+    if (dashPct < 1.f)
+    {
+        const float dashBarW = totalW;
+        const float dashBarH = 8.f;
+        const float dashBarX = startX;
+        const float dashBarY = slotY - dashBarH - 6.f;
+
+        DrawRectangleRounded({ dashBarX, dashBarY, dashBarW, dashBarH }, 0.5f, 4, Fade(BLACK, 0.7f));
+        DrawRectangleRounded({ dashBarX, dashBarY, dashBarW * dashPct, dashBarH }, 0.5f, 4, SKYBLUE);
+
+        const char* dashLabel = "DASH";
+        int dlw = MeasureText(dashLabel, 12);
+        DrawText(dashLabel, (int)(dashBarX + dashBarW / 2.f - dlw / 2.f),
+            (int)(dashBarY - 14.f), 12, Fade(SKYBLUE, 0.8f));
+    }
 }
 
 void Engine::DrawWaveIntro()
@@ -645,6 +777,8 @@ void Engine::HandlePlayerMeleeDamage()
 
     for (auto& enemy : _enemies)
     {
+        if (!enemy->IsActive())
+            continue;
         if (!enemy->IsAlive())
             continue;
 
@@ -874,7 +1008,6 @@ void Engine::UpdateFreezeProjectiles(float dt)
         {
             if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
             {
-                SpawnHitEffect(Character::CastType::Freeze, projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 break;
             }
@@ -886,6 +1019,8 @@ void Engine::UpdateFreezeProjectiles(float dt)
         // Freezes first enemy hit then is destroyed (no piercing)
         for (auto& enemy : _enemies)
         {
+            if (!enemy->IsActive())
+                continue;
             if (!enemy->IsAlive())
                 continue;
 
@@ -923,7 +1058,6 @@ void Engine::UpdateFireballProjectiles(float dt)
         {
             if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
             {
-                SpawnHitEffect(Character::CastType::Fireball, projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 break;
             }
@@ -934,16 +1068,20 @@ void Engine::UpdateFireballProjectiles(float dt)
 
         for (auto& enemy : _enemies)
         {
+            if (!enemy->IsActive())
+                continue;
             if (!enemy->IsAlive())
                 continue;
 
             if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
             {
-                enemy->TakeDamage(2, _player.GetWorldPos());
+                enemy->TakeDamage(1, _player.GetWorldPos());
                 enemy->ApplyBurn(1.f, 1, _player.GetWorldPos());
                 SpawnHitEffect(Character::CastType::Fireball, projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 TriggerScreenShake(4.f, 0.05f);
+                StopSound(_explosionSound);
+                PlaySound(_explosionSound);
                 break;
             }
         }
@@ -967,27 +1105,23 @@ void Engine::UpdateSwordBeamProjectiles(float dt)
         if (!projectile.IsActive())
             continue;
 
-        for (auto& prop : _props)
+        // Disappears when it travels beyond visible range (approx screen diagonal)
+        if (Vector2Distance(projectile.GetWorldPos(), _player.GetWorldPos()) > 900.f)
         {
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
-            {
-                SpawnHitEffect(Character::CastType::SwordBeam, projectile.GetWorldPos(), projectile.GetDirection());
-                projectile.Destroy();
-                break;
-            }
-        }
-
-        if (!projectile.IsActive())
+            projectile.Destroy();
             continue;
+        }
 
         for (auto& enemy : _enemies)
         {
+            if (!enemy->IsActive())
+                continue;
             if (!enemy->IsAlive() || projectile.HasHitEnemy(enemy.get()))
                 continue;
 
             if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
             {
-                enemy->TakeDamage(4, _player.GetWorldPos());
+                enemy->TakeDamage(1, _player.GetWorldPos());
                 projectile.RegisterHitEnemy(enemy.get());
                 SpawnHitEffect(Character::CastType::SwordBeam, enemy->GetWorldPos(), projectile.GetDirection());
                 TriggerScreenShake(5.f, 0.06f);
@@ -1001,229 +1135,10 @@ void Engine::UpdateSwordBeamProjectiles(float dt)
         _swordBeamProjectiles.end());
 }
 
-void Engine::BuildNavigationGrid()
-{
-    float mapW = _map.width * _mapScale;
-    float mapH = _map.height * _mapScale;
-
-    _navCols = std::max(1, (int)std::ceil(mapW / _navCellSize));
-    _navRows = std::max(1, (int)std::ceil(mapH / _navCellSize));
-    _navBlocked.assign(_navCols * _navRows, false);
-
-    for (int row = 0; row < _navRows; ++row)
-    {
-        for (int col = 0; col < _navCols; ++col)
-        {
-            Rectangle cellRect{
-                col * _navCellSize,
-                row * _navCellSize,
-                _navCellSize,
-                _navCellSize
-            };
-
-            for (auto& prop : _props)
-            {
-                if (CheckCollisionRecs(cellRect, prop.GetCollisionRec()))
-                {
-                    _navBlocked[GetNavigationIndex(col, row)] = true;
-                    break;
-                }
-            }
-        }
-    }
-}
-
-bool Engine::IsNavigationCellBlocked(int col, int row) const
-{
-    if (col < 0 || row < 0 || col >= _navCols || row >= _navRows)
-        return true;
-
-    return _navBlocked[GetNavigationIndex(col, row)];
-}
-
-int Engine::GetNavigationIndex(int col, int row) const
-{
-    return row * _navCols + col;
-}
-
-bool Engine::FindNearestOpenCell(int& col, int& row) const
-{
-    if (!IsNavigationCellBlocked(col, row))
-        return true;
-
-    for (int radius = 1; radius < std::max(_navCols, _navRows); ++radius)
-    {
-        for (int rowOffset = -radius; rowOffset <= radius; ++rowOffset)
-        {
-            for (int colOffset = -radius; colOffset <= radius; ++colOffset)
-            {
-                int nextCol = col + colOffset;
-                int nextRow = row + rowOffset;
-
-                if (IsNavigationCellBlocked(nextCol, nextRow))
-                    continue;
-
-                col = nextCol;
-                row = nextRow;
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-bool Engine::HasLineOfSight(Vector2 start, Vector2 end) const
-{
-    Vector2 delta = Vector2Subtract(end, start);
-    float length = Vector2Length(delta);
-
-    if (length < 1.f)
-        return true;
-
-    Vector2 direction = Vector2Normalize(delta);
-    float step = 24.f;
-
-    for (float distance = 0.f; distance <= length; distance += step)
-    {
-        Vector2 sample = Vector2Add(start, Vector2Scale(direction, distance));
-        Rectangle probe{ sample.x - 10.f, sample.y - 10.f, 20.f, 20.f };
-
-        for (auto& prop : _props)
-        {
-            if (CheckCollisionRecs(probe, prop.GetCollisionRec()))
-                return false;
-        }
-    }
-
-    return true;
-}
-
-Vector2 Engine::GetNavigationTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const
-{
-    if (_navCols <= 0 || _navRows <= 0)
-        return targetWorldPos;
-
-    auto clampToGrid = [](int value, int maxValue)
-    {
-        if (value < 0)
-            return 0;
-        if (value > maxValue)
-            return maxValue;
-        return value;
-    };
-
-    int startCol = clampToGrid((int)(startWorldPos.x / _navCellSize), _navCols - 1);
-    int startRow = clampToGrid((int)(startWorldPos.y / _navCellSize), _navRows - 1);
-    int targetCol = clampToGrid((int)(targetWorldPos.x / _navCellSize), _navCols - 1);
-    int targetRow = clampToGrid((int)(targetWorldPos.y / _navCellSize), _navRows - 1);
-
-    if (!FindNearestOpenCell(startCol, startRow) || !FindNearestOpenCell(targetCol, targetRow))
-        return targetWorldPos;
-
-    int startIndex = GetNavigationIndex(startCol, startRow);
-    int targetIndex = GetNavigationIndex(targetCol, targetRow);
-
-    if (startIndex == targetIndex)
-        return targetWorldPos;
-
-    std::vector<int> distance(_navCols * _navRows, std::numeric_limits<int>::max());
-    std::vector<int> previous(_navCols * _navRows, -1);
-
-    using QueueItem = std::pair<int, int>;
-    std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<QueueItem>> frontier;
-
-    distance[startIndex] = 0;
-    frontier.push({ 0, startIndex });
-
-    struct SearchOffset
-    {
-        int col;
-        int row;
-        int cost;
-    };
-
-    static const std::array<SearchOffset, 8> offsets{
-        SearchOffset{ 1, 0, 10 },
-        SearchOffset{ -1, 0, 10 },
-        SearchOffset{ 0, 1, 10 },
-        SearchOffset{ 0, -1, 10 },
-        SearchOffset{ 1, 1, 14 },
-        SearchOffset{ 1, -1, 14 },
-        SearchOffset{ -1, 1, 14 },
-        SearchOffset{ -1, -1, 14 }
-    };
-
-    while (!frontier.empty())
-    {
-        QueueItem current = frontier.top();
-        frontier.pop();
-
-        int cost = current.first;
-        int currentIndex = current.second;
-
-        if (cost > distance[currentIndex])
-            continue;
-
-        if (currentIndex == targetIndex)
-            break;
-
-        int currentCol = currentIndex % _navCols;
-        int currentRow = currentIndex / _navCols;
-
-        for (const SearchOffset& offset : offsets)
-        {
-            int nextCol = currentCol + offset.col;
-            int nextRow = currentRow + offset.row;
-
-            if (IsNavigationCellBlocked(nextCol, nextRow))
-                continue;
-
-            if (offset.col != 0 && offset.row != 0)
-            {
-                if (IsNavigationCellBlocked(currentCol + offset.col, currentRow)
-                    || IsNavigationCellBlocked(currentCol, currentRow + offset.row))
-                {
-                    continue;
-                }
-            }
-
-            int nextIndex = GetNavigationIndex(nextCol, nextRow);
-            int nextCost = cost + offset.cost;
-
-            if (nextCost >= distance[nextIndex])
-                continue;
-
-            distance[nextIndex] = nextCost;
-            previous[nextIndex] = currentIndex;
-            frontier.push({ nextCost, nextIndex });
-        }
-    }
-
-    if (previous[targetIndex] == -1)
-        return targetWorldPos;
-
-    int nextIndex = targetIndex;
-
-    while (previous[nextIndex] != startIndex && previous[nextIndex] != -1)
-        nextIndex = previous[nextIndex];
-
-    if (previous[nextIndex] == -1)
-        return targetWorldPos;
-
-    int nextCol = nextIndex % _navCols;
-    int nextRow = nextIndex / _navCols;
-
-    return Vector2{
-        nextCol * _navCellSize + _navCellSize * 0.5f,
-        nextRow * _navCellSize + _navCellSize * 0.5f
-    };
-}
 
 void Engine::SpawnEnemyDrop(Vector2 worldPos)
 {
-    // *** Testing: 100% drop rate. Change to 20 for final drop rate. ***
-    const int dropChancePercent = 100;
+    const int dropChancePercent = 20;
 
     if (GetRandomValue(1, 100) > dropChancePercent)
         return;
@@ -1257,6 +1172,39 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos)
         pickup = std::move(p);
     }
 
+    Vector2 dropPos = worldPos;
+    if (!IsSpawnPositionValid(dropPos))
+    {
+        float mapW = _map.width * _mapScale;
+        float mapH = _map.height * _mapScale;
+
+        for (int attempt = 0; attempt < 20; ++attempt)
+        {
+            Vector2 candidate{
+                worldPos.x + (float)GetRandomValue(-180, 180),
+                worldPos.y + (float)GetRandomValue(-180, 180)
+            };
+
+            candidate.x = (float)ClampInt((int)candidate.x, 100, (int)mapW - 100);
+            candidate.y = (float)ClampInt((int)candidate.y, 100, (int)mapH - 100);
+
+            if (!IsSpawnPositionValid(candidate))
+                continue;
+
+            dropPos = candidate;
+            break;
+        }
+    }
+
+    if (pickup->GetType() == PickupType::FireBall)
+        static_cast<FireBallPickup*>(pickup.get())->Init(dropPos, 1);
+    else if (pickup->GetType() == PickupType::SwordBeam)
+        static_cast<SwordBeamPickup*>(pickup.get())->Init(dropPos, 1);
+    else if (pickup->GetType() == PickupType::Freeze)
+        static_cast<FreezePickup*>(pickup.get())->Init(dropPos);
+    else
+        static_cast<HealPickup*>(pickup.get())->Init(dropPos);
+
     _pickups.push_back(std::move(pickup));
 }
 
@@ -1265,10 +1213,16 @@ void Engine::SpawnTimedPickup()
     float mapW = _map.width  * _mapScale;
     float mapH = _map.height * _mapScale;
 
-    Vector2 pos{
-        (float)GetRandomValue(200, (int)mapW - 200),
-        (float)GetRandomValue(200, (int)mapH - 200)
-    };
+    Vector2 pos{};
+    int attempts = 0;
+    do
+    {
+        pos = Vector2{
+            (float)GetRandomValue(300, (int)mapW - 300),
+            (float)GetRandomValue(300, (int)mapH - 300)
+        };
+        attempts++;
+    } while (!IsSpawnPositionValid(pos) && attempts < 40);
 
     // Timed pickups are either Freeze or Heal (50/50)
     std::unique_ptr<Pickup> pickup;
@@ -1291,166 +1245,146 @@ void Engine::SpawnTimedPickup()
     _pickups.push_back(std::move(pickup));
 }
 
-void Engine::DrawHowToPlay(bool resumeMode)
+void Engine::DrawHowToPlay()
 {
-    const int sw = GetScreenWidth();
-    const int sh = GetScreenHeight();
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+
+    // ── Font sizes (screen-relative) ────────────────────────────────────────
+    const int titleSz  = (int)(sh * 0.074f);   // ~80
+    const int headerSz = (int)(sh * 0.038f);   // ~41
+    const int labelSz  = (int)(sh * 0.030f);   // ~32
+    const int descSz   = (int)(sh * 0.024f);   // ~26
 
     // ── Background ──────────────────────────────────────────────────────────
-    DrawRectangle(0, 0, sw, sh, DARKBROWN);
+    DrawRectangle(0, 0, (int)sw, (int)sh, DARKBROWN);
 
-    // ── Title ───────────────────────────────────────────────────────────────
+    // ── Title banner ────────────────────────────────────────────────────────
+    float titleBannerY = sh * 0.02f;
+    float titleBannerH = titleSz + sh * 0.03f;
+    DrawRectangle(0, (int)titleBannerY, (int)sw, (int)titleBannerH, Fade(BLACK, 0.6f));
     const char* title = "How To Play";
-    int titleSize = 60;
-    int titleW = MeasureText(title, titleSize);
-    DrawRectangle(0, 20, sw, titleSize + 24, Fade(BLACK, 0.6f));
-    DrawText(title, sw / 2 - titleW / 2, 32, titleSize, YELLOW);
+    int titleW = MeasureText(title, titleSz);
+    DrawText(title, (int)(sw / 2.f - titleW / 2.f), (int)(titleBannerY + sh * 0.012f), titleSz, YELLOW);
 
-    // ── Panel setup ─────────────────────────────────────────────────────────
-    const float colL   = 60.f;          // left column X
-    const float colR   = sw / 2.f + 30.f; // right column X
-    float rowY         = 120.f;
-    const float rowGap = 80.f;
-    const int   labelSz  = 22;
-    const int   descSz   = 18;
-    const float iconX    = 36.f;        // icon centre offset from col start
+    // ── Layout anchors ───────────────────────────────────────────────────────
+    const float contentY  = titleBannerY + titleBannerH + sh * 0.025f;
+    const float dividerX  = sw * 0.50f;              // centre divider
+    const float gap       = sw * 0.035f;             // gap either side of divider
+    const float colL      = sw * 0.03f;              // left col start
+    const float iconCX    = dividerX + gap * 0.6f;   // icon centre — well clear of the line
+    const float colRText  = dividerX + gap + 28.f;   // right col text start
+    const float rowGap    = sh * 0.090f;
 
-    // Divider
-    DrawLineEx({ sw / 2.f, 110.f }, { sw / 2.f, (float)sh - 80.f }, 2.f, Fade(WHITE, 0.25f));
+    // ── Divider ─────────────────────────────────────────────────────────────
+    DrawLineEx({ dividerX, contentY }, { dividerX, sh - sh * 0.09f }, 2.f, Fade(WHITE, 0.30f));
 
-    // ── Left column header: Controls ─────────────────────────────────────
-    DrawText("CONTROLS", (int)colL, (int)rowY, 26, ORANGE);
-    rowY += 36.f;
+    // ── LEFT column — Controls ───────────────────────────────────────────────
+    float rowY = contentY;
+    DrawText("CONTROLS", (int)colL, (int)rowY, headerSz, ORANGE);
+    rowY += headerSz + sh * 0.018f;
 
     struct CtrlEntry { const char* key; const char* desc; };
     CtrlEntry controls[] = {
-        { "W A S D",    "Move"                        },
-        { "SPACE",      "Dash  (brief invincibility)" },
-        { "Left Click", "Melee attack"                },
-        { "Right Click","Fireball burst (needs ammo)" },
-        { "F",          "Sword Beam    (needs ammo)"  },
-        { "ESC",        "Pause / unpause"             },
+        { "W A S D",     "Move"                        },
+        { "SPACE",       "Dash  (brief invincibility)" },
+        { "Left Click",  "Melee attack"                },
+        { "Right Click", "Fireball burst (needs ammo)" },
+        { "1 / 2 / 3",  "Select ability slot"         },
+        { "Scroll",      "Cycle ability slot"          },
+        { "ESC",         "Pause / unpause"             },
     };
 
     for (auto& c : controls)
     {
-        // key badge
         int kw = MeasureText(c.key, labelSz);
-        DrawRectangleRounded({ colL, rowY - 4.f, (float)kw + 16.f, (float)labelSz + 10.f },
+        float badgeH = (float)labelSz + 10.f;
+        DrawRectangleRounded({ colL, rowY - 4.f, (float)kw + 18.f, badgeH },
             0.3f, 4, Fade(BLACK, 0.7f));
-        DrawRectangleRoundedLines({ colL, rowY - 4.f, (float)kw + 16.f, (float)labelSz + 10.f },
+        DrawRectangleRoundedLines({ colL, rowY - 4.f, (float)kw + 18.f, badgeH },
             0.3f, 4, Fade(WHITE, 0.5f));
-        DrawText(c.key, (int)colL + 8, (int)rowY, labelSz, WHITE);
-
-        // description
-        DrawText(c.desc, (int)(colL + kw + 28.f), (int)rowY, descSz, LIGHTGRAY);
-
-        rowY += rowGap * 0.85f;
+        DrawText(c.key,  (int)colL + 9, (int)rowY, labelSz, WHITE);
+        DrawText(c.desc, (int)(colL + kw + 30.f), (int)rowY, descSz, LIGHTGRAY);
+        rowY += rowGap * 0.82f;
     }
 
-    // ── Right column header: Pickups & Enemies ───────────────────────────
-    float rowR = 120.f + 36.f;
-    DrawText("PICKUPS & ENEMIES", (int)colR, 120, 26, ORANGE);
+    // EXP section below controls
+    rowY += sh * 0.01f;
+    DrawText("EXP & LEVELS", (int)colL, (int)rowY, headerSz, ORANGE);
+    rowY += headerSz + sh * 0.012f;
+    DrawText("Every enemy kill grants 1 EXP.",                  (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
+    DrawText("Level up: +1 ATK, +1 Max HP, +1 HP restored.",    (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
+    DrawText("EXP threshold doubles each level (10, 20, 40\xE2\x80\xA6)", (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
+    DrawText("Max level: 10.",                                   (int)colL, (int)rowY, descSz, LIGHTGRAY);
 
-    struct PickupEntry {
-        const char* name;
-        const char* desc;
-        Color       iconColor;
-        int         shape; // 0=fireball circles, 1=swordbeam, 2=freeze, 3=heal, 4=enemy
-    };
+    // ── RIGHT column — Pickups & Enemies ─────────────────────────────────────
+    float rowR = contentY;
+    DrawText("PICKUPS & ENEMIES", (int)colRText, (int)rowR, headerSz, ORANGE);
+    rowR += headerSz + sh * 0.018f;
 
+    struct PickupEntry { const char* name; const char* desc; int shape; };
     PickupEntry entries[] = {
-        { "Fireball Ammo",  "Right-click to fire 8 fireballs.\nBurns enemies over time.",
-          ORANGE, 0 },
-        { "Sword Beam Ammo","Press F to fire a piercing beam\nthat hits multiple enemies.",
-          BLUE,   1 },
-        { "Freeze  [Q]",    "Freezes ALL enemies for 3-5 sec.\nThey can still take damage.",
-          SKYBLUE,2 },
-        { "Heal",           "Restores 1 HP (rare drop).\nWon't exceed your max HP.",
-          RED,    3 },
-        { "Enemy",          "Chases and attacks you.\nDrops a pickup on death.",
-          RED,    4 },
+        { "Fireball Ammo",   "Right-click — 8 fireballs outward.",  0 },
+        { "Sword Beam Ammo", "Right-click — piercing beam forward.", 1 },
+        { "Freeze Ammo",     "Right-click — freezes all enemies.",   2 },
+        { "Heal",            "Restores 1 HP (rare drop).",           3 },
+        { "Enemy",           "Chases you. Drops a pickup on death.", 4 },
     };
-
-    const float iconCX = colR - 30.f; // icon centre X
 
     for (auto& e : entries)
     {
-        float cy = rowR + 20.f;
+        float cy = rowR + labelSz * 0.5f;
 
-        // ── Draw icon ──────────────────────────────────────────────────
-        if (e.shape == 0) // fireball
+        // Icon — drawn at iconCX, well to the right of the divider
+        if (e.shape == 0)
         {
-            DrawCircleV({ iconCX, cy }, 18.f, Fade(ORANGE, 0.5f));
-            DrawCircleV({ iconCX, cy }, 12.f, Fade(RED,    0.8f));
+            DrawCircleV({ iconCX, cy }, 20.f, Fade(ORANGE, 0.5f));
+            DrawCircleV({ iconCX, cy }, 13.f, Fade(RED,    0.8f));
             DrawCircleV({ iconCX, cy },  5.f, Fade(YELLOW, 0.9f));
         }
-        else if (e.shape == 1) // sword beam
+        else if (e.shape == 1)
         {
-            DrawCircleV({ iconCX + 6.f,  cy      }, 17.f, Fade(BLUE,    0.8f));
-            DrawCircleV({ iconCX + 14.f, cy - 2.f}, 16.f, Fade(BLACK,   0.95f));
-            DrawLineEx({ iconCX - 14.f, cy - 6.f }, { iconCX - 32.f, cy - 10.f }, 4.f, Fade(SKYBLUE, 0.7f));
-            DrawLineEx({ iconCX - 12.f, cy + 7.f }, { iconCX - 28.f, cy + 13.f }, 3.f, Fade(SKYBLUE, 0.55f));
+            DrawCircleV({ iconCX + 6.f,  cy      }, 18.f, Fade(BLUE,  0.8f));
+            DrawCircleV({ iconCX + 15.f, cy - 2.f}, 17.f, Fade(BLACK, 0.95f));
+            DrawLineEx({ iconCX - 14.f, cy - 6.f }, { iconCX - 34.f, cy - 10.f }, 4.f, Fade(SKYBLUE, 0.7f));
+            DrawLineEx({ iconCX - 12.f, cy + 7.f }, { iconCX - 30.f, cy + 13.f }, 3.f, Fade(SKYBLUE, 0.55f));
         }
-        else if (e.shape == 2) // freeze
+        else if (e.shape == 2)
         {
-            DrawCircleV({ iconCX, cy }, 18.f, Fade(BLUE,    0.35f));
-            DrawCircleV({ iconCX, cy }, 13.f, Fade(SKYBLUE, 0.85f));
+            DrawCircleV({ iconCX, cy }, 20.f, Fade(BLUE,    0.35f));
+            DrawCircleV({ iconCX, cy }, 14.f, Fade(SKYBLUE, 0.85f));
             DrawCircleV({ iconCX, cy },  6.f, Fade(WHITE,   0.90f));
-            DrawLineEx({ iconCX - 11.f, cy }, { iconCX + 11.f, cy }, 2.f, WHITE);
-            DrawLineEx({ iconCX, cy - 11.f }, { iconCX, cy + 11.f }, 2.f, WHITE);
+            DrawLineEx({ iconCX - 12.f, cy }, { iconCX + 12.f, cy }, 2.f, WHITE);
+            DrawLineEx({ iconCX, cy - 12.f }, { iconCX, cy + 12.f }, 2.f, WHITE);
         }
-        else if (e.shape == 3) // heal
+        else if (e.shape == 3)
         {
-            DrawCircleV({ iconCX, cy }, 18.f, Fade(RED,   0.35f));
-            DrawCircleV({ iconCX, cy }, 13.f, Fade(RED,   0.85f));
-            DrawCircleV({ iconCX, cy },  6.f, Fade(PINK,  0.90f));
-            DrawLineEx({ iconCX - 7.f, cy }, { iconCX + 7.f, cy }, 3.f, WHITE);
-            DrawLineEx({ iconCX, cy - 7.f }, { iconCX, cy + 7.f }, 3.f, WHITE);
-        }
-        else // enemy — red silhouette circle
-        {
-            DrawCircleV({ iconCX, cy }, 18.f, Fade(MAROON, 0.7f));
-            DrawCircleV({ iconCX, cy - 6.f }, 9.f, Fade(RED, 0.85f));   // "head"
-            DrawCircleV({ iconCX, cy + 8.f }, 12.f, Fade(MAROON, 0.9f)); // "body"
-        }
-
-        // ── Name + description ─────────────────────────────────────────
-        float textX = colR + 4.f;
-        DrawText(e.name, (int)textX, (int)(rowR), labelSz, WHITE);
-
-        // Split desc on \n
-        std::string full(e.desc);
-        size_t nl = full.find('\n');
-        if (nl != std::string::npos)
-        {
-            DrawText(full.substr(0, nl).c_str(), (int)textX, (int)(rowR + labelSz + 4), descSz, LIGHTGRAY);
-            DrawText(full.substr(nl + 1).c_str(), (int)textX, (int)(rowR + labelSz + 4 + descSz + 2), descSz, LIGHTGRAY);
+            DrawCircleV({ iconCX, cy }, 20.f, Fade(RED,  0.35f));
+            DrawCircleV({ iconCX, cy }, 14.f, Fade(RED,  0.85f));
+            DrawCircleV({ iconCX, cy },  6.f, Fade(PINK, 0.90f));
+            DrawLineEx({ iconCX - 8.f, cy }, { iconCX + 8.f, cy }, 3.f, WHITE);
+            DrawLineEx({ iconCX, cy - 8.f }, { iconCX, cy + 8.f }, 3.f, WHITE);
         }
         else
         {
-            DrawText(full.c_str(), (int)textX, (int)(rowR + labelSz + 4), descSz, LIGHTGRAY);
+            DrawCircleV({ iconCX, cy }, 20.f, Fade(MAROON, 0.7f));
+            DrawCircleV({ iconCX, cy - 7.f }, 10.f, Fade(RED,    0.85f));
+            DrawCircleV({ iconCX, cy + 9.f }, 13.f, Fade(MAROON, 0.9f));
         }
 
-        rowR += rowGap * 1.15f;
+        // Name + desc to the right of the icon
+        float textX = iconCX + 28.f;
+        DrawText(e.name, (int)textX, (int)rowR, labelSz, WHITE);
+        DrawText(e.desc, (int)textX, (int)(rowR + labelSz + 4), descSz, LIGHTGRAY);
+
+        rowR += rowGap * 1.05f;
     }
 
-    // ── EXP / Level note ────────────────────────────────────────────────────
-    DrawText("EXP & Levels", (int)colL, (int)rowY + 4.f, 26, ORANGE);
-    rowY += 36.f;
-    DrawText("Every enemy kill grants 1 EXP.", (int)colL, (int)rowY, descSz, LIGHTGRAY);
-    rowY += descSz + 6;
-    DrawText("Level up: +1 ATK, +1 Max HP, +1 HP restored.", (int)colL, (int)rowY, descSz, LIGHTGRAY);
-    rowY += descSz + 6;
-    DrawText("Thresholds double each level (10, 20, 40...)", (int)colL, (int)rowY, descSz, LIGHTGRAY);
-    rowY += descSz + 6;
-    DrawText("Max level: 10.", (int)colL, (int)rowY, descSz, LIGHTGRAY);
-
     // ── Back button ──────────────────────────────────────────────────────────
-    const float btnW = 220.f;
-    const float btnH = 55.f;
+    const float btnW = sw * 0.13f;
+    const float btnH = sh * 0.055f;
     const float btnX = sw / 2.f - btnW / 2.f;
-    const float btnY = sh - btnH - 16.f;
+    const float btnY = sh - btnH - sh * 0.018f;
 
     Rectangle backBtn{ btnX, btnY, btnW, btnH };
     bool hovered = CheckCollisionPointRec(GetMousePosition(), backBtn);
@@ -1458,19 +1392,20 @@ void Engine::DrawHowToPlay(bool resumeMode)
     DrawRectangleRounded(backBtn, 0.3f, 6, hovered ? Fade(GRAY, 0.9f) : Fade(DARKGRAY, 0.85f));
     DrawRectangleRoundedLines(backBtn, 0.3f, 6, Fade(WHITE, 0.5f));
 
-    const char* backLabel = resumeMode ? "Resume" : "< Back";
-    int backW = MeasureText(backLabel, 30);
-    DrawText(backLabel, (int)(btnX + btnW / 2.f - backW / 2.f), (int)(btnY + btnH / 2.f - 15.f), 30, WHITE);
+    const char* backLabel = (_howToPlayFrom == GameState::Pause) ? "Resume Game" : "< Back";
+    int backLabelSz = (int)(sh * 0.030f);
+    int backW = MeasureText(backLabel, backLabelSz);
+    DrawText(backLabel,
+        (int)(btnX + btnW / 2.f - backW / 2.f),
+        (int)(btnY + btnH / 2.f - backLabelSz / 2.f),
+        backLabelSz, WHITE);
 
     if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
-        if (resumeMode)
-            _gameState = GameState::Play;
-        else
-        {
+        StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+        if (_howToPlayFrom == GameState::Menu)
             _menu.Init();
-            _gameState = GameState::Menu;
-        }
+        _gameState = _howToPlayFrom;
     }
 }
 
@@ -1500,6 +1435,8 @@ void Engine::DrawMiniMap()
     // Enemy dots — red
     for (const auto& enemy : _enemies)
     {
+        if (!enemy->IsActive())
+            continue;
         if (!enemy->IsAlive())
             continue;
 
@@ -1530,9 +1467,9 @@ Vector2 Engine::GetRandomPropPosition()
     float mapH = _map.height * _mapScale;
 
     float minX = mapW * 0.05f;
-    float maxX = mapW * 0.72f;
+    float maxX = mapW * 0.95f;
     float minY = mapH * 0.05f;
-    float maxY = mapH * 0.76f;
+    float maxY = mapH * 0.85f;
 
     float minSpacing = 308.f;
     int attempts = 0;
@@ -1567,6 +1504,239 @@ Vector2 Engine::GetRandomPropPosition()
     return fallback;
 }
 
+void Engine::BuildNavigationGrid()
+{
+    float mapW = _map.width * _mapScale;
+    float mapH = _map.height * _mapScale;
+
+    _navCols = std::max(1, (int)std::ceil(mapW / _navCellSize));
+    _navRows = std::max(1, (int)std::ceil(mapH / _navCellSize));
+    _navBlocked.assign(_navCols * _navRows, false);
+    _navDistance.assign(_navCols * _navRows, std::numeric_limits<int>::max());
+
+    for (int row = 0; row < _navRows; ++row)
+    {
+        for (int col = 0; col < _navCols; ++col)
+        {
+            Rectangle cellRect{
+                col * _navCellSize,
+                row * _navCellSize,
+                _navCellSize,
+                _navCellSize
+            };
+
+            for (auto& prop : _props)
+            {
+                if (CheckCollisionRecs(cellRect, prop.GetCollisionRec()))
+                {
+                    _navBlocked[GetNavigationIndex(col, row)] = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+bool Engine::IsNavigationCellBlocked(int col, int row) const
+{
+    if (col < 0 || col >= _navCols || row < 0 || row >= _navRows)
+        return true;
+    return _navBlocked[GetNavigationIndex(col, row)];
+}
+
+int Engine::GetNavigationIndex(int col, int row) const
+{
+    return row * _navCols + col;
+}
+
+bool Engine::FindNearestOpenCell(int& col, int& row) const
+{
+    if (!IsNavigationCellBlocked(col, row))
+        return true;
+
+    for (int radius = 1; radius < std::max(_navCols, _navRows); ++radius)
+    {
+        for (int dc = -radius; dc <= radius; ++dc)
+        {
+            for (int dr = -radius; dr <= radius; ++dr)
+            {
+                if (std::abs(dc) != radius && std::abs(dr) != radius)
+                    continue;
+
+                int nc = col + dc;
+                int nr = row + dr;
+
+                if (!IsNavigationCellBlocked(nc, nr))
+                {
+                    col = nc;
+                    row = nr;
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+int Engine::GetClosestOpenNavigationIndex(int col, int row) const
+{
+    int nextCol = ClampInt(col, 0, std::max(0, _navCols - 1));
+    int nextRow = ClampInt(row, 0, std::max(0, _navRows - 1));
+
+    if (!FindNearestOpenCell(nextCol, nextRow))
+        return -1;
+
+    return GetNavigationIndex(nextCol, nextRow);
+}
+
+bool Engine::HasLineOfSight(Vector2 start, Vector2 end) const
+{
+    Vector2 dir = Vector2Subtract(end, start);
+    float dist = Vector2Length(dir);
+
+    if (dist < 0.01f)
+        return true;
+
+    dir = Vector2Normalize(dir);
+    float step = _navCellSize * 0.5f;
+
+    for (float t = 0.f; t < dist; t += step)
+    {
+        Vector2 point = Vector2Add(start, Vector2Scale(dir, t));
+        int col = (int)(point.x / _navCellSize);
+        int row = (int)(point.y / _navCellSize);
+
+        if (IsNavigationCellBlocked(col, row))
+            return false;
+    }
+
+    return true;
+}
+
+Vector2 Engine::GetNavigationTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const
+{
+    if (_navCols <= 0 || _navRows <= 0)
+        return targetWorldPos;
+
+    int startCol = ClampInt((int)(startWorldPos.x / _navCellSize), 0, _navCols - 1);
+    int startRow = ClampInt((int)(startWorldPos.y / _navCellSize), 0, _navRows - 1);
+
+    if (!FindNearestOpenCell(startCol, startRow))
+        return targetWorldPos;
+
+    static const std::array<std::pair<int,int>, 8> offsets{{
+        {1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}
+    }};
+
+    int startIndex = GetNavigationIndex(startCol, startRow);
+    int bestIndex  = startIndex;
+    int bestCost   = _navDistance[startIndex];
+
+    for (int i = 0; i < (int)offsets.size(); ++i)
+    {
+        int dc = offsets[i].first;
+        int dr = offsets[i].second;
+        int nc = startCol + dc;
+        int nr = startRow + dr;
+
+        if (IsNavigationCellBlocked(nc, nr))
+            continue;
+
+        if (dc != 0 && dr != 0)
+        {
+            if (IsNavigationCellBlocked(startCol + dc, startRow) ||
+                IsNavigationCellBlocked(startCol, startRow + dr))
+                continue;
+        }
+
+        int nextIndex = GetNavigationIndex(nc, nr);
+        int nextCost  = _navDistance[nextIndex];
+
+        if (nextCost < bestCost)
+        {
+            bestCost  = nextCost;
+            bestIndex = nextIndex;
+        }
+    }
+
+    if (bestIndex == startIndex || bestCost == std::numeric_limits<int>::max())
+        return targetWorldPos;
+
+    int nextCol = bestIndex % _navCols;
+    int nextRow = bestIndex / _navCols;
+
+    return Vector2{
+        nextCol * _navCellSize + _navCellSize * 0.5f,
+        nextRow * _navCellSize + _navCellSize * 0.5f
+    };
+}
+
+void Engine::RefreshNavigationField()
+{
+    if (_navCols <= 0 || _navRows <= 0)
+        return;
+
+    _navDistance.assign(_navCols * _navRows, std::numeric_limits<int>::max());
+
+    int playerCol = ClampInt((int)(_player.GetWorldPos().x / _navCellSize), 0, _navCols - 1);
+    int playerRow = ClampInt((int)(_player.GetWorldPos().y / _navCellSize), 0, _navRows - 1);
+    int targetIndex = GetClosestOpenNavigationIndex(playerCol, playerRow);
+    _lastPlayerNavIndex = targetIndex;
+
+    if (targetIndex < 0)
+        return;
+
+    using QueueItem = std::pair<int, int>;
+    std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<QueueItem>> frontier;
+    _navDistance[targetIndex] = 0;
+    frontier.push({ 0, targetIndex });
+
+    struct SearchOffset { int col, row, cost; };
+    static const std::array<SearchOffset, 8> navOffsets{{
+        {1,0,10},{-1,0,10},{0,1,10},{0,-1,10},
+        {1,1,14},{1,-1,14},{-1,1,14},{-1,-1,14}
+    }};
+
+    while (!frontier.empty())
+    {
+        int cost         = frontier.top().first;
+        int currentIndex = frontier.top().second;
+        frontier.pop();
+
+        if (cost > _navDistance[currentIndex])
+            continue;
+
+        int currentCol = currentIndex % _navCols;
+        int currentRow = currentIndex / _navCols;
+
+        for (const SearchOffset& off : navOffsets)
+        {
+            int nc = currentCol + off.col;
+            int nr = currentRow + off.row;
+
+            if (IsNavigationCellBlocked(nc, nr))
+                continue;
+
+            if (off.col != 0 && off.row != 0)
+            {
+                if (IsNavigationCellBlocked(currentCol + off.col, currentRow) ||
+                    IsNavigationCellBlocked(currentCol, currentRow + off.row))
+                    continue;
+            }
+
+            int nextIndex = GetNavigationIndex(nc, nr);
+            int nextCost  = cost + off.cost;
+
+            if (nextCost >= _navDistance[nextIndex])
+                continue;
+
+            _navDistance[nextIndex] = nextCost;
+            frontier.push({ nextCost, nextIndex });
+        }
+    }
+}
+
 void Engine::RespawnOutOfBoundsEnemies()
 {
     float mapW = _map.width  * _mapScale;
@@ -1575,6 +1745,8 @@ void Engine::RespawnOutOfBoundsEnemies()
 
     for (auto& enemy : _enemies)
     {
+        if (!enemy->IsActive())
+            continue;
         if (enemy->IsDying() || !enemy->IsAlive())
             continue;
 
@@ -1591,8 +1763,8 @@ void Engine::RespawnOutOfBoundsEnemies()
 
         for (int attempt = 0; attempt < 50; ++attempt)
         {
-            newPos.x = (float)GetRandomValue(200, (int)(mapW - 200));
-            newPos.y = (float)GetRandomValue(200, (int)(mapH - 200));
+            newPos.x = (float)GetRandomValue(300, (int)(mapW - 300));
+            newPos.y = (float)GetRandomValue(300, (int)(mapH - 300));
 
             if (!IsSpawnPositionValid(newPos))
                 continue;
@@ -1630,9 +1802,67 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
 
     for (auto& enemy : _enemies)
     {
+        if (!enemy->IsActive())
+            continue;
         if (Vector2Distance(pos, enemy->GetWorldPos()) < safeDistance)
             return false;
     }
 
     return true;
 }
+
+void Engine::ResetRunState()
+{
+    _wave = 0;
+    _navRefreshTimer = 0.f;
+    _lastPlayerNavIndex = -1;
+    _gameTimer = 0.f;
+    _playerDying = false;
+    _waveStarting = true;
+    _fireballProjectiles.clear();
+    _swordBeamProjectiles.clear();
+    _freezeProjectiles.clear();
+    _pickups.clear();
+    _effects.clear();
+    _player.Init();
+    _player.SetWorldPos(Vector2{ _map.width * _mapScale * 0.5f, _map.height * _mapScale * 0.5f });
+
+    for (auto& enemy : _enemies)
+    {
+        enemy->SetActive(false);
+        enemy->Teleport(Vector2{ -5000.f, -5000.f });
+    }
+
+    _pickupSpawnTimer = 60.f;
+
+    RefreshNavigationField();
+    SpawnWave();
+}
+
+int Engine::GetActiveEnemyCount() const
+{
+    int count = 0;
+    for (const auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            count++;
+    }
+
+    return count;
+}
+
+bool Engine::TryGetPooledEnemySpawn(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        enemy->ResetForSpawn(pos);
+        enemy->SetTarget(&_player);
+        return true;
+    }
+
+    return false;
+}
+

@@ -4,14 +4,19 @@ void MainMenu::Init()
 {
     _buttons.clear();
 
-    float buttonWidth = 350.f;
-    float buttonHeight = 90.f;
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
 
-    int centerX = GetScreenWidth() / 2 - buttonWidth / 2;
+    float buttonWidth  = sw * 0.20f;     // ~384 px at 1920
+    float buttonHeight = sh * 0.083f;    // ~90 px at 1080
+    float gap          = sh * 0.018f;    // ~20 px at 1080
 
-    _buttons.push_back({ "Start Game",   { (float)centerX, 300.f, buttonWidth, buttonHeight } });
-    _buttons.push_back({ "How To Play",  { (float)centerX, 410.f, buttonWidth, buttonHeight } });
-    _buttons.push_back({ "Quit",         { (float)centerX, 520.f, buttonWidth, buttonHeight } });
+    float startX = sw / 2.f - buttonWidth / 2.f;
+    float firstY = sh * 0.42f;           // first button at 42% down
+
+    _buttons.push_back({ "Start Game",   { startX, firstY,                         buttonWidth, buttonHeight } });
+    _buttons.push_back({ "How To Play",  { startX, firstY + (buttonHeight + gap),   buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Quit",         { startX, firstY + (buttonHeight + gap)*2, buttonWidth, buttonHeight } });
 
     _startPressed  = false;
     _quitPressed   = false;
@@ -41,7 +46,8 @@ void MainMenu::Draw()
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), DARKBROWN);
 
     // title banner
-    DrawBanner("Dungeon Colosseum", 120, 80, BLACK, WHITE);
+    int titleSz = GetScreenHeight() / 12;   // ~90 px at 1080
+    DrawBanner("Dungeon Colosseum", GetScreenHeight() / 6, titleSz, BLACK, WHITE);
 
     for (auto& button : _buttons)
     {

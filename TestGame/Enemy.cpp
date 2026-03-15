@@ -2,6 +2,16 @@
 
 #include "raymath.h"
 
+Texture2D Enemy::_sharedIdleAnim{};
+Texture2D Enemy::_sharedWalkAnim{};
+Texture2D Enemy::_sharedAttackAnim{};
+Texture2D Enemy::_sharedTakeDamageAnim{};
+Texture2D Enemy::_sharedDeathAnim{};
+Sound Enemy::_sharedAttackSound{};
+Sound Enemy::_sharedHurtSound{};
+Sound Enemy::_sharedDeathSound{};
+bool Enemy::_sharedResourcesLoaded = false;
+
 Enemy::Enemy(Vector2 pos)
 {
     _worldPos = pos;
@@ -10,30 +20,33 @@ Enemy::Enemy(Vector2 pos)
 
 Enemy::~Enemy()
 {
-    UnloadTexture(_idleAnim);
-    UnloadTexture(_walkAnim);
-    UnloadTexture(_attackAnim);
-    UnloadTexture(_takeDamageAnim);
-    UnloadTexture(_deathAnim);
-
-    UnloadSound(_attackSound);
-    UnloadSound(_hurtSound);
-    UnloadSound(_deathSound);
 }
 
 void Enemy::Init()
 {
-    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
-    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
-    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
-    _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
-    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
+    EnsureSharedResourcesLoaded();
 
-    _attackSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SwordSwipe2.wav");
-    _hurtSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SmallMonsterDamage.wav");
-    _deathSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerDeath.wav");
+    _idleAnim = _sharedIdleAnim;
+    _walkAnim = _sharedWalkAnim;
+    _attackAnim = _sharedAttackAnim;
+    _takeDamageAnim = _sharedTakeDamageAnim;
+    _deathAnim = _sharedDeathAnim;
+    _attackSound = _sharedAttackSound;
+    _hurtSound = _sharedHurtSound;
+    _deathSound = _sharedDeathSound;
 
+    ResetForSpawn(_worldPos);
+}
+
+void Enemy::ResetForSpawn(Vector2 pos)
+{
+    _worldPos = pos;
+    _worldPosLastFrame = pos;
+    _homePos = pos;
+    _velocity = Vector2Zero();
+    _isActive = true;
     _texture = _idleAnim;
+    _updateTime = 1.f / 8.f;
 
     _width = 32.f;
     _height = _texture.height;
@@ -47,14 +60,24 @@ void Enemy::Init()
     _maxFrames = _texture.width / _width;
     _frame = GetRandomValue(0, _maxFrames - 1);
     _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
+    _hitTimer = 0.f;
+    _deathTimer = 0.4f;
+    _freezeTimer = 0.f;
+    _attacking = false;
+    _damageApplied = false;
+    _takingDamage = false;
+    _dying = false;
     _pendingBurns.clear();
     _stuckTimer    = 0.f;
     _stuckCheckPos = _worldPos;
 }
 
 void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
-    const std::vector<std::unique_ptr<Enemy>>& enemies)
+    const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters)
 {
+    if (!_isActive)
+        return;
+
     // UpdateDeath is intentionally NOT called here.
     // It is called once per frame in Engine::UpdateEnemyCount so the
     // drop world position can be captured before Death() teleports the enemy.
@@ -75,16 +98,15 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
 
         _attackCooldown -= dt;
 
-        HandleMovement(dt, navigationTarget, hasNavigationTarget, enemies);
+        HandleMovement(dt, navigationTarget, hasNavigationTarget, enemies, propCenters);
         HandleAttack();
     }
 
     HandleAnimation(dt);
-    DrawEnemy(heroWorldPos);
 }
 
 void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
-    const std::vector<std::unique_ptr<Enemy>>& enemies)
+    const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters)
 {
     if (_target == nullptr || _dying)
         return;
@@ -103,6 +125,8 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     {
         if (enemy.get() == this)
             continue;
+        if (!enemy->IsActive() || enemy->IsDying() || !enemy->IsAlive())
+            continue;
 
         float dist = Vector2Distance(_worldPos, enemy->_worldPos);
 
@@ -114,6 +138,21 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
             {
                 float strength = (60.f - dist) / 60.f;
                 separation = Vector2Add(separation, Vector2Scale(Vector2Normalize(away), strength));
+            }
+        }
+    }
+
+    // Prop repulsion — steer away from nearby pillars
+    for (const Vector2& propCenter : propCenters)
+    {
+        float dist = Vector2Distance(_worldPos, propCenter);
+        if (dist < 110.f && dist > 0.f)
+        {
+            Vector2 away = Vector2Subtract(_worldPos, propCenter);
+            if (Vector2Length(away) > 0.01f)
+            {
+                float strength = (110.f - dist) / 110.f;
+                separation = Vector2Add(separation, Vector2Scale(Vector2Normalize(away), strength * 1.8f));
             }
         }
     }
@@ -212,7 +251,11 @@ void Enemy::HandleAttack()
     if (_attacking && !_damageApplied && _frame == 2)
     {
         Rectangle attackRec = GetCollisionRec();
-        attackRec.x += _rightLeft * 40.f;
+        attackRec.x += _rightLeft * 28.f;
+        // Shrink height and vertically center so enemies can't hit too high or too low
+        float trim = attackRec.height * 0.30f;
+        attackRec.y      += trim;
+        attackRec.height -= trim * 2.f;
 
         if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
         {
@@ -235,6 +278,9 @@ void Enemy::HandleAttack()
 
 void Enemy::DrawEnemy(Vector2 heroWorldPos)
 {
+    if (!_isActive)
+        return;
+
     float w = _width * _scale;
     float h = _height * _scale;
 
@@ -336,6 +382,38 @@ void Enemy::ApplyFreeze(float duration)
         _freezeTimer = duration;
 }
 
+void Enemy::SetWaveScale(int wave)
+{
+    if (wave <= 3)
+    {
+        _health    = 3.f;
+        _maxHealth = 3.f;
+        _attackPower = 1.f;
+        _speed     = 200.f;
+    }
+    else if (wave <= 5)
+    {
+        _health    = 6.f;
+        _maxHealth = 6.f;
+        _attackPower = 1.f;
+        _speed     = 230.f;
+    }
+    else if (wave <= 7)
+    {
+        _health    = 10.f;
+        _maxHealth = 10.f;
+        _attackPower = 2.f;
+        _speed     = 260.f;
+    }
+    else
+    {
+        _health    = 16.f;
+        _maxHealth = 16.f;
+        _attackPower = 3.f;
+        _speed     = 290.f;
+    }
+}
+
 void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)
 {
     if (_dying || !IsAlive())
@@ -346,18 +424,24 @@ void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)
 
 void Enemy::UpdateBurns(float dt)
 {
-    for (int i = static_cast<int>(_pendingBurns.size()) - 1; i >= 0; --i)
+    int writeIndex = 0;
+
+    for (int i = 0; i < static_cast<int>(_pendingBurns.size()); ++i)
     {
-        _pendingBurns[i].timer -= dt;
+        PendingBurn burn = _pendingBurns[i];
+        burn.timer -= dt;
 
-        if (_pendingBurns[i].timer > 0.f)
+        if (burn.timer <= 0.f)
+        {
+            if (IsAlive() && !_dying)
+                TakeDamage(burn.damage, burn.sourcePos);
             continue;
+        }
 
-        if (IsAlive() && !_dying)
-            TakeDamage(_pendingBurns[i].damage, _pendingBurns[i].sourcePos);
-
-        _pendingBurns.erase(_pendingBurns.begin() + i);
+        _pendingBurns[writeIndex++] = burn;
     }
+
+    _pendingBurns.resize(writeIndex);
 }
 
 void Enemy::PlayAttackSound()
@@ -382,4 +466,45 @@ void Enemy::PlayHurtSound()
     SetSoundPitch(_hurtSound, pitch);
     SetSoundVolume(_hurtSound, 0.5f);
     PlaySound(_hurtSound);
+}
+
+void Enemy::EnsureSharedResourcesLoaded()
+{
+    if (_sharedResourcesLoaded)
+        return;
+
+    _sharedIdleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
+    _sharedWalkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
+    _sharedAttackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
+    _sharedTakeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
+    _sharedDeathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
+    _sharedAttackSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SwordSwipe2.wav");
+    _sharedHurtSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SmallMonsterDamage.wav");
+    _sharedDeathSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerDeath.wav");
+    _sharedResourcesLoaded = true;
+}
+
+void Enemy::UnloadSharedResources()
+{
+    if (!_sharedResourcesLoaded)
+        return;
+
+    UnloadTexture(_sharedIdleAnim);
+    UnloadTexture(_sharedWalkAnim);
+    UnloadTexture(_sharedAttackAnim);
+    UnloadTexture(_sharedTakeDamageAnim);
+    UnloadTexture(_sharedDeathAnim);
+    UnloadSound(_sharedAttackSound);
+    UnloadSound(_sharedHurtSound);
+    UnloadSound(_sharedDeathSound);
+
+    _sharedIdleAnim = Texture2D{};
+    _sharedWalkAnim = Texture2D{};
+    _sharedAttackAnim = Texture2D{};
+    _sharedTakeDamageAnim = Texture2D{};
+    _sharedDeathAnim = Texture2D{};
+    _sharedAttackSound = Sound{};
+    _sharedHurtSound = Sound{};
+    _sharedDeathSound = Sound{};
+    _sharedResourcesLoaded = false;
 }

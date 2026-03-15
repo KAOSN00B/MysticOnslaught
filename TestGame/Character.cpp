@@ -49,6 +49,19 @@ Character::~Character()
 
 void Character::Init()
 {
+    if (_idleAnim.id != 0) UnloadTexture(_idleAnim);
+    if (_walkAnim.id != 0) UnloadTexture(_walkAnim);
+    if (_attackAnim.id != 0) UnloadTexture(_attackAnim);
+    if (_staffAnim.id != 0) UnloadTexture(_staffAnim);
+    if (_dashAnim.id != 0) UnloadTexture(_dashAnim);
+    if (_deathAnim.id != 0) UnloadTexture(_deathAnim);
+    if (_takeDamageAnim.id != 0) UnloadTexture(_takeDamageAnim);
+
+    if (_footStepSound.frameCount != 0) UnloadSound(_footStepSound);
+    if (_attackSound.frameCount != 0) UnloadSound(_attackSound);
+    if (_hurtSound.frameCount != 0) UnloadSound(_hurtSound);
+    if (_deathSound.frameCount != 0) UnloadSound(_deathSound);
+
     _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Idle.png");
     _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Walk.png");
     _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Slash.png");
@@ -67,7 +80,7 @@ void Character::Init()
     _width = 32.f;
     _height = _texture.height;
     _scale = 6.f;
-    _speed = 500.f;
+    _speed = 380.f;
 
     _health = 5;
     _maxHealth = 5;
@@ -146,19 +159,17 @@ void Character::HandleInput()
     if (IsKeyDown(KEY_W)) _direction.y -= 1;
     if (IsKeyDown(KEY_S)) _direction.y += 1;
 
-    if (_isDashing)
-    {
-        if (IsKeyDown(KEY_A)) _direction.x -= 1;
-        if (IsKeyDown(KEY_D)) _direction.x += 1;
-        if (IsKeyDown(KEY_W)) _direction.y -= 1;
-        if (IsKeyDown(KEY_S)) _direction.y += 1;
-    }
-
-    // 1-2-3-4 selects active ability slot
+    // 1-2-3 selects active ability slot; scroll wheel also cycles
     if (IsKeyPressed(KEY_ONE))   _selectedAbility = 0;
     if (IsKeyPressed(KEY_TWO))   _selectedAbility = 1;
     if (IsKeyPressed(KEY_THREE)) _selectedAbility = 2;
     if (IsKeyPressed(KEY_FOUR))  _selectedAbility = 3;
+
+    float wheel = GetMouseWheelMove();
+    if (wheel > 0)
+        _selectedAbility = (_selectedAbility + 1) % 3;
+    else if (wheel < 0)
+        _selectedAbility = (_selectedAbility + 2) % 3;
 
     if (IsKeyPressed(KEY_SPACE) && !_isDashing && _dashCooldown <= 0.f)
     {
@@ -166,6 +177,7 @@ void Character::HandleInput()
         _dashInvincible = true;
         _dashTimer = _dashDuration;
         _dashCooldown = _dashCooldownTime;
+        _velocity = Vector2Zero();  // clear any knockback so dash movement is clean
         _texture = _dashAnim;
         _frame = 0;
         _runningTime = 0.f;
@@ -211,7 +223,7 @@ void Character::HandleMovement(float dt)
 
 void Character::HandleAttackInput()
 {
-    if (_takingDamage || _dying)
+    if (_takingDamage || _dying || _isDashing)
         return;
 
     if (!_attacking && !_castingAbility && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -227,48 +239,56 @@ void Character::HandleAttackInput()
     }
 
     // Right-click fires the currently selected ability slot (1=Fireball, 2=SwordBeam, 3=Freeze)
+    // Only trigger if there is actually ammo for the selected slot
     if (!_attacking && !_castingAbility && IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
     {
-        _castingAbility = true;
-        _queuedCast = CastType::None;
+        CastType castType = CastType::None;
         bool useSlashAnimation = false;
 
         if (_selectedAbility == 0 && _fireballAmmo > 0)
         {
             _fireballAmmo--;
-            _queuedCast = CastType::Fireball;
+            castType = CastType::Fireball;
         }
         else if (_selectedAbility == 1 && _swordBeamAmmo > 0)
         {
             _swordBeamAmmo--;
-            _queuedCast = CastType::SwordBeam;
+            castType = CastType::SwordBeam;
             useSlashAnimation = true;
         }
         else if (_selectedAbility == 2 && _freezeAmmo > 0)
         {
             _freezeAmmo--;
-            _queuedCast = CastType::Freeze;
+            castType = CastType::Freeze;
         }
 
-        _texture = useSlashAnimation ? _attackAnim : _staffAnim;
-        _frame = 0;
-        _runningTime = 0.f;
-        _maxFrames = _texture.width / _width;
-        _updateTime = useSlashAnimation ? _attackUpdateTime : _staffCastUpdateTime;
+        if (castType != CastType::None)
+        {
+            _castingAbility = true;
+            _queuedCast = castType;
+            _texture = useSlashAnimation ? _attackAnim : _staffAnim;
+            _frame = 0;
+            _runningTime = 0.f;
+            _maxFrames = _texture.width / _width;
+            _updateTime = useSlashAnimation ? _attackUpdateTime : _staffCastUpdateTime;
+        }
     }
 }
 
-void Character::DrawPlayer()
+void Character::DrawPlayer(Vector2 cameraPos)
 {
     float w = _width * _scale;
     float h = _height * _scale;
 
+    // Compute screen position: world pos relative to camera, offset to screen center
+    float screenX = _worldPos.x - cameraPos.x + GetScreenWidth()  * 0.5f - w * 0.5f;
+    float screenY = _worldPos.y - cameraPos.y + GetScreenHeight() * 0.5f - h * 0.5f;
+
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ (GetScreenWidth() - w) * 0.5f, (GetScreenHeight() - h) * 0.5f, w, h };
+    Rectangle dest{ screenX, screenY, w, h };
 
-    float shadowWidth = w * 0.40f;
+    float shadowWidth  = w * 0.40f;
     float shadowHeight = h * 0.05f;
-
     float shadowOffsetX = -_rightLeft * 3.f;
     float shadowX = dest.x + w * 0.5f + shadowOffsetX;
     float shadowY = dest.y + h - 2.f;
@@ -277,14 +297,17 @@ void Character::DrawPlayer()
     DrawEllipse(shadowX, shadowY, shadowWidth * 0.7f, shadowHeight * 0.7f, Color{ 0, 0, 0, 40 });
 
     if (_playDashParticles)
-        DashParticles(h);
+    {
+        Vector2 playerScreenCenter{ screenX + w * 0.5f, screenY + h * 0.5f };
+        DashParticles(h, playerScreenCenter);
+    }
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
 }
 
-void Character::DashParticles(float h)
+void Character::DashParticles(float h, Vector2 playerScreenCenter)
 {
-    Vector2 screenPos{ GetScreenWidth() / 2.f, GetScreenHeight() / 2.f + h * 0.15f };
+    Vector2 screenPos{ playerScreenCenter.x, playerScreenCenter.y + h * 0.15f };
 
     float dashPercent = _dashTimer / _dashDuration;
     float trailLength = 160.f * dashPercent;
@@ -425,7 +448,7 @@ Character::CastType Character::ConsumeCastRequest()
 
 bool Character::CanApplyMeleeDamage() const
 {
-    return _attacking && !_damageApplied && _frame == 2;
+    return _attacking && !_damageApplied && _frame >= 2 && _frame <= 4;
 }
 
 void Character::ConsumeMeleeDamageFrame()
@@ -436,7 +459,9 @@ void Character::ConsumeMeleeDamageFrame()
 Rectangle Character::GetAttackCollisionRec() const
 {
     Rectangle attackRec = GetCollisionRec();
-    attackRec.x += _rightLeft * 50.f;
+    attackRec.x      += _rightLeft * 8.f;   // more forward reach
+    attackRec.y      += 20.f;                 // higher up
+    attackRec.height += 130.f;               // taller (up + down)
     return attackRec;
 }
 
@@ -489,7 +514,7 @@ void Character::Heal(int amount)
 {
     _health += amount;
 
-    if (_health > _maxHealth)
+    if (_health >= _maxHealth)
         _health = _maxHealth;
 
     if (amount > 0)
