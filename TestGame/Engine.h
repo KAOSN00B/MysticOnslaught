@@ -5,6 +5,9 @@
 #include "Character.h"
 #include "Prop.h"
 #include "Enemy.h"
+#include "Cyclops.h"
+#include "Ogre.h"
+#include "Molarbeast.h"
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
 #include "Pickup.h"
@@ -15,10 +18,14 @@
 #include "FireballProjectile.h"
 #include "SwordBeamProjectile.h"
 #include "FreezeProjectile.h"
+#include "CyclopsLaserProjectile.h"
+#include "LavaBallProjectile.h"
 
 #include <vector>
 #include <string>
 #include <memory>
+#include <future>
+#include <chrono>
 
 enum class GameState
 {
@@ -32,10 +39,21 @@ enum class GameState
 class Engine
 {
 public:
+    struct NavigationRefreshResult
+    {
+        // Fully computed distance field for the current player nav cell.
+        std::vector<int> distanceField;
+
+        // Open-cell index the worker used as the player's navigation target.
+        // The main thread applies this so it knows whether the player's cell changed.
+        int playerNavIndex = -1;
+    };
+
     Engine();
     ~Engine();
 
     void Run();
+    void RunFrame();
 
 private:
 
@@ -49,6 +67,11 @@ private:
     void SpawnEnemies();
     void HandleCollisions();
     void UpdateEnemyCount(float dt);
+    Enemy* SpawnCyclops(Vector2 pos);
+    Enemy* SpawnOgre(Vector2 pos);
+    void SpawnMolarbeast(Vector2 pos);
+    void UpdateCyclopsLasers(float dt);
+    void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
     void DrawWorld();
     void DrawHUD();
@@ -71,22 +94,41 @@ private:
     bool IsNavigationCellBlocked(int col, int row) const;
     int GetNavigationIndex(int col, int row) const;
     Vector2 GetNavigationTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const;
+    Vector2 GetAStarTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const;
     bool FindNearestOpenCell(int& col, int& row) const;
     bool HasLineOfSight(Vector2 start, Vector2 end) const;
     void RefreshNavigationField();
+    void ApplyCompletedNavigationRefresh();
     int GetClosestOpenNavigationIndex(int col, int row) const;
     void SpawnEnemyDrop(Vector2 worldPos);
     void SpawnTimedPickup();
+    void SpawnBossSupportAdds();
+    void UpdateBossSupportRespawns(float dt);
+    void ClearBossSupportAdds();
     void DrawMiniMap();
     void ResetRunState();
     int GetActiveEnemyCount() const;
+    bool IsBossFightActive() const;
     bool TryGetPooledEnemySpawn(Vector2 pos);
+    bool TryGetPooledCyclopsSpawn(Vector2 pos);
+    bool TryGetPooledOgreSpawn(Vector2 pos);
+    bool TryGetPooledMolarbeastSpawn(Vector2 pos);
+    int GetCyclopsSpawnCountForWave(int wave) const;
+    int GetOgreSpawnCountForWave(int wave) const;
+    int GetEnemyPowerLevelForWave(int wave) const;
+    void ConfigureSpawnedEnemy(Enemy& enemy);
 
     Vector2 GetRandomPropPosition();
     bool IsSpawnPositionValid(Vector2 pos);
     void RespawnOutOfBoundsEnemies();
+    bool TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance);
 
 private:
+    struct BossSupportState
+    {
+        Enemy* enemy = nullptr;
+        float respawnTimer = 0.f;
+    };
 
     struct AnimatedEffect
     {
@@ -136,10 +178,12 @@ private:
     float _gameOverTimer = 0.f;
     float _gameOverDelay = 2.f;
     float _fadeInTimer   = 0.f;
+    float _bossWarningTimer = 0.f;
 
     Sound _pickupSound{};
     Sound _fireballCastSound{};
     Sound _explosionSound{};
+    Sound _lavaBallImpactSound{};
     Sound _bladeBeamSound{};
     Sound _buttonPressSound{};
 
@@ -151,6 +195,7 @@ private:
     int _navRows = 0;
     int _maxActiveEnemies = 16;
     int _lastPlayerNavIndex = -1;
+    bool _navRefreshInFlight = false;
 
     Texture2D _pillarTex{};
     Texture2D _fireballCastTex{};
@@ -173,7 +218,12 @@ private:
     std::vector<AnimatedEffect> _effects;
     std::vector<bool> _navBlocked;
     std::vector<int>  _navDistance;
-    std::vector<std::unique_ptr<Enemy>> _enemies;
+    std::future<NavigationRefreshResult> _navRefreshJob;
+    std::vector<std::unique_ptr<Enemy>>   _enemies;
+    std::vector<CyclopsLaserProjectile>   _cyclopsLasers;
+    std::vector<LavaBallProjectile>       _lavaBalls;
+    BossSupportState _bossCyclopsSupport;
+    BossSupportState _bossOgreSupport;
 
     std::string _message = "Objective: Survive";
 };

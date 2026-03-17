@@ -1,7 +1,6 @@
 #include "MainMenu.h"
+#include "AssetPaths.h"
 #include <cmath>
-
-static const char* BASE = "C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\UI\\";
 
 MainMenu::~MainMenu()
 {
@@ -34,13 +33,13 @@ void MainMenu::Init()
     _howToPressed  = false;
 
     if (_borderTex.id == 0)
-        _borderTex  = LoadTexture(TextFormat("%sMainMenuBorder.png", BASE));
+        _borderTex  = LoadTexture(AssetPath("UI/MainMenuBorder.png").c_str());
     if (_bannerTex.id == 0)
-        _bannerTex  = LoadTexture(TextFormat("%sTitleBanner.png",    BASE));
+        _bannerTex  = LoadTexture(AssetPath("UI/TitleBanner.png").c_str());
     if (_playBtnTex.id == 0)
-        _playBtnTex = LoadTexture(TextFormat("%sPlayButton.png",     BASE));
+        _playBtnTex = LoadTexture(AssetPath("UI/PlayButton.png").c_str());
     if (_htpBtnTex.id == 0)
-        _htpBtnTex  = LoadTexture(TextFormat("%sHowToPlayButton.png",BASE));
+        _htpBtnTex  = LoadTexture(AssetPath("UI/HowToPlayButton.png").c_str());
 }
 
 void MainMenu::Update()

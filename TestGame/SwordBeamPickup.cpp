@@ -1,4 +1,5 @@
 #include "SwordBeamPickup.h"
+#include "AssetPaths.h"
 
 #include "Character.h"
 #include "raymath.h"
@@ -89,6 +90,6 @@ void SwordBeamPickup::EnsureTextureLoaded()
     if (_textureLoaded)
         return;
 
-    _sharedTexture = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\BladeBeamPickup.png");
+    _sharedTexture = LoadTexture(AssetPath("PowerUps/BladeBeamPickup.png").c_str());
     _textureLoaded = true;
 }

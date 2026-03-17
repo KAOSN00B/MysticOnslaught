@@ -1,4 +1,5 @@
 #include "HealPickup.h"
+#include "AssetPaths.h"
 
 #include "AnimationUtils.h"
 #include "Character.h"
@@ -77,6 +78,6 @@ void HealPickup::EnsureTextureLoaded()
     if (_textureLoaded)
         return;
 
-    _sharedTexture = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Health_Up.png");
+    _sharedTexture = LoadTexture(AssetPath("PowerUps/Health_Up.png").c_str());
     _textureLoaded = true;
 }

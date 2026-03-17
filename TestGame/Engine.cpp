@@ -1,6 +1,7 @@
 #include "Engine.h"
 
 #include "AnimationUtils.h"
+#include "AssetPaths.h"
 #include "raymath.h"
 
 #include <algorithm>
@@ -11,6 +12,23 @@
 
 namespace
 {
+    constexpr float kDefaultTimedPickupInterval = 60.f;
+
+    // Boss fights need a much denser combat-pickup cadence right now because
+    // the boss only takes light chip damage from specials in the current demo
+    // tuning pass.
+    constexpr float kBossTimedPickupInterval = 2.f;
+
+    // Spawn protection gives the player time to reposition if a wave enters on
+    // top of them or very near the player after pathing/spawn validation.
+    constexpr float kWaveSpawnProtectionDuration = 2.f;
+
+    // Boss support adds keep the fight active, but they should respawn far
+    // enough away that the player gets a real reposition window before the
+    // next Ogre/Cyclops pressure cycle starts.
+    constexpr float kBossSupportRespawnDelay = 20.f;
+    constexpr float kBossSupportMinPlayerDistance = 520.f;
+
     int ClampInt(int value, int minValue, int maxValue)
     {
         if (value < minValue)
@@ -18,6 +36,134 @@ namespace
         if (value > maxValue)
             return maxValue;
         return value;
+    }
+
+    int GetNavigationIndexForGrid(int col, int row, int cols)
+    {
+        return row * cols + col;
+    }
+
+    bool IsNavigationCellBlockedForGrid(const std::vector<bool>& blocked, int cols, int rows, int col, int row)
+    {
+        if (col < 0 || col >= cols || row < 0 || row >= rows)
+            return true;
+
+        return blocked[GetNavigationIndexForGrid(col, row, cols)];
+    }
+
+    bool FindNearestOpenCellForGrid(const std::vector<bool>& blocked, int cols, int rows, int& col, int& row)
+    {
+        if (!IsNavigationCellBlockedForGrid(blocked, cols, rows, col, row))
+            return true;
+
+        for (int radius = 1; radius < std::max(cols, rows); ++radius)
+        {
+            for (int dc = -radius; dc <= radius; ++dc)
+            {
+                for (int dr = -radius; dr <= radius; ++dr)
+                {
+                    if (std::abs(dc) != radius && std::abs(dr) != radius)
+                        continue;
+
+                    int nextCol = col + dc;
+                    int nextRow = row + dr;
+                    if (!IsNavigationCellBlockedForGrid(blocked, cols, rows, nextCol, nextRow))
+                    {
+                        col = nextCol;
+                        row = nextRow;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    int GetClosestOpenNavigationIndexForGrid(const std::vector<bool>& blocked, int cols, int rows, int col, int row)
+    {
+        int nextCol = ClampInt(col, 0, std::max(0, cols - 1));
+        int nextRow = ClampInt(row, 0, std::max(0, rows - 1));
+
+        if (!FindNearestOpenCellForGrid(blocked, cols, rows, nextCol, nextRow))
+            return -1;
+
+        return GetNavigationIndexForGrid(nextCol, nextRow, cols);
+    }
+
+    Engine::NavigationRefreshResult BuildNavigationRefreshResult(
+        const std::vector<bool>& blocked,
+        int cols,
+        int rows,
+        float cellSize,
+        Vector2 playerFeet)
+    {
+        Engine::NavigationRefreshResult result{};
+
+        if (cols <= 0 || rows <= 0)
+            return result;
+
+        result.distanceField.assign(cols * rows, std::numeric_limits<int>::max());
+
+        int playerCol = ClampInt((int)(playerFeet.x / cellSize), 0, cols - 1);
+        int playerRow = ClampInt((int)(playerFeet.y / cellSize), 0, rows - 1);
+        result.playerNavIndex = GetClosestOpenNavigationIndexForGrid(blocked, cols, rows, playerCol, playerRow);
+
+        if (result.playerNavIndex < 0)
+            return result;
+
+        using QueueItem = std::pair<int, int>;
+        std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<QueueItem>> frontier;
+        result.distanceField[result.playerNavIndex] = 0;
+        frontier.push({ 0, result.playerNavIndex });
+
+        struct SearchOffset { int col, row, cost; };
+        static const std::array<SearchOffset, 8> navOffsets{{
+            {1,0,10},{-1,0,10},{0,1,10},{0,-1,10},
+            {1,1,14},{1,-1,14},{-1,1,14},{-1,-1,14}
+        }};
+
+        while (!frontier.empty())
+        {
+            int cost = frontier.top().first;
+            int currentIndex = frontier.top().second;
+            frontier.pop();
+
+            if (cost > result.distanceField[currentIndex])
+                continue;
+
+            int currentCol = currentIndex % cols;
+            int currentRow = currentIndex / cols;
+
+            for (const SearchOffset& off : navOffsets)
+            {
+                int nextCol = currentCol + off.col;
+                int nextRow = currentRow + off.row;
+
+                if (IsNavigationCellBlockedForGrid(blocked, cols, rows, nextCol, nextRow))
+                    continue;
+
+                if (off.col != 0 && off.row != 0)
+                {
+                    if (IsNavigationCellBlockedForGrid(blocked, cols, rows, currentCol + off.col, currentRow) ||
+                        IsNavigationCellBlockedForGrid(blocked, cols, rows, currentCol, currentRow + off.row))
+                    {
+                        continue;
+                    }
+                }
+
+                int nextIndex = GetNavigationIndexForGrid(nextCol, nextRow, cols);
+                int nextCost = cost + off.cost;
+
+                if (nextCost >= result.distanceField[nextIndex])
+                    continue;
+
+                result.distanceField[nextIndex] = nextCost;
+                frontier.push({ nextCost, nextIndex });
+            }
+        }
+
+        return result;
     }
 }
 
@@ -28,7 +174,13 @@ Engine::Engine()
 
 Engine::~Engine()
 {
+    if (_navRefreshJob.valid())
+        _navRefreshJob.wait();
+
     Enemy::UnloadSharedResources();
+    Cyclops::UnloadSharedResources();
+    Ogre::UnloadSharedResources();
+    Molarbeast::UnloadSharedResources();
     FireBallPickup::UnloadSharedResources();
     SwordBeamPickup::UnloadSharedResources();
     FreezePickup::UnloadSharedResources();
@@ -36,9 +188,11 @@ Engine::~Engine()
     FireballProjectile::UnloadSharedResources();
     SwordBeamProjectile::UnloadSharedResources();
     FreezeProjectile::UnloadSharedResources();
+    LavaBallProjectile::UnloadSharedResources();
     UnloadSound(_pickupSound);
     UnloadSound(_fireballCastSound);
     UnloadSound(_explosionSound);
+    UnloadSound(_lavaBallImpactSound);
     UnloadSound(_bladeBeamSound);
     UnloadSound(_buttonPressSound);
     UnloadTexture(_map);
@@ -62,37 +216,50 @@ void Engine::Init()
 
     SetExitKey(KEY_NULL);
 
-    _pickupSound      = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PickupSound.mp3");
-    _fireballCastSound= LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\GS1_Spell_Fire.mp3");
-    _explosionSound   = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\GS1_Spell_Explode.mp3");
-    _bladeBeamSound   = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\GS1_BladeBeam.mp3");
-    _buttonPressSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\ButtonPress.mp3");
+    _pickupSound      = LoadSound(AssetPath("Sounds/PickupSound.mp3").c_str());
+    _fireballCastSound= LoadSound(AssetPath("Sounds/GS1_Spell_Fire.mp3").c_str());
+    _explosionSound   = LoadSound(AssetPath("Sounds/GS1_Spell_Explode.mp3").c_str());
+    {
+        // Lavaball impact should only play for the first second of the clip.
+        // Cropping the wave at load time keeps playback simple and lets each
+        // collision just trigger a normal PlaySound call.
+        Wave lavaImpactWave = LoadWave(AssetPath("Sounds/Explosion.wav").c_str());
+        int oneSecondFrame = lavaImpactWave.sampleRate;
+        if (oneSecondFrame > 0 && (int)lavaImpactWave.frameCount > oneSecondFrame)
+            WaveCrop(&lavaImpactWave, 0, oneSecondFrame);
+        _lavaBallImpactSound = LoadSoundFromWave(lavaImpactWave);
+        UnloadWave(lavaImpactWave);
+    }
+    _bladeBeamSound   = LoadSound(AssetPath("Sounds/GS1_BladeBeam.mp3").c_str());
+    _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.mp3").c_str());
 
     SetSoundPitch (_buttonPressSound, 1.25f);
     SetSoundVolume(_buttonPressSound, 0.35f);
 
     SetSoundPitch (_pickupSound, 1.35f);
     SetSoundVolume(_pickupSound, 0.45f);
+    SetSoundVolume(_lavaBallImpactSound, 0.45f);
 
     _pauseUI.Init();
 
     _menu.Init();
 
-    _map = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\TileSet\\Map.png");
-    _pillarTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\TileSet\\Pillar.png");
-    _fireballCastTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Fireball_Cast.png");
-    _fireballHitTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Fireball_Hit.png");
-    _swordBeamCastTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\BladeBeam_Cast.png");
-    _swordBeamHitTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Hit03.png");
-    _freezeCastTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Ice_Shard_Cast.png");
-    _freezeHitTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Ice_Shard_Hit.png");
-    _healEffectTex = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Health_Up.png");
+    _map = LoadTexture(AssetPath("TileSet/Map.png").c_str());
+    _pillarTex = LoadTexture(AssetPath("TileSet/Pillar.png").c_str());
+    _fireballCastTex = LoadTexture(AssetPath("PowerUps/Fireball_Cast.png").c_str());
+    _fireballHitTex = LoadTexture(AssetPath("PowerUps/Fireball_Hit.png").c_str());
+    _swordBeamCastTex = LoadTexture(AssetPath("PowerUps/BladeBeam_Cast.png").c_str());
+    _swordBeamHitTex = LoadTexture(AssetPath("PowerUps/Hit03.png").c_str());
+    _freezeCastTex = LoadTexture(AssetPath("PowerUps/Ice_Shard_Cast.png").c_str());
+    _freezeHitTex = LoadTexture(AssetPath("PowerUps/Ice_Shard_Hit.png").c_str());
+    _healEffectTex = LoadTexture(AssetPath("PowerUps/Health_Up.png").c_str());
 
     _props.clear();
     _pickups.clear();
     _fireballProjectiles.clear();
     _swordBeamProjectiles.clear();
     _freezeProjectiles.clear();
+    _lavaBalls.clear();
     _effects.clear();
     _enemies.clear();
 
@@ -106,7 +273,7 @@ void Engine::Init()
 
     BuildNavigationGrid();
 
-    _pickupSpawnTimer = 60.f;
+    _pickupSpawnTimer = kDefaultTimedPickupInterval;
 
     ResetRunState();
 }
@@ -121,10 +288,24 @@ void Engine::SpawnWave()
 
 void Engine::SpawnEnemies()
 {
-    int enemyCount = std::min(_wave * 2, _maxActiveEnemies);
-
     float mapW = _map.width * _mapScale;
     float mapH = _map.height * _mapScale;
+
+    // Proper wave flow: every 5th wave is a solo boss fight for now. That
+    // keeps the boss readable until the later "boss plus adds" rules are added.
+    if (_wave > 0 && _wave % 5 == 0)
+    {
+        Vector2 pos{ mapW * 0.5f, mapH * 0.28f };
+        SpawnMolarbeast(pos);
+        SpawnBossSupportAdds();
+        return;
+    }
+
+    // Regular enemies and cyclops share the same active budget so the HUD,
+    // wave-complete checks, and performance cap all measure total pressure.
+    const int cyclopsCount = GetCyclopsSpawnCountForWave(_wave);
+    const int ogreCount = GetOgreSpawnCountForWave(_wave);
+    const int enemyCount = std::max(0, std::min(_wave * 2, _maxActiveEnemies) - cyclopsCount - ogreCount);
 
     for (int i = 0; i < enemyCount; i++)
     {
@@ -143,25 +324,58 @@ void Engine::SpawnEnemies()
 
         auto enemy = std::make_unique<Enemy>(pos);
         enemy->Init();
-        enemy->SetWaveScale(_wave);
-        enemy->SetTarget(&_player);
+        ConfigureSpawnedEnemy(*enemy);
         _enemies.push_back(std::move(enemy));
+    }
+
+    // Cyclops use the same shared enemy pool, but only start appearing once
+    // the player has had a few waves to learn melee and pickup usage.
+    for (int i = 0; i < cyclopsCount; i++)
+    {
+        Vector2 pos{};
+        int attempts = 0;
+        do
+        {
+            pos.x = (float)GetRandomValue(300, (int)mapW - 300);
+            pos.y = (float)GetRandomValue(300, (int)mapH - 300);
+            attempts++;
+        } while (!IsSpawnPositionValid(pos) && attempts < 40);
+
+        SpawnCyclops(pos);
+    }
+
+    for (int i = 0; i < ogreCount; i++)
+    {
+        Vector2 pos{};
+        int attempts = 0;
+
+        do
+        {
+            pos.x = (float)GetRandomValue(300, (int)mapW - 300);
+            pos.y = (float)GetRandomValue(300, (int)mapH - 300);
+            attempts++;
+        } while (!IsSpawnPositionValid(pos) && attempts < 40);
+
+        SpawnOgre(pos);
     }
 }
 
 void Engine::Run()
 {
     while (!WindowShouldClose() && !_shouldClose)
-    {
-        float dt = GetFrameTime();
+        RunFrame();
+}
 
-        Update(dt);
+void Engine::RunFrame()
+{
+    float dt = GetFrameTime();
 
-        BeginDrawing();
-        ClearBackground(WHITE);
-        Draw();
-        EndDrawing();
-    }
+    Update(dt);
+
+    BeginDrawing();
+    ClearBackground(WHITE);
+    Draw();
+    EndDrawing();
 }
 
 void Engine::Update(float dt)
@@ -228,6 +442,8 @@ void Engine::UpdateGamePlay(float dt)
 
     if (_fadeInTimer > 0.f)
         _fadeInTimer -= dt;
+    if (_bossWarningTimer > 0.f)
+        _bossWarningTimer -= dt;
 
     _player.Update(dt);
 
@@ -253,7 +469,7 @@ void Engine::UpdateGamePlay(float dt)
         SpawnFreezeWave();
     }
 
-    if (_player.GetHealth() <= 0 && !_playerDying)
+    if (_player.GetHealthValue() <= 0.f && !_playerDying)
     {
         _playerDying = true;
         _gameOverTimer = _gameOverDelay;
@@ -277,28 +493,32 @@ void Engine::UpdateGamePlay(float dt)
         {
             _waveStarting = false;
             SpawnEnemies();
+            _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
         }
     }
     else
     {
         _gameTimer += dt;
+        ApplyCompletedNavigationRefresh();
 
-        // Timed pickup spawn — every 60 seconds
+        // Testing cadence: during the boss fight, keep combat pickups flowing
+        // constantly so the fight can be tuned without long dry periods.
         _pickupSpawnTimer -= dt;
         if (_pickupSpawnTimer <= 0.f)
         {
             SpawnTimedPickup();
-            _pickupSpawnTimer = 60.f;
+            _pickupSpawnTimer = IsBossFightActive() ? kBossTimedPickupInterval : kDefaultTimedPickupInterval;
         }
 
         if (GetActiveEnemyCount() == 0)
             SpawnWave();
 
         _navRefreshTimer -= dt;
-        int playerCol = ClampInt((int)(_player.GetWorldPos().x / _navCellSize), 0, std::max(0, _navCols - 1));
-        int playerRow = ClampInt((int)(_player.GetWorldPos().y / _navCellSize), 0, std::max(0, _navRows - 1));
+        Vector2 playerFeet = _player.GetFeetWorldPos();
+        int playerCol = ClampInt((int)(playerFeet.x / _navCellSize), 0, std::max(0, _navCols - 1));
+        int playerRow = ClampInt((int)(playerFeet.y / _navCellSize), 0, std::max(0, _navRows - 1));
         int playerNavIndex = (_navCols > 0 && _navRows > 0) ? GetClosestOpenNavigationIndex(playerCol, playerRow) : -1;
-        if (_navRefreshTimer <= 0.f || playerNavIndex != _lastPlayerNavIndex)
+        if (!_navRefreshInFlight && (_navRefreshTimer <= 0.f || playerNavIndex != _lastPlayerNavIndex))
         {
             RefreshNavigationField();
             _navRefreshTimer = _navRefreshInterval;
@@ -314,24 +534,78 @@ void Engine::UpdateGamePlay(float dt)
             if (!enemy->IsActive())
                 continue;
 
-            Vector2 navigationTarget = _player.GetWorldPos();
+            Vector2 navigationTarget = playerFeet;
             bool hasNavigationTarget = false;
 
-            if (!HasLineOfSight(enemy->GetWorldPos(), _player.GetWorldPos()))
+            if (enemy->IsBoss())
             {
-                navigationTarget = GetNavigationTarget(enemy->GetWorldPos(), _player.GetWorldPos());
-                hasNavigationTarget = !Vector2Equals(navigationTarget, _player.GetWorldPos());
+                // Boss pathing always comes from the A* helper so large enemies
+                // can route around pillars consistently instead of only
+                // pathing when line of sight is already broken.
+                navigationTarget = GetAStarTarget(enemy->GetWorldPos(), playerFeet);
+                hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
+            }
+            else if (!enemy->UsesDirectPursuit() &&
+                !HasLineOfSight(enemy->GetWorldPos(), playerFeet))
+            {
+                navigationTarget = GetNavigationTarget(enemy->GetWorldPos(), playerFeet);
+                hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
             }
 
-            enemy->Update(dt, _player.GetWorldPos(), navigationTarget, hasNavigationTarget, _enemies, propCenters);
+            enemy->Update(dt, playerFeet, navigationTarget, hasNavigationTarget, _enemies, propCenters);
+
+            // Cyclops shares the enemy pool, but still emits a separate laser
+            // projectile when its charge completes. The engine owns the laser
+            // list so projectile collision stays centralized.
+            if (Cyclops* cyclops = enemy->AsCyclops())
+            {
+                if (cyclops->WantsToFire())
+                {
+                    CyclopsLaserProjectile laser;
+                    laser.Init(cyclops->GetWorldPos(), cyclops->GetFireDirection(), cyclops->GetAttackPower());
+                    _cyclopsLasers.push_back(laser);
+                    cyclops->OnFired();
+                    cyclops->PlayAttackSound();
+                }
+            }
+
+            // Ogre rushes request impact shake when they end on a player, prop,
+            // wall, or arena boundary. The engine owns the camera system, so
+            // it consumes that one-shot request here after each enemy update.
+            if (Ogre* ogre = enemy->AsOgre())
+            {
+                if (ogre->ConsumeImpactShakeRequest())
+                    TriggerScreenShake(8.f, 0.14f);
+            }
+
+            // Molarbeast uses an engine-owned lavaball list for the same reason
+            // Cyclops uses engine-owned lasers: collision with the player and
+            // arena boundaries stays centralized in one place.
+            if (Molarbeast* molarbeast = enemy->AsMolarbeast())
+            {
+                if (molarbeast->WantsToFireLavaBall())
+                {
+                    LavaBallProjectile projectile;
+                    Vector2 toTarget = Vector2Subtract(molarbeast->GetQueuedLavaBallTarget(), molarbeast->GetLavaBallSpawnPos());
+                    projectile.Init(molarbeast->GetLavaBallSpawnPos(), toTarget);
+                    _lavaBalls.push_back(projectile);
+                    molarbeast->OnLavaBallSpawned();
+                }
+
+                if (molarbeast->ConsumeImpactShakeRequest())
+                    TriggerScreenShake(8.f, 0.14f);
+            }
         }
 
         HandlePlayerMeleeDamage();
         UpdateFireballProjectiles(dt);
         UpdateSwordBeamProjectiles(dt);
         UpdateFreezeProjectiles(dt);
+        UpdateLavaBallProjectiles(dt);
         UpdateEffects(dt);
         UpdateEnemyCount(dt);
+        UpdateBossSupportRespawns(dt);
+        UpdateCyclopsLasers(dt);
     }
 
     for (auto& pickup : _pickups)
@@ -441,6 +715,12 @@ void Engine::Draw()
         for (const auto& projectile : _freezeProjectiles)
             projectile.Draw(worldOffset);
 
+        for (const auto& projectile : _lavaBalls)
+            projectile.Draw(worldOffset);
+
+        for (const auto& laser : _cyclopsLasers)
+            laser.Draw(worldOffset);
+
         DrawEffects(worldOffset);
 
         for (auto& enemy : _enemies)
@@ -501,36 +781,84 @@ void Engine::HandleCollisions()
     if (pos.x < marginLeft  || pos.x > mapW - marginRight
      || pos.y < marginTop   || pos.y > mapH - marginBottom)
     {
-        _player.UndoMovement();
+        if (_player.IsBeingForcedPushed())
+            _player.OnForcedPushCollision();
+        else
+            _player.UndoMovement();
     }
-
-    const float enemyMargin = 80.f;
 
     for (auto& prop : _props)
     {
         if (CheckCollisionRecs(prop.GetCollisionRec(), _player.GetCollisionRec()))
-            _player.UndoMovement();
+        {
+            if (_player.IsBeingForcedPushed())
+                _player.OnForcedPushCollision();
+            else
+                _player.UndoMovement();
+        }
 
         for (auto& enemy : _enemies)
         {
             if (!enemy->IsActive())
                 continue;
+            if (enemy->IgnoresPropCollisions())
+                continue;
             if (CheckCollisionRecs(prop.GetCollisionRec(), enemy->GetCollisionRec()))
-                enemy->UndoMovement();
+            {
+                if (Ogre* ogre = enemy->AsOgre())
+                {
+                    if (ogre->IsRushing())
+                        ogre->OnRushBlocked();
+                    else
+                        enemy->UndoMovement();
+                }
+                else if (Molarbeast* molarbeast = enemy->AsMolarbeast())
+                {
+                    if (molarbeast->IsDashing())
+                        molarbeast->OnDashBlocked();
+                    else
+                        enemy->UndoMovement();
+                }
+                else
+                {
+                    enemy->UndoMovement();
+                }
+            }
         }
+
     }
 
-    // Push enemies back inside map bounds
-    for (auto& enemy : _enemies)
-    {
-        if (!enemy->IsActive())
-            continue;
-        if (enemy->IsDying()) continue;
-        Vector2 pos = enemy->GetWorldPos();
-        if (pos.x < enemyMargin || pos.y < enemyMargin ||
-            pos.x > mapW - enemyMargin || pos.y > mapH - enemyMargin)
-        {
-            enemy->UndoMovement();
+      // Enemies should obey the same arena rectangle as the player. Using the
+      // shared per-side margins keeps all actors inside the intended playable
+      // space instead of letting special enemies, like the ogre, rush beyond
+      // the lower boundary.
+      for (auto& enemy : _enemies)
+      {
+          if (!enemy->IsActive())
+              continue;
+          if (enemy->IsDying()) continue;
+          Vector2 pos = enemy->GetWorldPos();
+          if (pos.x < marginLeft  || pos.x > mapW - marginRight ||
+              pos.y < marginTop   || pos.y > mapH - marginBottom)
+          {
+              if (Ogre* ogre = enemy->AsOgre())
+              {
+                  if (ogre->IsRushing())
+                      ogre->OnRushBlocked();
+                  else
+                      enemy->UndoMovement();
+              }
+              else if (Molarbeast* molarbeast = enemy->AsMolarbeast())
+              {
+                  if (molarbeast->IsDashing())
+                      molarbeast->OnDashBlocked();
+                  else
+                      enemy->UndoMovement();
+              }
+              else
+              {
+                  enemy->UndoMovement();
+              }
         }
     }
 }
@@ -545,6 +873,14 @@ void Engine::UpdateEnemyCount(float dt)
         Vector2 dropPos = enemy->GetWorldPos();
         if (enemy->UpdateDeath(dt))
         {
+            // Boss support adds respawn on a timer while the Molarbeast is
+            // alive. Track their death moment before deactivating the pooled
+            // object so the engine can bring back the same pressure slot later.
+            if (enemy.get() == _bossCyclopsSupport.enemy && IsBossFightActive())
+                _bossCyclopsSupport.respawnTimer = kBossSupportRespawnDelay;
+            if (enemy.get() == _bossOgreSupport.enemy && IsBossFightActive())
+                _bossOgreSupport.respawnTimer = kBossSupportRespawnDelay;
+
             _player.AddExp(enemy->GetExpValue());
             SpawnEnemyDrop(dropPos);
             enemy->SetActive(false);
@@ -587,6 +923,12 @@ void Engine::DrawWorld()
     for (const auto& projectile : _freezeProjectiles)
         projectile.Draw(worldOffset);
 
+    for (const auto& projectile : _lavaBalls)
+        projectile.Draw(worldOffset);
+
+    for (const auto& laser : _cyclopsLasers)
+        laser.Draw(worldOffset);
+
     DrawEffects(worldOffset);
 
     for (auto& enemy : _enemies)
@@ -608,7 +950,7 @@ void Engine::DrawHUD()
     DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + GetScreenWidth() / 2 - 150, 60, fontSize, RAYWHITE);
     DrawText(("Wave: " + std::to_string(_wave)).c_str(), 20, 10, 30, RAYWHITE);
     DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
-    DrawText(("Health: " + std::to_string(_player.GetHealth())).c_str(), GetScreenWidth() - 200, 20, 30, RAYWHITE);
+    DrawText(TextFormat("Health: %.1f", _player.GetHealthValue()), GetScreenWidth() - 200, 20, 30, RAYWHITE);
 
     // EXP bar and level display
     int level = _player.GetLevel();
@@ -638,6 +980,18 @@ void Engine::DrawHUD()
 
     DrawAbilityBar();
     DrawMiniMap();
+
+    if (_bossWarningTimer > 0.f)
+    {
+        const char* warning = "DON'T GET TOO CLOSE";
+        int warningSize = 34;
+        int warningWidth = MeasureText(warning, warningSize);
+        DrawText(warning,
+            GetScreenWidth() / 2 - warningWidth / 2,
+            96,
+            warningSize,
+            ORANGE);
+    }
 }
 
 void Engine::DrawAbilityBar()
@@ -996,17 +1350,18 @@ void Engine::UpdateFreezeProjectiles(float dt)
         if (!projectile.IsActive())
             continue;
 
-        // Freezes first enemy hit then is destroyed (no piercing)
+        // Freeze still keeps its crowd-control role, but it also chips for a
+        // light amount of direct damage so it scales with the player's special
+        // damage multiplier instead of falling off completely.
         for (auto& enemy : _enemies)
         {
-            if (!enemy->IsActive())
-                continue;
-            if (!enemy->IsAlive())
+            if (!enemy->IsActive() || !enemy->IsAlive())
                 continue;
 
             if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
             {
                 float duration = GetRandomValue(3, 5) * 1.f;
+                enemy->TakeDamage(_player.GetFreezeDamage(), _player.GetWorldPos());
                 enemy->ApplyFreeze(duration);
                 SpawnHitEffect(Character::CastType::Freeze, projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
@@ -1014,6 +1369,7 @@ void Engine::UpdateFreezeProjectiles(float dt)
                 break;
             }
         }
+
     }
 
     _freezeProjectiles.erase(
@@ -1048,15 +1404,19 @@ void Engine::UpdateFireballProjectiles(float dt)
 
         for (auto& enemy : _enemies)
         {
-            if (!enemy->IsActive())
-                continue;
-            if (!enemy->IsAlive())
+            if (!enemy->IsActive() || !enemy->IsAlive())
                 continue;
 
             if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
             {
-                enemy->TakeDamage(1, _player.GetWorldPos());
-                enemy->ApplyBurn(1.f, 1, _player.GetWorldPos());
+                // Boss tuning: fireball should always land for 1 direct damage
+                // on the Molarbeast, while regular enemies still use the
+                // player's scaled fireball damage.
+                int fireballDamage = (enemy->AsMolarbeast() != nullptr)
+                    ? 1
+                    : _player.GetFireballHitDamage();
+                enemy->TakeDamage(fireballDamage, _player.GetWorldPos());
+                enemy->ApplyBurn(1.f, _player.GetFireballBurnDamage(), _player.GetWorldPos());
                 SpawnHitEffect(Character::CastType::Fireball, projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 TriggerScreenShake(4.f, 0.05f);
@@ -1065,6 +1425,7 @@ void Engine::UpdateFireballProjectiles(float dt)
                 break;
             }
         }
+
     }
 
     _fireballProjectiles.erase(
@@ -1094,19 +1455,25 @@ void Engine::UpdateSwordBeamProjectiles(float dt)
 
         for (auto& enemy : _enemies)
         {
-            if (!enemy->IsActive())
-                continue;
-            if (!enemy->IsAlive() || projectile.HasHitEnemy(enemy.get()))
+            if (!enemy->IsActive() || !enemy->IsAlive() || projectile.HasHitEnemy(enemy.get()))
                 continue;
 
             if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
             {
-                enemy->TakeDamage(1, _player.GetWorldPos());
+                // Boss tuning: blade beam is the strongest special tool in the
+                // fight, so it always lands for 2 direct damage on the
+                // Molarbeast while regular enemies still use the player's
+                // scaled sword-beam value.
+                int swordBeamDamage = (enemy->AsMolarbeast() != nullptr)
+                    ? 2
+                    : _player.GetSwordBeamDamage();
+                enemy->TakeDamage(swordBeamDamage, _player.GetWorldPos());
                 projectile.RegisterHitEnemy(enemy.get());
                 SpawnHitEffect(Character::CastType::SwordBeam, enemy->GetWorldPos(), projectile.GetDirection());
                 TriggerScreenShake(5.f, 0.06f);
             }
         }
+
     }
 
     _swordBeamProjectiles.erase(
@@ -1118,28 +1485,37 @@ void Engine::UpdateSwordBeamProjectiles(float dt)
 
 void Engine::SpawnEnemyDrop(Vector2 worldPos)
 {
-    const int dropChancePercent = 20;
+    // Normal-wave drops should smooth out run pacing a bit more than before.
+    // Keeping the total chance conservative avoids flooding the arena, while
+    // shifting more weight into heal and freeze makes non-boss waves less
+    // feast-or-famine.
+    const int dropChancePercent = 22;
 
     if (GetRandomValue(1, 100) > dropChancePercent)
         return;
 
-    // Weighted pool: FireBall=40, SwordBeam=40, Freeze=12, Heal=8  (total=100)
+    // Weighted pool:
+    // FireBall  = 32
+    // SwordBeam = 26
+    // Freeze    = 16
+    // Heal      = 26
+    // Total     = 100
     int roll = GetRandomValue(1, 100);
     std::unique_ptr<Pickup> pickup;
 
-    if (roll <= 40)
+    if (roll <= 32)
     {
         auto p = std::make_unique<FireBallPickup>();
         p->Init(worldPos, 1);
         pickup = std::move(p);
     }
-    else if (roll <= 80)
+    else if (roll <= 58)
     {
         auto p = std::make_unique<SwordBeamPickup>();
         p->Init(worldPos, 1);
         pickup = std::move(p);
     }
-    else if (roll <= 92)
+    else if (roll <= 74)
     {
         auto p = std::make_unique<FreezePickup>();
         p->Init(worldPos);
@@ -1204,10 +1580,37 @@ void Engine::SpawnTimedPickup()
         attempts++;
     } while (!IsSpawnPositionValid(pos) && attempts < 40);
 
-    // Timed pickups are either Freeze or Heal (50/50)
+    // Boss-fight testing pool: only combat pickups are spawned from the timed
+    // system so every drop helps tune the actual fight loop.
     std::unique_ptr<Pickup> pickup;
 
-    if (GetRandomValue(0, 1) == 0)
+    if (IsBossFightActive())
+    {
+        int roll = GetRandomValue(0, 2);
+
+        if (roll == 0)
+        {
+            auto p = std::make_unique<FireBallPickup>();
+            p->Init(pos);
+            p->SetTimerSpawned(true);
+            pickup = std::move(p);
+        }
+        else if (roll == 1)
+        {
+            auto p = std::make_unique<SwordBeamPickup>();
+            p->Init(pos);
+            p->SetTimerSpawned(true);
+            pickup = std::move(p);
+        }
+        else
+        {
+            auto p = std::make_unique<FreezePickup>();
+            p->Init(pos);
+            p->SetTimerSpawned(true);
+            pickup = std::move(p);
+        }
+    }
+    else if (GetRandomValue(0, 1) == 0)
     {
         auto p = std::make_unique<FreezePickup>();
         p->Init(pos);
@@ -1444,8 +1847,17 @@ void Engine::DrawMiniMap()
             continue;
 
         Vector2 dot = toMini(enemy->GetWorldPos());
-        DrawCircleV(dot, 3.f, Fade(RED, 0.9f));
+        if (enemy->AsMolarbeast() != nullptr)
+            DrawCircleV(dot, 6.f, Fade(MAROON, 0.95f));
+        else if (enemy->AsCyclops() != nullptr)
+            DrawCircleV(dot, 4.f, Fade(ORANGE, 0.9f));
+        else if (enemy->AsOgre() != nullptr)
+            DrawCircleV(dot, 4.f, Fade(BROWN, 0.9f));
+        else
+            DrawCircleV(dot, 3.f, Fade(RED, 0.9f));
     }
+
+    // Cyclops dots — orange
 
     // Pickup dots — green for all active pickups
     for (const auto& pickup : _pickups)
@@ -1468,6 +1880,7 @@ Vector2 Engine::GetRandomPropPosition()
 {
     float mapW = _map.width * _mapScale;
     float mapH = _map.height * _mapScale;
+    Vector2 playerStart{ mapW * 0.5f, mapH * 0.5f };
 
     float minX = mapW * 0.05f;
     float maxX = mapW * 0.95f;
@@ -1475,6 +1888,7 @@ Vector2 Engine::GetRandomPropPosition()
     float maxY = mapH * 0.85f;
 
     float minSpacing = 308.f;
+    float playerSafeRadius = 320.f;
     int attempts = 0;
     const int maxAttempts = 50;
 
@@ -1485,6 +1899,9 @@ Vector2 Engine::GetRandomPropPosition()
         pos.y = (float)GetRandomValue((int)minY, (int)maxY);
 
         bool tooClose = false;
+
+        if (Vector2Distance(pos, playerStart) < playerSafeRadius)
+            tooClose = true;
 
         for (auto& prop : _props)
         {
@@ -1675,69 +2092,159 @@ Vector2 Engine::GetNavigationTarget(Vector2 startWorldPos, Vector2 targetWorldPo
     };
 }
 
-void Engine::RefreshNavigationField()
+Vector2 Engine::GetAStarTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const
 {
     if (_navCols <= 0 || _navRows <= 0)
-        return;
+        return targetWorldPos;
 
-    _navDistance.assign(_navCols * _navRows, std::numeric_limits<int>::max());
+    int startCol = ClampInt((int)(startWorldPos.x / _navCellSize), 0, _navCols - 1);
+    int startRow = ClampInt((int)(startWorldPos.y / _navCellSize), 0, _navRows - 1);
+    int goalCol  = ClampInt((int)(targetWorldPos.x / _navCellSize), 0, _navCols - 1);
+    int goalRow  = ClampInt((int)(targetWorldPos.y / _navCellSize), 0, _navRows - 1);
 
-    int playerCol = ClampInt((int)(_player.GetWorldPos().x / _navCellSize), 0, _navCols - 1);
-    int playerRow = ClampInt((int)(_player.GetWorldPos().y / _navCellSize), 0, _navRows - 1);
-    int targetIndex = GetClosestOpenNavigationIndex(playerCol, playerRow);
-    _lastPlayerNavIndex = targetIndex;
+    // Snap start and goal to the nearest open cells in case they sit inside a blocked tile.
+    if (!FindNearestOpenCell(startCol, startRow))
+        return targetWorldPos;
+    FindNearestOpenCell(goalCol, goalRow);
 
-    if (targetIndex < 0)
-        return;
+    int startIdx = GetNavigationIndex(startCol, startRow);
+    int goalIdx  = GetNavigationIndex(goalCol,  goalRow);
 
-    using QueueItem = std::pair<int, int>;
-    std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<QueueItem>> frontier;
-    _navDistance[targetIndex] = 0;
-    frontier.push({ 0, targetIndex });
+    if (startIdx == goalIdx)
+        return targetWorldPos;
 
-    struct SearchOffset { int col, row, cost; };
-    static const std::array<SearchOffset, 8> navOffsets{{
-        {1,0,10},{-1,0,10},{0,1,10},{0,-1,10},
-        {1,1,14},{1,-1,14},{-1,1,14},{-1,-1,14}
-    }};
+    const int total = _navCols * _navRows;
 
-    while (!frontier.empty())
+    struct Node
     {
-        int cost         = frontier.top().first;
-        int currentIndex = frontier.top().second;
-        frontier.pop();
+        int f, g, idx;
+        bool operator>(const Node& o) const { return f > o.f; }
+    };
 
-        if (cost > _navDistance[currentIndex])
-            continue;
+    std::vector<int>  gScore(total, INT_MAX);
+    std::vector<int>  parent(total, -1);
+    std::vector<bool> closed(total, false);
+    std::priority_queue<Node, std::vector<Node>, std::greater<Node>> open;
 
-        int currentCol = currentIndex % _navCols;
-        int currentRow = currentIndex / _navCols;
+    // Octile heuristic (integer scaled x10) — admissible for 8-directional movement.
+    auto heuristic = [&](int col, int row) -> int
+    {
+        int dc = std::abs(col - goalCol);
+        int dr = std::abs(row - goalRow);
+        return 10 * (dc + dr) + (14 - 20) * std::min(dc, dr);  // = 10*(dc+dr) - 6*min
+    };
 
-        for (const SearchOffset& off : navOffsets)
+    gScore[startIdx] = 0;
+    open.push({ heuristic(startCol, startRow), 0, startIdx });
+
+    static constexpr int dc[] = { 1, -1,  0,  0,  1,  1, -1, -1 };
+    static constexpr int dr[] = { 0,  0,  1, -1,  1, -1,  1, -1 };
+    static constexpr int cost[]= {10, 10, 10, 10, 14, 14, 14, 14 };
+
+    bool found = false;
+    while (!open.empty())
+    {
+        Node cur = open.top();
+        open.pop();
+
+        if (cur.idx == goalIdx) { found = true; break; }
+        if (closed[cur.idx]) continue;
+        closed[cur.idx] = true;
+
+        int col = cur.idx % _navCols;
+        int row = cur.idx / _navCols;
+
+        for (int i = 0; i < 8; ++i)
         {
-            int nc = currentCol + off.col;
-            int nr = currentRow + off.row;
+            int nc = col + dc[i];
+            int nr = row + dr[i];
+            if (nc < 0 || nc >= _navCols || nr < 0 || nr >= _navRows) continue;
 
-            if (IsNavigationCellBlocked(nc, nr))
+            int nIdx = GetNavigationIndex(nc, nr);
+            if (_navBlocked[nIdx] || closed[nIdx]) continue;
+
+            // For diagonals, require both shared cardinal neighbours to be open
+            // so the path doesn't clip through prop corners.
+            if (i >= 4 && (IsNavigationCellBlocked(col + dc[i], row) ||
+                           IsNavigationCellBlocked(col, row + dr[i])))
                 continue;
 
-            if (off.col != 0 && off.row != 0)
+            int tentG = gScore[cur.idx] + cost[i];
+            if (tentG < gScore[nIdx])
             {
-                if (IsNavigationCellBlocked(currentCol + off.col, currentRow) ||
-                    IsNavigationCellBlocked(currentCol, currentRow + off.row))
-                    continue;
+                parent[nIdx] = cur.idx;
+                gScore[nIdx] = tentG;
+                open.push({ tentG + heuristic(nc, nr), tentG, nIdx });
             }
-
-            int nextIndex = GetNavigationIndex(nc, nr);
-            int nextCost  = cost + off.cost;
-
-            if (nextCost >= _navDistance[nextIndex])
-                continue;
-
-            _navDistance[nextIndex] = nextCost;
-            frontier.push({ nextCost, nextIndex });
         }
     }
+
+    if (!found)
+        return targetWorldPos;
+
+    // Walk the parent chain back to find the first step after the start cell.
+    int step = goalIdx;
+    while (parent[step] != -1 && parent[step] != startIdx)
+        step = parent[step];
+
+    if (parent[step] == -1)
+        return targetWorldPos;
+
+    int stepCol = step % _navCols;
+    int stepRow = step / _navCols;
+
+    return Vector2{
+        stepCol * _navCellSize + _navCellSize * 0.5f,
+        stepRow * _navCellSize + _navCellSize * 0.5f
+    };
+}
+
+void Engine::RefreshNavigationField()
+{
+    if (_navCols <= 0 || _navRows <= 0 || _navRefreshInFlight)
+        return;
+
+    Vector2 playerFeet = _player.GetFeetWorldPos();
+    std::vector<bool> blockedCopy = _navBlocked;
+    int cols = _navCols;
+    int rows = _navRows;
+    float cellSize = _navCellSize;
+
+#ifdef __EMSCRIPTEN__
+    // The first web build keeps navigation single-threaded so it does not rely
+    // on browser pthread support. The desktop build still uses the async job.
+    NavigationRefreshResult result = BuildNavigationRefreshResult(blockedCopy, cols, rows, cellSize, playerFeet);
+    _navDistance = std::move(result.distanceField);
+    _lastPlayerNavIndex = result.playerNavIndex;
+#else
+    // Build the shared flow field off-thread using copies of the immutable
+    // grid data for this refresh. Enemy movement still consumes the finished
+    // field on the main thread, so gameplay mutation stays single-threaded.
+    _navRefreshJob = std::async(std::launch::async,
+        [blocked = std::move(blockedCopy), cols, rows, cellSize, playerFeet]() mutable
+        {
+            return BuildNavigationRefreshResult(blocked, cols, rows, cellSize, playerFeet);
+        });
+    _navRefreshInFlight = true;
+#endif
+}
+
+void Engine::ApplyCompletedNavigationRefresh()
+{
+#ifdef __EMSCRIPTEN__
+    return;
+#else
+    if (!_navRefreshInFlight || !_navRefreshJob.valid())
+        return;
+
+    if (_navRefreshJob.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return;
+
+    NavigationRefreshResult result = _navRefreshJob.get();
+    _navDistance = std::move(result.distanceField);
+    _lastPlayerNavIndex = result.playerNavIndex;
+    _navRefreshInFlight = false;
+#endif
 }
 
 void Engine::RespawnOutOfBoundsEnemies()
@@ -1788,6 +2295,7 @@ void Engine::RespawnOutOfBoundsEnemies()
 bool Engine::IsSpawnPositionValid(Vector2 pos)
 {
     const float safeDistance = 200.f;
+    const float playerSafeDistance = 260.f;
 
     // Reject if the spawn cell or any neighbour is blocked by a prop on the nav grid
     int col = (int)(pos.x / _navCellSize);
@@ -1811,24 +2319,38 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
             return false;
     }
 
+    // Keep enemy, boss, and timed pickup spawns away from the player so
+    // nothing materializes directly on top of them.
+    if (Vector2Distance(pos, _player.GetWorldPos()) < playerSafeDistance)
+        return false;
+
     return true;
 }
 
 void Engine::ResetRunState()
 {
+    if (_navRefreshJob.valid())
+        _navRefreshJob.wait();
+
+    _navRefreshInFlight = false;
     _wave = 0;
     _navRefreshTimer = 0.f;
     _lastPlayerNavIndex = -1;
     _gameTimer = 0.f;
     _playerDying = false;
     _waveStarting = true;
+    _bossWarningTimer = 0.f;
     _fireballProjectiles.clear();
     _swordBeamProjectiles.clear();
     _freezeProjectiles.clear();
+    _lavaBalls.clear();
+    _cyclopsLasers.clear();
     _pickups.clear();
     _effects.clear();
     _player.Init();
     _player.SetWorldPos(Vector2{ _map.width * _mapScale * 0.5f, _map.height * _mapScale * 0.5f });
+    _bossCyclopsSupport = {};
+    _bossOgreSupport = {};
 
     for (auto& enemy : _enemies)
     {
@@ -1836,9 +2358,12 @@ void Engine::ResetRunState()
         enemy->Teleport(Vector2{ -5000.f, -5000.f });
     }
 
-    _pickupSpawnTimer = 60.f;
+    _pickupSpawnTimer = kDefaultTimedPickupInterval;
 
     RefreshNavigationField();
+    if (_navRefreshJob.valid())
+        _navRefreshJob.wait();
+    ApplyCompletedNavigationRefresh();
     SpawnWave();
 }
 
@@ -1854,18 +2379,423 @@ int Engine::GetActiveEnemyCount() const
     return count;
 }
 
+bool Engine::IsBossFightActive() const
+{
+    for (const auto& enemy : _enemies)
+    {
+        if (!enemy->IsActive())
+            continue;
+        if (!enemy->IsAlive())
+            continue;
+        if (enemy->AsMolarbeast() != nullptr)
+            return true;
+    }
+
+    return false;
+}
+
+bool Engine::TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance)
+{
+    float mapW = _map.width * _mapScale;
+    float mapH = _map.height * _mapScale;
+
+    for (int attempt = 0; attempt < 60; ++attempt)
+    {
+        Vector2 candidate{
+            (float)GetRandomValue(300, (int)mapW - 300),
+            (float)GetRandomValue(300, (int)mapH - 300)
+        };
+
+        if (!IsSpawnPositionValid(candidate))
+            continue;
+        if (Vector2Distance(candidate, _player.GetWorldPos()) < minPlayerDistance)
+            continue;
+
+        pos = candidate;
+        return true;
+    }
+
+    return false;
+}
+
+void Engine::SpawnBossSupportAdds()
+{
+    Vector2 cyclopsPos{};
+    if (TryGetFarSpawnPosition(cyclopsPos, kBossSupportMinPlayerDistance))
+        _bossCyclopsSupport.enemy = SpawnCyclops(cyclopsPos);
+
+    Vector2 ogrePos{};
+    if (TryGetFarSpawnPosition(ogrePos, kBossSupportMinPlayerDistance))
+        _bossOgreSupport.enemy = SpawnOgre(ogrePos);
+
+    _bossCyclopsSupport.respawnTimer = 0.f;
+    _bossOgreSupport.respawnTimer = 0.f;
+}
+
+void Engine::ClearBossSupportAdds()
+{
+    if (_bossCyclopsSupport.enemy != nullptr)
+    {
+        _bossCyclopsSupport.enemy->SetActive(false);
+        _bossCyclopsSupport.enemy->Teleport(Vector2{ -5000.f, -5000.f });
+    }
+
+    if (_bossOgreSupport.enemy != nullptr)
+    {
+        _bossOgreSupport.enemy->SetActive(false);
+        _bossOgreSupport.enemy->Teleport(Vector2{ -5000.f, -5000.f });
+    }
+
+    _bossCyclopsSupport = {};
+    _bossOgreSupport = {};
+}
+
+void Engine::UpdateBossSupportRespawns(float dt)
+{
+    if (!IsBossFightActive())
+    {
+        ClearBossSupportAdds();
+        return;
+    }
+
+    if (_bossCyclopsSupport.enemy != nullptr &&
+        !_bossCyclopsSupport.enemy->IsActive() &&
+        _bossCyclopsSupport.respawnTimer > 0.f)
+    {
+        _bossCyclopsSupport.respawnTimer -= dt;
+        if (_bossCyclopsSupport.respawnTimer <= 0.f)
+        {
+            Vector2 spawnPos{};
+            if (TryGetFarSpawnPosition(spawnPos, kBossSupportMinPlayerDistance))
+                _bossCyclopsSupport.enemy = SpawnCyclops(spawnPos);
+            _bossCyclopsSupport.respawnTimer = 0.f;
+        }
+    }
+
+    if (_bossOgreSupport.enemy != nullptr &&
+        !_bossOgreSupport.enemy->IsActive() &&
+        _bossOgreSupport.respawnTimer > 0.f)
+    {
+        _bossOgreSupport.respawnTimer -= dt;
+        if (_bossOgreSupport.respawnTimer <= 0.f)
+        {
+            Vector2 spawnPos{};
+            if (TryGetFarSpawnPosition(spawnPos, kBossSupportMinPlayerDistance))
+                _bossOgreSupport.enemy = SpawnOgre(spawnPos);
+            _bossOgreSupport.respawnTimer = 0.f;
+        }
+    }
+}
+
 bool Engine::TryGetPooledEnemySpawn(Vector2 pos)
 {
     for (auto& enemy : _enemies)
     {
         if (enemy->IsActive())
             continue;
+        if (enemy->AsCyclops() != nullptr)
+            continue;
+        if (enemy->AsOgre() != nullptr)
+            continue;
+        if (enemy->AsMolarbeast() != nullptr)
+            continue;
 
         enemy->ResetForSpawn(pos);
-        enemy->SetTarget(&_player);
+        ConfigureSpawnedEnemy(*enemy);
         return true;
     }
 
     return false;
+}
+
+bool Engine::TryGetPooledCyclopsSpawn(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        Cyclops* cyclops = enemy->AsCyclops();
+        if (cyclops == nullptr)
+            continue;
+
+        cyclops->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*cyclops);
+        return true;
+    }
+
+    return false;
+}
+
+int Engine::GetCyclopsSpawnCountForWave(int wave) const
+{
+    // Cyclops joins the main enemy pool instead of being a separate testing
+    // stream. Early waves stay melee-focused, then ranged pressure ramps in.
+    if (wave <= 2)
+        return 0;
+    if (wave <= 4)
+        return 1;
+    return std::min(2, _maxActiveEnemies);
+}
+
+bool Engine::TryGetPooledOgreSpawn(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        Ogre* ogre = enemy->AsOgre();
+        if (ogre == nullptr)
+            continue;
+
+        ogre->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*ogre);
+        return true;
+    }
+
+    return false;
+}
+
+bool Engine::TryGetPooledMolarbeastSpawn(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        Molarbeast* molarbeast = enemy->AsMolarbeast();
+        if (molarbeast == nullptr)
+            continue;
+
+        molarbeast->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*molarbeast);
+        return true;
+    }
+
+    return false;
+}
+
+int Engine::GetOgreSpawnCountForWave(int wave) const
+{
+    // Ogre starts as a single wave-4 threat, then gains a second slot later
+    // so it remains readable and fair while the player is learning the charge.
+    if (wave < 4)
+        return 0;
+    if (wave < 8)
+        return 1;
+    return std::min(2, _maxActiveEnemies);
+}
+
+int Engine::GetEnemyPowerLevelForWave(int wave) const
+{
+    // Enemy power level advances once per completed 5-wave block:
+    // waves 1-5   = level 1
+    // waves 6-10  = level 2
+    // waves 11-15 = level 3
+    // This keeps the long-run curve readable and lets per-wave composition do
+    // most of the heavy lifting in the early and mid game.
+    if (wave <= 0)
+        return 1;
+
+    return 1 + ((wave - 1) / 5);
+}
+
+void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
+{
+    // All enemy types share the same spawn-tuning path:
+    // 1. Apply their archetype stats for the current wave band.
+    // 2. Apply the softer global enemy power level that advances every 5 waves.
+    // 3. Restore the player target so pooled enemies rejoin the current run.
+    enemy.SetWaveScale(_wave);
+    enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
+    enemy.SetTarget(&_player);
+}
+
+Enemy* Engine::SpawnCyclops(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        Cyclops* cyclops = enemy->AsCyclops();
+        if (cyclops == nullptr)
+            continue;
+
+        cyclops->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*cyclops);
+        return cyclops;
+    }
+
+    // No pooled instance - create a new one.
+    auto cyclops = std::make_unique<Cyclops>(pos);
+    cyclops->Init();
+    ConfigureSpawnedEnemy(*cyclops);
+    Enemy* cyclopsPtr = cyclops.get();
+    _enemies.push_back(std::move(cyclops));
+    return cyclopsPtr;
+}
+
+Enemy* Engine::SpawnOgre(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        Ogre* ogre = enemy->AsOgre();
+        if (ogre == nullptr)
+            continue;
+
+        ogre->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*ogre);
+        return ogre;
+    }
+
+    auto ogre = std::make_unique<Ogre>(pos);
+    ogre->Init();
+    ConfigureSpawnedEnemy(*ogre);
+    Enemy* ogrePtr = ogre.get();
+    _enemies.push_back(std::move(ogre));
+    return ogrePtr;
+}
+
+void Engine::SpawnMolarbeast(Vector2 pos)
+{
+    if (TryGetPooledMolarbeastSpawn(pos))
+    {
+        _bossWarningTimer = 4.f;
+        _pickupSpawnTimer = std::min(_pickupSpawnTimer, kBossTimedPickupInterval);
+        return;
+    }
+
+    auto molarbeast = std::make_unique<Molarbeast>(pos);
+    molarbeast->Init();
+    ConfigureSpawnedEnemy(*molarbeast);
+    _enemies.push_back(std::move(molarbeast));
+    _bossWarningTimer = 4.f;
+    _pickupSpawnTimer = std::min(_pickupSpawnTimer, kBossTimedPickupInterval);
+}
+
+// =============================================================================
+void Engine::UpdateCyclopsLasers(float dt)
+{
+    for (auto& laser : _cyclopsLasers)
+    {
+        if (!laser.IsActive()) continue;
+
+        laser.Update(dt);
+        if (!laser.IsActive()) continue;
+
+        // Destroyed by props
+        for (auto& prop : _props)
+        {
+            if (CheckCollisionRecs(laser.GetCollisionRec(), prop.GetCollisionRec()))
+            {
+                laser.Destroy();
+                break;
+            }
+        }
+
+        if (!laser.IsActive()) continue;
+
+        // Damages player on hit
+        if (_player.IsAlive() &&
+            CheckCollisionRecs(laser.GetCollisionRec(), _player.GetCollisionRec()))
+        {
+            _player.TakeDamage(laser.GetDamage(), laser.GetWorldPos());
+            laser.Destroy();
+
+            // Cyclops laser already has a strong visual read from the charge
+            // glow and beam draw, so keep the hit shake lighter than melee and
+            // explosive ability impacts to avoid overdriving the camera.
+            TriggerScreenShake(2.5f, 0.07f);
+        }
+    }
+
+    _cyclopsLasers.erase(
+        std::remove_if(_cyclopsLasers.begin(), _cyclopsLasers.end(),
+            [](const CyclopsLaserProjectile& l) { return !l.IsActive(); }),
+        _cyclopsLasers.end());
+}
+
+void Engine::UpdateLavaBallProjectiles(float dt)
+{
+    const float mapW = _map.width * _mapScale;
+    const float mapH = _map.height * _mapScale;
+    const float marginLeft = 76.f;
+    const float marginRight = 96.f;
+    const float marginTop = 42.f;
+    const float marginBottom = 320.f;
+
+    for (auto& projectile : _lavaBalls)
+    {
+        if (!projectile.IsActive())
+            continue;
+
+        projectile.Update(dt);
+        if (!projectile.IsActive())
+            continue;
+
+        Rectangle collisionRec = projectile.GetCollisionRec();
+
+        // Arena wall and prop checks only matter while the ball is travelling.
+        if (projectile.IsFlying())
+        {
+            bool hitArenaWall =
+                collisionRec.x < marginLeft ||
+                collisionRec.x + collisionRec.width > mapW - marginRight ||
+                collisionRec.y < marginTop ||
+                collisionRec.y + collisionRec.height > mapH - marginBottom;
+
+            if (hitArenaWall)
+            {
+                projectile.BeginHit();
+                StopSound(_lavaBallImpactSound);
+                PlaySound(_lavaBallImpactSound);
+                continue;
+            }
+
+            bool hitProp = false;
+            for (const auto& prop : _props)
+            {
+                if (CheckCollisionRecs(collisionRec, prop.GetCollisionRec()))
+                {
+                    hitProp = true;
+                    break;
+                }
+            }
+            if (hitProp)
+            {
+                projectile.BeginHit();
+                StopSound(_lavaBallImpactSound);
+                PlaySound(_lavaBallImpactSound);
+                continue;
+            }
+        }
+
+        // Player collision is active during both flying and the explosion so
+        // a direct hit always registers. HasHitPlayer guards against applying
+        // the burn twice from the same projectile.
+        if (_player.IsAlive() &&
+            !projectile.HasHitPlayer() &&
+            CheckCollisionRecs(collisionRec, _player.GetCollisionRec()))
+        {
+            _player.ApplyBurnTicks(1.0f, 2, 0.2f, projectile.GetWorldPos());
+            projectile.OnPlayerHit();
+            if (projectile.IsFlying())
+            {
+                projectile.BeginHit();
+                StopSound(_lavaBallImpactSound);
+                PlaySound(_lavaBallImpactSound);
+            }
+        }
+    }
+
+    _lavaBalls.erase(
+        std::remove_if(_lavaBalls.begin(), _lavaBalls.end(),
+            [](const LavaBallProjectile& projectile) { return !projectile.IsActive(); }),
+        _lavaBalls.end());
 }
 

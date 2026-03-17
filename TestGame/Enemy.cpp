@@ -1,6 +1,8 @@
 #include "Enemy.h"
+#include "AssetPaths.h"
 
 #include "raymath.h"
+#include <cmath>
 
 Texture2D Enemy::_sharedIdleAnim{};
 Texture2D Enemy::_sharedWalkAnim{};
@@ -70,6 +72,12 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _stuckTimer    = 0.f;
     _stuckCheckPos = _worldPos;
+
+    // Each enemy gets its own flank slot so nearby enemies naturally choose
+    // slightly different approach lanes around the player instead of piling
+    // into one exact point.
+    _flankSide = (GetRandomValue(0, 1) == 0) ? -1.f : 1.f;
+    _flankDistance = (float)GetRandomValue((int)_minFlankDistance, (int)_maxFlankDistance);
 }
 
 void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
@@ -87,6 +95,7 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateBurns(dt);
+    UpdateLaunchVisual(dt);
 
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
@@ -111,7 +120,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     if (_target == nullptr || _dying)
         return;
 
-    Vector2 targetPos = hasNavigationTarget ? navigationTarget : _target->GetWorldPos();
+    Vector2 targetPos = hasNavigationTarget ? navigationTarget : _target->GetFeetWorldPos();
     Vector2 toPlayer = Vector2Subtract(targetPos, _worldPos);
 
     Vector2 moveDir = Vector2Zero();
@@ -119,7 +128,32 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     if (Vector2Length(toPlayer) > 0.01f)
         moveDir = Vector2Normalize(toPlayer);
 
+    // Once a regular enemy gets into the player's local space, it blends part
+    // of its movement into a personal side lane. That creates a loose flanking
+    // ring and reduces the "everyone crowds one pixel" behavior.
+    if (!hasNavigationTarget)
+    {
+        float directDistance = Vector2Length(toPlayer);
+        if (directDistance < _flankStartDistance && directDistance > _attackRange * 0.85f)
+        {
+            Vector2 forward = Vector2Normalize(toPlayer);
+            Vector2 lateral = { -forward.y * _flankSide, forward.x * _flankSide };
+            Vector2 flankTarget = Vector2Add(targetPos, Vector2Scale(lateral, _flankDistance));
+            Vector2 flankDir = Vector2Subtract(flankTarget, _worldPos);
+
+            if (Vector2Length(flankDir) > 0.01f)
+            {
+                flankDir = Vector2Normalize(flankDir);
+
+                float closeBlend = 1.f - (directDistance / _flankStartDistance);
+                float blend = closeBlend * _flankBlendStrength;
+                moveDir = Vector2Add(Vector2Scale(moveDir, 1.f - blend), Vector2Scale(flankDir, blend));
+            }
+        }
+    }
+
     Vector2 separation = Vector2Zero();
+    Vector2 propSlide = Vector2Zero();
 
     for (const auto& enemy : enemies)
     {
@@ -151,14 +185,27 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
             Vector2 away = Vector2Subtract(_worldPos, propCenter);
             if (Vector2Length(away) > 0.01f)
             {
+                away = Vector2Normalize(away);
                 float strength = (110.f - dist) / 110.f;
-                separation = Vector2Add(separation, Vector2Scale(Vector2Normalize(away), strength * 1.8f));
+                separation = Vector2Add(separation, Vector2Scale(away, strength * 1.8f));
+
+                // Add a small tangential slide along the pillar so enemies keep
+                // flowing around props instead of just pushing directly away
+                // and bunching up at the same corner.
+                Vector2 tangentA = { -away.y, away.x };
+                Vector2 tangentB = { away.y, -away.x };
+                float dotA = Vector2DotProduct(tangentA, moveDir);
+                float dotB = Vector2DotProduct(tangentB, moveDir);
+                Vector2 bestTangent = (dotA >= dotB) ? tangentA : tangentB;
+                propSlide = Vector2Add(propSlide, Vector2Scale(bestTangent, strength));
             }
         }
     }
 
     separation = Vector2Scale(separation, 0.6f);
+    propSlide = Vector2Scale(propSlide, _propSlideStrength);
     moveDir = Vector2Add(moveDir, separation);
+    moveDir = Vector2Add(moveDir, propSlide);
 
     if (Vector2Length(moveDir) > 0.01f)
         moveDir = Vector2Normalize(moveDir);
@@ -221,7 +268,7 @@ void Enemy::HandleAttack()
     if (_dying || _target == nullptr || IsFrozen())
         return;
 
-    Vector2 toTarget = Vector2Subtract(_target->GetWorldPos(), _worldPos);
+    Vector2 toTarget = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
     float distance = Vector2Length(toTarget);
 
     Vector2 toTargetDir{ 0.f, 0.f };
@@ -284,9 +331,20 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     float w = _width * _scale;
     float h = _height * _scale;
 
+    // External launch effects briefly make enemies read as if they were thrown
+    // upward by the ogre charge. The sprite grows slightly and lifts off the
+    // ground, then settles back to normal as the timer expires.
+    float launchRatio = (_launchVisualDuration > 0.f)
+        ? (_launchVisualTimer / _launchVisualDuration)
+        : 0.f;
+    float launchScale = 1.f + _launchVisualScaleBoost * launchRatio;
+    float launchLift = _launchVisualLift * launchRatio;
+    w *= launchScale;
+    h *= launchScale;
+
     Vector2 screenPos = Vector2Subtract(_worldPos, heroWorldPos);
     screenPos.x += GetScreenWidth() / 2.f;
-    screenPos.y += GetScreenHeight() / 2.f;
+    screenPos.y += GetScreenHeight() / 2.f - launchLift;
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - w / 2.f, screenPos.y - h / 2.f, w, h };
@@ -317,6 +375,12 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
 
 void Enemy::HandleAnimation(float dt)
 {
+    // Ogre launch reactions intentionally hold enemies on the second hurt
+    // frame so the shove reads as a sustained airborne hit, not a normal
+    // walk/idle transition.
+    if (_launchHoldingHurtPose)
+        return;
+
     _runningTime += dt;
 
     if (_runningTime >= _updateTime)
@@ -382,8 +446,55 @@ void Enemy::ApplyFreeze(float duration)
         _freezeTimer = duration;
 }
 
+void Enemy::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
+{
+    // This helper lets special enemies, like the ogre, throw other enemies
+    // around without needing to know their internal animation state. It also
+    // starts a short launch visual so the shove reads as a heavy upward fling.
+    _velocity = Vector2Add(_velocity, impulse);
+    _launchVisualTimer = _launchVisualDuration;
+    _launchHoldingHurtPose = true;
+    _takingDamage = true;
+    _texture = _takeDamageAnim;
+    _frame = 1;
+    _runningTime = 0.f;
+    _updateTime = 1.f / 12.f;
+    _maxFrames = _texture.width / _width;
+
+    if (cancelLockedAnimation)
+    {
+        _attacking = false;
+    }
+}
+
+void Enemy::UpdateLaunchVisual(float dt)
+{
+    if (_launchVisualTimer <= 0.f)
+        return;
+
+    _launchVisualTimer -= dt;
+    if (_launchVisualTimer < 0.f)
+        _launchVisualTimer = 0.f;
+
+    if (_launchVisualTimer == 0.f && _launchHoldingHurtPose)
+    {
+        _launchHoldingHurtPose = false;
+        _takingDamage = false;
+        _texture = _idleAnim;
+        _frame = 0;
+        _runningTime = 0.f;
+        _updateTime = 1.f / 10.f;
+        _maxFrames = _texture.width / _width;
+    }
+}
+
 void Enemy::SetWaveScale(int wave)
 {
+    // Baseline enemies should scale in durability more smoothly than bosses or
+    // special archetypes. The goal is to increase pressure through count and
+    // composition without turning the basic melee enemy into a sponge.
+    _expValue = 1;
+
     if (wave <= 3)
     {
         _health    = 3.f;
@@ -393,25 +504,49 @@ void Enemy::SetWaveScale(int wave)
     }
     else if (wave <= 5)
     {
-        _health    = 6.f;
-        _maxHealth = 6.f;
+        _health    = 5.f;
+        _maxHealth = 5.f;
         _attackPower = 1.f;
         _speed     = 230.f;
     }
     else if (wave <= 7)
     {
-        _health    = 10.f;
-        _maxHealth = 10.f;
+        _health    = 8.f;
+        _maxHealth = 8.f;
         _attackPower = 2.f;
         _speed     = 260.f;
     }
     else
     {
-        _health    = 16.f;
-        _maxHealth = 16.f;
+        _health    = 12.f;
+        _maxHealth = 12.f;
         _attackPower = 3.f;
         _speed     = 290.f;
     }
+}
+
+void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
+{
+    // Enemy power level is the long-run progression layer that advances every
+    // five waves. It is intentionally much softer than the per-wave archetype
+    // bands so later difficulty comes from sustained pressure, not giant stat
+    // jumps on every boss interval.
+    if (enemyPowerLevel <= 1)
+        return;
+
+    const int bonusTiers = enemyPowerLevel - 1;
+    const float healthMultiplier = 1.f + 0.08f * (float)bonusTiers;
+    const float damageMultiplier = 1.f + 0.04f * (float)bonusTiers;
+    const float speedMultiplier = 1.f + 0.02f * (float)bonusTiers;
+
+    _maxHealth = std::ceil(_maxHealth * healthMultiplier);
+    _health = _maxHealth;
+    _attackPower *= damageMultiplier;
+    _speed *= speedMultiplier;
+
+    // EXP uses a small flat bonus per enemy power tier so rewards rise with
+    // wave progression without compounding aggressively across pooled respawns.
+    _expValue += bonusTiers;
 }
 
 void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)
@@ -465,6 +600,7 @@ void Enemy::PlayHurtSound()
     float pitch = GetRandomValue(140, 180) / 100.f;
     SetSoundPitch(_hurtSound, pitch);
     SetSoundVolume(_hurtSound, 0.5f);
+    StopSound(_hurtSound);
     PlaySound(_hurtSound);
 }
 
@@ -473,14 +609,14 @@ void Enemy::EnsureSharedResourcesLoaded()
     if (_sharedResourcesLoaded)
         return;
 
-    _sharedIdleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyIdle.png");
-    _sharedWalkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyWalk.png");
-    _sharedAttackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyAttack.png");
-    _sharedTakeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDamage.png");
-    _sharedDeathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Enemy\\EnemyDeath.png");
-    _sharedAttackSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SwordSwipe2.wav");
-    _sharedHurtSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SmallMonsterDamage.wav");
-    _sharedDeathSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerDeath.wav");
+    _sharedIdleAnim = LoadTexture(AssetPath("Enemy/EnemyIdle.png").c_str());
+    _sharedWalkAnim = LoadTexture(AssetPath("Enemy/EnemyWalk.png").c_str());
+    _sharedAttackAnim = LoadTexture(AssetPath("Enemy/EnemyAttack.png").c_str());
+    _sharedTakeDamageAnim = LoadTexture(AssetPath("Enemy/EnemyDamage.png").c_str());
+    _sharedDeathAnim = LoadTexture(AssetPath("Enemy/EnemyDeath.png").c_str());
+    _sharedAttackSound = LoadSound(AssetPath("Sounds/SwordSwipe2.wav").c_str());
+    _sharedHurtSound = LoadSound(AssetPath("Sounds/SmallMonsterDamage.wav").c_str());
+    _sharedDeathSound = LoadSound(AssetPath("Sounds/PlayerDeath.wav").c_str());
     _sharedResourcesLoaded = true;
 }
 

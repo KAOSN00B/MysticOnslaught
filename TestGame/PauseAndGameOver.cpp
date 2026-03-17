@@ -1,6 +1,5 @@
 #include "PauseAndGameOver.h"
-
-static const char* UI_BASE = "C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\UI\\";
+#include "AssetPaths.h"
 
 // ── Shared helper: draw a textured button, return true if clicked ─────────────
 static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color tint)
@@ -39,11 +38,11 @@ PauseAndGameOver::~PauseAndGameOver()
 void PauseAndGameOver::Init()
 {
     if (_borderTex.id == 0)
-        _borderTex  = LoadTexture(TextFormat("%sPauseBoarder.png",     UI_BASE));
+        _borderTex  = LoadTexture(AssetPath("UI/PauseBoarder.png").c_str());
     if (_btnTex.id == 0)
-        _btnTex     = LoadTexture(TextFormat("%sPlayButton.png",       UI_BASE));
+        _btnTex     = LoadTexture(AssetPath("UI/PlayButton.png").c_str());
     if (_htpBtnTex.id == 0)
-        _htpBtnTex  = LoadTexture(TextFormat("%sHowToPlayButton.png",  UI_BASE));
+        _htpBtnTex  = LoadTexture(AssetPath("UI/HowToPlayButton.png").c_str());
 }
 
 void PauseAndGameOver::Unload()

@@ -1,4 +1,5 @@
 #include "FireballProjectile.h"
+#include "AssetPaths.h"
 
 #include "AnimationUtils.h"
 #include "raymath.h"
@@ -106,6 +107,6 @@ void FireballProjectile::EnsureTextureLoaded()
     if (_textureLoaded)
         return;
 
-    _sharedTexture = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\PowerUps\\Fireball.png");
+    _sharedTexture = LoadTexture(AssetPath("PowerUps/Fireball.png").c_str());
     _textureLoaded = true;
 }

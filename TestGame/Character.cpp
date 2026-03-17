@@ -1,6 +1,9 @@
 #include "Character.h"
+#include "AssetPaths.h"
 
 #include "raymath.h"
+
+#include <cmath>
 
 Character::Character()
 {
@@ -22,6 +25,10 @@ Character::Character()
     _swordBeamAmmo = 0;
     _freezeAmmo    = 0;
     _pendingHealEffects = 0;
+    _forcedPushActive = false;
+    _forcedPushDirection = Vector2Zero();
+    _forcedPushSpeed = 0.f;
+    _forcedPushStunTimer = 0.f;
 
     _invincibleTimer = 0.f;
     _dashTimer = 0.f;
@@ -62,18 +69,18 @@ void Character::Init()
     if (_hurtSound.frameCount != 0) UnloadSound(_hurtSound);
     if (_deathSound.frameCount != 0) UnloadSound(_deathSound);
 
-    _idleAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Idle.png");
-    _walkAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Walk.png");
-    _attackAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Slash.png");
-    _staffAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Staff.png");
-    _dashAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Dash.png");
-    _deathAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_Death.png");
-    _takeDamageAnim = LoadTexture("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Hero\\Hero_TakeDamage.png");
+    _idleAnim = LoadTexture(AssetPath("Hero/Hero_Idle.png").c_str());
+    _walkAnim = LoadTexture(AssetPath("Hero/Hero_Walk.png").c_str());
+    _attackAnim = LoadTexture(AssetPath("Hero/Hero_Slash.png").c_str());
+    _staffAnim = LoadTexture(AssetPath("Hero/Hero_Staff.png").c_str());
+    _dashAnim = LoadTexture(AssetPath("Hero/Hero_Dash.png").c_str());
+    _deathAnim = LoadTexture(AssetPath("Hero/Hero_Death.png").c_str());
+    _takeDamageAnim = LoadTexture(AssetPath("Hero/Hero_TakeDamage.png").c_str());
 
-    _footStepSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\FootSteps.wav");
-    _attackSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\SwordSwipe.wav");
-    _hurtSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerHurt.wav");
-    _deathSound = LoadSound("C:\\Users\\rober\\Desktop\\Lasalle\\Semester 4\\2DGamesProgramming\\ClassNotes\\TestGame\\Sounds\\PlayerDeath.wav");
+    _footStepSound = LoadSound(AssetPath("Sounds/FootSteps.wav").c_str());
+    _attackSound = LoadSound(AssetPath("Sounds/SwordSwipe.wav").c_str());
+    _hurtSound = LoadSound(AssetPath("Sounds/PlayerHurt.wav").c_str());
+    _deathSound = LoadSound(AssetPath("Sounds/PlayerDeath.wav").c_str());
 
     _texture = _idleAnim;
 
@@ -104,10 +111,15 @@ void Character::Init()
     _freezeAmmo      = 0;
     _selectedAbility = 0;
     _pendingHealEffects = 0;
+    _forcedPushActive = false;
+    _forcedPushDirection = Vector2Zero();
+    _forcedPushSpeed = 0.f;
+    _forcedPushStunTimer = 0.f;
 
     _exp            = 0;
     _level          = 0;
     _expToNextLevel = 10;
+    _pendingBurnTicks.clear();
 
     _invincibleTimer = 0.f;
     _dashTimer = 0.f;
@@ -125,15 +137,28 @@ void Character::Update(float dt)
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateDeath(dt);
+    UpdatePendingBurns(dt);
 
     if (!_dying && !_takingDamage)
     {
-        HandleInput();
+        if (!HandleForcedPush(dt))
+        {
+            if (_forcedPushStunTimer > 0.f)
+                _forcedPushStunTimer -= dt;
 
-        if (!Dashing(dt))
-            HandleMovement(dt);
+            if (_forcedPushStunTimer < 0.f)
+                _forcedPushStunTimer = 0.f;
 
-        HandleAttackInput();
+            if (!IsForceLocked())
+            {
+                HandleInput();
+
+                if (!Dashing(dt))
+                    HandleMovement(dt);
+
+                HandleAttackInput();
+            }
+        }
     }
 
     if (_hasIFrames)
@@ -152,6 +177,9 @@ void Character::Update(float dt)
 
 void Character::HandleInput()
 {
+    if (IsForceLocked())
+        return;
+
     _direction = Vector2Zero();
 
     if (IsKeyDown(KEY_A)) _direction.x -= 1;
@@ -199,7 +227,7 @@ void Character::HandleInput()
 
 void Character::HandleMovement(float dt)
 {
-    if (_attacking || _castingAbility || _takingDamage || _dying)
+    if (_attacking || _castingAbility || _takingDamage || _dying || IsForceLocked())
         return;
 
     if (Vector2Length(_direction) > 0.f)
@@ -228,7 +256,7 @@ void Character::HandleMovement(float dt)
 
 void Character::HandleAttackInput()
 {
-    if (_takingDamage || _dying || _isDashing)
+    if (_takingDamage || _dying || _isDashing || IsForceLocked())
         return;
 
     if (!_attacking && !_castingAbility && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -343,6 +371,11 @@ void Character::DashParticles(float h, Vector2 playerScreenCenter)
 
 void Character::HandleAnimation(float dt)
 {
+    // Ogre shove locks the player into the hit pose until the forced movement
+    // ends on a wall or prop, which makes the impact read more clearly.
+    if (_forcedPushActive)
+        return;
+
     _runningTime += dt;
 
     if (_runningTime >= _updateTime)
@@ -391,6 +424,14 @@ void Character::HandleAnimation(float dt)
 
 bool Character::Dashing(float dt)
 {
+    if (IsForceLocked())
+    {
+        _isDashing = false;
+        _dashInvincible = false;
+        _playDashParticles = false;
+        return false;
+    }
+
     if (_dashCooldown > 0.f)
         _dashCooldown -= dt;
 
@@ -429,7 +470,7 @@ void Character::Death()
 
 void Character::TakeDamage(int damage, Vector2 attackerPos)
 {
-    if (_hasIFrames || _dashInvincible)
+    if (_hasIFrames || _dashInvincible || _forcedPushActive)
         return;
 
     _hasIFrames = true;
@@ -438,9 +479,190 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
 
+void Character::TakeFractionalDamage(float damage, Vector2 attackerPos)
+{
+    if (_hasIFrames || _dashInvincible || _forcedPushActive)
+        return;
+    if (_dying || damage <= 0.f)
+        return;
+
+    // Boss contact and heavy special pressure use fractional damage so the
+    // fight can stay aggressive without deleting the player in a few touches.
+    // This mirrors the normal player hit gate: one resolved hit grants a brief
+    // invulnerability window before the next direct boss hit can land.
+    _hasIFrames = true;
+    _invincibleTimer = 0.4f;
+
+    _health -= damage;
+
+    if (_health > 0.f)
+    {
+        PlayHurtSound();
+        return;
+    }
+
+    _health = 0.f;
+    _dying = true;
+    _attacking = false;
+    _castingAbility = false;
+    _takingDamage = false;
+    _forcedPushActive = false;
+    _forcedPushSpeed = 0.f;
+    _forcedPushDirection = Vector2Zero();
+    _velocity = Vector2Zero();
+
+    _deathTimer = 0.4f;
+    _texture = _deathAnim;
+    _frame = 0;
+    _runningTime = 0.f;
+    _maxFrames = _texture.width / _width;
+    _updateTime = 1.f / 4.f;
+    (void)attackerPos;
+    PlayDeathSound();
+}
+
 void Character::SetWorldPos(Vector2 pos)
 {
     _worldPos = pos;
+}
+
+void Character::StartForcedPush(Vector2 direction, float speed)
+{
+    // Ogre charge pushes the player in a fixed direction until a wall or prop
+    // stops the movement. During this forced movement the player cannot act
+    // and ignores incoming damage for fairness.
+    _forcedPushDirection = (Vector2Length(direction) > 0.01f)
+        ? Vector2Normalize(direction)
+        : Vector2{ (float)_rightLeft, 0.f };
+    _forcedPushSpeed = speed;
+    _forcedPushActive = true;
+    _forcedPushStunTimer = 0.f;
+
+    _attacking = false;
+    _castingAbility = false;
+    _isDashing = false;
+    _dashInvincible = false;
+    _playDashParticles = false;
+    _velocity = Vector2Zero();
+    _texture = _takeDamageAnim;
+    // Start on the second hurt frame so the shove reads as a held impact pose
+    // instead of replaying the bright white flash frame while sliding.
+    _frame = 1;
+    _runningTime = 0.f;
+    _maxFrames = _texture.width / _width;
+    _updateTime = 1.f / 12.f;
+}
+
+bool Character::HandleForcedPush(float dt)
+{
+    if (!_forcedPushActive)
+        return false;
+
+    _worldPos = Vector2Add(_worldPos, Vector2Scale(_forcedPushDirection, _forcedPushSpeed * dt));
+    return true;
+}
+
+void Character::OnForcedPushCollision()
+{
+    if (!_forcedPushActive)
+        return;
+
+    // Revert to the last safe position and apply a short landing stun so the
+    // player cannot instantly cancel the ogre impact by buffering an action.
+    UndoMovement();
+    _forcedPushActive = false;
+    _forcedPushSpeed = 0.f;
+    _forcedPushDirection = Vector2Zero();
+    _forcedPushStunTimer = _forcedPushImpactStunDuration;
+    _velocity = Vector2Zero();
+}
+
+void Character::ApplyBurnTicks(float tickDelay, int tickCount, float damagePerTick, Vector2 sourcePos)
+{
+    // Lavaball burn is intentionally applied as delayed fractional damage so
+    // the boss pressures the player over time instead of front-loading all of
+    // its damage into the projectile collision itself.
+    for (int tickIndex = 0; tickIndex < tickCount; ++tickIndex)
+    {
+        PendingBurnTick tick;
+        tick.timer = tickDelay * (float)(tickIndex + 1);
+        tick.damage = damagePerTick;
+        tick.sourcePos = sourcePos;
+        _pendingBurnTicks.push_back(tick);
+    }
+}
+
+void Character::GrantInvulnerability(float duration)
+{
+    // Reuse the player's normal i-frame system for wave-spawn protection so
+    // all incoming damage checks continue to flow through the same gate.
+    // This keeps spawn safety simple: the engine grants a fixed duration right
+    // after enemies appear, and Character::TakeDamage / TakeFractionalDamage
+    // automatically respect it.
+    if (duration <= 0.f)
+        return;
+
+    _hasIFrames = true;
+    _invincibleTimer = std::max(_invincibleTimer, duration);
+}
+
+void Character::UpdatePendingBurns(float dt)
+{
+    if (_pendingBurnTicks.empty() || _dying)
+        return;
+
+    int writeIndex = 0;
+    for (int index = 0; index < (int)_pendingBurnTicks.size(); ++index)
+    {
+        PendingBurnTick tick = _pendingBurnTicks[index];
+        tick.timer -= dt;
+
+        if (tick.timer <= 0.f)
+        {
+            ApplyBurnTickDamage(tick.damage, tick.sourcePos);
+            continue;
+        }
+
+        _pendingBurnTicks[writeIndex++] = tick;
+    }
+
+    _pendingBurnTicks.resize(writeIndex);
+}
+
+void Character::ApplyBurnTickDamage(float damage, Vector2 sourcePos)
+{
+    // Burn ticks bypass the direct-hit invulnerability gate because they are a
+    // follow-up effect from an already-resolved projectile hit. They still use
+    // the normal hurt/death feedback so the player can read the extra damage.
+    (void)sourcePos;
+    if (_dying || damage <= 0.f)
+        return;
+
+    _health -= damage;
+
+    if (_health > 0.f)
+    {
+        PlayHurtSound();
+        return;
+    }
+
+    _health = 0.f;
+    _dying = true;
+    _attacking = false;
+    _castingAbility = false;
+    _takingDamage = false;
+    _forcedPushActive = false;
+    _forcedPushSpeed = 0.f;
+    _forcedPushDirection = Vector2Zero();
+    _velocity = Vector2Zero();
+
+    _deathTimer = 0.4f;
+    _texture = _deathAnim;
+    _frame = 0;
+    _runningTime = 0.f;
+    _maxFrames = _texture.width / _width;
+    _updateTime = 1.f / 4.f;
+    PlayDeathSound();
 }
 
 void Character::PlayHurtSound()
@@ -494,6 +716,17 @@ Vector2 Character::GetFacingDirection() const
     return Vector2{ (float)_rightLeft, 0.f };
 }
 
+Vector2 Character::GetFeetWorldPos() const
+{
+    // Enemies should steer toward the player's grounded position instead of the
+    // sprite centre. Using the feet point keeps melee enemies from hovering
+    // above the hero and makes their approach line up with the visible floor.
+    return Vector2{
+        _worldPos.x,
+        _worldPos.y + (_height * _scale * 0.30f)
+    };
+}
+
 int Character::ConsumeHealEffectRequests()
 {
     int pending = _pendingHealEffects;
@@ -503,6 +736,52 @@ int Character::ConsumeHealEffectRequests()
 
 void Character::AddFreezeAmmo(int amount)    { _freezeAmmo    += amount; }
 int  Character::GetFreezeAmmo()    const      { return _freezeAmmo; }
+
+int Character::GetSpecialDamageBonus() const
+{
+    // Specials now use flat damage bonuses instead of percentages so the
+    // player's growth stays easy to read. The bonus still ramps by level band
+    // rather than every single level to keep pickup abilities powerful without
+    // letting them completely replace melee.
+    if (_level <= 2)
+        return 0;
+
+    if (_level <= 5)
+        return 1;
+
+    if (_level <= 8)
+        return 2;
+
+    return 3;
+}
+
+int Character::GetFireballHitDamage() const
+{
+    // Fireball is an eight-direction burst. Each projectile stays light on
+    // direct damage because the total ability power comes from coverage.
+    return (int)_fireballBaseDamage + GetSpecialDamageBonus();
+}
+
+int Character::GetFireballBurnDamage() const
+{
+    // Burn shares the same flat bonus so all fireball damage scales together.
+    // Keeping this low prevents excessive burst when many projectiles land.
+    return (int)_fireballBurnBaseDamage + GetSpecialDamageBonus();
+}
+
+int Character::GetSwordBeamDamage() const
+{
+    // Sword beam starts from a higher base because it is a rarer, directional
+    // piercing ability. It still uses the same conservative flat bonus.
+    return (int)_swordBeamBaseDamage + GetSpecialDamageBonus();
+}
+
+int Character::GetFreezeDamage() const
+{
+    // Freeze keeps its main identity as crowd control, so it uses the same
+    // slow flat bonus but starts from a light 1-damage base.
+    return (int)_freezeBaseDamage + GetSpecialDamageBonus();
+}
 
 void Character::AddExp(int amount)
 {
@@ -517,9 +796,12 @@ void Character::AddExp(int amount)
         _level++;
         _expToNextLevel *= 2;  // 10 → 20 → 40 → 80 ...
 
-        // Level-up bonuses: +1 max HP, heal 1, +1 attack power
+        // Level-ups now use simple +1 stat gains so the player's progression is
+        // easy to read and tune. Health, damage, and move speed each improve by
+        // one point, and the player heals one point immediately.
         _maxHealth += 1;
         _attackPower += 1.f;
+        _speed += 1.f;
         Heal(1);
     }
 

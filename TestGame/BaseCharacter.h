@@ -7,12 +7,13 @@ public:
     BaseCharacter();
     virtual ~BaseCharacter() = default;
 
-    Rectangle GetCollisionRec() const;
+    virtual Rectangle GetCollisionRec() const;
 
     virtual void TakeDamage(int damage, Vector2 attackerPos);
     virtual void Death();
 
     int GetHealth() const;
+    float GetHealthValue() const { return _health; }
 
 
     void ApplyVelocity(float dt);
