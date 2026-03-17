@@ -803,7 +803,7 @@ void Engine::HandleCollisions()
                 continue;
             if (enemy->IgnoresPropCollisions())
                 continue;
-            if (CheckCollisionRecs(prop.GetCollisionRec(), enemy->GetCollisionRec()))
+            if (CheckCollisionCircleRec(prop.GetEnemyCollisionCenter(), prop.GetEnemyCollisionRadius(), enemy->GetCollisionRec()))
             {
                 if (Ogre* ogre = enemy->AsOgre())
                 {
