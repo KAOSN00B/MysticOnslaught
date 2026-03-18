@@ -78,6 +78,15 @@
     <ClCompile Include="FreezeProjectile.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Cyclops.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="CyclopsLaserProjectile.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Leaderboard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Character.h">
@@ -141,6 +150,21 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AnimationUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Cyclops.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CyclopsLaserProjectile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CyclopsProjectile.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="AssetPaths.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Leaderboard.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

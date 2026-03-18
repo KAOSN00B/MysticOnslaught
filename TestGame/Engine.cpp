@@ -210,9 +210,11 @@ Engine::~Engine()
 
 void Engine::Init()
 {
-    InitWindow(_windowWidth, _windowHeight, "Top Down Game");
+    InitWindow(_windowWidth, _windowHeight, "Mystic Onslaught");
     SetTargetFPS(60);
     InitAudioDevice();
+
+    _leaderboard.Load("leaderboard.txt");
 
     SetExitKey(KEY_NULL);
 
@@ -398,6 +400,8 @@ void Engine::Update(float dt)
             _howToPlayFrom = GameState::Menu;
             _gameState = GameState::HowToPlay;
         }
+        if (_menu.LeaderboardPressed())
+            _gameState = GameState::Leaderboard;
 
         break;
     }
@@ -480,10 +484,17 @@ void Engine::UpdateGamePlay(float dt)
         _gameOverTimer -= dt;
 
         if (_gameOverTimer <= 0.f)
+        {
+            _awaitingNameEntry = true;
+            _pauseUI.ResetNameEntry();
             _gameState = GameState::GameOver;
+        }
 
         return;
     }
+
+    if (_levelUpTimer > 0.f)
+        _levelUpTimer -= dt;
 
     if (_waveStarting)
     {
@@ -683,6 +694,7 @@ void Engine::Draw()
         DrawWorld();
         DrawHUD();
         DrawWaveIntro();
+        DrawLevelUpMessage();
 
         if (_fadeInTimer > 0.f)
         {
@@ -749,17 +761,40 @@ void Engine::Draw()
 
     case GameState::GameOver:
     {
-        int goResult = _pauseUI.DrawGameOver(_wave, _gameTimer);
-        if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-        if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _gameState = GameState::Play; }
-        else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
-        else if (goResult == 3) _shouldClose = true;
+        if (_awaitingNameEntry)
+        {
+            std::string confirmed = _pauseUI.DrawNameEntry(_wave, _gameTimer, _enemiesKilled);
+            if (!confirmed.empty())
+            {
+                _leaderboard.AddEntry(_wave, _gameTimer, _enemiesKilled, confirmed);
+                _leaderboard.Save("leaderboard.txt");
+                _awaitingNameEntry = false;
+            }
+        }
+        else
+        {
+            int goResult = _pauseUI.DrawGameOver(_wave, _gameTimer, _enemiesKilled, _leaderboard.GetEntries());
+            if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
+            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _gameState = GameState::Play; }
+            else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
+            else if (goResult == 3) _shouldClose = true;
+        }
         break;
     }
 
     case GameState::HowToPlay:
     {
         DrawHowToPlay();
+        break;
+    }
+
+    case GameState::Leaderboard:
+    {
+        if (_pauseUI.DrawLeaderboardScreen(_leaderboard.GetEntries()))
+        {
+            _menu.Init();
+            _gameState = GameState::Menu;
+        }
         break;
     }
 
@@ -881,7 +916,14 @@ void Engine::UpdateEnemyCount(float dt)
             if (enemy.get() == _bossOgreSupport.enemy && IsBossFightActive())
                 _bossOgreSupport.respawnTimer = kBossSupportRespawnDelay;
 
+            int prevLevel = _player.GetLevel();
             _player.AddExp(enemy->GetExpValue());
+            if (_player.GetLevel() > prevLevel)
+            {
+                _levelUpLevel = _player.GetLevel();
+                _levelUpTimer = 2.f;
+            }
+            _enemiesKilled++;
             SpawnEnemyDrop(dropPos);
             enemy->SetActive(false);
             enemy->Teleport(Vector2{ -5000.f, -5000.f });
@@ -948,9 +990,30 @@ void Engine::DrawHUD()
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight() / 8, Fade(BLACK, 0.6f));
 
     DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + GetScreenWidth() / 2 - 150, 60, fontSize, RAYWHITE);
-    DrawText(("Wave: " + std::to_string(_wave)).c_str(), 20, 10, 30, RAYWHITE);
+    DrawText(("Enemies Defeated: " + std::to_string(_enemiesKilled)).c_str(), 20, 10, 30, RAYWHITE);
     DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
-    DrawText(TextFormat("Health: %.1f", _player.GetHealthValue()), GetScreenWidth() - 200, 20, 30, RAYWHITE);
+    // Player health bar — top right
+    {
+        float maxHp  = _player.GetMaxHealthValue();
+        float curHp  = _player.GetHealthValue();
+        float hpPct  = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
+
+        const float barW = 220.f;
+        const float barH = 22.f;
+        const float barX = (float)GetScreenWidth() - barW - 20.f;
+        const float barY = 20.f;
+
+        Color fillColor = (hpPct > 0.5f) ? GREEN :
+                          (hpPct > 0.25f) ? YELLOW : RED;
+
+        DrawRectangleRounded({ barX - 2.f, barY - 2.f, barW + 4.f, barH + 4.f }, 0.3f, 4, Fade(BLACK, 0.8f));
+        DrawRectangleRounded({ barX, barY, barW, barH },              0.3f, 4, Fade(DARKGRAY, 0.9f));
+        DrawRectangleRounded({ barX, barY, barW * hpPct, barH },      0.3f, 4, fillColor);
+
+        const char* hpLabel = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
+        int labelW = MeasureText(hpLabel, 18);
+        DrawText(hpLabel, (int)(barX + barW / 2.f - labelW / 2.f), (int)(barY + barH + 4.f), 18, RAYWHITE);
+    }
 
     // EXP bar and level display
     int level = _player.GetLevel();
@@ -1094,11 +1157,60 @@ void Engine::DrawWaveIntro()
     }
     else
     {
+        bool isBossWave = (_wave % 5 == 0);
+
         std::string waveText = "Wave " + std::to_string(_wave);
         int textWidth = MeasureText(waveText.c_str(), fontSize);
 
-        DrawText(waveText.c_str(), GetScreenWidth() / 2 - textWidth / 2, GetScreenHeight() / 2 - 30, fontSize, YELLOW);
+        int waveY = isBossWave ? GetScreenHeight() / 2 - 55 : GetScreenHeight() / 2 - 30;
+        DrawText(waveText.c_str(), GetScreenWidth() / 2 - textWidth / 2, waveY, fontSize, YELLOW);
+
+        if (isBossWave)
+        {
+            const char* bossLine = "- Boss Incoming -";
+            int bossLineW = MeasureText(bossLine, fontSize);
+            DrawText(bossLine, GetScreenWidth() / 2 - bossLineW / 2, waveY + fontSize + 10, fontSize, RED);
+        }
     }
+}
+
+void Engine::DrawLevelUpMessage()
+{
+    if (_levelUpTimer <= 0.f)
+        return;
+
+    Vector2 playerScreen = { GetScreenWidth() / 2.f, GetScreenHeight() / 2.f };
+
+    // Glow rings around player — only during the first second (timer 2.0 → 1.0)
+    if (_levelUpTimer > 1.f)
+    {
+        float glowPhase = 1.f - (_levelUpTimer - 1.f);  // 0 → 1 over the first second
+
+        // Soft inner glow
+        float innerRadius = 40.f + glowPhase * 60.f;
+        DrawCircleV(playerScreen, innerRadius, Fade(YELLOW, (1.f - glowPhase) * 0.30f));
+
+        // Outer shockwave ring
+        float r1 = 80.f + glowPhase * 220.f;
+        DrawRing(playerScreen, r1 - 12.f, r1, 0.f, 360.f, 48, Fade(YELLOW, (1.f - glowPhase) * 0.85f));
+
+        // Inner ring slightly behind
+        float r2 = 50.f + glowPhase * 150.f;
+        DrawRing(playerScreen, r2 - 8.f, r2, 0.f, 360.f, 48, Fade(WHITE, (1.f - glowPhase) * 0.55f));
+    }
+
+    // Message above the ability bar — fades out in the last 0.5 seconds
+    const float slotY   = (float)GetScreenHeight() - 90.f - 14.f;
+    const int   fontSize = 34;
+    float alpha = (_levelUpTimer < 0.5f) ? (_levelUpTimer / 0.5f) : 1.f;
+
+    std::string msg = "You have levelled up to level: " + std::to_string(_levelUpLevel);
+    int textW = MeasureText(msg.c_str(), fontSize);
+    DrawText(msg.c_str(),
+        GetScreenWidth() / 2 - textW / 2,
+        (int)(slotY - fontSize - 12.f),
+        fontSize,
+        Fade(YELLOW, alpha));
 }
 
 void Engine::HandlePlayerMeleeDamage()
@@ -2333,11 +2445,15 @@ void Engine::ResetRunState()
         _navRefreshJob.wait();
 
     _navRefreshInFlight = false;
-    _wave = 0;
+    _wave          = 0;
+    _enemiesKilled = 0;
+    _levelUpTimer  = 0.f;
+    _levelUpLevel  = 0;
     _navRefreshTimer = 0.f;
     _lastPlayerNavIndex = -1;
     _gameTimer = 0.f;
     _playerDying = false;
+    _awaitingNameEntry = false;
     _waveStarting = true;
     _bossWarningTimer = 0.f;
     _fireballProjectiles.clear();

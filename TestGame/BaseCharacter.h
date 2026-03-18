@@ -13,7 +13,8 @@ public:
     virtual void Death();
 
     int GetHealth() const;
-    float GetHealthValue() const { return _health; }
+    float GetHealthValue()    const { return _health; }
+    float GetMaxHealthValue() const { return _maxHealth; }
 
 
     void ApplyVelocity(float dt);

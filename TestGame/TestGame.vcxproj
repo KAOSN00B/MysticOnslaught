@@ -139,6 +139,7 @@
     <ClCompile Include="Game.cpp" />
     <ClCompile Include="HealPickup.cpp" />
     <ClCompile Include="LavaBallProjectile.cpp" />
+    <ClCompile Include="Leaderboard.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Molarbeast.cpp" />
     <ClCompile Include="Ogre.cpp" />
@@ -152,6 +153,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AnimationUtils.h" />
+    <ClInclude Include="AssetPaths.h" />
     <ClInclude Include="BaseCharacter.h" />
     <ClInclude Include="Character.h" />
     <ClInclude Include="Cyclops.h" />
@@ -166,6 +168,7 @@
     <ClInclude Include="Game.h" />
     <ClInclude Include="HealPickup.h" />
     <ClInclude Include="LavaBallProjectile.h" />
+    <ClInclude Include="Leaderboard.h" />
     <ClInclude Include="MainMenu.h" />
     <ClInclude Include="Molarbeast.h" />
     <ClInclude Include="Ogre.h" />

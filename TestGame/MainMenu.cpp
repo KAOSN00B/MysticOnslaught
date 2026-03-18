@@ -28,9 +28,15 @@ void MainMenu::Init()
     _buttons.push_back({ "How To Play", { startX, firstY + (buttonHeight + gap),   buttonWidth, buttonHeight } });
     _buttons.push_back({ "Quit",        { startX, firstY + (buttonHeight + gap)*2, buttonWidth, buttonHeight } });
 
-    _startPressed  = false;
-    _quitPressed   = false;
-    _howToPressed  = false;
+    // Bottom-left leaderboard button (smaller, corner)
+    float lbW = sw * 0.14f;
+    float lbH = sh * 0.055f;
+    _buttons.push_back({ "Leaderboard", { sw * 0.018f, sh - lbH - sh * 0.018f, lbW, lbH } });
+
+    _startPressed       = false;
+    _quitPressed        = false;
+    _howToPressed       = false;
+    _leaderboardPressed = false;
 
     if (_borderTex.id == 0)
         _borderTex  = LoadTexture(AssetPath("UI/MainMenuBorder.png").c_str());
@@ -52,9 +58,10 @@ void MainMenu::Update()
 
         if (button.hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
-            if (button.text == "Start Game")  _startPressed = true;
-            if (button.text == "Quit")        _quitPressed  = true;
-            if (button.text == "How To Play") _howToPressed = true;
+            if (button.text == "Start Game")   _startPressed       = true;
+            if (button.text == "Quit")         _quitPressed        = true;
+            if (button.text == "How To Play")  _howToPressed       = true;
+            if (button.text == "Leaderboard")  _leaderboardPressed = true;
         }
     }
 }
@@ -118,7 +125,7 @@ void MainMenu::Draw()
 
     // Title text — centred in the flat body of the banner, with black outline
     int         titleSz = (int)(sh * 0.058f);
-    const char* title   = "Dungeon Colosseum";
+    const char* title   = "Mystic Onslaught";
     int         titleW  = MeasureText(title, titleSz);
     int         textX   = (int)(sw / 2.f - titleW / 2.f);
     int         textY   = (int)(bannerY + bannerH * 0.28f);
@@ -133,6 +140,21 @@ void MainMenu::Draw()
     // ── Buttons ──────────────────────────────────────────────────────────────
     for (auto& button : _buttons)
     {
+        // Leaderboard is a standalone corner button — draw differently
+        if (button.text == "Leaderboard")
+        {
+            Color tint = button.hovered ? Color{ 180, 160, 255, 255 } : Color{ 130, 110, 220, 255 };
+            DrawRectangleRounded(button.bounds, 0.22f, 6, tint);
+            DrawRectangleRoundedLines(button.bounds, 0.22f, 6, Fade(WHITE, 0.45f));
+            int fs = (int)(sh * 0.026f);
+            int tw = MeasureText(button.text.c_str(), fs);
+            DrawText(button.text.c_str(),
+                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
+                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                fs, WHITE);
+            continue;
+        }
+
         Texture2D* tex  = &_playBtnTex;
         Color      tint = WHITE;
 
@@ -160,6 +182,7 @@ void MainMenu::Draw()
     }
 }
 
-bool MainMenu::StartPressed() const { return _startPressed; }
-bool MainMenu::QuitPressed()  const { return _quitPressed;  }
-bool MainMenu::HowToPressed() const { return _howToPressed; }
+bool MainMenu::StartPressed()       const { return _startPressed;       }
+bool MainMenu::QuitPressed()        const { return _quitPressed;        }
+bool MainMenu::HowToPressed()       const { return _howToPressed;       }
+bool MainMenu::LeaderboardPressed() const { return _leaderboardPressed; }

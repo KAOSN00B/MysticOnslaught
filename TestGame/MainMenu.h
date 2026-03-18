@@ -14,9 +14,10 @@ public:
     void Update();
     void Draw();
 
-    bool StartPressed()   const;
-    bool QuitPressed()    const;
-    bool HowToPressed()   const;
+    bool StartPressed()       const;
+    bool QuitPressed()        const;
+    bool HowToPressed()       const;
+    bool LeaderboardPressed() const;
 
 private:
 
@@ -33,7 +34,8 @@ private:
     Texture2D _playBtnTex{};
     Texture2D _htpBtnTex{};
 
-    bool _startPressed  = false;
-    bool _quitPressed   = false;
-    bool _howToPressed  = false;
+    bool _startPressed       = false;
+    bool _quitPressed        = false;
+    bool _howToPressed       = false;
+    bool _leaderboardPressed = false;
 };

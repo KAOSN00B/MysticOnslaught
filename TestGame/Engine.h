@@ -20,6 +20,7 @@
 #include "FreezeProjectile.h"
 #include "CyclopsLaserProjectile.h"
 #include "LavaBallProjectile.h"
+#include "Leaderboard.h"
 
 #include <vector>
 #include <string>
@@ -33,7 +34,8 @@ enum class GameState
     Play,
     GameOver,
     Pause,
-    HowToPlay
+    HowToPlay,
+    Leaderboard
 };
 
 class Engine
@@ -106,6 +108,7 @@ private:
     void UpdateBossSupportRespawns(float dt);
     void ClearBossSupportAdds();
     void DrawMiniMap();
+    void DrawLevelUpMessage();
     void ResetRunState();
     int GetActiveEnemyCount() const;
     bool IsBossFightActive() const;
@@ -156,8 +159,10 @@ private:
     bool _waveStarting = true;
     bool _playerDying = false;
     bool _shouldClose = false;
+    bool _awaitingNameEntry = false;
 
-    int _wave = 0;
+    int _wave        = 0;
+    int _enemiesKilled = 0;
 
     float _shakeTimer = 0.f;
     float _shakeStrength = 0.f;
@@ -175,8 +180,10 @@ private:
     float _navRefreshTimer = 0.f;
     float _navRefreshInterval = 0.2f;
 
-    float _gameOverTimer = 0.f;
-    float _gameOverDelay = 2.f;
+    float _gameOverTimer  = 0.f;
+    float _gameOverDelay  = 2.f;
+    float _levelUpTimer   = 0.f;
+    int   _levelUpLevel   = 0;
     float _fadeInTimer   = 0.f;
     float _bossWarningTimer = 0.f;
 
@@ -226,4 +233,6 @@ private:
     BossSupportState _bossOgreSupport;
 
     std::string _message = "Objective: Survive";
+
+    Leaderboard _leaderboard;
 };
