@@ -69,7 +69,7 @@ int PauseAndGameOver::DrawPause()
     const float padV   = sh * 0.045f;
     const float titleH = sh * 0.075f;
     const float panelW = btnW + sw * 0.06f;
-    const float panelH = padV + titleH + 3.f * (btnH + btnGap) + padV;
+    const float panelH = padV + titleH + 4.f * (btnH + btnGap) + padV;
 
     float panelX = sw / 2.f - panelW / 2.f;
     float panelY = sh / 2.f - panelH / 2.f;
@@ -110,11 +110,184 @@ int PauseAndGameOver::DrawPause()
         result = 2;
     btnY += btnH + btnGap;
 
-    // Quit — red tint on play button
+    // Keybindings — blue tint
+    if (DrawButton(_btnTex, "Keybindings", { btnX, btnY, btnW, btnH }, Color{ 80, 150, 230, 255 }))
+        result = 4;
+    btnY += btnH + btnGap;
+
+    // Quit — red tint
     if (DrawButton(_btnTex, "Quit Game", { btnX, btnY, btnW, btnH }, Color{ 230, 80, 80, 255 }))
         result = 3;
 
     return result;
+}
+
+// ── Keybindings ───────────────────────────────────────────────────────────────
+// Returns true when Back is pressed. Modifies bindings in place.
+bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
+{
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+
+    // Dim overlay
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.75f));
+
+    // Slot table: name, pointer to the key, clearable (KEY_NULL allowed)
+    struct SlotDef { const char* name; KeyboardKey* key; bool clearable; };
+    SlotDef slots[9] = {
+        { "Move Up",    &bindings.moveUp,      false },
+        { "Move Down",  &bindings.moveDown,    false },
+        { "Move Left",  &bindings.moveLeft,    false },
+        { "Move Right", &bindings.moveRight,   false },
+        { "Dash",       &bindings.dash,        false },
+        { "Attack Key", &bindings.attack,      true  },
+        { "Fireball",   &bindings.ability[0],  true  },
+        { "Sword Beam", &bindings.ability[1],  true  },
+        { "Freeze",     &bindings.ability[2],  true  },
+    };
+
+    // Poll for a key press when rebinding
+    if (_rebindingSlot >= 0 && _rebindingSlot < 9)
+    {
+        if (IsKeyPressed(KEY_BACKSPACE) && slots[_rebindingSlot].clearable)
+        {
+            *slots[_rebindingSlot].key = KEY_NULL;
+            _rebindingSlot = -1;
+        }
+        else
+        {
+            int pressed = GetKeyPressed();
+            if (pressed != 0)
+            {
+                KeyboardKey k = (KeyboardKey)pressed;
+                if (k == KEY_ESCAPE)
+                    _rebindingSlot = -1;
+                else if (k != KEY_BACKSPACE)
+                {
+                    *slots[_rebindingSlot].key = k;
+                    _rebindingSlot = -1;
+                }
+            }
+        }
+    }
+
+    // Layout
+    const float panelW      = sw * 0.42f;
+    const float rowH        = sh * 0.058f;
+    const float rowGap      = sh * 0.010f;
+    const float padV        = sh * 0.036f;
+    const float titleH      = sh * 0.065f;
+    const float groupLabelH = sh * 0.030f;
+    const float groupGap    = sh * 0.022f;
+    const float backH       = sh * 0.062f;
+    const float hintH       = sh * 0.022f;
+
+    // 3 groups: 4 + 2 + 3 rows
+    const float panelH = padV + titleH
+        + groupLabelH + 4.f * (rowH + rowGap)
+        + groupGap
+        + groupLabelH + 2.f * (rowH + rowGap)
+        + groupGap
+        + groupLabelH + 3.f * (rowH + rowGap)
+        + groupGap + hintH + rowGap + backH + padV;
+
+    float panelX = sw / 2.f - panelW / 2.f;
+    float panelY = sh / 2.f - panelH / 2.f;
+
+    DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(BLACK, 0.93f));
+    DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(WHITE, 0.30f));
+
+    // Title
+    const char* title   = "KEYBINDINGS";
+    int         titleSz = (int)(sh * 0.046f);
+    DrawText(title,
+        (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
+        (int)(panelY + padV), titleSz, ORANGE);
+
+    int nameSz   = (int)(sh * 0.026f);
+    int keySz    = (int)(sh * 0.029f);
+    int groupSz  = (int)(sh * 0.022f);
+
+    struct GroupDef { const char* name; int start; int count; };
+    GroupDef groups[3] = {
+        { "MOVEMENT",  0, 4 },
+        { "ACTIONS",   4, 2 },
+        { "ABILITIES", 6, 3 },
+    };
+
+    float rowY = panelY + padV + titleH;
+
+    for (int g = 0; g < 3; g++)
+    {
+        if (g > 0) rowY += groupGap;
+
+        // Group label
+        DrawText(groups[g].name,
+            (int)(panelX + panelW * 0.05f),
+            (int)(rowY), groupSz, Fade(GOLD, 0.72f));
+        rowY += groupLabelH;
+
+        for (int ri = 0; ri < groups[g].count; ri++)
+        {
+            int slotIdx = groups[g].start + ri;
+            float rowX     = panelX + panelW * 0.05f;
+            float rowRight = panelX + panelW * 0.95f;
+
+            DrawRectangleRounded({ rowX, rowY, panelW * 0.90f, rowH }, 0.2f, 4, Fade(WHITE, 0.06f));
+
+            DrawText(slots[slotIdx].name,
+                (int)(rowX + 12.f),
+                (int)(rowY + rowH * 0.5f - nameSz * 0.5f),
+                nameSz, LIGHTGRAY);
+
+            float badgeW = sw * 0.095f;
+            float badgeH = rowH * 0.70f;
+            float badgeX = rowRight - badgeW - 4.f;
+            float badgeY = rowY + rowH * 0.5f - badgeH * 0.5f;
+            Rectangle badgeRect{ badgeX, badgeY, badgeW, badgeH };
+
+            bool rebinding = (_rebindingSlot == slotIdx);
+            bool hovered   = CheckCollisionPointRec(GetMousePosition(), badgeRect) && !rebinding;
+
+            Color badgeCol = rebinding ? Fade(GOLD, 0.85f)
+                           : hovered   ? Fade(SKYBLUE, 0.75f)
+                                       : Fade(DARKGRAY, 0.80f);
+            DrawRectangleRounded(badgeRect, 0.3f, 4, badgeCol);
+            DrawRectangleRoundedLines(badgeRect, 0.3f, 4, Fade(WHITE, 0.4f));
+
+            const char* keyLabel = rebinding ? "..." : GetKeyName(*slots[slotIdx].key);
+            int labelW = MeasureText(keyLabel, keySz);
+            DrawText(keyLabel,
+                (int)(badgeX + badgeW / 2.f - labelW / 2.f),
+                (int)(badgeY + badgeH / 2.f - keySz  / 2.f),
+                keySz, rebinding ? BLACK : WHITE);
+
+            if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+                _rebindingSlot = slotIdx;
+
+            rowY += rowH + rowGap;
+        }
+    }
+
+    // Hint text
+    rowY += groupGap;
+    const char* hintText = (_rebindingSlot >= 0)
+        ? (slots[_rebindingSlot].clearable
+            ? "Press a key  (ESC cancels  |  BKSP to clear)"
+            : "Press a key  (ESC cancels)")
+        : "Click a badge to rebind";
+    int hintSz = (int)(sh * 0.019f);
+    DrawText(hintText,
+        (int)(sw / 2.f - MeasureText(hintText, hintSz) / 2.f),
+        (int)(rowY), hintSz, Fade(WHITE, 0.45f));
+
+    // Back button
+    rowY += hintH + rowGap;
+    float backW = panelW * 0.40f;
+    float backX = sw / 2.f - backW / 2.f;
+    bool done   = DrawButton(_btnTex, "Back", { backX, rowY, backW, backH }, Fade(WHITE, 0.85f));
+
+    return done;
 }
 
 // ── Game Over ─────────────────────────────────────────────────────────────────

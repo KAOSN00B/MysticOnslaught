@@ -460,15 +460,30 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
 
 Rectangle Cyclops::GetCollisionRec() const
 {
-    // Cyclops is visually wider and taller than the default base-enemy hurtbox.
-    // Expanding the active target area keeps melee and projectile hits aligned
-    // with the sprite instead of forcing the player to overlap almost fully.
-    const float width = _width * _scale * 0.9f;
-    const float height = _height * _scale * 0.78f;
+    // Narrow body-only collision so the player can walk up to melee range
+    // without being stopped by the wide sprite extents.
+    const float width  = _width  * _scale * 0.40f;
+    const float height = _height * _scale * 0.55f;
 
     return Rectangle{
-        _worldPos.x - width * 0.5f,
-        _worldPos.y - height * 0.5f + (_height * _scale * 0.18f),
+        _worldPos.x - width  * 0.5f,
+        _worldPos.y - height * 0.5f + (_height * _scale * 0.22f),
+        width,
+        height
+    };
+}
+
+Rectangle Cyclops::GetHitCollisionRec() const
+{
+    // Wider than the solid collision rect so melee attacks register from any
+    // angle including from behind while the narrow solid rect still lets the
+    // player walk close without being blocked.
+    const float width  = _width  * _scale * 0.68f;
+    const float height = _height * _scale * 0.55f;
+
+    return Rectangle{
+        _worldPos.x - width  * 0.5f,
+        _worldPos.y - height * 0.5f + (_height * _scale * 0.22f),
         width,
         height
     };

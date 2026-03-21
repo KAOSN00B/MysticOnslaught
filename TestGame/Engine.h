@@ -2,6 +2,7 @@
 #pragma once
 
 #include "raylib.h"
+#include "KeyBindings.h"
 #include "Character.h"
 #include "Prop.h"
 #include "Enemy.h"
@@ -35,7 +36,8 @@ enum class GameState
     GameOver,
     Pause,
     HowToPlay,
-    Leaderboard
+    Leaderboard,
+    Keybindings
 };
 
 class Engine
@@ -110,6 +112,8 @@ private:
     void DrawMiniMap();
     void DrawLevelUpMessage();
     void ResetRunState();
+    void SaveKeybindings();
+    void LoadKeybindings();
     int GetActiveEnemyCount() const;
     bool IsBossFightActive() const;
     bool TryGetPooledEnemySpawn(Vector2 pos);
@@ -216,6 +220,7 @@ private:
     Character _player;
     MainMenu _menu;
     PauseAndGameOver _pauseUI;
+    KeyBindings _keybindingsEdit;
 
     std::vector<Prop> _props;
     std::vector<std::unique_ptr<Pickup>> _pickups;

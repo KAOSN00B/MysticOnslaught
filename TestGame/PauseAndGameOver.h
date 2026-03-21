@@ -1,6 +1,7 @@
 #pragma once
 
 #include "raylib.h"
+#include "KeyBindings.h"
 #include "Leaderboard.h"
 #include <vector>
 #include <string>
@@ -14,7 +15,9 @@ public:
     void Init();
     void Unload();
 
-    int  DrawPause();      // 0=nothing  1=resume  2=howtoplay  3=quit
+    int  DrawPause();      // 0=nothing  1=resume  2=howtoplay  3=quit  4=keybindings
+    // Returns true when Back is pressed. Modifies bindings in place as rebinds happen.
+    bool DrawKeybindings(KeyBindings& bindings);
     int  DrawGameOver(int wave, float gameTimer, int kills, const std::vector<LeaderboardEntry>& scores);  // 0=nothing  1=play again  2=main menu  3=quit
     bool DrawLeaderboardScreen(const std::vector<LeaderboardEntry>& scores);  // returns true when Back is clicked
 
@@ -29,5 +32,6 @@ private:
     Texture2D   _htpBtnTex{};
 
     std::string _nameBuffer;
-    float       _cursorBlink = 0.f;
+    float       _cursorBlink  = 0.f;
+    int         _rebindingSlot = -1;   // -1 = not rebinding
 };

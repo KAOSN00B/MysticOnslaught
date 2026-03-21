@@ -44,6 +44,10 @@ public:
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
+    // Wider rect used only for player melee hit-detection; defaults to solid rect.
+    // Cyclops overrides this so the body can be hit from any angle while the
+    // narrow solid rect still lets the player walk up close.
+    virtual Rectangle GetHitCollisionRec() const { return GetCollisionRec(); }
 	void PlayAttackSound() override;
     void PlayDeathSound() override;
     void PlayHurtSound() override;
@@ -82,7 +86,7 @@ protected:
     static constexpr float _stuckThreshold  = 0.8f;
     static constexpr float _stuckMinMove    = 8.f;   // pixels needed to not be considered stuck
 
-    float _attackRange = 80.f;
+    float _attackRange = 110.f;
     float _attackUpdateTime = 1.f / 8.f;
 
     float _attackCooldown = 0.f;

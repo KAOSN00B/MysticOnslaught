@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <limits>
 #include <queue>
 
@@ -243,6 +245,7 @@ void Engine::Init()
     SetSoundVolume(_lavaBallImpactSound, 0.45f);
 
     _pauseUI.Init();
+    LoadKeybindings();
 
     _menu.Init();
 
@@ -416,6 +419,10 @@ void Engine::Update(float dt)
         }
         break;
     }
+
+    case GameState::Keybindings:
+        // Navigation handled in the Draw case (Back button)
+        break;
 
     case GameState::Play:
     {
@@ -755,6 +762,11 @@ void Engine::Draw()
         }
         else if (pauseResult == 3)
             _shouldClose = true;
+        else if (pauseResult == 4)
+        {
+            _keybindingsEdit = _player.GetBindings();
+            _gameState = GameState::Keybindings;
+        }
 
         break;
     }
@@ -788,6 +800,17 @@ void Engine::Draw()
         break;
     }
 
+    case GameState::Keybindings:
+    {
+        if (_pauseUI.DrawKeybindings(_keybindingsEdit))
+        {
+            _player.SetBindings(_keybindingsEdit);
+            SaveKeybindings();
+            _gameState = GameState::Pause;
+        }
+        break;
+    }
+
     case GameState::Leaderboard:
     {
         if (_pauseUI.DrawLeaderboardScreen(_leaderboard.GetEntries()))
@@ -817,9 +840,17 @@ void Engine::HandleCollisions()
      || pos.y < marginTop   || pos.y > mapH - marginBottom)
     {
         if (_player.IsBeingForcedPushed())
+        {
             _player.OnForcedPushCollision();
+        }
         else
-            _player.UndoMovement();
+        {
+            // Clamp rather than undo so the player slides along walls instead
+            // of being snapped back into an enemy that was pushing them.
+            pos.x = std::max(marginLeft,        std::min(pos.x, mapW - marginRight));
+            pos.y = std::max(marginTop,         std::min(pos.y, mapH - marginBottom));
+            _player.SetWorldPos(pos);
+        }
     }
 
     for (auto& prop : _props)
@@ -894,6 +925,44 @@ void Engine::HandleCollisions()
               {
                   enemy->UndoMovement();
               }
+        }
+    }
+
+    // Player vs enemy solid collision — dash passes straight through.
+    // After the dash ends, eject the player if they landed inside an enemy.
+    if (!_player.IsDashing())
+    {
+        for (auto& enemy : _enemies)
+        {
+            if (!enemy->IsActive() || !enemy->IsAlive())
+                continue;
+
+            Rectangle pr = _player.GetCollisionRec();
+            Rectangle er = enemy->GetCollisionRec();
+            if (!CheckCollisionRecs(pr, er))
+                continue;
+
+            // Normal case: revert the movement that caused the overlap
+            _player.UndoMovement();
+
+            // If still overlapping (e.g. stuck inside after a dash), eject via MTV
+            pr = _player.GetCollisionRec();
+            if (CheckCollisionRecs(pr, er))
+            {
+                float overlapX = std::min(pr.x + pr.width,  er.x + er.width)  - std::max(pr.x, er.x);
+                float overlapY = std::min(pr.y + pr.height, er.y + er.height) - std::max(pr.y, er.y);
+                Vector2 pos    = _player.GetWorldPos();
+                if (overlapX < overlapY)
+                {
+                    float dir = (pr.x + pr.width * 0.5f < er.x + er.width * 0.5f) ? -1.f : 1.f;
+                    _player.SetWorldPos({ pos.x + dir * overlapX, pos.y });
+                }
+                else
+                {
+                    float dir = (pr.y + pr.height * 0.5f < er.y + er.height * 0.5f) ? -1.f : 1.f;
+                    _player.SetWorldPos({ pos.x, pos.y + dir * overlapY });
+                }
+            }
         }
     }
 }
@@ -1059,14 +1128,22 @@ void Engine::DrawHUD()
 
 void Engine::DrawAbilityBar()
 {
-    // 3 slots: 0=Fireball, 1=SwordBeam, 2=Freeze
+    // Only render slots the player has unlocked (picked up at least once)
     const int   slotCount  = 3;
     const float slotSize   = 90.f;
     const float slotGap    = 10.f;
-    const float totalW     = slotCount * slotSize + (slotCount - 1) * slotGap;
-    const float startX     = GetScreenWidth() / 2.f - totalW / 2.f;
     const float slotY      = GetScreenHeight() - slotSize - 14.f;
-    const int   selected   = _player.GetSelectedAbility();
+
+    // Count visible slots so the bar stays centred
+    int visibleCount = 0;
+    for (int i = 0; i < slotCount; i++)
+        if (_player.HasEverHadAbility(i)) visibleCount++;
+
+    if (visibleCount == 0)
+        return;   // nothing to show yet
+
+    const float totalW = visibleCount * slotSize + (visibleCount - 1) * slotGap;
+    const float startX = GetScreenWidth() / 2.f - totalW / 2.f;
 
     int ammo[3] = {
         _player.GetFireballAmmo(),
@@ -1074,49 +1151,55 @@ void Engine::DrawAbilityBar()
         _player.GetFreezeAmmo()
     };
 
+
+    Vector2 mouse = GetMousePosition();
+
+    int drawIndex = 0;
     for (int i = 0; i < slotCount; i++)
     {
-        float x = startX + i * (slotSize + slotGap);
+        if (!_player.HasEverHadAbility(i))
+            continue;
+
+        float x = startX + drawIndex * (slotSize + slotGap);
+        drawIndex++;
         Rectangle slot{ x, slotY, slotSize, slotSize };
 
-        // Background
-        DrawRectangleRounded(slot, 0.18f, 6,
-            i == selected ? Fade(BLACK, 0.88f) : Fade(BLACK, 0.55f));
+        bool hovered = CheckCollisionPointRec(mouse, slot);
 
-        // Gold border on selected slot
-        Color borderCol = (i == selected) ? GOLD : Fade(LIGHTGRAY, 0.35f);
-        DrawRectangleRoundedLines(slot, 0.18f, 6, borderCol);
+        // Background + border — brighten on hover
+        DrawRectangleRounded(slot, 0.18f, 6, hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
+        DrawRectangleRoundedLines(slot, 0.18f, 6, hovered ? Fade(GOLD, 0.70f) : Fade(LIGHTGRAY, 0.35f));
 
-        // Slot number
-        DrawText(TextFormat("%d", i + 1), (int)(x + 6.f), (int)(slotY + 6.f), 16,
-            i == selected ? GOLD : Fade(WHITE, 0.5f));
+        // Key label (top-left of slot)
+        DrawText(GetKeyName(_player.GetAbilityKey(i)), (int)(x + 6.f), (int)(slotY + 6.f), 16, Fade(WHITE, 0.6f));
+
+        // Click to cast
+        if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            _player.TriggerAbilityCast(i);
 
         // Icon
         float cx = x + slotSize * 0.42f;
         float cy = slotY + slotSize * 0.46f;
 
-        if (i == 0) // Fireball
+        if (i == 0)
         {
             Texture2D tex = FireBallPickup::GetSharedTexture();
             float sc = 2.8f;
-            DrawTextureEx(tex,
-                Vector2{ cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
+            DrawTextureEx(tex, { cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
                 0.f, sc, ammo[i] > 0 ? WHITE : Fade(WHITE, 0.3f));
         }
-        else if (i == 1) // Sword Beam
+        else if (i == 1)
         {
             Texture2D tex = SwordBeamPickup::GetSharedTexture();
             float sc = 2.9f;
-            DrawTextureEx(tex,
-                Vector2{ cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
+            DrawTextureEx(tex, { cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
                 0.f, sc, ammo[i] > 0 ? WHITE : Fade(WHITE, 0.3f));
         }
-        else if (i == 2) // Freeze
+        else if (i == 2)
         {
             Texture2D tex = FreezePickup::GetSharedTexture();
             float sc = 2.9f;
-            DrawTextureEx(tex,
-                Vector2{ cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
+            DrawTextureEx(tex, { cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
                 0.f, sc, ammo[i] > 0 ? WHITE : Fade(WHITE, 0.3f));
         }
 
@@ -1127,11 +1210,11 @@ void Engine::DrawAbilityBar()
             ammo[i] > 0 ? RAYWHITE : Fade(GRAY, 0.6f));
     }
 
-    // "RMB to use" hint below bar
-    const char* hint = "RMB to use";
-    int hw = MeasureText(hint, 14);
+    // Hint below bar
+    const char* hint = "Click icon or press key to use  |  Rebind in Pause";
+    int hw = MeasureText(hint, 13);
     DrawText(hint, (int)(GetScreenWidth() / 2.f - hw / 2.f),
-        (int)(slotY + slotSize + 2.f), 14, Fade(WHITE, 0.45f));
+        (int)(slotY + slotSize + 2.f), 13, Fade(WHITE, 0.40f));
 
 }
 
@@ -1228,7 +1311,7 @@ void Engine::HandlePlayerMeleeDamage()
         if (!enemy->IsAlive())
             continue;
 
-        if (CheckCollisionRecs(attackRec, enemy->GetCollisionRec()))
+        if (CheckCollisionRecs(attackRec, enemy->GetHitCollisionRec()))
         {
             enemy->TakeDamage(2, _player.GetWorldPos());
             SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
@@ -2913,5 +2996,47 @@ void Engine::UpdateLavaBallProjectiles(float dt)
         std::remove_if(_lavaBalls.begin(), _lavaBalls.end(),
             [](const LavaBallProjectile& projectile) { return !projectile.IsActive(); }),
         _lavaBalls.end());
+}
+
+void Engine::SaveKeybindings()
+{
+    const KeyBindings& b = _player.GetBindings();
+    FILE* f = nullptr;
+    fopen_s(&f, "keybindings.cfg", "w");
+    if (!f) return;
+    std::fprintf(f, "moveUp %d\n",    (int)b.moveUp);
+    std::fprintf(f, "moveDown %d\n",  (int)b.moveDown);
+    std::fprintf(f, "moveLeft %d\n",  (int)b.moveLeft);
+    std::fprintf(f, "moveRight %d\n", (int)b.moveRight);
+    std::fprintf(f, "dash %d\n",      (int)b.dash);
+    std::fprintf(f, "attack %d\n",    (int)b.attack);
+    std::fprintf(f, "ability0 %d\n",  (int)b.ability[0]);
+    std::fprintf(f, "ability1 %d\n",  (int)b.ability[1]);
+    std::fprintf(f, "ability2 %d\n",  (int)b.ability[2]);
+    std::fclose(f);
+}
+
+void Engine::LoadKeybindings()
+{
+    FILE* f = nullptr;
+    fopen_s(&f, "keybindings.cfg", "r");
+    if (!f) return;
+    KeyBindings b;
+    char key[32];
+    int  value;
+    while (fscanf_s(f, "%31s %d", key, (unsigned)sizeof(key), &value) == 2)
+    {
+        if      (std::strcmp(key, "moveUp")    == 0) b.moveUp     = (KeyboardKey)value;
+        else if (std::strcmp(key, "moveDown")  == 0) b.moveDown   = (KeyboardKey)value;
+        else if (std::strcmp(key, "moveLeft")  == 0) b.moveLeft   = (KeyboardKey)value;
+        else if (std::strcmp(key, "moveRight") == 0) b.moveRight  = (KeyboardKey)value;
+        else if (std::strcmp(key, "dash")      == 0) b.dash       = (KeyboardKey)value;
+        else if (std::strcmp(key, "attack")    == 0) b.attack     = (KeyboardKey)value;
+        else if (std::strcmp(key, "ability0")  == 0) b.ability[0] = (KeyboardKey)value;
+        else if (std::strcmp(key, "ability1")  == 0) b.ability[1] = (KeyboardKey)value;
+        else if (std::strcmp(key, "ability2")  == 0) b.ability[2] = (KeyboardKey)value;
+    }
+    std::fclose(f);
+    _player.SetBindings(b);
 }
 

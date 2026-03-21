@@ -31,7 +31,8 @@ public:
     void SetWaveScale(int wave) override;
 
     void DrawEnemy(Vector2 cameraRef) override;
-    Rectangle GetCollisionRec() const override;
+    Rectangle GetCollisionRec()    const override;
+    Rectangle GetHitCollisionRec() const override;
 
     void ApplyFreeze(float duration) override;
     void ApplyBurn(float delay, int damage, Vector2 sourcePos) override;

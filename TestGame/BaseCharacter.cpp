@@ -9,8 +9,8 @@ BaseCharacter::BaseCharacter()
 
 Rectangle BaseCharacter::GetCollisionRec() const
 {
-	float w = _width * _scale * 0.5f;
-	float h = _height * _scale * 0.4f;
+	float w = _width * _scale * 0.35f;
+	float h = _height * _scale * 0.28f;
 
 	return Rectangle{_worldPos.x - w / 2.f,_worldPos.y - h / 2.f 
 		+ (_height * _scale * 0.3f),w,h};

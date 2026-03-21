@@ -109,7 +109,10 @@ void Character::Init()
     _fireballAmmo    = 0;
     _swordBeamAmmo   = 0;
     _freezeAmmo      = 0;
-    _selectedAbility = 0;
+    _bindings = KeyBindings{};
+    _abilityEverHad[0] = false;
+    _abilityEverHad[1] = false;
+    _abilityEverHad[2] = false;
     _pendingHealEffects = 0;
     _forcedPushActive = false;
     _forcedPushDirection = Vector2Zero();
@@ -117,7 +120,7 @@ void Character::Init()
     _forcedPushStunTimer = 0.f;
 
     _exp            = 0;
-    _level          = 0;
+    _level          = 1;
     _expToNextLevel = 10;
     _pendingBurnTicks.clear();
 
@@ -182,24 +185,17 @@ void Character::HandleInput()
 
     _direction = Vector2Zero();
 
-    if (IsKeyDown(KEY_A)) _direction.x -= 1;
-    if (IsKeyDown(KEY_D)) _direction.x += 1;
-    if (IsKeyDown(KEY_W)) _direction.y -= 1;
-    if (IsKeyDown(KEY_S)) _direction.y += 1;
+    if (IsKeyDown(_bindings.moveLeft))  _direction.x -= 1;
+    if (IsKeyDown(_bindings.moveRight)) _direction.x += 1;
+    if (IsKeyDown(_bindings.moveUp))    _direction.y -= 1;
+    if (IsKeyDown(_bindings.moveDown))  _direction.y += 1;
 
-    // 1-2-3 selects active ability slot; scroll wheel also cycles
-    if (IsKeyPressed(KEY_ONE))   _selectedAbility = 0;
-    if (IsKeyPressed(KEY_TWO))   _selectedAbility = 1;
-    if (IsKeyPressed(KEY_THREE)) _selectedAbility = 2;
-    if (IsKeyPressed(KEY_FOUR))  _selectedAbility = 3;
+    // Ability hotkeys — directly cast, no selection step needed
+    for (int i = 0; i < 3; i++)
+        if (_bindings.ability[i] != KEY_NULL && IsKeyPressed(_bindings.ability[i]))
+            TriggerAbilityCast(i);
 
-    float wheel = GetMouseWheelMove();
-    if (wheel > 0)
-        _selectedAbility = (_selectedAbility + 1) % 3;
-    else if (wheel < 0)
-        _selectedAbility = (_selectedAbility + 2) % 3;
-
-    if (IsKeyPressed(KEY_SPACE) && !_isDashing && _dashCooldown <= 0.f)
+    if (IsKeyPressed(_bindings.dash) && !_isDashing && _dashCooldown <= 0.f)
     {
         // Cancel any ongoing attack or cast so movement isn't blocked after the dash
         _attacking = false;
@@ -259,7 +255,10 @@ void Character::HandleAttackInput()
     if (_takingDamage || _dying || _isDashing || IsForceLocked())
         return;
 
-    if (!_attacking && !_castingAbility && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    bool attackPressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+                         (_bindings.attack != KEY_NULL && IsKeyPressed(_bindings.attack));
+
+    if (!_attacking && !_castingAbility && attackPressed)
     {
         _attacking = true;
         _damageApplied = false;
@@ -271,41 +270,30 @@ void Character::HandleAttackInput()
         PlayAttackSound();
     }
 
-    // Right-click fires the currently selected ability slot (1=Fireball, 2=SwordBeam, 3=Freeze)
-    // Only trigger if there is actually ammo for the selected slot
-    if (!_attacking && !_castingAbility && IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
-    {
-        CastType castType = CastType::None;
-        bool useSlashAnimation = false;
+}
 
-        if (_selectedAbility == 0 && _fireballAmmo > 0)
-        {
-            _fireballAmmo--;
-            castType = CastType::Fireball;
-        }
-        else if (_selectedAbility == 1 && _swordBeamAmmo > 0)
-        {
-            _swordBeamAmmo--;
-            castType = CastType::SwordBeam;
-            useSlashAnimation = true;
-        }
-        else if (_selectedAbility == 2 && _freezeAmmo > 0)
-        {
-            _freezeAmmo--;
-            castType = CastType::Freeze;
-        }
+void Character::TriggerAbilityCast(int slot)
+{
+    if (_attacking || _castingAbility || _takingDamage || _dying || _isDashing || IsForceLocked())
+        return;
 
-        if (castType != CastType::None)
-        {
-            _castingAbility = true;
-            _queuedCast = castType;
-            _texture = useSlashAnimation ? _attackAnim : _staffAnim;
-            _frame = 0;
-            _runningTime = 0.f;
-            _maxFrames = _texture.width / _width;
-            _updateTime = useSlashAnimation ? _attackUpdateTime : _staffCastUpdateTime;
-        }
-    }
+    CastType castType        = CastType::None;
+    bool     useSlashAnim    = false;
+
+    if      (slot == 0 && _fireballAmmo  > 0) { _fireballAmmo--;  castType = CastType::Fireball;  }
+    else if (slot == 1 && _swordBeamAmmo > 0) { _swordBeamAmmo--; castType = CastType::SwordBeam; useSlashAnim = true; }
+    else if (slot == 2 && _freezeAmmo    > 0) { _freezeAmmo--;    castType = CastType::Freeze;    }
+
+    if (castType == CastType::None)
+        return;
+
+    _castingAbility = true;
+    _queuedCast     = castType;
+    _texture        = useSlashAnim ? _attackAnim : _staffAnim;
+    _frame          = 0;
+    _runningTime    = 0.f;
+    _maxFrames      = _texture.width / _width;
+    _updateTime     = useSlashAnim ? _attackUpdateTime : _staffCastUpdateTime;
 }
 
 void Character::DrawPlayer(Vector2 cameraPos)
@@ -673,10 +661,10 @@ void Character::PlayHurtSound()
     PlaySound(_hurtSound);
 }
 
-void Character::AddFireballAmmo(int amount)  { _fireballAmmo  += amount; }
+void Character::AddFireballAmmo(int amount)  { _fireballAmmo  += amount; if (amount > 0) _abilityEverHad[0] = true; }
 int  Character::GetFireballAmmo()  const      { return _fireballAmmo; }
 
-void Character::AddSwordBeamAmmo(int amount) { _swordBeamAmmo += amount; }
+void Character::AddSwordBeamAmmo(int amount) { _swordBeamAmmo += amount; if (amount > 0) _abilityEverHad[1] = true; }
 int  Character::GetSwordBeamAmmo() const      { return _swordBeamAmmo; }
 
 Character::CastType Character::ConsumeCastRequest()
@@ -734,7 +722,7 @@ int Character::ConsumeHealEffectRequests()
     return pending;
 }
 
-void Character::AddFreezeAmmo(int amount)    { _freezeAmmo    += amount; }
+void Character::AddFreezeAmmo(int amount)    { _freezeAmmo    += amount; if (amount > 0) _abilityEverHad[2] = true; }
 int  Character::GetFreezeAmmo()    const      { return _freezeAmmo; }
 
 int Character::GetSpecialDamageBonus() const

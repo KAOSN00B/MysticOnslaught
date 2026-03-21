@@ -1,5 +1,6 @@
 #pragma once
 #include "BaseCharacter.h"
+#include "KeyBindings.h"
 #include <vector>
 
 class Character : public BaseCharacter
@@ -33,6 +34,7 @@ public:
     void GrantInvulnerability(float duration);
     bool IsBeingForcedPushed() const { return _forcedPushActive; }
     bool IsForceLocked() const { return _forcedPushActive || _forcedPushStunTimer > 0.f; }
+    bool IsDashing() const { return _isDashing; }
 
     void AddFireballAmmo(int amount);
     int  GetFireballAmmo() const;
@@ -40,7 +42,19 @@ public:
     int  GetSwordBeamAmmo() const;
     void AddFreezeAmmo(int amount);
     int  GetFreezeAmmo() const;
-    int  GetSelectedAbility() const { return _selectedAbility; }
+    // Full keybindings — includes movement, dash, attack, and ability slots
+    const KeyBindings& GetBindings() const { return _bindings; }
+    void               SetBindings(const KeyBindings& b) { _bindings = b; }
+    // Ability keys — convenience wrappers over _bindings.ability[]
+    KeyboardKey GetAbilityKey(int slot)  const { return (slot >= 0 && slot < 3) ? _bindings.ability[slot] : KEY_NULL; }
+    void        SetAbilityKey(int slot, KeyboardKey key) { if (slot >= 0 && slot < 3) _bindings.ability[slot] = key; }
+
+    // True once the player has picked up at least one charge of this ability
+    bool HasEverHadAbility(int slot) const { return (slot >= 0 && slot < 3) && _abilityEverHad[slot]; }
+
+    // Called by Engine when an ability icon is clicked or a hotkey fires
+    void TriggerAbilityCast(int slot);
+
     CastType ConsumeCastRequest();
     bool CanApplyMeleeDamage() const;
     void ConsumeMeleeDamageFrame();
@@ -93,8 +107,9 @@ private:
     bool _dashAnimPlaying = false;
     bool _playDashParticles = false;
     bool _dashInvincible = false;
-    bool _forcedPushActive = false;
-    int  _selectedAbility = 0;   // 0=Fireball 1=SwordBeam 2=Freeze 3=(future)
+    bool        _forcedPushActive  = false;
+    KeyBindings _bindings;
+    bool        _abilityEverHad[3] = { false, false, false };
 
     float _attackUpdateTime = 1.f / 14.f;
     float _staffCastUpdateTime = 1.f / 12.f;
@@ -117,7 +132,7 @@ private:
     int _pendingHealEffects = 0;
 
     int _exp = 0;
-    int _level = 0;
+    int _level = 1;
     int _expToNextLevel = 10;
     static constexpr int _maxLevel = 10;
 
