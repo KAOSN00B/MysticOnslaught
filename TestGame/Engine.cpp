@@ -183,11 +183,10 @@ Engine::~Engine()
     Cyclops::UnloadSharedResources();
     Ogre::UnloadSharedResources();
     Molarbeast::UnloadSharedResources();
-    FireBallPickup::UnloadSharedResources();
-    SwordBeamPickup::UnloadSharedResources();
-    FreezePickup::UnloadSharedResources();
+    // [SHELVED] FireBallPickup/SwordBeamPickup/FreezePickup unload calls removed
     HealPickup::UnloadSharedResources();
-    FireballProjectile::UnloadSharedResources();
+    ManaGemPickup::UnloadSharedResources();
+    SpreadProjectile::UnloadSharedResources();
     SwordBeamProjectile::UnloadSharedResources();
     FreezeProjectile::UnloadSharedResources();
     LavaBallProjectile::UnloadSharedResources();
@@ -199,13 +198,25 @@ Engine::~Engine()
     UnloadSound(_buttonPressSound);
     UnloadTexture(_map);
     UnloadTexture(_pillarTex);
+    UnloadTexture(_torchTex);
+    UnloadTexture(_pillarTorchTex);
     UnloadTexture(_fireballCastTex);
     UnloadTexture(_fireballHitTex);
     UnloadTexture(_swordBeamCastTex);
     UnloadTexture(_swordBeamHitTex);
     UnloadTexture(_freezeCastTex);
     UnloadTexture(_freezeHitTex);
+    UnloadTexture(_lightningCastTex);
     UnloadTexture(_healEffectTex);
+    UnloadTexture(_abilityIconFireTex);
+    UnloadTexture(_abilityIconIceTex);
+    UnloadTexture(_abilityIconElectricTex);
+    UnloadTexture(_upgradeAttackPowerTex);
+    UnloadTexture(_upgradeAttackRangeTex);
+    UnloadTexture(_upgradeHealthTex);
+    UnloadTexture(_upgradeMagicTex);
+    UnloadTexture(_upgradeDefenseTex);
+    UnloadTexture(_upgradeMoveSpeedTex);
     _pauseUI.Unload();
     CloseWindow();
 }
@@ -250,30 +261,61 @@ void Engine::Init()
     _menu.Init();
 
     _map = LoadTexture(AssetPath("TileSet/Map.png").c_str());
-    _pillarTex = LoadTexture(AssetPath("TileSet/Pillar.png").c_str());
+    _pillarTex      = LoadTexture(AssetPath("TileSet/Pillar.png").c_str());
+    _torchTex       = LoadTexture(AssetPath("TileSet/Torch.png").c_str());
+    _pillarTorchTex = LoadTexture(AssetPath("TileSet/PillarTorch.png").c_str());
     _fireballCastTex = LoadTexture(AssetPath("PowerUps/Fireball_Cast.png").c_str());
     _fireballHitTex = LoadTexture(AssetPath("PowerUps/Fireball_Hit.png").c_str());
     _swordBeamCastTex = LoadTexture(AssetPath("PowerUps/BladeBeam_Cast.png").c_str());
     _swordBeamHitTex = LoadTexture(AssetPath("PowerUps/Hit03.png").c_str());
     _freezeCastTex = LoadTexture(AssetPath("PowerUps/Ice_Shard_Cast.png").c_str());
     _freezeHitTex = LoadTexture(AssetPath("PowerUps/Ice_Shard_Hit.png").c_str());
+    _lightningCastTex = LoadTexture(AssetPath("PowerUps/LightningCast.png").c_str());
     _healEffectTex = LoadTexture(AssetPath("PowerUps/Health_Up.png").c_str());
+    _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
+    _abilityIconIceTex      = LoadTexture(AssetPath("PowerUps/IceSpellPickup.png").c_str());
+    _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
+
+    _upgradeAttackPowerTex = LoadTexture(AssetPath("UI/Upgrades/AttackPower.png").c_str());
+    _upgradeAttackRangeTex = LoadTexture(AssetPath("UI/Upgrades/AttackRange.png").c_str());
+    _upgradeHealthTex      = LoadTexture(AssetPath("UI/Upgrades/HealthUpgrade.png").c_str());
+    _upgradeMagicTex       = LoadTexture(AssetPath("UI/Upgrades/Magic.png").c_str());
+    _upgradeDefenseTex     = LoadTexture(AssetPath("UI/Upgrades/Defense.png").c_str());
+    _upgradeMoveSpeedTex   = LoadTexture(AssetPath("UI/Upgrades/MoveSpeed.png").c_str());
 
     _props.clear();
     _pickups.clear();
-    _fireballProjectiles.clear();
+    _spreadProjectiles.clear();
+    _ultimateBlasts.clear();
     _swordBeamProjectiles.clear();
     _freezeProjectiles.clear();
     _lavaBalls.clear();
     _effects.clear();
     _enemies.clear();
 
-    int propCount = GetRandomValue(7, 10);
+    // Total prop slots: 7-10. Always reserve 3 for torch decorations
+    // (2 wall torches + 1 pillar torch); the rest are solid stone pillars.
+    // Frame sizes: Torch = 8 frames of 32x29, PillarTorch = 5 frames of 53x48.
+    // Adjust frame counts here if the sprite sheets differ on disk.
+    int propCount  = GetRandomValue(7, 10);
+    int pillarCount = propCount - 3;
 
-    for (int i = 0; i < propCount; i++)
+    for (int i = 0; i < pillarCount; i++)
     {
         Vector2 pos = GetRandomPropPosition();
         _props.push_back(Prop{ pos, _pillarTex });
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        Vector2 pos = GetRandomPropPosition();
+        _props.push_back(Prop{ pos, _torchTex, 8, 32, 29, 2.5f });
+    }
+    {
+        Vector2 pos = GetRandomPropPosition();
+        // PillarTorch.png: 290x52, 8 frames at stride 32 starting at col 17.
+        // The 21px leading/trailing padding means frames aren't at col 0,
+        // so frameXOffset=17 slides each source rect to capture the content.
+        _props.push_back(Prop{ pos, _pillarTorchTex, 8, 32, 52, 3.f, 1.f / 10.f, 17 });
     }
 
     BuildNavigationGrid();
@@ -393,8 +435,13 @@ void Engine::Update(float dt)
 
         if (_menu.StartPressed())
         {
+            ResetRunState();
             _fadeInTimer = 2.0f;
-            _gameState = GameState::Play;
+            GenerateStartingAbilityOptions();
+            _awaitingStartingAbility = true;
+            _levelUpReturnState = GameState::Play;
+            _levelUpOpenTimer = 0.8f;
+            _gameState = GameState::LevelUpChoice;
         }
         if (_menu.QuitPressed())
             _shouldClose = true;
@@ -440,6 +487,11 @@ void Engine::Update(float dt)
 
     case GameState::GameOver:
         break;
+
+    case GameState::LevelUpChoice:
+        if (_levelUpOpenTimer > 0.f)
+            _levelUpOpenTimer -= dt;
+        break;
     }
 }
 
@@ -456,17 +508,67 @@ void Engine::UpdateGamePlay(float dt)
     if (_bossWarningTimer > 0.f)
         _bossWarningTimer -= dt;
 
+    // Block attacks and abilities during wave intro and ultimate cinematic
+    _player.SetCombatLocked(_waveStarting || _ultimatePhase != UltimatePhase::None);
     _player.Update(dt);
+
+    // During the cinematic ultimate sequence everything except the player
+    // animation is frozen. Drain any pending cast request so it doesn't fire
+    // twice when play resumes.
+    if (_ultimatePhase != UltimatePhase::None)
+    {
+        _player.ConsumeCastRequest();
+        UpdateUltimateSequence(dt);
+        return;
+    }
 
     Character::CastType castType = _player.ConsumeCastRequest();
 
-    if (castType == Character::CastType::Fireball)
+    if (castType == Character::CastType::FireSpread ||
+        castType == Character::CastType::IceSpread  ||
+        castType == Character::CastType::ElectricSpread)
     {
+        AbilityType element =
+            (castType == Character::CastType::FireSpread)     ? AbilityType::FireSpread :
+            (castType == Character::CastType::IceSpread)      ? AbilityType::IceSpread  :
+                                                                 AbilityType::ElectricSpread;
         SpawnCastEffect(castType);
         StopSound(_fireballCastSound);
         PlaySound(_fireballCastSound);
-        SpawnFireballBurst();
+        SpawnSpreadBurst(element);
     }
+    else if (castType == Character::CastType::FireUltimate  ||
+             castType == Character::CastType::IceUltimate   ||
+             castType == Character::CastType::ElectricUltimate)
+    {
+        AbilityType element =
+            (castType == Character::CastType::FireUltimate)     ? AbilityType::FireUltimate  :
+            (castType == Character::CastType::IceUltimate)      ? AbilityType::IceUltimate   :
+                                                                   AbilityType::ElectricUltimate;
+        TriggerUltimateSequence(element);
+    }
+    else if (castType == Character::CastType::FireBolt  ||
+             castType == Character::CastType::IceBolt   ||
+             castType == Character::CastType::ElectricBolt)
+    {
+        AbilityType element =
+            (castType == Character::CastType::FireBolt)     ? AbilityType::FireBolt  :
+            (castType == Character::CastType::IceBolt)      ? AbilityType::IceBolt   :
+                                                               AbilityType::ElectricBolt;
+        // Reuse the matching spread cast effect for visual feedback
+        Character::CastType effectType =
+            (element == AbilityType::FireBolt)     ? Character::CastType::FireSpread :
+            (element == AbilityType::IceBolt)      ? Character::CastType::IceSpread  :
+                                                     Character::CastType::ElectricSpread;
+        SpawnCastEffect(effectType);
+        StopSound(_fireballCastSound);
+        PlaySound(_fireballCastSound);
+        SpawnBolt(element);
+    }
+    // [SHELVED] — SwordBeam and FreezeWave dispatch. These branches are never
+    // reached because no UpgradeType in GenerateLevelUpOptions can teach either
+    // ability. The projectile vectors (_swordBeamProjectiles, _freezeProjectiles)
+    // are always empty. Code preserved in case these are reintegrated later.
     else if (castType == Character::CastType::SwordBeam)
     {
         SpawnCastEffect(castType);
@@ -500,9 +602,6 @@ void Engine::UpdateGamePlay(float dt)
         return;
     }
 
-    if (_levelUpTimer > 0.f)
-        _levelUpTimer -= dt;
-
     if (_waveStarting)
     {
         _waveIntroTimer -= dt;
@@ -529,7 +628,28 @@ void Engine::UpdateGamePlay(float dt)
         }
 
         if (GetActiveEnemyCount() == 0)
+        {
+            // After wave 1 clears, guarantee a level-up before wave 2 begins.
+            // Top up the player's exp to the next threshold so the level-up
+            // screen fires naturally, keeping the level/exp counters in sync.
+            if (_wave == 1 && !_wave1LevelUpDone)
+            {
+                _wave1LevelUpDone = true;
+                int prevLevel  = _player.GetLevel();
+                int remaining  = _player.GetExpToNext() - _player.GetExp();
+                if (remaining > 0)
+                    _player.AddExp(remaining);
+                if (_player.GetLevel() > prevLevel)
+                {
+                    GenerateLevelUpOptions();
+                    _levelUpReturnState = GameState::Play;
+                    _levelUpOpenTimer   = 0.25f;
+                    _gameState          = GameState::LevelUpChoice;
+                    return; // wave 2 spawns when we come back to Play
+                }
+            }
             SpawnWave();
+        }
 
         _navRefreshTimer -= dt;
         Vector2 playerFeet = _player.GetFeetWorldPos();
@@ -616,7 +736,7 @@ void Engine::UpdateGamePlay(float dt)
         }
 
         HandlePlayerMeleeDamage();
-        UpdateFireballProjectiles(dt);
+        UpdateSpreadProjectiles(dt);
         UpdateSwordBeamProjectiles(dt);
         UpdateFreezeProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
@@ -699,9 +819,9 @@ void Engine::Draw()
     case GameState::Play:
     {
         DrawWorld();
+        DrawUltimateSequence();
         DrawHUD();
         DrawWaveIntro();
-        DrawLevelUpMessage();
 
         if (_fadeInTimer > 0.f)
         {
@@ -725,7 +845,7 @@ void Engine::Draw()
         for (auto& pickup : _pickups)
             pickup->Draw(worldOffset);
 
-        for (const auto& projectile : _fireballProjectiles)
+        for (const auto& projectile : _spreadProjectiles)
             projectile.Draw(worldOffset);
 
         for (const auto& projectile : _swordBeamProjectiles)
@@ -787,7 +907,7 @@ void Engine::Draw()
         {
             int goResult = _pauseUI.DrawGameOver(_wave, _gameTimer, _enemiesKilled, _leaderboard.GetEntries());
             if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _gameState = GameState::Play; }
+            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
             else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
             else if (goResult == 3) _shouldClose = true;
         }
@@ -821,6 +941,14 @@ void Engine::Draw()
         break;
     }
 
+    case GameState::LevelUpChoice:
+    {
+        DrawWorld();
+        DrawHUD();
+        DrawLevelUpChoice();
+        break;
+    }
+
     }
 }
 
@@ -840,17 +968,12 @@ void Engine::HandleCollisions()
      || pos.y < marginTop   || pos.y > mapH - marginBottom)
     {
         if (_player.IsBeingForcedPushed())
-        {
             _player.OnForcedPushCollision();
-        }
-        else
-        {
-            // Clamp rather than undo so the player slides along walls instead
-            // of being snapped back into an enemy that was pushing them.
-            pos.x = std::max(marginLeft,        std::min(pos.x, mapW - marginRight));
-            pos.y = std::max(marginTop,         std::min(pos.y, mapH - marginBottom));
-            _player.SetWorldPos(pos);
-        }
+
+        // Always clamp — stops forced pushes and normal movement at the boundary
+        pos.x = std::max(marginLeft,        std::min(pos.x, mapW - marginRight));
+        pos.y = std::max(marginTop,         std::min(pos.y, mapH - marginBottom));
+        _player.SetWorldPos(pos);
     }
 
     for (auto& prop : _props)
@@ -859,8 +982,23 @@ void Engine::HandleCollisions()
         {
             if (_player.IsBeingForcedPushed())
                 _player.OnForcedPushCollision();
+
+            // Always eject the player fully outside the prop via MTV
+            Rectangle pr    = _player.GetCollisionRec();
+            Rectangle propr = prop.GetCollisionRec();
+            float overlapX = std::min(pr.x + pr.width,  propr.x + propr.width)  - std::max(pr.x, propr.x);
+            float overlapY = std::min(pr.y + pr.height, propr.y + propr.height) - std::max(pr.y, propr.y);
+            Vector2 ppos = _player.GetWorldPos();
+            if (overlapX < overlapY)
+            {
+                float dir = (pr.x + pr.width * 0.5f < propr.x + propr.width * 0.5f) ? -1.f : 1.f;
+                _player.SetWorldPos({ ppos.x + dir * overlapX, ppos.y });
+            }
             else
-                _player.UndoMovement();
+            {
+                float dir = (pr.y + pr.height * 0.5f < propr.y + propr.height * 0.5f) ? -1.f : 1.f;
+                _player.SetWorldPos({ ppos.x, ppos.y + dir * overlapY });
+            }
         }
 
         for (auto& enemy : _enemies)
@@ -875,15 +1013,31 @@ void Engine::HandleCollisions()
                 {
                     if (ogre->IsRushing())
                         ogre->OnRushBlocked();
-                    else
-                        enemy->UndoMovement();
                 }
                 else if (Molarbeast* molarbeast = enemy->AsMolarbeast())
                 {
                     if (molarbeast->IsDashing())
                         molarbeast->OnDashBlocked();
+                }
+
+                // Always eject the enemy fully outside the prop via MTV
+                Rectangle er    = enemy->GetCollisionRec();
+                Rectangle propr = prop.GetCollisionRec();
+                if (CheckCollisionRecs(er, propr))
+                {
+                    float overlapX = std::min(er.x + er.width,  propr.x + propr.width)  - std::max(er.x, propr.x);
+                    float overlapY = std::min(er.y + er.height, propr.y + propr.height) - std::max(er.y, propr.y);
+                    Vector2 epos = enemy->GetWorldPos();
+                    if (overlapX < overlapY)
+                    {
+                        float dir = (er.x + er.width * 0.5f < propr.x + propr.width * 0.5f) ? -1.f : 1.f;
+                        enemy->Teleport({ epos.x + dir * overlapX, epos.y });
+                    }
                     else
-                        enemy->UndoMovement();
+                    {
+                        float dir = (er.y + er.height * 0.5f < propr.y + propr.height * 0.5f) ? -1.f : 1.f;
+                        enemy->Teleport({ epos.x, epos.y + dir * overlapY });
+                    }
                 }
                 else
                 {
@@ -928,6 +1082,7 @@ void Engine::HandleCollisions()
         }
     }
 
+
     // Player vs enemy solid collision — dash passes straight through.
     // After the dash ends, eject the player if they landed inside an enemy.
     if (!_player.IsDashing())
@@ -940,6 +1095,15 @@ void Engine::HandleCollisions()
             Rectangle pr = _player.GetCollisionRec();
             Rectangle er = enemy->GetCollisionRec();
             if (!CheckCollisionRecs(pr, er))
+                continue;
+
+            // If the player is being force-pushed by an Ogre charge, hitting an
+            // enemy should stop the push (same behaviour as hitting a prop/wall).
+            // Using UndoMovement here causes the player to jitter inside the enemy
+            // because the forced-push velocity overrides the revert every frame.
+            // While the player is being force-pushed they slide through enemies;
+            // only walls and props stop the push.
+            if (_player.IsBeingForcedPushed())
                 continue;
 
             // Normal case: revert the movement that caused the overlap
@@ -985,12 +1149,25 @@ void Engine::UpdateEnemyCount(float dt)
             if (enemy.get() == _bossOgreSupport.enemy && IsBossFightActive())
                 _bossOgreSupport.respawnTimer = kBossSupportRespawnDelay;
 
+            // Exp rules:
+            //  Boss kill     → flat bonus of 10 × wave (grows each boss fight)
+            //  Support add   → no exp while boss is alive (block easy farming)
+            //  Normal enemy  → standard per-enemy exp
+            bool isBoss = (dynamic_cast<Molarbeast*>(enemy.get()) != nullptr);
             int prevLevel = _player.GetLevel();
-            _player.AddExp(enemy->GetExpValue());
+
+            if (isBoss)
+                _player.AddExp(10 * _wave);
+            else if (!IsBossFightActive())
+                _player.AddExp(enemy->GetExpValue());
+            // else: support add during active boss fight — no exp
+
             if (_player.GetLevel() > prevLevel)
             {
-                _levelUpLevel = _player.GetLevel();
-                _levelUpTimer = 2.f;
+                GenerateLevelUpOptions();
+                _levelUpReturnState = GameState::Play;
+                _levelUpOpenTimer = 0.25f;
+                _gameState = GameState::LevelUpChoice;
             }
             _enemiesKilled++;
             SpawnEnemyDrop(dropPos);
@@ -1025,8 +1202,10 @@ void Engine::DrawWorld()
     for (auto& pickup : _pickups)
         pickup->Draw(worldOffset);
 
-    for (const auto& projectile : _fireballProjectiles)
+    for (const auto& projectile : _spreadProjectiles)
         projectile.Draw(worldOffset);
+
+    DrawUltimateBlasts(worldOffset);
 
     for (const auto& projectile : _swordBeamProjectiles)
         projectile.Draw(worldOffset);
@@ -1054,61 +1233,99 @@ void Engine::DrawWorld()
 
 void Engine::DrawHUD()
 {
-    int fontSize = 30;
+    // ── Shared bottom-bar layout constants (mirrored in DrawAbilityBar) ───────
+    static constexpr float kBarW   = 400.f;
+    static constexpr float kBarH   = 28.f;
+    static constexpr float kBarGap = 8.f;
+    static constexpr float kBotPad = 12.f;
 
+    const float expBarY  = (float)GetScreenHeight() - kBotPad - kBarH;
+    const float manaBarY = expBarY - kBarGap - kBarH;
+    const float hpBarY   = manaBarY - kBarGap - kBarH;
+    const float barX     = (float)GetScreenWidth() / 2.f - kBarW / 2.f;
+
+    // ── Top banner ────────────────────────────────────────────────────────────
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight() / 8, Fade(BLACK, 0.6f));
 
-    DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + GetScreenWidth() / 2 - 150, 60, fontSize, RAYWHITE);
+    DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + GetScreenWidth() / 2 - 150, 60, 30, RAYWHITE);
     DrawText(("Enemies Defeated: " + std::to_string(_enemiesKilled)).c_str(), 20, 10, 30, RAYWHITE);
     DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
-    // Player health bar — top right
-    {
-        float maxHp  = _player.GetMaxHealthValue();
-        float curHp  = _player.GetHealthValue();
-        float hpPct  = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
 
-        const float barW = 220.f;
-        const float barH = 22.f;
-        const float barX = (float)GetScreenWidth() - barW - 20.f;
-        const float barY = 20.f;
+    // ── Wave display — top right ──────────────────────────────────────────────
+    {
+        bool isBoss = (_wave > 0 && _wave % 5 == 0);
+        const char* waveLabel = isBoss
+            ? TextFormat("Wave %d  - BOSS", _wave)
+            : TextFormat("Wave %d", _wave);
+        int waveLabelW = MeasureText(waveLabel, 32);
+        DrawText(waveLabel, GetScreenWidth() - waveLabelW - 20, 20, 32,
+            isBoss ? ORANGE : RAYWHITE);
+    }
+
+    // ── HP bar (bottom, above EXP) ────────────────────────────────────────────
+    {
+        float maxHp = _player.GetMaxHealthValue();
+        float curHp = _player.GetHealthValue();
+        float hpPct = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
 
         Color fillColor = (hpPct > 0.5f) ? GREEN :
                           (hpPct > 0.25f) ? YELLOW : RED;
 
-        DrawRectangleRounded({ barX - 2.f, barY - 2.f, barW + 4.f, barH + 4.f }, 0.3f, 4, Fade(BLACK, 0.8f));
-        DrawRectangleRounded({ barX, barY, barW, barH },              0.3f, 4, Fade(DARKGRAY, 0.9f));
-        DrawRectangleRounded({ barX, barY, barW * hpPct, barH },      0.3f, 4, fillColor);
+        DrawRectangleRounded({ barX, hpBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
+        DrawRectangleRounded({ barX, hpBarY, kBarW * hpPct, kBarH }, 0.3f, 6, fillColor);
+        DrawRectangleRoundedLines({ barX, hpBarY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
 
         const char* hpLabel = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
         int labelW = MeasureText(hpLabel, 18);
-        DrawText(hpLabel, (int)(barX + barW / 2.f - labelW / 2.f), (int)(barY + barH + 4.f), 18, RAYWHITE);
+        DrawText(hpLabel,
+            (int)(barX + kBarW / 2.f - labelW / 2.f),
+            (int)(hpBarY + kBarH / 2.f - 9.f),
+            18, RAYWHITE);
     }
 
-    // EXP bar and level display
-    int level = _player.GetLevel();
-    int exp = _player.GetExp();
-    int expToNext = _player.GetExpToNext();
-
-    const float barW = 200.f;
-    const float barH = 14.f;
-    const float barX = GetScreenWidth() / 2.f - barW / 2.f;
-    const float barY = 12.f;
-
-    DrawRectangleRounded(Rectangle{ barX - 2.f, barY - 2.f, barW + 4.f, barH + 4.f }, 0.5f, 4, Fade(BLACK, 0.8f));
-    DrawRectangleRounded(Rectangle{ barX, barY, barW, barH }, 0.5f, 4, Fade(DARKGRAY, 0.9f));
-
-    if (level < 10)
+    // ── Mana bar (middle) ─────────────────────────────────────────────────────
     {
-        float expPercent = (float)exp / (float)expToNext;
-        DrawRectangleRounded(Rectangle{ barX, barY, barW * expPercent, barH }, 0.5f, 4, Fade(YELLOW, 0.9f));
+        int   curMana  = _player.GetMana();
+        int   maxMana  = _player.GetMaxMana();
+        float manaPct  = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
+
+        static const Color kManaFill = { 60, 120, 255, 230 };
+
+        DrawRectangleRounded({ barX, manaBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
+        DrawRectangleRounded({ barX, manaBarY, kBarW * manaPct, kBarH }, 0.3f, 6, kManaFill);
+        DrawRectangleRoundedLines({ barX, manaBarY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+
+        const char* manaLabel = TextFormat("MP  %d / %d", curMana, maxMana);
+        int manaLabelW = MeasureText(manaLabel, 18);
+        DrawText(manaLabel,
+            (int)(barX + kBarW / 2.f - manaLabelW / 2.f),
+            (int)(manaBarY + kBarH / 2.f - 9.f),
+            18, RAYWHITE);
     }
 
-    const char* levelText = level < 10
-        ? TextFormat("Lv.%d  %d/%d EXP", level, exp, expToNext)
-        : "Lv.MAX";
+    // ── EXP bar (very bottom) ─────────────────────────────────────────────────
+    {
+        int   level    = _player.GetLevel();
+        int   exp      = _player.GetExp();
+        int   expToNext= _player.GetExpToNext();
+        float expPct   = (level < 10 && expToNext > 0) ? (float)exp / (float)expToNext : 1.f;
 
-    int textW = MeasureText(levelText, 18);
-    DrawText(levelText, (int)(barX + barW / 2.f - textW / 2.f), (int)(barY + barH + 4.f), 18, YELLOW);
+        static const Color kExpFill = { 255, 210, 0, 230 };
+
+        DrawRectangleRounded({ barX, expBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
+        if (level < 10)
+            DrawRectangleRounded({ barX, expBarY, kBarW * expPct, kBarH }, 0.3f, 6, kExpFill);
+        DrawRectangleRoundedLines({ barX, expBarY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+
+        const char* levelText = (level < 10)
+            ? TextFormat("Lv.%d  %d/%d EXP", level, exp, expToNext)
+            : "Lv.MAX";
+        int textW = MeasureText(levelText, 18);
+        DrawText(levelText,
+            (int)(barX + kBarW / 2.f - textW / 2.f),
+            (int)(expBarY + kBarH / 2.f - 9.f),
+            18, kExpFill);
+    }
 
     DrawAbilityBar();
     DrawMiniMap();
@@ -1129,93 +1346,76 @@ void Engine::DrawHUD()
 void Engine::DrawAbilityBar()
 {
     // Only render slots the player has unlocked (picked up at least once)
-    const int   slotCount  = 3;
-    const float slotSize   = 90.f;
-    const float slotGap    = 10.f;
-    const float slotY      = GetScreenHeight() - slotSize - 14.f;
+    const int   learnedCount = _player.GetLearnedCount();
+    if (learnedCount == 0)
+        return;
 
-    // Count visible slots so the bar stays centred
-    int visibleCount = 0;
-    for (int i = 0; i < slotCount; i++)
-        if (_player.HasEverHadAbility(i)) visibleCount++;
+    const float slotSize = 90.f;
+    const float slotGap  = 10.f;
 
-    if (visibleCount == 0)
-        return;   // nothing to show yet
+    // Compute slotY — must match DrawHUD() constants
+    static constexpr float kBarH   = 28.f;
+    static constexpr float kBarGap = 8.f;
+    static constexpr float kBotPad = 12.f;
+    const float expBarY  = (float)GetScreenHeight() - kBotPad - kBarH;
+    const float manaBarY = expBarY - kBarGap - kBarH;
+    const float hpBarY   = manaBarY - kBarGap - kBarH;
+    const float slotY    = hpBarY - 12.f - slotSize;
 
-    const float totalW = visibleCount * slotSize + (visibleCount - 1) * slotGap;
+    const float totalW = learnedCount * slotSize + (learnedCount - 1) * slotGap;
     const float startX = GetScreenWidth() / 2.f - totalW / 2.f;
-
-    int ammo[3] = {
-        _player.GetFireballAmmo(),
-        _player.GetSwordBeamAmmo(),
-        _player.GetFreezeAmmo()
-    };
-
 
     Vector2 mouse = GetMousePosition();
 
-    int drawIndex = 0;
-    for (int i = 0; i < slotCount; i++)
+    for (int i = 0; i < learnedCount; i++)
     {
-        if (!_player.HasEverHadAbility(i))
-            continue;
-
-        float x = startX + drawIndex * (slotSize + slotGap);
-        drawIndex++;
+        AbilityType ability = _player.GetLearnedAbility(i);
+        bool canCast = _player.GetMana() >= GetAbilityManaCost(ability);
+        float x = startX + i * (slotSize + slotGap);
         Rectangle slot{ x, slotY, slotSize, slotSize };
-
         bool hovered = CheckCollisionPointRec(mouse, slot);
 
-        // Background + border — brighten on hover
+        // Background + border
         DrawRectangleRounded(slot, 0.18f, 6, hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
-        DrawRectangleRoundedLines(slot, 0.18f, 6, hovered ? Fade(GOLD, 0.70f) : Fade(LIGHTGRAY, 0.35f));
+        DrawRectangleRoundedLines(slot, 0.18f, 6,
+            hovered ? Fade(GOLD, 0.70f) :
+            canCast  ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f));
 
-        // Key label (top-left of slot)
-        DrawText(GetKeyName(_player.GetAbilityKey(i)), (int)(x + 6.f), (int)(slotY + 6.f), 16, Fade(WHITE, 0.6f));
+        // Key label
+        DrawText(GetKeyName(_player.GetAbilityKey(i)),
+            (int)(x + 6.f), (int)(slotY + 6.f), 16, Fade(WHITE, 0.6f));
 
         // Click to cast
         if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _player.TriggerAbilityCast(i);
 
-        // Icon
-        float cx = x + slotSize * 0.42f;
-        float cy = slotY + slotSize * 0.46f;
+        // Icon — per-element pickup sprite, dimmed when out of mana
+        const Texture2D* iconTex = &_abilityIconFireTex;
+        if      (ability == AbilityType::IceSpread      ||
+                 ability == AbilityType::IceBolt        ||
+                 ability == AbilityType::IceUltimate)    iconTex = &_abilityIconIceTex;
+        else if (ability == AbilityType::ElectricSpread ||
+                 ability == AbilityType::ElectricBolt   ||
+                 ability == AbilityType::ElectricUltimate) iconTex = &_abilityIconElectricTex;
 
-        if (i == 0)
-        {
-            Texture2D tex = FireBallPickup::GetSharedTexture();
-            float sc = 2.8f;
-            DrawTextureEx(tex, { cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
-                0.f, sc, ammo[i] > 0 ? WHITE : Fade(WHITE, 0.3f));
-        }
-        else if (i == 1)
-        {
-            Texture2D tex = SwordBeamPickup::GetSharedTexture();
-            float sc = 2.9f;
-            DrawTextureEx(tex, { cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
-                0.f, sc, ammo[i] > 0 ? WHITE : Fade(WHITE, 0.3f));
-        }
-        else if (i == 2)
-        {
-            Texture2D tex = FreezePickup::GetSharedTexture();
-            float sc = 2.9f;
-            DrawTextureEx(tex, { cx - tex.width * sc * 0.5f, cy - tex.height * sc * 0.5f },
-                0.f, sc, ammo[i] > 0 ? WHITE : Fade(WHITE, 0.3f));
-        }
+        Color iconTint = canCast ? WHITE : Fade(WHITE, 0.35f);
+        float maxIconSize = slotSize * 0.60f;
+        float iconScale   = std::min(maxIconSize / (float)iconTex->width,
+                                     maxIconSize / (float)iconTex->height);
+        float iw = iconTex->width  * iconScale;
+        float ih = iconTex->height * iconScale;
+        float cx = x + slotSize * 0.5f;
+        float cy = slotY + slotSize * 0.44f;
+        DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
 
-        // Ammo count
-        DrawText(TextFormat("x%d", ammo[i]),
-            (int)(x + slotSize - MeasureText(TextFormat("x%d", ammo[i]), 18) - 6.f),
-            (int)(slotY + slotSize - 22.f), 18,
-            ammo[i] > 0 ? RAYWHITE : Fade(GRAY, 0.6f));
+        // Ability name below icon
+        const char* abilityName = GetAbilityName(ability);
+        int nameW = MeasureText(abilityName, 14);
+        DrawText(abilityName,
+            (int)(x + slotSize / 2.f - nameW / 2.f),
+            (int)(slotY + slotSize - 22.f),
+            14, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
     }
-
-    // Hint below bar
-    const char* hint = "Click icon or press key to use  |  Rebind in Pause";
-    int hw = MeasureText(hint, 13);
-    DrawText(hint, (int)(GetScreenWidth() / 2.f - hw / 2.f),
-        (int)(slotY + slotSize + 2.f), 13, Fade(WHITE, 0.40f));
-
 }
 
 void Engine::DrawWaveIntro()
@@ -1257,43 +1457,531 @@ void Engine::DrawWaveIntro()
     }
 }
 
-void Engine::DrawLevelUpMessage()
+void Engine::GenerateStartingAbilityOptions()
 {
-    if (_levelUpTimer <= 0.f)
-        return;
-
-    Vector2 playerScreen = { GetScreenWidth() / 2.f, GetScreenHeight() / 2.f };
-
-    // Glow rings around player — only during the first second (timer 2.0 → 1.0)
-    if (_levelUpTimer > 1.f)
+    // Pool of all 6 abilities (3 spread + 3 bolt). Shuffle and show 3 so the
+    // player always sees a varied starting choice.
+    UpgradeType pool[6] = {
+        UpgradeType::LearnFireSpread,
+        UpgradeType::LearnIceSpread,
+        UpgradeType::LearnElectricSpread,
+        UpgradeType::LearnFireBolt,
+        UpgradeType::LearnIceBolt,
+        UpgradeType::LearnElectricBolt,
+    };
+    for (int i = 0; i < 6; i++)
     {
-        float glowPhase = 1.f - (_levelUpTimer - 1.f);  // 0 → 1 over the first second
+        int j = GetRandomValue(i, 5);
+        UpgradeType tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+    }
+    _levelUpOptions[0] = pool[0];
+    _levelUpOptions[1] = pool[1];
+    _levelUpOptions[2] = pool[2];
+}
 
-        // Soft inner glow
-        float innerRadius = 40.f + glowPhase * 60.f;
-        DrawCircleV(playerScreen, innerRadius, Fade(YELLOW, (1.f - glowPhase) * 0.30f));
+void Engine::GenerateLevelUpOptions()
+{
+    // Build pool of stat boosts + unlearned abilities
+    UpgradeType pool[15];
+    int poolSize = 0;
 
-        // Outer shockwave ring
-        float r1 = 80.f + glowPhase * 220.f;
-        DrawRing(playerScreen, r1 - 12.f, r1, 0.f, 360.f, 48, Fade(YELLOW, (1.f - glowPhase) * 0.85f));
+    // Always include all 6 stat upgrades
+    pool[poolSize++] = UpgradeType::AttackPower;
+    pool[poolSize++] = UpgradeType::AttackRange;
+    pool[poolSize++] = UpgradeType::MaxHealth;
+    pool[poolSize++] = UpgradeType::MaxMana;
+    pool[poolSize++] = UpgradeType::Defense;
+    pool[poolSize++] = UpgradeType::MoveSpeed;
 
-        // Inner ring slightly behind
-        float r2 = 50.f + glowPhase * 150.f;
-        DrawRing(playerScreen, r2 - 8.f, r2, 0.f, 360.f, 48, Fade(WHITE, (1.f - glowPhase) * 0.55f));
+    // Add ability unlocks the player hasn't learned yet (and has a free slot for)
+    if (!_player.HasLearnedAbility(AbilityType::FireSpread) &&
+        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
+        pool[poolSize++] = UpgradeType::LearnFireSpread;
+
+    if (!_player.HasLearnedAbility(AbilityType::IceSpread) &&
+        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
+        pool[poolSize++] = UpgradeType::LearnIceSpread;
+
+    if (!_player.HasLearnedAbility(AbilityType::ElectricSpread) &&
+        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
+        pool[poolSize++] = UpgradeType::LearnElectricSpread;
+
+    if (!_player.HasLearnedAbility(AbilityType::FireBolt) &&
+        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
+        pool[poolSize++] = UpgradeType::LearnFireBolt;
+
+    if (!_player.HasLearnedAbility(AbilityType::IceBolt) &&
+        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
+        pool[poolSize++] = UpgradeType::LearnIceBolt;
+
+    if (!_player.HasLearnedAbility(AbilityType::ElectricBolt) &&
+        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
+        pool[poolSize++] = UpgradeType::LearnElectricBolt;
+
+    // Ultimates have their own dedicated row at level 3 — keep them out of here.
+
+    // Fisher-Yates shuffle first 3
+    for (int i = 0; i < 3 && i < poolSize; i++)
+    {
+        int j = GetRandomValue(i, poolSize - 1);
+        UpgradeType tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
     }
 
-    // Message above the ability bar — fades out in the last 0.5 seconds
-    const float slotY   = (float)GetScreenHeight() - 90.f - 14.f;
-    const int   fontSize = 34;
-    float alpha = (_levelUpTimer < 0.5f) ? (_levelUpTimer / 0.5f) : 1.f;
+    _levelUpOptions[0] = pool[0];
+    _levelUpOptions[1] = (poolSize > 1) ? pool[1] : pool[0];
+    _levelUpOptions[2] = (poolSize > 2) ? pool[2] : pool[0];
 
-    std::string msg = "You have levelled up to level: " + std::to_string(_levelUpLevel);
-    int textW = MeasureText(msg.c_str(), fontSize);
-    DrawText(msg.c_str(),
-        GetScreenWidth() / 2 - textW / 2,
-        (int)(slotY - fontSize - 12.f),
-        fontSize,
-        Fade(YELLOW, alpha));
+    // Show the ultimate row only at level 3
+    _showUltimateRow   = (_player.GetLevel() == 3);
+    _ultimateRowPicked = false;
+    _regularRowPicked  = false;
+}
+
+void Engine::DrawLevelUpChoice()
+{
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+
+    // Dim overlay
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.65f));
+
+    // Determine which rows are still visible
+    bool showUlt = _showUltimateRow && !_ultimateRowPicked && !_awaitingStartingAbility;
+    bool showReg = !_regularRowPicked;
+
+    // Title
+    const char* title;
+    if (_awaitingStartingAbility)
+        title = "Choose your starting ability:";
+    else if (showUlt && showReg)
+        title = "LEVEL UP!  Choose an Ultimate AND an Upgrade:";
+    else if (showUlt)
+        title = "Now choose your Ultimate:";
+    else if (showReg)
+        title = "Now choose an Upgrade:";
+    else
+        title = "LEVEL UP!";
+
+    int titleSz = 44;
+    int titleW  = MeasureText(title, titleSz);
+    DrawText(title, (int)(sw / 2.f - titleW / 2.f), (int)(sh * 0.06f), titleSz, GOLD);
+
+    // Card layout
+    const float cardW   = 280.f;
+    const float cardH   = 360.f;
+    const float cardGap = 40.f;
+    const float totalW  = 3.f * cardW + 2.f * cardGap;
+    const float startX  = sw / 2.f - totalW / 2.f;
+
+    // Row Y positions — stack both rows when both visible, otherwise center the lone row
+    float ultRowY, regRowY;
+    if (showUlt && showReg)
+    {
+        float totalH = cardH * 2.f + 50.f;
+        float topY   = sh / 2.f - totalH / 2.f;
+        ultRowY = topY;
+        regRowY = topY + cardH + 50.f;
+    }
+    else
+    {
+        ultRowY = sh / 2.f - cardH / 2.f;
+        regRowY = sh / 2.f - cardH / 2.f;
+    }
+
+    // Use cardY to keep the rest of the code below working for the regular row
+    const float cardY = regRowY;
+
+    // Map UpgradeType to display info
+    auto getUpgradeInfo = [&](UpgradeType type, const char*& name, const char*& desc, Texture2D*& icon)
+    {
+        switch (type)
+        {
+        case UpgradeType::AttackPower:
+            name = "Attack Power";
+            desc = "+8% melee\ndamage";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::AttackRange:
+            name = "Attack Range";
+            desc = "+10% melee\nreach";
+            icon = &_upgradeAttackRangeTex;
+            break;
+        case UpgradeType::MaxHealth:
+            name = "Max Health";
+            desc = "+12% max HP\n(heals too)";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::MaxMana:
+            name = "Max Mana";
+            desc = "+20 max MP";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::Defense:
+            name = "Defense";
+            desc = "+5% damage\nreduction";
+            icon = &_upgradeDefenseTex;
+            break;
+        case UpgradeType::MoveSpeed:
+            name = "Move Speed";
+            desc = "+8% movement\nspeed";
+            icon = &_upgradeMoveSpeedTex;
+            break;
+        case UpgradeType::LearnFireSpread:
+            name = "Fire Spread";
+            desc = "8 fireballs\nburn on hit";
+            icon = &_abilityIconFireTex;
+            break;
+        case UpgradeType::LearnIceSpread:
+            name = "Ice Spread";
+            desc = "8 ice shards\nfreeze on hit";
+            icon = &_abilityIconIceTex;
+            break;
+        case UpgradeType::LearnElectricSpread:
+            name = "Electric Spread";
+            desc = "8 bolts\nstun randomly";
+            icon = &_abilityIconElectricTex;
+            break;
+        case UpgradeType::LearnFireBolt:
+            name = "Fire Bolt";
+            desc = "Aimed fireball\nhigh damage + burn";
+            icon = &_abilityIconFireTex;
+            break;
+        case UpgradeType::LearnIceBolt:
+            name = "Ice Bolt";
+            desc = "Aimed shard\nhigh damage + freeze";
+            icon = &_abilityIconIceTex;
+            break;
+        case UpgradeType::LearnElectricBolt:
+            name = "Electric Bolt";
+            desc = "Aimed bolt\nhigh damage + stun";
+            icon = &_abilityIconElectricTex;
+            break;
+        case UpgradeType::LearnFireUltimate:
+            name = "Fire Ultimate";
+            desc = "Blasts everywhere\n4 dmg + burn, all MP";
+            icon = &_abilityIconFireTex;
+            break;
+        case UpgradeType::LearnIceUltimate:
+            name = "Ice Ultimate";
+            desc = "Blasts everywhere\n4 dmg + freeze, all MP";
+            icon = &_abilityIconIceTex;
+            break;
+        case UpgradeType::LearnElectricUltimate:
+            name = "Elec. Ultimate";
+            desc = "Blasts everywhere\n4 dmg + stun, all MP";
+            icon = &_abilityIconElectricTex;
+            break;
+        default:
+            name = "???";
+            desc = "";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        }
+    };
+
+    Vector2 mouse = GetMousePosition();
+    bool ready = (_levelUpOpenTimer <= 0.f);
+
+    // ── Ultimate row (level 3 only, top) ─────────────────────────────────────
+    if (showUlt)
+    {
+        // Row label
+        int lblSz = 22;
+        const char* lbl = "- Elemental Ultimate -";
+        DrawText(lbl, (int)(sw / 2.f - MeasureText(lbl, lblSz) / 2.f),
+                 (int)(ultRowY - lblSz - 8.f), lblSz, Color{255,200,80,200});
+
+        for (int i = 0; i < 3; i++)
+        {
+            float x = startX + i * (cardW + cardGap);
+            Rectangle card{ x, ultRowY, cardW, cardH };
+            bool hovered = ready && CheckCollisionPointRec(mouse, card);
+
+            // Gold-tinted card background to distinguish from regular row
+            Color bgColor = hovered ? Color{55, 40, 10, 230} : Color{35, 25, 5, 215};
+            DrawRectangleRounded(card, 0.12f, 8, bgColor);
+            DrawRectangleRoundedLines(card, 0.12f, 8,
+                hovered ? Color{255,180,0,255} : Color{200,140,30,160});
+
+            const char* name = ""; const char* desc = ""; Texture2D* icon = nullptr;
+            getUpgradeInfo(_levelUpUltimateOptions[i], name, desc, icon);
+
+            // Icon / pattern area
+            {
+                const float iconAreaSize = cardW * 0.52f;
+                const float previewCX    = x + cardW / 2.f;
+                const float previewCY    = ultRowY + cardH * 0.10f + iconAreaSize / 2.f;
+
+                UpgradeType opt = _levelUpUltimateOptions[i];
+                Color ec =
+                    (opt == UpgradeType::LearnFireUltimate)     ? Color{255,110, 20,255} :
+                    (opt == UpgradeType::LearnIceUltimate)      ? Color{100,210,255,255} :
+                                                                  Color{255,220, 30,255};
+                Color ecDim = {ec.r, ec.g, ec.b, 80};
+                const float outerR = iconAreaSize * 0.44f;
+                DrawCircleLinesV({previewCX, previewCY}, outerR, ecDim);
+                const float dotAngles[10] = {0.f,36.f,72.f,108.f,144.f,180.f,216.f,252.f,288.f,324.f};
+                const float dotDists[10]  = {0.55f,0.80f,0.65f,0.90f,0.50f,0.75f,0.85f,0.60f,0.95f,0.70f};
+                for (int d = 0; d < 10; d++)
+                {
+                    float rad  = dotAngles[d] * DEG2RAD;
+                    float dist = outerR * dotDists[d];
+                    Vector2 dp = {previewCX + cosf(rad)*dist, previewCY + sinf(rad)*dist};
+                    DrawCircleV(dp, 5.f, ecDim);
+                    DrawCircleV(dp, 3.f, ec);
+                }
+                if (icon && icon->id != 0)
+                {
+                    float iconTarget = (opt == UpgradeType::LearnFireUltimate) ? 44.f : 72.f;
+                    float iconScale  = std::min(iconTarget/(float)icon->width, iconTarget/(float)icon->height);
+                    float iw = icon->width * iconScale; float ih = icon->height * iconScale;
+                    DrawTextureEx(*icon, {previewCX - iw*0.5f, previewCY - ih*0.5f}, 0.f, iconScale, WHITE);
+                }
+            }
+
+            // Name
+            int nameSz = 26;
+            int nameW  = MeasureText(name, nameSz);
+            DrawText(name, (int)(x + cardW/2.f - nameW/2.f),
+                     (int)(ultRowY + cardH*0.58f), nameSz, hovered ? GOLD : RAYWHITE);
+
+            // Description
+            std::string descStr = desc;
+            int nlPos = (int)descStr.find('\n');
+            int descSz = 20;
+            if (nlPos != (int)std::string::npos)
+            {
+                std::string line1 = descStr.substr(0, nlPos);
+                std::string line2 = descStr.substr(nlPos + 1);
+                DrawText(line1.c_str(), (int)(x + cardW/2.f - MeasureText(line1.c_str(),descSz)/2.f),
+                         (int)(ultRowY + cardH*0.72f), descSz, LIGHTGRAY);
+                DrawText(line2.c_str(), (int)(x + cardW/2.f - MeasureText(line2.c_str(),descSz)/2.f),
+                         (int)(ultRowY + cardH*0.72f + descSz + 4), descSz, LIGHTGRAY);
+            }
+            else
+            {
+                DrawText(desc, (int)(x + cardW/2.f - MeasureText(desc,descSz)/2.f),
+                         (int)(ultRowY + cardH*0.72f), descSz, LIGHTGRAY);
+            }
+
+            if (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            {
+                _player.ApplyUpgrade(_levelUpUltimateOptions[i]);
+                _ultimateRowPicked = true;
+                if (_regularRowPicked)
+                    _gameState = _levelUpReturnState;
+            }
+        }
+    }
+
+    // ── Regular row ──────────────────────────────────────────────────────────
+    if (showReg)
+    {
+        // Row label when both rows are visible
+        if (showUlt)
+        {
+            int lblSz = 22;
+            const char* lbl = "- Upgrade -";
+            DrawText(lbl, (int)(sw / 2.f - MeasureText(lbl, lblSz) / 2.f),
+                     (int)(regRowY - lblSz - 8.f), lblSz, Color{200,200,200,180});
+        }
+
+    for (int i = 0; i < 3; i++)
+    {
+        float x = startX + i * (cardW + cardGap);
+        Rectangle card{ x, cardY, cardW, cardH };
+
+        bool hovered = ready && CheckCollisionPointRec(mouse, card);
+
+        // Card background
+        Color bgColor = hovered ? Color{ 50, 45, 25, 230 } : Color{ 25, 22, 12, 210 };
+        DrawRectangleRounded(card, 0.12f, 8, bgColor);
+        DrawRectangleRoundedLines(card, 0.12f, 8,
+            hovered ? Color{ 255, 200, 0, 220 } : Color{ 180, 160, 80, 120 });
+
+        const char* name = "";
+        const char* desc = "";
+        Texture2D* icon  = nullptr;
+        getUpgradeInfo(_levelUpOptions[i], name, desc, icon);
+
+        // Icon area — ability unlocks get a drawn attack-pattern preview so the
+        // player can immediately see "burst vs single shot". Stat upgrades keep
+        // their regular texture icon.
+        {
+            const float iconAreaSize = cardW * 0.52f;
+            const float previewCX    = x + cardW / 2.f;
+            const float previewCY    = cardY + cardH * 0.10f + iconAreaSize / 2.f;
+
+            UpgradeType opt = _levelUpOptions[i];
+            bool isSpreadAbility   = (opt == UpgradeType::LearnFireSpread  ||
+                                      opt == UpgradeType::LearnIceSpread   ||
+                                      opt == UpgradeType::LearnElectricSpread);
+            bool isBoltAbility     = (opt == UpgradeType::LearnFireBolt    ||
+                                      opt == UpgradeType::LearnIceBolt     ||
+                                      opt == UpgradeType::LearnElectricBolt);
+            bool isUltimateAbility = (opt == UpgradeType::LearnFireUltimate    ||
+                                      opt == UpgradeType::LearnIceUltimate     ||
+                                      opt == UpgradeType::LearnElectricUltimate);
+
+            if (isSpreadAbility || isBoltAbility || isUltimateAbility)
+            {
+                // Pick element colour
+                Color ec =
+                    (opt == UpgradeType::LearnFireSpread    || opt == UpgradeType::LearnFireBolt    || opt == UpgradeType::LearnFireUltimate)     ? Color{255, 110,  20, 255} :
+                    (opt == UpgradeType::LearnIceSpread     || opt == UpgradeType::LearnIceBolt     || opt == UpgradeType::LearnIceUltimate)      ? Color{100, 210, 255, 255} :
+                                                                                                                                                    Color{255, 220,  30, 255};
+                Color ecDim = { ec.r, ec.g, ec.b, 80 };
+
+                if (isSpreadAbility)
+                {
+                    // 8 radiating arrows from a centre point
+                    const float armLen  = iconAreaSize * 0.40f;
+                    const float headLen = 10.f;
+                    const float headW   = 6.f;
+                    const float angles[8] = { 0.f, 45.f, 90.f, 135.f, 180.f, 225.f, 270.f, 315.f };
+
+                    for (float deg : angles)
+                    {
+                        float rad  = deg * DEG2RAD;
+                        float cx2  = cosf(rad);
+                        float cy2  = sinf(rad);
+                        Vector2 shaft0 = { previewCX + cx2 * 22.f, previewCY + cy2 * 22.f };
+                        Vector2 tip    = { previewCX + cx2 * armLen, previewCY + cy2 * armLen };
+
+                        DrawLineEx(shaft0, tip, 2.2f, ec);
+
+                        Vector2 perpL = { -cy2, cx2 };
+                        Vector2 hb1 = { tip.x - cx2 * headLen + perpL.x * headW,
+                                        tip.y - cy2 * headLen + perpL.y * headW };
+                        Vector2 hb2 = { tip.x - cx2 * headLen - perpL.x * headW,
+                                        tip.y - cy2 * headLen - perpL.y * headW };
+                        DrawTriangle(tip, hb1, hb2, ec);
+                    }
+                }
+                else if (isBoltAbility)
+                {
+                    // Single large arrow aimed to the right
+                    const float armLen  = iconAreaSize * 0.38f;
+                    const float headLen = 18.f;
+                    const float headW   = 11.f;
+
+                    Vector2 shaftStart = { previewCX - armLen * 0.55f, previewCY };
+                    Vector2 tip        = { previewCX + armLen,          previewCY };
+                    DrawLineEx(shaftStart, tip, 4.5f, ec);
+
+                    Vector2 hb1 = { tip.x - headLen, tip.y - headW };
+                    Vector2 hb2 = { tip.x - headLen, tip.y + headW };
+                    DrawTriangle(tip, hb1, hb2, ec);
+                }
+                else // ultimate
+                {
+                    // Scattered burst: outer ring + 10 dots at irregular distances
+                    // to suggest "explosions everywhere". Positions are deterministic
+                    // so they don't flicker each frame.
+                    const float outerR = iconAreaSize * 0.44f;
+                    DrawCircleLinesV({ previewCX, previewCY }, outerR, ecDim);
+
+                    const float dotAngles[10] = { 0.f, 36.f, 72.f, 108.f, 144.f, 180.f, 216.f, 252.f, 288.f, 324.f };
+                    const float dotDists[10]  = { 0.55f, 0.80f, 0.65f, 0.90f, 0.50f, 0.75f, 0.85f, 0.60f, 0.95f, 0.70f };
+
+                    for (int d = 0; d < 10; d++)
+                    {
+                        float rad  = dotAngles[d] * DEG2RAD;
+                        float dist = outerR * dotDists[d];
+                        Vector2 dp = { previewCX + cosf(rad) * dist, previewCY + sinf(rad) * dist };
+                        DrawCircleV(dp, 5.f, ecDim);
+                        DrawCircleV(dp, 3.f, ec);
+                    }
+                }
+
+                // Icon centred on top of the arrow pattern
+                if (icon && icon->id != 0)
+                {
+                    // Fire icon reads clearly at a smaller size; ice and electric
+                    // sprites are visually smaller so give them more room.
+                    float iconTarget =
+                        (opt == UpgradeType::LearnIceSpread      || opt == UpgradeType::LearnIceBolt      || opt == UpgradeType::LearnIceUltimate      ||
+                         opt == UpgradeType::LearnElectricSpread || opt == UpgradeType::LearnElectricBolt || opt == UpgradeType::LearnElectricUltimate)
+                        ? 72.f : 44.f;
+                    float iconScale = std::min(iconTarget / (float)icon->width,
+                                               iconTarget / (float)icon->height);
+                    float iw = icon->width  * iconScale;
+                    float ih = icon->height * iconScale;
+                    DrawTextureEx(*icon, { previewCX - iw * 0.5f, previewCY - ih * 0.5f },
+                                  0.f, iconScale, WHITE);
+                }
+            }
+            else if (icon && icon->id != 0)
+            {
+                // Stat upgrade — draw the regular texture icon
+                float iconScale = std::min(iconAreaSize / (float)icon->width,
+                                           iconAreaSize / (float)icon->height);
+                float iconW = icon->width  * iconScale;
+                float iconH = icon->height * iconScale;
+                float iconX = previewCX - iconW / 2.f;
+                float iconY = cardY + cardH * 0.10f + (iconAreaSize - iconH) / 2.f;
+                DrawTextureEx(*icon, { iconX, iconY }, 0.f, iconScale, WHITE);
+            }
+        }
+
+        // Name
+        int nameSz = 26;
+        int nameW  = MeasureText(name, nameSz);
+        DrawText(name,
+            (int)(x + cardW / 2.f - nameW / 2.f),
+            (int)(cardY + cardH * 0.58f),
+            nameSz, hovered ? GOLD : RAYWHITE);
+
+        // Description — manual newline split
+        std::string descStr = desc;
+        int nlPos = (int)descStr.find('\n');
+        int descSz = 20;
+        if (nlPos != (int)std::string::npos)
+        {
+            std::string line1 = descStr.substr(0, nlPos);
+            std::string line2 = descStr.substr(nlPos + 1);
+            int l1W = MeasureText(line1.c_str(), descSz);
+            int l2W = MeasureText(line2.c_str(), descSz);
+            DrawText(line1.c_str(),
+                (int)(x + cardW / 2.f - l1W / 2.f),
+                (int)(cardY + cardH * 0.72f), descSz, LIGHTGRAY);
+            DrawText(line2.c_str(),
+                (int)(x + cardW / 2.f - l2W / 2.f),
+                (int)(cardY + cardH * 0.72f + descSz + 4), descSz, LIGHTGRAY);
+        }
+        else
+        {
+            int dW = MeasureText(desc, descSz);
+            DrawText(desc,
+                (int)(x + cardW / 2.f - dW / 2.f),
+                (int)(cardY + cardH * 0.72f), descSz, LIGHTGRAY);
+        }
+
+        // Click to select — blocked until open timer expires
+        if (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            _player.ApplyUpgrade(_levelUpOptions[i]);
+            _awaitingStartingAbility = false;
+            _regularRowPicked = true;
+            if (!_showUltimateRow || _ultimateRowPicked)
+                _gameState = _levelUpReturnState;
+        }
+    }
+    } // end showReg
+
+    // Hint / loading cue
+    const char* hint;
+    if (_levelUpOpenTimer > 0.f)
+        hint = "Loading...";
+    else if (showUlt && showReg)
+        hint = "Choose one from each row";
+    else
+        hint = "Click a card to choose";
+
+    Color hintColor = (_levelUpOpenTimer > 0.f) ? Fade(GRAY, 0.6f) : Fade(LIGHTGRAY, 0.7f);
+    float hintRefY  = showReg ? (regRowY + cardH + 28.f) : (ultRowY + cardH + 28.f);
+    int hintW = MeasureText(hint, 22);
+    DrawText(hint, (int)(sw / 2.f - hintW / 2.f), (int)hintRefY, 22, hintColor);
 }
 
 void Engine::HandlePlayerMeleeDamage()
@@ -1313,7 +2001,7 @@ void Engine::HandlePlayerMeleeDamage()
 
         if (CheckCollisionRecs(attackRec, enemy->GetHitCollisionRec()))
         {
-            enemy->TakeDamage(2, _player.GetWorldPos());
+            enemy->TakeDamage(_player.GetMeleeDamage(), _player.GetWorldPos());
             SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
             hitAny = true;
         }
@@ -1325,26 +2013,304 @@ void Engine::HandlePlayerMeleeDamage()
         TriggerScreenShake(6.f, 0.07f);
 }
 
-void Engine::SpawnFireballBurst()
+void Engine::SpawnSpreadBurst(AbilityType element)
 {
     static const std::array<Vector2, 8> directions{
-        Vector2{ 1.f, 0.f },
-        Vector2{ -1.f, 0.f },
-        Vector2{ 0.f, 1.f },
-        Vector2{ 0.f, -1.f },
-        Vector2{ 1.f, 1.f },
-        Vector2{ 1.f, -1.f },
-        Vector2{ -1.f, 1.f },
+        Vector2{  1.f,  0.f },
+        Vector2{ -1.f,  0.f },
+        Vector2{  0.f,  1.f },
+        Vector2{  0.f, -1.f },
+        Vector2{  1.f,  1.f },
+        Vector2{  1.f, -1.f },
+        Vector2{ -1.f,  1.f },
         Vector2{ -1.f, -1.f }
     };
 
     Vector2 origin = _player.GetCastOrigin();
 
-    for (const Vector2& direction : directions)
+    for (const Vector2& dir : directions)
     {
-        FireballProjectile projectile;
-        projectile.Init(origin, direction);
-        _fireballProjectiles.push_back(projectile);
+        SpreadProjectile projectile;
+        projectile.Init(origin, dir, element);
+        _spreadProjectiles.push_back(projectile);
+    }
+}
+
+void Engine::SpawnBolt(AbilityType element)
+{
+    SpreadProjectile projectile;
+    projectile.Init(_player.GetCastOrigin(), _player.GetFacingDirection(), element);
+    _spreadProjectiles.push_back(projectile);
+}
+
+void Engine::SpawnUltimateBurst(AbilityType element)
+{
+    // Fill the entire visible screen with blasts. Positions are computed in
+    // screen space then converted to world space so they always cover the
+    // full 1920x1080 view regardless of where the player is.
+    const int   blastCount = 25;
+    const float lifetime   = _ultCinematicDuration;
+    const float margin     = 80.f;   // keep icons away from the very edge
+
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+    Vector2 playerPos = _player.GetWorldPos();
+
+    for (int i = 0; i < blastCount; i++)
+    {
+        float sx = (float)GetRandomValue((int)margin, (int)(sw - margin));
+        float sy = (float)GetRandomValue((int)margin, (int)(sh - margin));
+
+        // Convert screen-space position to world-space so DrawUltimateBlasts
+        // maps it back to the same screen pixel via the worldOffset calculation.
+        Vector2 pos = {
+            playerPos.x + sx - sw * 0.5f,
+            playerPos.y + sy - sh * 0.5f
+        };
+
+        // Angle each blast outward from the screen center so they look like
+        // they're radiating away from the player.
+        float rotation = atan2f(sy - sh * 0.5f, sx - sw * 0.5f) * RAD2DEG;
+
+        UltimateBlast blast;
+        blast.worldPos  = pos;
+        blast.element   = element;
+        blast.lifetime  = lifetime;
+        blast.timer     = lifetime;
+        blast.rotation  = rotation;
+        _ultimateBlasts.push_back(blast);
+    }
+
+    TriggerScreenShake(6.f, 0.3f);
+}
+
+void Engine::UpdateUltimateBlasts(float dt)
+{
+    // Purely visual during the cinematic phase — damage is applied all at once
+    // by ApplyUltimateImpact at the Impact phase transition.
+    for (auto& blast : _ultimateBlasts)
+        blast.timer -= dt;
+
+    _ultimateBlasts.erase(
+        std::remove_if(_ultimateBlasts.begin(), _ultimateBlasts.end(),
+            [](const UltimateBlast& b) { return b.timer <= 0.f; }),
+        _ultimateBlasts.end());
+}
+
+void Engine::TriggerUltimateSequence(AbilityType element)
+{
+    _ultimatePhase       = UltimatePhase::WindUp;
+    _ultimatePhaseTimer  = 0.f;
+    _ultimateCircleAngle = 0.f;
+    _ultimateElement     = element;
+    _ultimateBlasts.clear();
+    StopSound(_fireballCastSound);
+    PlaySound(_fireballCastSound);
+}
+
+void Engine::UpdateUltimateSequence(float dt)
+{
+    _ultimatePhaseTimer  += dt;
+    _ultimateCircleAngle += dt * 2.2f;
+
+    switch (_ultimatePhase)
+    {
+    case UltimatePhase::WindUp:
+        if (_ultimatePhaseTimer >= _ultWindUpDuration)
+        {
+            _ultimatePhase      = UltimatePhase::Cinematic;
+            _ultimatePhaseTimer = 0.f;
+            SpawnUltimateBurst(_ultimateElement);
+        }
+        break;
+
+    case UltimatePhase::Cinematic:
+        UpdateUltimateBlasts(dt);
+        if (_ultimatePhaseTimer >= _ultCinematicDuration)
+        {
+            _ultimatePhase      = UltimatePhase::Impact;
+            _ultimatePhaseTimer = 0.f;
+            ApplyUltimateImpact();
+            _ultimateBlasts.clear();
+            TriggerScreenShake(14.f, 0.45f);
+            StopSound(_explosionSound);
+            PlaySound(_explosionSound);
+        }
+        break;
+
+    case UltimatePhase::Impact:
+        if (_ultimatePhaseTimer >= _ultImpactDuration)
+        {
+            _ultimatePhase      = UltimatePhase::Release;
+            _ultimatePhaseTimer = 0.f;
+        }
+        break;
+
+    case UltimatePhase::Release:
+        if (_ultimatePhaseTimer >= _ultReleaseDuration)
+        {
+            _ultimatePhase      = UltimatePhase::None;
+            _ultimatePhaseTimer = 0.f;
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+void Engine::ApplyUltimateImpact()
+{
+    // Hit every enemy currently visible on screen (with a small margin beyond edges).
+    const float halfW = GetScreenWidth()  * 0.55f;
+    const float halfH = GetScreenHeight() * 0.55f;
+    Vector2 playerPos = _player.GetWorldPos();
+
+    for (auto& enemy : _enemies)
+    {
+        if (!enemy->IsActive() || !enemy->IsAlive())
+            continue;
+
+        Vector2 delta = Vector2Subtract(enemy->GetWorldPos(), playerPos);
+        if (fabsf(delta.x) > halfW || fabsf(delta.y) > halfH)
+            continue;
+
+        int dmg = enemy->AsMolarbeast() ? 2 : 4;
+        enemy->TakeDamage(dmg, playerPos);
+
+        if (_ultimateElement == AbilityType::FireUltimate)
+            enemy->ApplyBurn(0.5f, _player.GetBoltBurnDamage(), playerPos);
+        else if (_ultimateElement == AbilityType::IceUltimate)
+            enemy->ApplyFreeze(3.f);
+        else if (_ultimateElement == AbilityType::ElectricUltimate)
+            enemy->ApplyElectricCharge();
+    }
+}
+
+void Engine::DrawUltimateSequence()
+{
+    if (_ultimatePhase == UltimatePhase::None)
+        return;
+
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+    const float cx = sw * 0.5f;
+    const float cy = sh * 0.5f;
+
+    Color ec =
+        (_ultimateElement == AbilityType::FireUltimate)     ? Color{255, 110,  20, 255} :
+        (_ultimateElement == AbilityType::IceUltimate)      ? Color{ 80, 200, 255, 255} :
+                                                               Color{255, 220,   0, 255};
+
+    // ── Dark overlay (ramps up during wind-up, holds, fades on release) ───────
+    if (_ultimatePhase != UltimatePhase::Impact)
+    {
+        float alpha =
+            (_ultimatePhase == UltimatePhase::WindUp)
+                ? (_ultimatePhaseTimer / _ultWindUpDuration) * 0.55f :
+            (_ultimatePhase == UltimatePhase::Release)
+                ? 0.55f * (1.f - _ultimatePhaseTimer / _ultReleaseDuration)
+                : 0.55f;
+        DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, alpha));
+    }
+
+    // ── Impact flash ─────────────────────────────────────────────────────────
+    if (_ultimatePhase == UltimatePhase::Impact)
+    {
+        float t = 1.f - (_ultimatePhaseTimer / _ultImpactDuration);
+        DrawRectangle(0, 0, (int)sw, (int)sh, Fade(WHITE, t * 0.85f));
+        // Expanding ring in element colour
+        Color ringCol = { ec.r, ec.g, ec.b, (unsigned char)(t * 210.f) };
+        DrawCircleLinesV({ cx, cy }, (1.f - t) * sw * 0.9f, ringCol);
+    }
+
+    // ── Magic circle (wind-up + cinematic) ───────────────────────────────────
+    if (_ultimatePhase == UltimatePhase::WindUp || _ultimatePhase == UltimatePhase::Cinematic)
+    {
+        float progress = (_ultimatePhase == UltimatePhase::WindUp)
+            ? _ultimatePhaseTimer / _ultWindUpDuration : 1.f;
+
+        const float radii[3]  = { 75.f, 120.f, 165.f };
+        const float speeds[3] = { 1.0f, -0.65f, 0.45f };
+
+        for (int r = 0; r < 3; r++)
+        {
+            float radius = radii[r] * progress;
+            float angle  = _ultimateCircleAngle * speeds[r];
+            unsigned char a = (unsigned char)(190.f * progress);
+            Color ringCol = { ec.r, ec.g, ec.b, a };
+
+            DrawCircleLinesV({ cx, cy }, radius, ringCol);
+
+            // 4 glowing markers rotating around each ring
+            for (int m = 0; m < 4; m++)
+            {
+                float ma = angle + m * (PI * 0.5f);
+                Vector2 mp = { cx + cosf(ma) * radius, cy + sinf(ma) * radius };
+                DrawCircleV(mp, 5.f * progress, ringCol);
+            }
+        }
+
+        // Soft glow around the player's screen position
+        DrawCircleV({ cx, cy }, 48.f * progress,
+            { ec.r, ec.g, ec.b, (unsigned char)(85.f * progress) });
+    }
+}
+
+void Engine::DrawUltimateBlasts(Vector2 worldOffset)
+{
+    for (const auto& blast : _ultimateBlasts)
+    {
+        if (blast.timer <= 0.f)
+            continue;
+
+        // Progress 0→1 as blast ages
+        float progress = 1.f - (blast.timer / blast.lifetime);
+
+        // Pulse envelope: pop in fast, hold, fade out
+        float pulse;
+        if      (progress < 0.3f)  pulse = progress / 0.3f;
+        else if (progress < 0.75f) pulse = 1.f;
+        else                       pulse = 1.f - (progress - 0.75f) / 0.25f;
+
+        if (pulse <= 0.f) continue;
+
+        // Animated sprite sheet — ultimate types use their own 64x64 sheets
+        const Texture2D& tex = SpreadProjectile::GetAnimTexture(blast.element);
+
+        const float fw        = (float)SpreadProjectile::GetFrameWFor(blast.element);
+        const float fh        = (float)SpreadProjectile::GetFrameHFor(blast.element);
+        const int   frameCount = SpreadProjectile::GetFrameCountFor(blast.element);
+
+        float elapsed = blast.lifetime - blast.timer;
+        int   frame   = (int)(elapsed / (1.f / 16.f)) % frameCount;
+
+        Rectangle src = GetAnimationFrameRect(tex, (int)fw, (int)fh, frame);
+
+        const float maxSize = 200.f;
+        float size = maxSize * pulse;
+
+        Vector2 screenPos = {
+            blast.worldPos.x + worldOffset.x + GetScreenWidth()  * 0.5f,
+            blast.worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f
+        };
+
+        // Fixed facing direction per blast — no spinning
+        float rotation = blast.rotation;
+
+        Rectangle dest     = { screenPos.x, screenPos.y, size, size };
+        Vector2   origin   = { size * 0.5f, size * 0.5f };
+        unsigned char alpha = (unsigned char)(pulse * 255.f);
+
+        // Soft glow behind — slightly larger, low alpha
+        float     glowSize   = size * 1.65f;
+        Rectangle glowDest   = { screenPos.x, screenPos.y, glowSize, glowSize };
+        Vector2   glowOrigin = { glowSize * 0.5f, glowSize * 0.5f };
+        DrawTexturePro(tex, src, glowDest, glowOrigin, rotation,
+            { 255, 255, 255, (unsigned char)(pulse * 55.f) });
+
+        // Main animated frame
+        DrawTexturePro(tex, src, dest, origin, rotation, { 255, 255, 255, alpha });
     }
 }
 
@@ -1427,8 +2393,19 @@ void Engine::SpawnCastEffect(Character::CastType castType)
 
     switch (castType)
     {
-    case Character::CastType::Fireball:
+    case Character::CastType::FireSpread:
         effect.texture = &_fireballCastTex;
+        effect.frameCount = 8;
+        effect.scale = 4.f;
+        break;
+    case Character::CastType::IceSpread:
+        effect.texture = &_freezeCastTex;
+        effect.frameCount = 8;
+        effect.scale = 4.f;
+        effect.tint = Color{ 100, 200, 255, 255 };
+        break;
+    case Character::CastType::ElectricSpread:
+        effect.texture = &_lightningCastTex;
         effect.frameCount = 8;
         effect.scale = 4.f;
         break;
@@ -1472,9 +2449,21 @@ void Engine::SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vect
         effect.tint = Color{ 255, 150, 150, 255 };
         break;
 
-    case Character::CastType::Fireball:
+    case Character::CastType::FireSpread:
         effect.texture = &_fireballHitTex;
         effect.frameCount = 6;
+        effect.scale = 4.f;
+        effect.tint = WHITE;
+        break;
+    case Character::CastType::IceSpread:
+        effect.texture = &_freezeHitTex;
+        effect.frameCount = 5;
+        effect.scale = 4.f;
+        effect.tint = Color{ 100, 200, 255, 255 };
+        break;
+    case Character::CastType::ElectricSpread:
+        effect.texture = &_swordBeamHitTex;  // Hit03.png — the lightning impact sprite
+        effect.frameCount = 5;
         effect.scale = 4.f;
         effect.tint = WHITE;
         break;
@@ -1553,7 +2542,7 @@ void Engine::UpdateFreezeProjectiles(float dt)
             if (!enemy->IsActive() || !enemy->IsAlive())
                 continue;
 
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
+            if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetHitCollisionRec()))
             {
                 float duration = GetRandomValue(3, 5) * 1.f;
                 enemy->TakeDamage(_player.GetFreezeDamage(), _player.GetWorldPos());
@@ -1573,9 +2562,9 @@ void Engine::UpdateFreezeProjectiles(float dt)
         _freezeProjectiles.end());
 }
 
-void Engine::UpdateFireballProjectiles(float dt)
+void Engine::UpdateSpreadProjectiles(float dt)
 {
-    for (auto& projectile : _fireballProjectiles)
+    for (auto& projectile : _spreadProjectiles)
     {
         if (!projectile.IsActive())
             continue;
@@ -1585,10 +2574,35 @@ void Engine::UpdateFireballProjectiles(float dt)
         if (!projectile.IsActive())
             continue;
 
+        // Helper: map element -> CastType so hit effects use the right sprite
+        auto elementToCastType = [](AbilityType el) -> Character::CastType
+        {
+            if (el == AbilityType::IceSpread     || el == AbilityType::IceBolt)      return Character::CastType::IceSpread;
+            if (el == AbilityType::ElectricSpread|| el == AbilityType::ElectricBolt) return Character::CastType::ElectricSpread;
+            return Character::CastType::FireSpread;
+        };
+
+        // Map-boundary wall check — same margins as player collision
+        {
+            float mapW = _map.width  * _mapScale;
+            float mapH = _map.height * _mapScale;
+            Vector2 p  = projectile.GetWorldPos();
+            if (p.x < 76.f || p.x > mapW - 96.f ||
+                p.y < 42.f || p.y > mapH - 320.f)
+            {
+                SpawnHitEffect(elementToCastType(projectile.GetElement()),
+                               projectile.GetWorldPos(), projectile.GetDirection());
+                projectile.Destroy();
+                continue;
+            }
+        }
+
         for (auto& prop : _props)
         {
             if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
             {
+                SpawnHitEffect(elementToCastType(projectile.GetElement()),
+                               projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 break;
             }
@@ -1602,31 +2616,55 @@ void Engine::UpdateFireballProjectiles(float dt)
             if (!enemy->IsActive() || !enemy->IsAlive())
                 continue;
 
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
-            {
-                // Boss tuning: fireball should always land for 1 direct damage
-                // on the Molarbeast, while regular enemies still use the
-                // player's scaled fireball damage.
-                int fireballDamage = (enemy->AsMolarbeast() != nullptr)
-                    ? 1
-                    : _player.GetFireballHitDamage();
-                enemy->TakeDamage(fireballDamage, _player.GetWorldPos());
-                enemy->ApplyBurn(1.f, _player.GetFireballBurnDamage(), _player.GetWorldPos());
-                SpawnHitEffect(Character::CastType::Fireball, projectile.GetWorldPos(), projectile.GetDirection());
-                projectile.Destroy();
-                TriggerScreenShake(4.f, 0.05f);
-                StopSound(_explosionSound);
-                PlaySound(_explosionSound);
-                break;
-            }
-        }
+            if (!CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetHitCollisionRec()))
+                continue;
 
+            AbilityType element = projectile.GetElement();
+
+            bool isBolt = (element == AbilityType::FireBolt  ||
+                           element == AbilityType::IceBolt   ||
+                           element == AbilityType::ElectricBolt);
+
+            // Bolts deal more damage per shot; boss caps at 2 from bolts vs 1 from spread
+            int hitDamage;
+            if (enemy->AsMolarbeast() != nullptr)
+                hitDamage = isBolt ? 2 : 1;
+            else
+                hitDamage = isBolt ? _player.GetBoltHitDamage() : _player.GetSpreadHitDamage();
+            enemy->TakeDamage(hitDamage, _player.GetWorldPos());
+
+            // Per-element on-hit effect — same for both spread and bolt of the same element
+            Character::CastType hitEffectType = Character::CastType::FireSpread;
+            if (element == AbilityType::FireSpread || element == AbilityType::FireBolt)
+            {
+                int burnDmg = isBolt ? _player.GetBoltBurnDamage() : _player.GetSpreadBurnDamage();
+                enemy->ApplyBurn(1.f, burnDmg, _player.GetWorldPos());
+                hitEffectType = Character::CastType::FireSpread;
+            }
+            else if (element == AbilityType::IceSpread || element == AbilityType::IceBolt)
+            {
+                enemy->ApplyFreeze(3.f);
+                hitEffectType = Character::CastType::IceSpread;
+            }
+            else if (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt)
+            {
+                enemy->ApplyElectricCharge();
+                hitEffectType = Character::CastType::ElectricSpread;
+            }
+
+            SpawnHitEffect(hitEffectType, projectile.GetWorldPos(), projectile.GetDirection());
+            projectile.Destroy();
+            TriggerScreenShake(4.f, 0.05f);
+            StopSound(_explosionSound);
+            PlaySound(_explosionSound);
+            break;
+        }
     }
 
-    _fireballProjectiles.erase(
-        std::remove_if(_fireballProjectiles.begin(), _fireballProjectiles.end(),
-            [](const FireballProjectile& projectile) { return !projectile.IsActive(); }),
-        _fireballProjectiles.end());
+    _spreadProjectiles.erase(
+        std::remove_if(_spreadProjectiles.begin(), _spreadProjectiles.end(),
+            [](const SpreadProjectile& p) { return !p.IsActive(); }),
+        _spreadProjectiles.end());
 }
 
 void Engine::UpdateSwordBeamProjectiles(float dt)
@@ -1653,7 +2691,7 @@ void Engine::UpdateSwordBeamProjectiles(float dt)
             if (!enemy->IsActive() || !enemy->IsAlive() || projectile.HasHitEnemy(enemy.get()))
                 continue;
 
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetCollisionRec()))
+            if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetHitCollisionRec()))
             {
                 // Boss tuning: blade beam is the strongest special tool in the
                 // fight, so it always lands for 2 direct damage on the
@@ -1680,49 +2718,26 @@ void Engine::UpdateSwordBeamProjectiles(float dt)
 
 void Engine::SpawnEnemyDrop(Vector2 worldPos)
 {
-    // Normal-wave drops should smooth out run pacing a bit more than before.
-    // Keeping the total chance conservative avoids flooding the arena, while
-    // shifting more weight into heal and freeze makes non-boss waves less
-    // feast-or-famine.
     const int dropChancePercent = 22;
-
     if (GetRandomValue(1, 100) > dropChancePercent)
         return;
 
-    // Weighted pool:
-    // FireBall  = 32
-    // SwordBeam = 26
-    // Freeze    = 16
-    // Heal      = 26
-    // Total     = 100
-    int roll = GetRandomValue(1, 100);
+    // 50/50 heal or mana gem
     std::unique_ptr<Pickup> pickup;
-
-    if (roll <= 32)
-    {
-        auto p = std::make_unique<FireBallPickup>();
-        p->Init(worldPos, 1);
-        pickup = std::move(p);
-    }
-    else if (roll <= 58)
-    {
-        auto p = std::make_unique<SwordBeamPickup>();
-        p->Init(worldPos, 1);
-        pickup = std::move(p);
-    }
-    else if (roll <= 74)
-    {
-        auto p = std::make_unique<FreezePickup>();
-        p->Init(worldPos);
-        pickup = std::move(p);
-    }
-    else
+    if (GetRandomValue(0, 1) == 0)
     {
         auto p = std::make_unique<HealPickup>();
         p->Init(worldPos);
         pickup = std::move(p);
     }
+    else
+    {
+        auto p = std::make_unique<ManaGemPickup>();
+        p->Init(worldPos);
+        pickup = std::move(p);
+    }
 
+    // Move drop away from inside a prop if needed
     Vector2 dropPos = worldPos;
     if (!IsSpawnPositionValid(dropPos))
     {
@@ -1747,14 +2762,10 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos)
         }
     }
 
-    if (pickup->GetType() == PickupType::FireBall)
-        static_cast<FireBallPickup*>(pickup.get())->Init(dropPos, 1);
-    else if (pickup->GetType() == PickupType::SwordBeam)
-        static_cast<SwordBeamPickup*>(pickup.get())->Init(dropPos, 1);
-    else if (pickup->GetType() == PickupType::Freeze)
-        static_cast<FreezePickup*>(pickup.get())->Init(dropPos);
-    else
+    if (pickup->GetType() == PickupType::Heal)
         static_cast<HealPickup*>(pickup.get())->Init(dropPos);
+    else
+        static_cast<ManaGemPickup*>(pickup.get())->Init(dropPos);
 
     _pickups.push_back(std::move(pickup));
 }
@@ -1775,46 +2786,19 @@ void Engine::SpawnTimedPickup()
         attempts++;
     } while (!IsSpawnPositionValid(pos) && attempts < 40);
 
-    // Boss-fight testing pool: only combat pickups are spawned from the timed
-    // system so every drop helps tune the actual fight loop.
+    // Timed pickups are always health or mana gems
     std::unique_ptr<Pickup> pickup;
 
-    if (IsBossFightActive())
+    if (GetRandomValue(0, 1) == 0)
     {
-        int roll = GetRandomValue(0, 2);
-
-        if (roll == 0)
-        {
-            auto p = std::make_unique<FireBallPickup>();
-            p->Init(pos);
-            p->SetTimerSpawned(true);
-            pickup = std::move(p);
-        }
-        else if (roll == 1)
-        {
-            auto p = std::make_unique<SwordBeamPickup>();
-            p->Init(pos);
-            p->SetTimerSpawned(true);
-            pickup = std::move(p);
-        }
-        else
-        {
-            auto p = std::make_unique<FreezePickup>();
-            p->Init(pos);
-            p->SetTimerSpawned(true);
-            pickup = std::move(p);
-        }
-    }
-    else if (GetRandomValue(0, 1) == 0)
-    {
-        auto p = std::make_unique<FreezePickup>();
+        auto p = std::make_unique<HealPickup>();
         p->Init(pos);
         p->SetTimerSpawned(true);
         pickup = std::move(p);
     }
     else
     {
-        auto p = std::make_unique<HealPickup>();
+        auto p = std::make_unique<ManaGemPickup>();
         p->Init(pos);
         p->SetTimerSpawned(true);
         pickup = std::move(p);
@@ -2530,16 +3514,23 @@ void Engine::ResetRunState()
     _navRefreshInFlight = false;
     _wave          = 0;
     _enemiesKilled = 0;
-    _levelUpTimer  = 0.f;
-    _levelUpLevel  = 0;
     _navRefreshTimer = 0.f;
     _lastPlayerNavIndex = -1;
     _gameTimer = 0.f;
     _playerDying = false;
     _awaitingNameEntry = false;
-    _waveStarting = true;
-    _bossWarningTimer = 0.f;
-    _fireballProjectiles.clear();
+    _awaitingStartingAbility = false;
+    _waveStarting        = true;
+    _wave1LevelUpDone    = false;
+    _bossWarningTimer    = 0.f;
+    _ultimatePhase       = UltimatePhase::None;
+    _ultimatePhaseTimer  = 0.f;
+    _ultimateCircleAngle = 0.f;
+    _showUltimateRow     = false;
+    _ultimateRowPicked   = false;
+    _regularRowPicked    = false;
+    _spreadProjectiles.clear();
+    _ultimateBlasts.clear();
     _swordBeamProjectiles.clear();
     _freezeProjectiles.clear();
     _lavaBalls.clear();
@@ -2564,6 +3555,7 @@ void Engine::ResetRunState()
         _navRefreshJob.wait();
     ApplyCompletedNavigationRefresh();
     SpawnWave();
+
 }
 
 int Engine::GetActiveEnemyCount() const
@@ -2779,7 +3771,7 @@ int Engine::GetOgreSpawnCountForWave(int wave) const
 {
     // Ogre starts as a single wave-4 threat, then gains a second slot later
     // so it remains readable and fair while the player is learning the charge.
-    if (wave < 4)
+    if (wave < 1)
         return 0;
     if (wave < 8)
         return 1;

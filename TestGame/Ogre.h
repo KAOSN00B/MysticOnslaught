@@ -24,6 +24,7 @@ public:
     void SetWaveScale(int wave) override;
     void DrawEnemy(Vector2 cameraRef) override;
     void TakeDamage(int damage, Vector2 attackerPos) override;
+    void ApplyElectricCharge() override;
     Rectangle GetCollisionRec() const override;
     Ogre* AsOgre() override { return this; }
     void PlayHurtSound() override;
@@ -102,7 +103,7 @@ private:
     static constexpr float _chargeCooldownDuration = 6.0f;
     static constexpr float _stunDuration = 0.6f;
     static constexpr float _playerPushSpeed = 1200.f;
-    static constexpr float _rushDamage = 1.f;
+    static constexpr float _rushDamage = 2.f;
     static constexpr float _walkSpeed = 175.f;
     static constexpr float _scatterImpulse = 1850.f;
 

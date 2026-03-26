@@ -64,7 +64,9 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
     _hitTimer = 0.f;
     _deathTimer = 0.4f;
-    _freezeTimer = 0.f;
+    _freezeTimer        = 0.f;
+    _isCharged          = false;
+    _chargeNextStunTime = 0.f;
     _attacking = false;
     _damageApplied = false;
     _takingDamage = false;
@@ -78,6 +80,43 @@ void Enemy::ResetForSpawn(Vector2 pos)
     // into one exact point.
     _flankSide = (GetRandomValue(0, 1) == 0) ? -1.f : 1.f;
     _flankDistance = (float)GetRandomValue((int)_minFlankDistance, (int)_maxFlankDistance);
+
+    PickApproachOffset();
+    _approachOffsetTimer = (float)GetRandomValue(0, 250) / 100.f;
+}
+
+Rectangle Enemy::GetCollisionRec() const
+{
+    // Taller and higher than the base so the box covers the enemy body,
+    // not just the feet. This makes melee hits and attack collisions register
+    // against the visible sprite rather than the ground beneath it.
+    float w = _width * _scale * 0.35f;
+    float h = _height * _scale * 0.50f;
+    return Rectangle{
+        _worldPos.x - w * 0.5f,
+        _worldPos.y - h * 0.5f + (_height * _scale * 0.12f),
+        w, h
+    };
+}
+
+void Enemy::PickApproachOffset()
+{
+    // 6 slots — 3 per side. Enemies cycle through them so each one picks a
+    // unique spot: right side spreads NE/E/SE, left side spreads NW/W/SW.
+    // This keeps enemies on the flanks while preventing them from stacking.
+    static const Vector2 dirs[6] = {
+        {  0.707f, -0.707f },   // right-up   (NE)
+        {  1.000f,  0.000f },   // right       (E)
+        {  0.707f,  0.707f },   // right-down (SE)
+        { -0.707f, -0.707f },   // left-up    (NW)
+        { -1.000f,  0.000f },   // left        (W)
+        { -0.707f,  0.707f },   // left-down  (SW)
+    };
+    static int s_nextSlot = 0;
+    int idx = s_nextSlot % 6;
+    s_nextSlot++;
+    _approachOffset = Vector2Scale(dirs[idx], _approachOffsetRadius);
+    _approachOffsetTimer = _approachOffsetDuration + (float)GetRandomValue(0, 150) / 100.f;
 }
 
 void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
@@ -95,10 +134,17 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateBurns(dt);
+    UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
 
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
+
+    // Periodically repick approach direction so enemies shift positions
+    // and don't permanently crowd one side of the player.
+    _approachOffsetTimer -= dt;
+    if (_approachOffsetTimer <= 0.f)
+        PickApproachOffset();
 
     if (!_dying)
     {
@@ -120,7 +166,12 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     if (_target == nullptr || _dying)
         return;
 
-    Vector2 targetPos = hasNavigationTarget ? navigationTarget : _target->GetFeetWorldPos();
+    // When pathing freely, steer toward the enemy's personal approach slot
+    // around the player rather than the raw feet position. This spreads enemies
+    // across all 8 directions and prevents the whole wave from converging on
+    // one point. Navigation target overrides the offset so A* routing still works.
+    Vector2 playerCenter = _target->GetFeetWorldPos();
+    Vector2 targetPos = hasNavigationTarget ? navigationTarget : Vector2Add(playerCenter, _approachOffset);
     Vector2 toPlayer = Vector2Subtract(targetPos, _worldPos);
 
     Vector2 moveDir = Vector2Zero();
@@ -164,13 +215,13 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
         float dist = Vector2Distance(_worldPos, enemy->_worldPos);
 
-        if (dist < 60.f && dist > 0.f)
+        if (dist < 90.f && dist > 0.f)
         {
             Vector2 away = Vector2Subtract(_worldPos, enemy->_worldPos);
 
             if (Vector2Length(away) > 0.01f)
             {
-                float strength = (60.f - dist) / 60.f;
+                float strength = (90.f - dist) / 90.f;
                 separation = Vector2Add(separation, Vector2Scale(Vector2Normalize(away), strength));
             }
         }
@@ -202,7 +253,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         }
     }
 
-    separation = Vector2Scale(separation, 0.6f);
+    separation = Vector2Scale(separation, 0.55f);
     propSlide = Vector2Scale(propSlide, _propSlideStrength);
     moveDir = Vector2Add(moveDir, separation);
     moveDir = Vector2Add(moveDir, propSlide);
@@ -265,7 +316,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
 void Enemy::HandleAttack()
 {
-    if (_dying || _target == nullptr || IsFrozen())
+    if (_dying || _target == nullptr || IsFrozen() || _takingDamage)
         return;
 
     Vector2 toTarget = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
@@ -278,7 +329,7 @@ void Enemy::HandleAttack()
     Vector2 facingDir{ (float)_rightLeft, 0.f };
     float dot = Vector2DotProduct(facingDir, toTargetDir);
 
-    if (distance <= _attackRange && dot > 0.4f && !_attacking && _attackCooldown <= 0.f)
+    if (distance <= _attackRange && dot > -0.5f && !_attacking && _attackCooldown <= 0.f)
     {
         _attacking = true;
         _damageApplied = false;
@@ -308,6 +359,9 @@ void Enemy::HandleAttack()
         {
             _target->TakeDamage((int)_attackPower, _worldPos);
             _damageApplied = true;
+            // Repick a new approach slot after landing a hit so enemies
+            // shuffle positions instead of immediately re-stacking.
+            PickApproachOffset();
         }
     }
 
@@ -349,12 +403,16 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - w / 2.f, screenPos.y - h / 2.f, w, h };
 
-    bool burning = !_pendingBurns.empty();
-    bool frozen  = IsFrozen();
+    bool burning       = !_pendingBurns.empty();
+    bool frozen        = IsFrozen();
+    bool electroStunned = IsElectroStunned();
+    bool charged       = _isCharged && !electroStunned;
 
-    Color tint = frozen  ? Color{ 140, 200, 255, 255 } :
-                 burning ? Color{ 255, 180, 180, 255 } :
-                           WHITE;
+    Color tint = electroStunned ? Color{ 255, 255,  60, 255 } :   // bright yellow — stunned
+                 charged        ? Color{ 220, 220,  80, 255 } :   // dim yellow — charged, not stunned
+                 frozen         ? Color{ 140, 200, 255, 255 } :
+                 burning        ? Color{ 255, 180, 180, 255 } :
+                                  WHITE;
 
     if (burning)
     {
@@ -391,6 +449,13 @@ void Enemy::HandleAnimation(float dt)
         if (_frame >= _maxFrames)
         {
             if (_dying)
+            {
+                _frame = _maxFrames - 1;
+                return;
+            }
+
+            // Frozen: hold on the last frame, no looping or state transitions
+            if (IsFrozen())
             {
                 _frame = _maxFrames - 1;
                 return;
@@ -446,6 +511,35 @@ void Enemy::ApplyFreeze(float duration)
         _freezeTimer = duration;
 }
 
+void Enemy::ApplyElectricCharge()
+{
+    if (_dying || !IsAlive())
+        return;
+
+    _isCharged    = true;
+    _takingDamage = true;
+    _texture      = _takeDamageAnim;
+    _frame        = 0;
+    _runningTime  = 0.f;
+    _maxFrames    = (int)(_texture.width / _width);
+    _hitTimer     = _maxFrames * _updateTime + 0.1f;
+    // Schedule the next stun after this one finishes
+    _chargeNextStunTime = (float)GetRandomValue(150, 400) / 100.f;
+}
+
+void Enemy::UpdateElectricCharge(float dt)
+{
+    if (!_isCharged || _dying || !IsAlive() || _takingDamage)
+        return;
+
+    _chargeNextStunTime -= dt;
+    if (_chargeNextStunTime <= 0.f)
+    {
+        ApplyElectricCharge();   // virtual — calls the correct override for each enemy type
+        // ApplyElectricCharge already schedules the next interval via _chargeNextStunTime
+    }
+}
+
 void Enemy::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
 {
     // This helper lets special enemies, like the ogre, throw other enemies
@@ -490,39 +584,15 @@ void Enemy::UpdateLaunchVisual(float dt)
 
 void Enemy::SetWaveScale(int wave)
 {
-    // Baseline enemies should scale in durability more smoothly than bosses or
-    // special archetypes. The goal is to increase pressure through count and
-    // composition without turning the basic melee enemy into a sponge.
-    _expValue = 1;
+    // Tier advances after every boss wave (every 5 waves), endlessly.
+    // tier 0 = waves 1-5, tier 1 = waves 6-10, tier 2 = waves 11-15, etc.
+    _expValue = 3; // 3 exp per regular enemy kill
+    int tier = (wave - 1) / 5;
 
-    if (wave <= 3)
-    {
-        _health    = 3.f;
-        _maxHealth = 3.f;
-        _attackPower = 1.f;
-        _speed     = 200.f;
-    }
-    else if (wave <= 5)
-    {
-        _health    = 5.f;
-        _maxHealth = 5.f;
-        _attackPower = 1.f;
-        _speed     = 230.f;
-    }
-    else if (wave <= 7)
-    {
-        _health    = 8.f;
-        _maxHealth = 8.f;
-        _attackPower = 2.f;
-        _speed     = 260.f;
-    }
-    else
-    {
-        _health    = 12.f;
-        _maxHealth = 12.f;
-        _attackPower = 3.f;
-        _speed     = 290.f;
-    }
+    _health      = 6.f  + tier * 4.f;
+    _maxHealth   = _health;
+    _attackPower = 1.f  + tier * 0.5f;
+    _speed       = 190.f + tier * 15.f;
 }
 
 void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)

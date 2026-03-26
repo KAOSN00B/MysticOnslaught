@@ -1,4 +1,8 @@
 #pragma once
+// [SHELVED] — FireBallPickup is no longer spawned by Engine.
+// The old ammo-pickup system has been replaced by the mana economy.
+// Engine no longer includes this header. This file is kept so the project
+// compiles without .vcxproj changes. Safe to remove from the project entirely.
 #include "Pickup.h"
 
 class FireBallPickup : public Pickup

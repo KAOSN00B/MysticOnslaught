@@ -38,6 +38,7 @@ public:
     void ApplyBurn(float delay, int damage, Vector2 sourcePos) override;
     void ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation) override;
     void TakeDamage(int damage, Vector2 attackerPos) override;
+    void ApplyElectricCharge() override;
     Cyclops* AsCyclops() override { return this; }
 
     // Laser firing interface (read by Engine after Update)

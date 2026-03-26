@@ -90,6 +90,7 @@ private:
     float GetChargeDuration() const;
 
     State _state = State::Chasing;
+    float _orbitAngle = 0.f;   // current angle (radians) around the player for circling
     float _stableFrameW = 0.f;   // frozen at idle-sheet frame size, used by all collision rects
     float _stableFrameH = 0.f;
     Vector2 _navTarget{};        // A* waypoint supplied by the engine each frame
@@ -125,9 +126,9 @@ private:
     // Hurtbox: this is intentionally generous so the player's sword can connect
     // cleanly against the large boss sprite even though the art has a lot of
     // empty space around the head silhouette.
-    static constexpr float _collisionWidthScale = 0.94f;
-    static constexpr float _collisionHeightScale = 0.86f;
-    static constexpr float _collisionYOffsetScale = 0.08f;
+    static constexpr float _collisionWidthScale = 0.52f;
+    static constexpr float _collisionHeightScale = 0.68f;
+    static constexpr float _collisionYOffsetScale = -0.10f;
     // Body contact should be narrower than the hurtbox so the player can space
     // near the boss without taking unavoidable damage.
     static constexpr float _bodyContactInset = 36.f;

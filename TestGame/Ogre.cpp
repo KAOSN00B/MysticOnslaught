@@ -99,6 +99,7 @@ void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateBurns(dt);
+    UpdateElectricCharge(dt);
 
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
@@ -115,7 +116,14 @@ void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool
             break;
 
         case RushState::Charging:
-            HandleCharging(dt);
+            if (IsFrozen() || _takingDamage)
+            {
+                _rushState   = RushState::Repositioning;
+                _chargeTimer = 0.f;
+                SetIdleAnimation(true);
+            }
+            else
+                HandleCharging(dt);
             break;
 
         case RushState::Rushing:
@@ -146,12 +154,13 @@ void Ogre::SetWaveScale(int wave)
 {
     // Ogre is intentionally a little bulkier than Cyclops in every band so it
     // reads as a frontline disruptor rather than another ranged pressure unit.
-    _expValue = 3;
+    _expValue = 5; // 5 exp — disruptor, worth more than a regular enemy
 
-    if (wave <= 3)       { _health = 8.f;  _maxHealth = 8.f;  _speed = _walkSpeed;      _attackPower = _rushDamage; }
-    else if (wave <= 5)  { _health = 12.f; _maxHealth = 12.f; _speed = _walkSpeed + 10.f; _attackPower = _rushDamage; }
-    else if (wave <= 7)  { _health = 18.f; _maxHealth = 18.f; _speed = _walkSpeed + 20.f; _attackPower = _rushDamage; }
-    else                 { _health = 26.f; _maxHealth = 26.f; _speed = _walkSpeed + 30.f; _attackPower = _rushDamage; }
+    int tier = (wave - 1) / 5;
+    _health      = 12.f + tier * 8.f;
+    _maxHealth   = _health;
+    _speed       = _walkSpeed + tier * 10.f;
+    _attackPower = _rushDamage;
 }
 
 void Ogre::DrawEnemy(Vector2 cameraRef)
@@ -169,10 +178,10 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
     screenPos.x += GetScreenWidth() / 2.f;
     screenPos.y += GetScreenHeight() / 2.f;
 
-    Color tint = IsFrozen() ? Color{ 140, 200, 255, 255 } : WHITE;
-
-    if (_takingDamage)
-        tint = Color{ 255, 215, 215, 255 };
+    Color tint = IsElectroStunned() ? Color{ 255, 255,  60, 255 } :
+                 IsFrozen()         ? Color{ 140, 200, 255, 255 } :
+                 _takingDamage      ? Color{ 255, 215, 215, 255 } :
+                                      WHITE;
 
     if (_rushState == RushState::Charging)
     {
@@ -509,7 +518,8 @@ void Ogre::HandleRush(float dt, const std::vector<std::unique_ptr<Enemy>>& enemi
 
         if (CheckCollisionRecs(GetCollisionRec(), enemy->GetCollisionRec()))
         {
-            ScatterEnemy(*enemy);
+            // Throw the enemy along the rush direction with a strong impulse
+            enemy->ApplyExternalImpulse(Vector2Scale(_rushDirection, _playerPushSpeed * 6.f), true);
             enemy->PlayHurtSound();
             PlayRushHitSound();
             _rushedEnemies.push_back(enemy.get());
@@ -541,6 +551,12 @@ void Ogre::HandleAnimation(float dt)
         return;
 
     if (_dying)
+    {
+        _frame = _maxFrames - 1;
+        return;
+    }
+
+    if (IsFrozen())
     {
         _frame = _maxFrames - 1;
         return;
@@ -599,6 +615,27 @@ void Ogre::ScatterEnemy(Enemy& enemy) const
         impulseDir = Vector2Normalize(impulseDir);
 
     enemy.ApplyExternalImpulse(Vector2Scale(impulseDir, _scatterImpulse), true);
+}
+
+void Ogre::ApplyElectricCharge()
+{
+    if (_dying || !IsAlive())
+        return;
+
+    _isCharged = true;
+
+    // Interrupt any charging or rushing state
+    if (_rushState == RushState::Charging || _rushState == RushState::Rushing)
+    {
+        _rushState   = RushState::Repositioning;
+        _chargeTimer = 0.f;
+        _attacking   = false;
+    }
+
+    SetHurtAnimation(true);
+    _takingDamage       = true;
+    _hitTimer           = _maxFrames * (1.f / 12.f) + 0.1f;
+    _chargeNextStunTime = (float)GetRandomValue(150, 400) / 100.f;
 }
 
 bool Ogre::HasAlreadyRushedEnemy(const Enemy* enemy) const

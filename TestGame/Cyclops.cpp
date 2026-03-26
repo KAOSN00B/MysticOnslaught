@@ -77,7 +77,7 @@ void Cyclops::ResetForSpawn(Vector2 pos)
     _maxHealth   = 6.f;
     _attackPower = 2.f;
     _speed       = 200.f;
-    _expValue    = 3;
+    _expValue    = 5; // 5 exp — ranged threat, worth more than a regular enemy
 
     _frame       = GetRandomValue(0, _maxFrames - 1);
     _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
@@ -154,9 +154,15 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
 
     _worldPosLastFrame = _worldPos;
 
+    // Lock position during charge — prevents knockback impulses from
+    // displacing the sprite while the laser telegraph is playing.
+    if (_charging || _wantsToFire)
+        _velocity = Vector2Zero();
+
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateBurns(dt);
+    UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
 
     if (_freezeTimer > 0.f)
@@ -188,6 +194,15 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
                 // animates in place instead of freezing a walk frame.
                 SetIdleAnimation(true);
             }
+        }
+
+        if (_charging && (IsFrozen() || _takingDamage))
+        {
+            _charging      = false;
+            _chargeTimer   = 0.f;
+            _wantsToFire   = false;
+            _fireDirection = Vector2Zero();
+            SetIdleAnimation(true);
         }
 
         if (_charging)
@@ -374,6 +389,12 @@ void Cyclops::HandleAnimation(float dt)
                 return;
             }
 
+            if (IsFrozen())
+            {
+                _frame = _maxFrames - 1;
+                return;
+            }
+
             if (_takingDamage)
             {
                 _takingDamage = false;
@@ -418,12 +439,14 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     screenPos.x += GetScreenWidth()  / 2.f;
     screenPos.y += GetScreenHeight() / 2.f - launchLift;
 
-    bool burning = !_pendingBurns.empty();
-    bool frozen  = IsFrozen();
+    bool burning       = !_pendingBurns.empty();
+    bool frozen        = IsFrozen();
+    bool electroStunned = IsElectroStunned();
 
-    Color tint = frozen  ? Color{ 140, 200, 255, 255 } :
-                 burning ? Color{ 255, 180, 180, 255 } :
-                           WHITE;
+    Color tint = electroStunned ? Color{ 255, 255,  60, 255 } :
+                 frozen         ? Color{ 140, 200, 255, 255 } :
+                 burning        ? Color{ 255, 180, 180, 255 } :
+                                  WHITE;
 
     if (burning && !frozen)
     {
@@ -462,8 +485,8 @@ Rectangle Cyclops::GetCollisionRec() const
 {
     // Narrow body-only collision so the player can walk up to melee range
     // without being stopped by the wide sprite extents.
-    const float width  = _width  * _scale * 0.40f;
-    const float height = _height * _scale * 0.55f;
+    const float width  = _width  * _scale * 0.26f;
+    const float height = _height * _scale * 0.36f;
 
     return Rectangle{
         _worldPos.x - width  * 0.5f,
@@ -540,6 +563,32 @@ void Cyclops::TakeDamage(int damage, Vector2 attackerPos)
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
 
+void Cyclops::ApplyElectricCharge()
+{
+    if (_dying || !IsAlive())
+        return;
+
+    _isCharged = true;
+
+    // Cancel any active laser charge
+    _charging      = false;
+    _chargeTimer   = 0.f;
+    _wantsToFire   = false;
+    _fireDirection = Vector2Zero();
+
+    // Set up hurt animation with correct per-frame dimensions
+    _texture     = _takeDamageAnim;
+    _width       = _takeDamageAnim.width / (float)kCyclopsFrameCount;
+    _height      = _takeDamageAnim.height;
+    _updateTime  = 1.f / 12.f;
+    _maxFrames   = kCyclopsFrameCount;
+    _frame       = 0;
+    _runningTime = 0.f;
+    _takingDamage       = true;
+    _hitTimer           = kCyclopsFrameCount * (1.f / 12.f) + 0.1f;
+    _chargeNextStunTime = (float)GetRandomValue(150, 400) / 100.f;
+}
+
 // =============================================================================
 void Cyclops::UpdateBurns(float dt)
 {
@@ -570,12 +619,13 @@ void Cyclops::SetWaveScale(int wave)
     // When the game gets a real enemy power-level system, this flag should be
     // set from that shared progression state instead of the current wave.
     _chargeCanBeInterrupted = true;
-    _expValue = 3;
+    _expValue = 5;
 
-    if (wave <= 3)       { _health = 6.f;  _maxHealth = 6.f;  _speed = 200.f; _attackPower = 2.f; }
-    else if (wave <= 5)  { _health = 10.f; _maxHealth = 10.f; _speed = 220.f; _attackPower = 2.f; }
-    else if (wave <= 7)  { _health = 16.f; _maxHealth = 16.f; _speed = 240.f; _attackPower = 3.f; }
-    else                 { _health = 24.f; _maxHealth = 24.f; _speed = 260.f; _attackPower = 4.f; }
+    int tier = (wave - 1) / 5;
+    _health      = 8.f   + tier * 6.f;
+    _maxHealth   = _health;
+    _speed       = 195.f + tier * 15.f;
+    _attackPower = 1.f   + tier * 0.5f;
 }
 
 // =============================================================================

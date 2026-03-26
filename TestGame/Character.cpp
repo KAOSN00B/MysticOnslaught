@@ -21,9 +21,9 @@ Character::Character()
     _castingAbility = false;
     _playDashParticles = false;
     _queuedCast = CastType::None;
-    _fireballAmmo  = 0;
-    _swordBeamAmmo = 0;
-    _freezeAmmo    = 0;
+    for (int i = 0; i < _hardAbilityCap; i++) _learnedAbilities[i] = AbilityType::None;
+    _learnedCount    = 0;
+    _maxAbilitySlots = 4;
     _pendingHealEffects = 0;
     _forcedPushActive = false;
     _forcedPushDirection = Vector2Zero();
@@ -89,9 +89,9 @@ void Character::Init()
     _scale = 6.f;
     _speed = 380.f;
 
-    _health = 5;
-    _maxHealth = 5;
-    _attackPower = 2.f;
+    _health = 8;
+    _maxHealth = 8;
+    _attackPower = 3.f;
 
     _maxFrames = _texture.width / _width;
     _updateTime = 1.f / 8.f;
@@ -106,13 +106,10 @@ void Character::Init()
     _castingAbility = false;
     _playDashParticles = false;
     _queuedCast = CastType::None;
-    _fireballAmmo    = 0;
-    _swordBeamAmmo   = 0;
-    _freezeAmmo      = 0;
+    for (int i = 0; i < _hardAbilityCap; i++) _learnedAbilities[i] = AbilityType::None;
+    _learnedCount    = 0;
+    _maxAbilitySlots = 4;
     _bindings = KeyBindings{};
-    _abilityEverHad[0] = false;
-    _abilityEverHad[1] = false;
-    _abilityEverHad[2] = false;
     _pendingHealEffects = 0;
     _forcedPushActive = false;
     _forcedPushDirection = Vector2Zero();
@@ -121,8 +118,13 @@ void Character::Init()
 
     _exp            = 0;
     _level          = 1;
-    _expToNextLevel = 10;
+    _expToNextLevel = 15;
     _pendingBurnTicks.clear();
+
+    _mana    = 60;
+    _maxMana = 60;
+    _defense = 0.f;
+    _attackRangeMultiplier = 1.5f;
 
     _invincibleTimer = 0.f;
     _dashTimer = 0.f;
@@ -190,8 +192,11 @@ void Character::HandleInput()
     if (IsKeyDown(_bindings.moveUp))    _direction.y -= 1;
     if (IsKeyDown(_bindings.moveDown))  _direction.y += 1;
 
-    // Ability hotkeys — directly cast, no selection step needed
-    for (int i = 0; i < 3; i++)
+    // Ability hotkeys — blocked during wave intro or other combat-locked states
+    if (_combatLocked)
+        return;
+
+    for (int i = 0; i < _learnedCount; i++)
         if (_bindings.ability[i] != KEY_NULL && IsKeyPressed(_bindings.ability[i]))
             TriggerAbilityCast(i);
 
@@ -252,7 +257,7 @@ void Character::HandleMovement(float dt)
 
 void Character::HandleAttackInput()
 {
-    if (_takingDamage || _dying || _isDashing || IsForceLocked())
+    if (_takingDamage || _dying || _isDashing || IsForceLocked() || _combatLocked)
         return;
 
     bool attackPressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
@@ -274,26 +279,51 @@ void Character::HandleAttackInput()
 
 void Character::TriggerAbilityCast(int slot)
 {
-    if (_attacking || _castingAbility || _takingDamage || _dying || _isDashing || IsForceLocked())
+    if (_attacking || _castingAbility || _takingDamage || _dying || _isDashing || IsForceLocked() || _combatLocked)
         return;
 
-    CastType castType        = CastType::None;
-    bool     useSlashAnim    = false;
+    if (slot < 0 || slot >= _learnedCount)
+        return;
 
-    if      (slot == 0 && _fireballAmmo  > 0) { _fireballAmmo--;  castType = CastType::Fireball;  }
-    else if (slot == 1 && _swordBeamAmmo > 0) { _swordBeamAmmo--; castType = CastType::SwordBeam; useSlashAnim = true; }
-    else if (slot == 2 && _freezeAmmo    > 0) { _freezeAmmo--;    castType = CastType::Freeze;    }
+    AbilityType ability = _learnedAbilities[slot];
+    if (ability == AbilityType::None)
+        return;
+
+    int cost = GetAbilityManaCost(ability);
+    if (_mana < cost)
+        return;
+
+    // Ultimates drain every point of mana; other abilities deduct their fixed cost.
+    if (AbilityDrainsAllMana(ability))
+        _mana = 0;
+    else
+        _mana -= cost;
+
+    CastType castType = CastType::None;
+    switch (ability)
+    {
+    case AbilityType::FireSpread:     castType = CastType::FireSpread;     break;
+    case AbilityType::IceSpread:      castType = CastType::IceSpread;      break;
+    case AbilityType::ElectricSpread: castType = CastType::ElectricSpread; break;
+    case AbilityType::FireBolt:        castType = CastType::FireBolt;        break;
+    case AbilityType::IceBolt:         castType = CastType::IceBolt;         break;
+    case AbilityType::ElectricBolt:    castType = CastType::ElectricBolt;    break;
+    case AbilityType::FireUltimate:    castType = CastType::FireUltimate;    break;
+    case AbilityType::IceUltimate:     castType = CastType::IceUltimate;     break;
+    case AbilityType::ElectricUltimate:castType = CastType::ElectricUltimate;break;
+    default: break;
+    }
 
     if (castType == CastType::None)
         return;
 
     _castingAbility = true;
     _queuedCast     = castType;
-    _texture        = useSlashAnim ? _attackAnim : _staffAnim;
+    _texture        = _staffAnim;
     _frame          = 0;
     _runningTime    = 0.f;
     _maxFrames      = _texture.width / _width;
-    _updateTime     = useSlashAnim ? _attackUpdateTime : _staffCastUpdateTime;
+    _updateTime     = _staffCastUpdateTime;
 }
 
 void Character::DrawPlayer(Vector2 cameraPos)
@@ -464,6 +494,10 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
 
+    // Apply percentage defense reduction (rounded up so 1 damage always deals at least 1)
+    if (_defense > 0.f)
+        damage = std::max(1, (int)std::ceil(damage * (1.f - _defense)));
+
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
 
@@ -532,6 +566,9 @@ void Character::StartForcedPush(Vector2 direction, float speed)
     _dashInvincible = false;
     _playDashParticles = false;
     _velocity = Vector2Zero();
+    // Clear the hurt-flag so Character::Update doesn't block HandleForcedPush
+    // behind the !_takingDamage guard (TakeDamage sets it just before this call).
+    _takingDamage = false;
     _texture = _takeDamageAnim;
     // Start on the second hurt frame so the shove reads as a held impact pose
     // instead of replaying the bright white flash frame while sliding.
@@ -661,11 +698,54 @@ void Character::PlayHurtSound()
     PlaySound(_hurtSound);
 }
 
-void Character::AddFireballAmmo(int amount)  { _fireballAmmo  += amount; if (amount > 0) _abilityEverHad[0] = true; }
-int  Character::GetFireballAmmo()  const      { return _fireballAmmo; }
+bool Character::LearnAbility(AbilityType type)
+{
+    if (type == AbilityType::None || HasLearnedAbility(type))
+        return false;
+    if (_learnedCount >= _maxAbilitySlots)
+        return false;
 
-void Character::AddSwordBeamAmmo(int amount) { _swordBeamAmmo += amount; if (amount > 0) _abilityEverHad[1] = true; }
-int  Character::GetSwordBeamAmmo() const      { return _swordBeamAmmo; }
+    _learnedAbilities[_learnedCount++] = type;
+    return true;
+}
+
+void Character::RemoveUltimateIfPresent()
+{
+    for (int i = 0; i < _learnedCount; i++)
+    {
+        AbilityType a = _learnedAbilities[i];
+        if (a == AbilityType::FireUltimate ||
+            a == AbilityType::IceUltimate  ||
+            a == AbilityType::ElectricUltimate)
+        {
+            // Shift the remaining slots down to fill the gap
+            for (int j = i; j < _learnedCount - 1; j++)
+                _learnedAbilities[j] = _learnedAbilities[j + 1];
+            _learnedAbilities[--_learnedCount] = AbilityType::None;
+            break;
+        }
+    }
+}
+
+bool Character::HasLearnedAbility(AbilityType type) const
+{
+    for (int i = 0; i < _learnedCount; i++)
+        if (_learnedAbilities[i] == type) return true;
+    return false;
+}
+
+AbilityType Character::GetLearnedAbility(int slot) const
+{
+    if (slot < 0 || slot >= _learnedCount) return AbilityType::None;
+    return _learnedAbilities[slot];
+}
+
+// [SHELVED] — ammo stubs: FireBallPickup/SwordBeamPickup/FreezePickup call these
+// but are never spawned. The mana system (RestoreMana / TriggerAbilityCast) is
+// the only active resource path. These can be deleted once those pickup files are
+// removed from the project.
+void Character::AddFireballAmmo(int amount)  { (void)amount; }
+void Character::AddSwordBeamAmmo(int amount) { (void)amount; }
 
 Character::CastType Character::ConsumeCastRequest()
 {
@@ -687,9 +767,10 @@ void Character::ConsumeMeleeDamageFrame()
 Rectangle Character::GetAttackCollisionRec() const
 {
     Rectangle attackRec = GetCollisionRec();
-    attackRec.x      += _rightLeft * 8.f;   // more forward reach
-    attackRec.y      += 20.f;                 // higher up
-    attackRec.height += 130.f;               // taller (up + down)
+    attackRec.x      += _rightLeft * 8.f * _attackRangeMultiplier;
+    attackRec.y      += 20.f;
+    attackRec.height += 130.f;                    // vertical reach is fixed — only horizontal scales
+    attackRec.width  *= _attackRangeMultiplier;
     return attackRec;
 }
 
@@ -722,8 +803,7 @@ int Character::ConsumeHealEffectRequests()
     return pending;
 }
 
-void Character::AddFreezeAmmo(int amount)    { _freezeAmmo    += amount; if (amount > 0) _abilityEverHad[2] = true; }
-int  Character::GetFreezeAmmo()    const      { return _freezeAmmo; }
+void Character::AddFreezeAmmo(int amount)    { (void)amount; } // [SHELVED] — see AddFireballAmmo note above
 
 int Character::GetSpecialDamageBonus() const
 {
@@ -743,18 +823,24 @@ int Character::GetSpecialDamageBonus() const
     return 3;
 }
 
-int Character::GetFireballHitDamage() const
+int Character::GetSpreadHitDamage() const
 {
-    // Fireball is an eight-direction burst. Each projectile stays light on
-    // direct damage because the total ability power comes from coverage.
-    return (int)_fireballBaseDamage + GetSpecialDamageBonus();
+    return (int)_spreadBaseDamage + GetSpecialDamageBonus();
 }
 
-int Character::GetFireballBurnDamage() const
+int Character::GetSpreadBurnDamage() const
 {
-    // Burn shares the same flat bonus so all fireball damage scales together.
-    // Keeping this low prevents excessive burst when many projectiles land.
-    return (int)_fireballBurnBaseDamage + GetSpecialDamageBonus();
+    return (int)_spreadBurnBaseDamage + GetSpecialDamageBonus();
+}
+
+int Character::GetBoltHitDamage() const
+{
+    return (int)_boltBaseDamage + GetSpecialDamageBonus();
+}
+
+int Character::GetBoltBurnDamage() const
+{
+    return (int)_boltBurnBaseDamage + GetSpecialDamageBonus();
 }
 
 int Character::GetSwordBeamDamage() const
@@ -782,14 +868,13 @@ void Character::AddExp(int amount)
     {
         _exp -= _expToNextLevel;
         _level++;
-        _expToNextLevel *= 2;  // 10 → 20 → 40 → 80 ...
+        // EXP thresholds rise by ~20 each level so the curve stays steep but
+        // never becomes a pure grind wall the way doubling does past level 5.
+        _expToNextLevel += 20;  // 15 → 35 → 55 → 75 → 95 ...
 
-        // Level-ups now use simple +1 stat gains so the player's progression is
-        // easy to read and tune. Health, damage, and move speed each improve by
-        // one point, and the player heals one point immediately.
-        _maxHealth += 1;
-        _attackPower += 1.f;
-        _speed += 1.f;
+        _maxHealth  += 2;
+        _attackPower += 2.f;
+        _speed      += 10.f;
         Heal(1);
     }
 
@@ -807,4 +892,75 @@ void Character::Heal(int amount)
 
     if (amount > 0)
         _pendingHealEffects += amount;
+}
+
+void Character::RestoreMana(int amount)
+{
+    _mana += amount;
+    if (_mana > _maxMana)
+        _mana = _maxMana;
+}
+
+void Character::ApplyUpgrade(UpgradeType type)
+{
+    switch (type)
+    {
+    case UpgradeType::AttackPower:
+        _attackPower *= 1.08f;
+        break;
+    case UpgradeType::AttackRange:
+        _attackRangeMultiplier *= 1.10f;
+        break;
+    case UpgradeType::MaxHealth:
+    {
+        int bonus = std::max(1, (int)std::ceil(_maxHealth * 0.12f));
+        _maxHealth += bonus;
+        Heal(bonus);
+        break;
+    }
+    case UpgradeType::MaxMana:
+        _maxMana += 20;
+        _mana = std::min(_mana + 20, _maxMana);
+        break;
+    case UpgradeType::Defense:
+        _defense = std::min(_defense + 0.05f, 0.60f);
+        break;
+    case UpgradeType::MoveSpeed:
+        _speed *= 1.08f;
+        break;
+    case UpgradeType::LearnFireSpread:
+        LearnAbility(AbilityType::FireSpread);
+        break;
+    case UpgradeType::LearnIceSpread:
+        LearnAbility(AbilityType::IceSpread);
+        break;
+    case UpgradeType::LearnElectricSpread:
+        LearnAbility(AbilityType::ElectricSpread);
+        break;
+    case UpgradeType::LearnFireBolt:
+        LearnAbility(AbilityType::FireBolt);
+        break;
+    case UpgradeType::LearnIceBolt:
+        LearnAbility(AbilityType::IceBolt);
+        break;
+    case UpgradeType::LearnElectricBolt:
+        LearnAbility(AbilityType::ElectricBolt);
+        break;
+    // Ultimates are exclusive — remove any existing ultimate first so the new
+    // one always fits, regardless of how full the ability bar is.
+    case UpgradeType::LearnFireUltimate:
+        RemoveUltimateIfPresent();
+        LearnAbility(AbilityType::FireUltimate);
+        break;
+    case UpgradeType::LearnIceUltimate:
+        RemoveUltimateIfPresent();
+        LearnAbility(AbilityType::IceUltimate);
+        break;
+    case UpgradeType::LearnElectricUltimate:
+        RemoveUltimateIfPresent();
+        LearnAbility(AbilityType::ElectricUltimate);
+        break;
+    default:
+        break;
+    }
 }

@@ -12,11 +12,18 @@
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
 #include "Pickup.h"
-#include "FireBallPickup.h"
-#include "SwordBeamPickup.h"
-#include "FreezePickup.h"
+// [SHELVED] FireBallPickup.h / SwordBeamPickup.h / FreezePickup.h
+//   These ammo-pickup classes are no longer spawned. Engine used to hand out
+//   ability ammo via pickups; that system was replaced by the mana economy.
+//   The .cpp files are still in the project so they compile, but Engine has no
+//   dependency on them. Remove from .vcxproj when confirmed safe to delete.
 #include "HealPickup.h"
-#include "FireballProjectile.h"
+#include "ManaGemPickup.h"
+#include "SpreadProjectile.h"
+// [SHELVED] SwordBeamProjectile.h / FreezeProjectile.h
+//   Kept because SpawnSwordBeam() and SpawnFreezeWave() still reference them.
+//   Those functions are unreachable (no UpgradeType to learn SwordBeam/Freeze),
+//   so _swordBeamProjectiles and _freezeProjectiles are always empty at runtime.
 #include "SwordBeamProjectile.h"
 #include "FreezeProjectile.h"
 #include "CyclopsLaserProjectile.h"
@@ -37,7 +44,8 @@ enum class GameState
     Pause,
     HowToPlay,
     Leaderboard,
-    Keybindings
+    Keybindings,
+    LevelUpChoice
 };
 
 class Engine
@@ -83,10 +91,22 @@ private:
     void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
     void DrawWaveIntro();
     void HandlePlayerMeleeDamage();
-    void SpawnFireballBurst();
+    void SpawnSpreadBurst(AbilityType element);
+    void SpawnBolt(AbilityType element);
+    void SpawnUltimateBurst(AbilityType element);
+    void UpdateUltimateBlasts(float dt);
+    void DrawUltimateBlasts(Vector2 worldOffset);
+
+    // Cinematic ultimate sequence
+    void TriggerUltimateSequence(AbilityType element);
+    void UpdateUltimateSequence(float dt);
+    void DrawUltimateSequence();
+    void ApplyUltimateImpact();
+    void GenerateStartingAbilityOptions();
+    void UpdateSpreadProjectiles(float dt);
+    // [SHELVED] — SwordBeam and FreezeWave have no learn path in the upgrade system
     void SpawnSwordBeam();
     void SpawnFreezeWave();
-    void UpdateFireballProjectiles(float dt);
     void UpdateSwordBeamProjectiles(float dt);
     void UpdateFreezeProjectiles(float dt);
     void UpdateEffects(float dt);
@@ -110,7 +130,8 @@ private:
     void UpdateBossSupportRespawns(float dt);
     void ClearBossSupportAdds();
     void DrawMiniMap();
-    void DrawLevelUpMessage();
+    void DrawLevelUpChoice();
+    void GenerateLevelUpOptions();
     void ResetRunState();
     void SaveKeybindings();
     void LoadKeybindings();
@@ -161,9 +182,11 @@ private:
     bool _shouldExit = false;
     GameState _howToPlayFrom = GameState::Menu;
     bool _waveStarting = true;
+    bool _wave1LevelUpDone = false; // ensures forced level-up after wave 1 only fires once
     bool _playerDying = false;
     bool _shouldClose = false;
     bool _awaitingNameEntry = false;
+    bool _awaitingStartingAbility = false;
 
     int _wave        = 0;
     int _enemiesKilled = 0;
@@ -186,16 +209,31 @@ private:
 
     float _gameOverTimer  = 0.f;
     float _gameOverDelay  = 2.f;
-    float _levelUpTimer   = 0.f;
-    int   _levelUpLevel   = 0;
     float _fadeInTimer   = 0.f;
     float _bossWarningTimer = 0.f;
+    float _levelUpOpenTimer = 0.f;  // blocks card clicks briefly after panel opens
+
+    // Level-up choice state
+    UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };
+    UpgradeType _levelUpUltimateOptions[3] = { UpgradeType::LearnFireUltimate, UpgradeType::LearnIceUltimate, UpgradeType::LearnElectricUltimate };
+    GameState   _levelUpReturnState  = GameState::Play;
+    bool        _showUltimateRow     = false;
+    bool        _ultimateRowPicked   = false;
+    bool        _regularRowPicked    = false;
+
+    // Upgrade icon textures (loaded once, never reloaded)
+    Texture2D _upgradeAttackPowerTex{};
+    Texture2D _upgradeAttackRangeTex{};
+    Texture2D _upgradeHealthTex{};
+    Texture2D _upgradeMagicTex{};
+    Texture2D _upgradeDefenseTex{};
+    Texture2D _upgradeMoveSpeedTex{};
 
     Sound _pickupSound{};
     Sound _fireballCastSound{};
     Sound _explosionSound{};
     Sound _lavaBallImpactSound{};
-    Sound _bladeBeamSound{};
+    Sound _bladeBeamSound{};         // [SHELVED] — only played by shelved SwordBeam path
     Sound _buttonPressSound{};
 
     Texture2D _map{};
@@ -209,13 +247,21 @@ private:
     bool _navRefreshInFlight = false;
 
     Texture2D _pillarTex{};
+    Texture2D _torchTex{};       // Torch.png — 256x29, 8 frames of 32x29
+    Texture2D _pillarTorchTex{}; // PillarTorch.png — 290x52, 8 frames of 32x52 (content offset x=17)
     Texture2D _fireballCastTex{};
     Texture2D _fireballHitTex{};
-    Texture2D _swordBeamCastTex{};
-    Texture2D _swordBeamHitTex{};
-    Texture2D _freezeCastTex{};
-    Texture2D _freezeHitTex{};
+    Texture2D _swordBeamCastTex{};  // [SHELVED] — only used by shelved SwordBeam path
+    Texture2D _swordBeamHitTex{};   // [SHELVED]
+    Texture2D _freezeCastTex{};     // [SHELVED] — only used by shelved FreezeWave path
+    Texture2D _freezeHitTex{};      // [SHELVED]
+    Texture2D _lightningCastTex{};
     Texture2D _healEffectTex{};
+
+    // Ability card icons for the level-up / starting ability panels
+    Texture2D _abilityIconFireTex{};
+    Texture2D _abilityIconIceTex{};
+    Texture2D _abilityIconElectricTex{};
 
     Character _player;
     MainMenu _menu;
@@ -224,9 +270,31 @@ private:
 
     std::vector<Prop> _props;
     std::vector<std::unique_ptr<Pickup>> _pickups;
-    std::vector<FireballProjectile>  _fireballProjectiles;
-    std::vector<SwordBeamProjectile> _swordBeamProjectiles;
-    std::vector<FreezeProjectile>    _freezeProjectiles;
+    enum class UltimatePhase { None, WindUp, Cinematic, Impact, Release };
+
+    struct UltimateBlast
+    {
+        Vector2     worldPos{};
+        AbilityType element  = AbilityType::FireUltimate;
+        float       timer    = 0.f;
+        float       lifetime = 0.f;
+        float       rotation = 0.f;   // initial rotation angle (degrees)
+    };
+
+    static constexpr float _ultWindUpDuration    = 0.75f;
+    static constexpr float _ultCinematicDuration = 1.5f;
+    static constexpr float _ultImpactDuration    = 0.35f;
+    static constexpr float _ultReleaseDuration   = 0.5f;
+
+    UltimatePhase _ultimatePhase       = UltimatePhase::None;
+    float         _ultimatePhaseTimer  = 0.f;
+    float         _ultimateCircleAngle = 0.f;
+    AbilityType   _ultimateElement     = AbilityType::FireUltimate;
+
+    std::vector<UltimateBlast>       _ultimateBlasts;
+    std::vector<SpreadProjectile>    _spreadProjectiles;
+    std::vector<SwordBeamProjectile> _swordBeamProjectiles; // [SHELVED] always empty at runtime
+    std::vector<FreezeProjectile>    _freezeProjectiles;    // [SHELVED] always empty at runtime
     std::vector<AnimatedEffect> _effects;
     std::vector<bool> _navBlocked;
     std::vector<int>  _navDistance;

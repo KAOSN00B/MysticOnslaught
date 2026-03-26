@@ -1,4 +1,6 @@
 #pragma once
+// [SHELVED] — FreezePickup is no longer spawned by Engine.
+// See FireBallPickup.h for full explanation. Safe to remove from the project.
 #include "Pickup.h"
 
 // ─────────────────────────────────────────────────────────────

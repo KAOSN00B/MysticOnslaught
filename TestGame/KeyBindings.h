@@ -15,8 +15,8 @@ struct KeyBindings
     KeyboardKey dash      = KEY_SPACE;
     KeyboardKey attack    = KEY_NULL;   // optional; LMB always works as melee
 
-    // Abilities
-    KeyboardKey ability[3] = { KEY_ONE, KEY_TWO, KEY_THREE };
+    // Abilities (up to 4 slots; slot cap can be raised via upgrade)
+    KeyboardKey ability[4] = { KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR };
 };
 
 // Human-readable label for a KeyboardKey (used by ability bar and keybindings screen)

@@ -7,22 +7,43 @@ Prop::Prop(Vector2 pos, Texture2D tex)
 {
 }
 
+Prop::Prop(Vector2 pos, Texture2D tex, int frameCount, int frameWidth, int frameHeight,
+           float scale, float frameTime, int frameXOffset)
+	: _worldPos{ pos }, _texture{ tex }, _frameCount{ frameCount },
+	  _frameWidth{ frameWidth }, _frameHeight{ frameHeight },
+	  _scale{ scale }, _frameTime{ frameTime }, _frameXOffset{ frameXOffset }
+{
+}
+
 void Prop::Render(Vector2 heroWorldPos)
 {
     Vector2 screenPos = Vector2Subtract(_worldPos, heroWorldPos);
     screenPos.x += GetScreenWidth() / 2.0f;
     screenPos.y += GetScreenHeight() / 2.0f;
-	DrawTextureEx(_texture, screenPos, 0.0f, _scale, WHITE);
+
+    if (_frameCount > 1)
+    {
+        // Advance frame based on wall-clock time so all torches animate smoothly
+        // without needing a per-prop Update() call.
+        int frame = (int)(GetTime() / _frameTime) % _frameCount;
+        Rectangle src{ (float)(_frameXOffset + frame * _frameWidth), 0.f, (float)_frameWidth, (float)_frameHeight };
+        Rectangle dst{ screenPos.x, screenPos.y, (float)_frameWidth * _scale, (float)_frameHeight * _scale };
+        DrawTexturePro(_texture, src, dst, { 0.f, 0.f }, 0.f, WHITE);
+    }
+    else
+    {
+        DrawTextureEx(_texture, screenPos, 0.0f, _scale, WHITE);
+    }
 }
 
 Rectangle Prop::GetCollisionRec() const
 {
-    float hitboxWidth = _texture.width * _scale;
-    float hitboxHeight = _texture.height * _scale;
+    float hitboxWidth  = (_frameCount > 1 ? (float)_frameWidth  : (float)_texture.width)  * _scale;
+    float hitboxHeight = (_frameCount > 1 ? (float)_frameHeight : (float)_texture.height) * _scale;
 
     return Rectangle{
-        _worldPos.x + (_texture.width * _scale - hitboxWidth) / 2,
-        _worldPos.y + (_texture.height * _scale - hitboxHeight) / 2,
+        _worldPos.x,
+        _worldPos.y,
         hitboxWidth,
         hitboxHeight
     };

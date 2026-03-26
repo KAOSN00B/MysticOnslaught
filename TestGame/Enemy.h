@@ -30,8 +30,12 @@ public:
     virtual void DrawEnemy(Vector2 heroWorldPos);
     virtual void ApplyBurn(float delay, int damage, Vector2 sourcePos);
     virtual void ApplyFreeze(float duration);
+    virtual void ApplyElectricCharge();
     virtual void ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation);
-    virtual bool IsFrozen()     const { return _freezeTimer > 0.f; }
+
+    virtual bool IsFrozen()        const { return _freezeTimer > 0.f; }
+    virtual bool IsElectroStunned() const { return _isCharged && _takingDamage; }
+    bool IsCharged()               const { return _isCharged; }
     virtual int  GetExpValue()  const { return _expValue; }
     virtual int  GetAttackPower() const { return (int)_attackPower; }
     bool IsDying()      const { return _dying; }
@@ -44,10 +48,18 @@ public:
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
+    Rectangle GetCollisionRec() const override;
+
     // Wider rect used only for player melee hit-detection; defaults to solid rect.
     // Cyclops overrides this so the body can be hit from any angle while the
     // narrow solid rect still lets the player walk up close.
-    virtual Rectangle GetHitCollisionRec() const { return GetCollisionRec(); }
+    virtual Rectangle GetHitCollisionRec() const
+    {
+        Rectangle r = GetCollisionRec();
+        constexpr float padX = 28.f;
+        constexpr float padY = 18.f;
+        return { r.x - padX, r.y - padY, r.width + padX * 2.f, r.height + padY * 2.f };
+    }
 	void PlayAttackSound() override;
     void PlayDeathSound() override;
     void PlayHurtSound() override;
@@ -58,7 +70,9 @@ protected:
     void HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
         const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters);
     void HandleAttack();
+    void PickApproachOffset();
     void UpdateBurns(float dt);
+    void UpdateElectricCharge(float dt);
     void UpdateLaunchVisual(float dt);
 
 	void HandleAnimation(float dt);
@@ -77,7 +91,12 @@ protected:
     bool  _attacking    = false;
     bool  _damageApplied = false;
 
-    float   _freezeTimer    = 0.f;
+    float   _freezeTimer        = 0.f;
+
+    // Electric charge — applied by ElectricSpread hits; repeating random stuns all wave
+    bool    _isCharged          = false;
+    float   _chargeNextStunTime = 0.f;   // countdown to next stun trigger
+
     int     _expValue       = 1;
 
     // Stuck detection — if barely moved for _stuckThreshold seconds, apply a kick
@@ -86,7 +105,7 @@ protected:
     static constexpr float _stuckThreshold  = 0.8f;
     static constexpr float _stuckMinMove    = 8.f;   // pixels needed to not be considered stuck
 
-    float _attackRange = 110.f;
+    float _attackRange = 85.f;
     float _attackUpdateTime = 1.f / 8.f;
 
     float _attackCooldown = 0.f;
@@ -102,11 +121,19 @@ protected:
     // into that lane once it gets near the player.
     float _flankSide = 1.f;
     float _flankDistance = 80.f;
-    static constexpr float _flankStartDistance = 220.f;
-    static constexpr float _flankBlendStrength = 0.65f;
+    static constexpr float _flankStartDistance = 0.f;   // disabled — approach offset handles spread
+    static constexpr float _flankBlendStrength = 0.35f;
     static constexpr float _minFlankDistance = 55.f;
     static constexpr float _maxFlankDistance = 110.f;
     static constexpr float _propSlideStrength = 0.75f;
+
+    // 8-direction approach: each enemy picks one of 8 slots around the player
+    // and moves toward that offset point. Resets on a timer and after each hit
+    // so enemies shift positions and never permanently crowd one side.
+    Vector2 _approachOffset = {};
+    float   _approachOffsetTimer = 0.f;
+    static constexpr float _approachOffsetRadius   = 70.f;
+    static constexpr float _approachOffsetDuration = 3.5f;
 
     Vector2 _homePos;
     std::vector<PendingBurn> _pendingBurns;

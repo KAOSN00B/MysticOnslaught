@@ -1,5 +1,12 @@
 #include "PauseAndGameOver.h"
 #include "AssetPaths.h"
+#include "NineSlice.h"
+
+// ── 9-slice corner sizes ──────────────────────────────────────────────────────
+static constexpr float BORDER_SRC_CORNER = 16.f;
+static constexpr float BORDER_DST_CORNER = 32.f;
+static constexpr float BTN_SRC_CORNER    = 8.f;
+static constexpr float BTN_DST_CORNER    = 12.f;
 
 // ── Shared helper: draw a textured button, return true if clicked ─────────────
 static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color tint)
@@ -9,9 +16,7 @@ static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color t
     Color drawTint = hovered ? Fade(tint, 0.75f) : tint;
 
     if (tex.id != 0)
-        DrawTexturePro(tex,
-            { 0.f, 0.f, (float)tex.width, (float)tex.height },
-            btn, {}, 0.f, drawTint);
+        DrawNineSlice(tex, BTN_SRC_CORNER, BTN_DST_CORNER, btn, drawTint);
     else
     {
         DrawRectangleRounded(btn, 0.22f, 6, drawTint);
@@ -77,11 +82,9 @@ int PauseAndGameOver::DrawPause()
     // Draw border texture as the panel background (slightly oversized for visual frame)
     float borderPad = sw * 0.012f;
     if (_borderTex.id != 0)
-        DrawTexturePro(_borderTex,
-            { 0.f, 0.f, (float)_borderTex.width, (float)_borderTex.height },
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
             { panelX - borderPad, panelY - borderPad,
-              panelW + borderPad * 2.f, panelH + borderPad * 2.f },
-            {}, 0.f, WHITE);
+              panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
     else
     {
         DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(BLACK, 0.92f));

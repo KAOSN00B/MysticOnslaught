@@ -93,6 +93,9 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _stuckTimer = 0.f;
     _stuckCheckPos = _worldPos;
     _deathTimer = 0.6f;
+    // Start each spawn at a random orbit angle so multiple Molarbeasts
+    // don't circle in sync.
+    _orbitAngle = (float)GetRandomValue(0, 628) / 100.f;
     SetIdleAnimation(true);
 }
 
@@ -165,10 +168,11 @@ void Molarbeast::SetWaveScale(int wave)
     // tuned. Later balance can raise health after attack feel is locked in.
     _expValue = _bossBaseExpValue;
 
-    if (wave <= 5)       { _health = 18.f; _maxHealth = 18.f; _speed = _moveSpeed;       _attackPower = 1.f; }
-    else if (wave <= 10) { _health = 24.f; _maxHealth = 24.f; _speed = _moveSpeed + 10.f; _attackPower = 1.f; }
-    else if (wave <= 15) { _health = 32.f; _maxHealth = 32.f; _speed = _moveSpeed + 18.f; _attackPower = 1.f; }
-    else                 { _health = 42.f; _maxHealth = 42.f; _speed = _moveSpeed + 28.f; _attackPower = 1.f; }
+    int tier = (wave - 1) / 5;
+    _health      = 40.f + tier * 25.f;
+    _maxHealth   = _health;
+    _speed       = _moveSpeed + tier * 10.f;
+    _attackPower = 2.f  + tier * 0.5f;
 
     _attackRange = _attackRangeBase;
     ResetSpecialCooldown();
@@ -587,10 +591,34 @@ void Molarbeast::HandleChasing(float dt)
         return;
     }
 
-    // When a prop is blocking the straight line to the player, steer toward
-    // the A* waypoint the engine computed. Once line of sight is clear the
-    // engine stops sending a waypoint and we go direct again.
-    Vector2 moveTarget = (_hasNavTarget) ? _navTarget : _target->GetFeetWorldPos();
+    // Orbit the player at a preferred radius, spinning around them rather than
+    // charging straight in. When a prop blocks the path the engine's A* waypoint
+    // overrides the orbit target so the boss can route around obstacles.
+    //
+    // The orbit angle advances at a fixed rate; the target point is a position
+    // on a circle of _orbitRadius around the player. If the boss is still far
+    // away it closes in quickly; once inside the orbit radius it settles into
+    // the circling behaviour and waits for a special or melee window.
+    static constexpr float _orbitRadius    = 220.f;  // preferred circling distance
+    static constexpr float _orbitSpeed     = 0.55f;  // radians per second
+
+    Vector2 playerCenter = _target->GetFeetWorldPos();
+    float distToPlayer   = Vector2Distance(_worldPos, playerCenter);
+
+    // Advance the orbit angle only when we're close enough to be circling;
+    // if still far away we close the gap first and only start the spin once nearby.
+    if (distToPlayer < _orbitRadius * 1.6f)
+        _orbitAngle += _orbitSpeed * dt;
+
+    // Orbit target: a point on the circle around the player
+    Vector2 orbitPoint = {
+        playerCenter.x + cosf(_orbitAngle) * _orbitRadius,
+        playerCenter.y + sinf(_orbitAngle) * _orbitRadius
+    };
+
+    // When A* is routing us around a prop, use the waypoint instead so the boss
+    // doesn't try to orbit through a wall.
+    Vector2 moveTarget = _hasNavTarget ? _navTarget : orbitPoint;
     Vector2 toTarget   = Vector2Subtract(moveTarget, _worldPos);
 
     if (Vector2Length(toTarget) > 0.01f)
@@ -781,6 +809,12 @@ void Molarbeast::HandleAnimation(float dt)
         return;
 
     if (_dying)
+    {
+        _frame = _maxFrames - 1;
+        return;
+    }
+
+    if (IsFrozen())
     {
         _frame = _maxFrames - 1;
         return;

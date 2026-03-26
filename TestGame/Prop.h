@@ -6,6 +6,11 @@ class Prop
 public:
 	Prop() = default;
 	Prop(Vector2 pos, Texture2D tex);
+	// Animated prop: tex is a horizontal sprite sheet with frameCount frames.
+	// frameXOffset shifts the source X so frames don't have to start at column 0
+	// (use when the sheet has leading padding, e.g. PillarTorch.png).
+	Prop(Vector2 pos, Texture2D tex, int frameCount, int frameWidth, int frameHeight,
+	     float scale = 4.f, float frameTime = 1.f / 10.f, int frameXOffset = 0);
 	void Render(Vector2 heroWorldPos);
 	Rectangle GetCollisionRec() const;
 	Vector2 GetEnemyCollisionCenter() const;
@@ -16,4 +21,11 @@ protected:
 	Texture2D _texture{};
 	Vector2 _worldPos{};
 	float _scale = 4.0f;
+
+	// Animation — only active when _frameCount > 1
+	int   _frameCount   = 1;
+	int   _frameWidth   = 0;
+	int   _frameHeight  = 0;
+	int   _frameXOffset = 0;   // column in the sheet where frame 0 starts
+	float _frameTime    = 1.f / 10.f;
 };

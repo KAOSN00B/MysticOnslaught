@@ -1,6 +1,16 @@
 #include "MainMenu.h"
 #include "AssetPaths.h"
+#include "NineSlice.h"
 #include <cmath>
+
+// ── 9-slice corner sizes ──────────────────────────────────────────────────────
+// srcCorner: how many pixels from each edge of the texture form a corner.
+// dstCorner: how large that corner appears on screen.
+// Tune these to match your art (open the PNG and measure the corner detail).
+static constexpr float BORDER_SRC_CORNER = 16.f;   // px in source texture
+static constexpr float BORDER_DST_CORNER = 32.f;   // px on screen
+static constexpr float BTN_SRC_CORNER    = 8.f;
+static constexpr float BTN_DST_CORNER    = 12.f;
 
 MainMenu::~MainMenu()
 {
@@ -98,16 +108,14 @@ void MainMenu::Draw()
     }
 
     // ── Panel border around the button area ──────────────────────────────────
-    float borderW = sw * 0.36f;
-    float borderH = sh * 0.48f;
+    float borderW = sw * 0.40f;
+    float borderH = sh * 0.53f;
     float borderX = sw / 2.f - borderW / 2.f;
-    float borderY = sh * 0.34f;
+    float borderY = sh * 0.35f;
 
     if (_borderTex.id != 0)
-        DrawTexturePro(_borderTex,
-            { 0.f, 0.f, (float)_borderTex.width, (float)_borderTex.height },
-            { borderX, borderY, borderW, borderH },
-            {}, 0.f, WHITE);
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
+            { borderX, borderY, borderW, borderH }, WHITE);
 
     // ── Title banner ─────────────────────────────────────────────────────────
     float bannerW = sw * 0.42f;
@@ -167,9 +175,8 @@ void MainMenu::Draw()
             tint = Fade(tint, 0.78f);
 
         if (tex->id != 0)
-            DrawTexturePro(*tex,
-                { 0.f, 0.f, (float)tex->width, (float)tex->height },
-                button.bounds, {}, 0.f, tint);
+            DrawNineSlice(*tex, BTN_SRC_CORNER, BTN_DST_CORNER,
+                button.bounds, tint);
         else
             DrawRectangleRec(button.bounds, Fade(GRAY, 0.7f));
 
