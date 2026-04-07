@@ -272,8 +272,10 @@ void Molarbeast::TakeDamage(int damage, Vector2 attackerPos)
     if (_dying)
         return;
 
-    // I-frame guard: ignore hits while the hurt reaction is still playing so
-    // burst damage can't kill the boss in a single rapid combo.
+    // Keep only a tiny duplicate-hit guard. The older 0.1s blanket gate made
+    // the boss effectively stop taking damage once it entered its faster
+    // low-health pattern, because many legitimate melee/projectile hits landed
+    // during the guard window and were discarded.
     if (_hitTimer > 0.f)
         return;
 
@@ -310,7 +312,7 @@ void Molarbeast::TakeDamage(int damage, Vector2 attackerPos)
         // intact and let HandleAnimation restore the correct charge sheet after
         // the brief hurt reaction finishes.
         _takingDamage = true;
-        _hitTimer = 0.1f;
+        _hitTimer = 0.02f;
         SetHurtAnimation(true);
         return;
     }
@@ -320,7 +322,7 @@ void Molarbeast::TakeDamage(int damage, Vector2 attackerPos)
     // registering twice in consecutive frames. _takingDamage stays true
     // independently until the hurt animation finishes, so the visual hold
     // is not tied to this timer.
-    _hitTimer = 0.1f;
+    _hitTimer = 0.02f;
     SetHurtAnimation(true);
 }
 

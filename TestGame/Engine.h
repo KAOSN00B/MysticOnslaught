@@ -122,6 +122,12 @@ private:
     void SpawnBossSupportAdds();
     void UpdateBossSupportRespawns(float dt);
     void ClearBossSupportAdds();
+    Biome GetBiomeForWave(int wave) const;
+    const char* GetBiomeName(Biome biome) const;
+    void ApplyBiome(Biome biome);
+    void PopulatePropsForBiome(Biome biome);
+    void UpdateBiomeTransition(float dt);
+    float GetBiomeTransitionAlpha() const;
     void DrawMiniMap();
     void DrawLevelUpChoice();
     void GenerateLevelUpOptions();
@@ -247,6 +253,10 @@ private:
     Sound _buttonPressSound{};
 
     Texture2D _map{};
+    Texture2D _treeTex{};
+    Texture2D _smallTreeTex{};
+    Texture2D _rockTex{};
+    Texture2D _bigRockTex{};
     Vector2 _mapPos{};
     float _mapScale = 3.f;
     float _navCellSize = 72.f;
@@ -313,6 +323,11 @@ private:
     BossSupportState _bossOgreSupport;
 
     std::string _message = "Objective: Survive";
+    Biome _currentBiome = Biome::Dungeon;
+    Biome _pendingBiome = Biome::Dungeon;
+    bool  _biomeTransitionActive = false;
+    bool  _biomeTransitionSwapped = false;
+    float _biomeTransitionTimer = 0.f;
 
     Leaderboard _leaderboard;
 };

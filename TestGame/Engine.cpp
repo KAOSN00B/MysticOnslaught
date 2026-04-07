@@ -15,6 +15,8 @@
 namespace
 {
     constexpr float kDefaultTimedPickupInterval = 60.f;
+    constexpr float kBiomeFadeOutDuration = 3.f;
+    constexpr float kBiomeFadeInDuration = 1.f;
 
     // Boss fights need a much denser combat-pickup cadence right now because
     // the boss only takes light chip damage from specials in the current demo
@@ -197,6 +199,10 @@ Engine::~Engine()
     UnloadTexture(_pillarTex);
     UnloadTexture(_torchTex);
     UnloadTexture(_pillarTorchTex);
+    UnloadTexture(_treeTex);
+    UnloadTexture(_smallTreeTex);
+    UnloadTexture(_rockTex);
+    UnloadTexture(_bigRockTex);
     UnloadTexture(_fireballCastTex);
     UnloadTexture(_fireballHitTex);
     UnloadTexture(_genericHitTex);
@@ -254,10 +260,13 @@ void Engine::Init()
 
     _menu.Init();
 
-    _map = LoadTexture(AssetPath("TileSet/Map.png").c_str());
     _pillarTex      = LoadTexture(AssetPath("TileSet/Pillar.png").c_str());
     _torchTex       = LoadTexture(AssetPath("TileSet/Torch.png").c_str());
     _pillarTorchTex = LoadTexture(AssetPath("TileSet/PillarTorch.png").c_str());
+    _treeTex        = LoadTexture(AssetPath("ForestLevel/Tree.png").c_str());
+    _smallTreeTex   = LoadTexture(AssetPath("ForestLevel/SmallTree.png").c_str());
+    _rockTex        = LoadTexture(AssetPath("ForestLevel/Rock.png").c_str());
+    _bigRockTex     = LoadTexture(AssetPath("ForestLevel/BigRock.png").c_str());
     _fireballCastTex = LoadTexture(AssetPath("PowerUps/Fireball_Cast.png").c_str());
     _fireballHitTex  = LoadTexture(AssetPath("PowerUps/Fireball_Hit.png").c_str());
     _genericHitTex   = LoadTexture(AssetPath("PowerUps/Hit03.png").c_str());
@@ -283,33 +292,6 @@ void Engine::Init()
     _effects.clear();
     _enemies.clear();
 
-    // Total prop slots: 7-10. Always reserve 3 for torch decorations
-    // (2 wall torches + 1 pillar torch); the rest are solid stone pillars.
-    // Frame sizes: Torch = 8 frames of 32x29, PillarTorch = 5 frames of 53x48.
-    // Adjust frame counts here if the sprite sheets differ on disk.
-    int propCount  = GetRandomValue(7, 10);
-    int pillarCount = propCount - 3;
-
-    for (int i = 0; i < pillarCount; i++)
-    {
-        Vector2 pos = GetRandomPropPosition();
-        _props.push_back(Prop{ pos, _pillarTex });
-    }
-    for (int i = 0; i < 2; i++)
-    {
-        Vector2 pos = GetRandomPropPosition();
-        _props.push_back(Prop{ pos, _torchTex, 8, 32, 29, 2.5f });
-    }
-    {
-        Vector2 pos = GetRandomPropPosition();
-        // PillarTorch.png: 290x52, 8 frames at stride 32 starting at col 17.
-        // The 21px leading/trailing padding means frames aren't at col 0,
-        // so frameXOffset=17 slides each source rect to capture the content.
-        _props.push_back(Prop{ pos, _pillarTorchTex, 8, 32, 52, 3.f, 1.f / 10.f, 17 });
-    }
-
-    BuildNavigationGrid();
-
     _pickupSpawnTimer = kDefaultTimedPickupInterval;
 
     ResetRunState();
@@ -321,6 +303,15 @@ void Engine::SpawnWave()
     _message = "Wave " + std::to_string(_wave);
     _waveStarting = true;
     _waveIntroTimer = _waveIntroDuration;
+
+    Biome nextBiome = GetBiomeForWave(_wave);
+    if (nextBiome != _currentBiome)
+    {
+        _pendingBiome = nextBiome;
+        _biomeTransitionActive = true;
+        _biomeTransitionSwapped = false;
+        _biomeTransitionTimer = kBiomeFadeOutDuration + kBiomeFadeInDuration;
+    }
 }
 
 void Engine::SpawnEnemies()
@@ -503,6 +494,8 @@ void Engine::UpdateGamePlay(float dt)
         _fadeInTimer -= dt;
     if (_bossWarningTimer > 0.f)
         _bossWarningTimer -= dt;
+    if (_biomeTransitionActive)
+        UpdateBiomeTransition(dt);
 
     // Block attacks and abilities during wave intro and ultimate cinematic
     _player.SetCombatLocked(_waveStarting || _ultimatePhase != UltimatePhase::None);
@@ -586,7 +579,7 @@ void Engine::UpdateGamePlay(float dt)
     {
         _waveIntroTimer -= dt;
 
-        if (_waveIntroTimer <= 0.f)
+        if (!_biomeTransitionActive && _waveIntroTimer <= 0.f)
         {
             _waveStarting = false;
             SpawnEnemies();
@@ -815,6 +808,8 @@ void Engine::Draw()
             float alpha = _fadeInTimer / 2.0f;   // 1.0 → 0.0 over two seconds
             DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, alpha));
         }
+        if (_biomeTransitionActive)
+            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, GetBiomeTransitionAlpha()));
         break;
     }
 
@@ -950,7 +945,7 @@ void Engine::HandleCollisions()
     const float marginLeft   = 76.f;
     const float marginRight  = 96.f;
     const float marginTop    = 42.f;   // let the player go a little higher
-    const float marginBottom = 320.f;  // two character heights — wall is drawn above the map edge
+    const float marginBottom = (_currentBiome == Biome::Forest) ? 220.f : 320.f;
 
     Vector2 pos = _player.GetWorldPos();
     if (pos.x < marginLeft  || pos.x > mapW - marginRight
@@ -1466,28 +1461,40 @@ void Engine::DrawWaveIntro()
     {
         const char* line1 = "Objective:";
         const char* line2 = "Survive";
+        const char* biomeName = GetBiomeName(_currentBiome);
 
         int w1 = MeasureText(line1, fontSize);
         int w2 = MeasureText(line2, fontSize);
+        int w3 = MeasureText(biomeName, 42);
 
         DrawText(line1, GetScreenWidth() / 2 - w1 / 2, GetScreenHeight() / 2 - 60, fontSize, YELLOW);
         DrawText(line2, GetScreenWidth() / 2 - w2 / 2, GetScreenHeight() / 2 + 10, fontSize, YELLOW);
+        DrawText(biomeName, GetScreenWidth() / 2 - w3 / 2, GetScreenHeight() / 2 + 72, 42, LIGHTGRAY);
     }
     else
     {
         bool isBossWave = (_wave % 5 == 0);
+        bool isBiomeIntroWave = ((_wave - 1) % 5 == 0);
 
         std::string waveText = "Wave " + std::to_string(_wave);
         int textWidth = MeasureText(waveText.c_str(), fontSize);
 
-        int waveY = isBossWave ? GetScreenHeight() / 2 - 55 : GetScreenHeight() / 2 - 30;
+        int waveY = (isBossWave || isBiomeIntroWave) ? GetScreenHeight() / 2 - 55 : GetScreenHeight() / 2 - 30;
         DrawText(waveText.c_str(), GetScreenWidth() / 2 - textWidth / 2, waveY, fontSize, YELLOW);
+
+        if (isBiomeIntroWave)
+        {
+            const char* biomeName = GetBiomeName(_currentBiome);
+            int biomeWidth = MeasureText(biomeName, 42);
+            DrawText(biomeName, GetScreenWidth() / 2 - biomeWidth / 2, waveY + fontSize + 8, 42, LIGHTGRAY);
+        }
 
         if (isBossWave)
         {
             const char* bossLine = "- Boss Incoming -";
             int bossLineW = MeasureText(bossLine, fontSize);
-            DrawText(bossLine, GetScreenWidth() / 2 - bossLineW / 2, waveY + fontSize + 10, fontSize, RED);
+            int bossY = waveY + fontSize + (isBiomeIntroWave ? 52 : 10);
+            DrawText(bossLine, GetScreenWidth() / 2 - bossLineW / 2, bossY, fontSize, RED);
         }
     }
 }
@@ -3323,7 +3330,7 @@ Vector2 Engine::GetRandomPropPosition()
     float minX = mapW * 0.05f;
     float maxX = mapW * 0.95f;
     float minY = mapH * 0.05f;
-    float maxY = mapH * 0.85f;
+    float maxY = mapH * (_currentBiome == Biome::Forest ? 0.88f : 0.85f);
 
     float minSpacing = 308.f;
     float playerSafeRadius = 320.f;
@@ -3360,6 +3367,139 @@ Vector2 Engine::GetRandomPropPosition()
     fallback.x = (float)GetRandomValue((int)minX, (int)maxX);
     fallback.y = (float)GetRandomValue((int)minY, (int)maxY);
     return fallback;
+}
+
+Biome Engine::GetBiomeForWave(int wave) const
+{
+    if (wave <= 0)
+        return Biome::Dungeon;
+
+    return (((wave - 1) / 5) % 2 == 0) ? Biome::Dungeon : Biome::Forest;
+}
+
+const char* Engine::GetBiomeName(Biome biome) const
+{
+    return biome == Biome::Forest ? "Forest" : "Dungeon";
+}
+
+void Engine::PopulatePropsForBiome(Biome biome)
+{
+    _props.clear();
+
+    if (biome == Biome::Forest)
+    {
+        // Forest props are all solid blockers, so a mixed random rotation is
+        // enough to make each pass through the biome read differently without
+        // changing the existing prop/pathfinding systems.
+        int propCount = GetRandomValue(9, 13);
+        for (int i = 0; i < propCount; ++i)
+        {
+            Vector2 pos = GetRandomPropPosition();
+            switch (GetRandomValue(0, 3))
+            {
+            case 0: _props.push_back(Prop{ pos, _treeTex, 1, 0, 0, 3.f }); break;
+            case 1: _props.push_back(Prop{ pos, _smallTreeTex, 1, 0, 0, 3.f }); break;
+            case 2: _props.push_back(Prop{ pos, _rockTex, 1, 0, 0, 5.f }); break;
+            default:_props.push_back(Prop{ pos, _bigRockTex, 1, 0, 0, 4.f }); break;
+            }
+        }
+        return;
+    }
+
+    // Dungeon keeps the original authored mix of pillars and torches.
+    int propCount = GetRandomValue(7, 10);
+    int pillarCount = propCount - 3;
+
+    for (int i = 0; i < pillarCount; ++i)
+    {
+        Vector2 pos = GetRandomPropPosition();
+        _props.push_back(Prop{ pos, _pillarTex });
+    }
+    for (int i = 0; i < 2; ++i)
+    {
+        Vector2 pos = GetRandomPropPosition();
+        _props.push_back(Prop{ pos, _torchTex, 8, 32, 29, 2.5f });
+    }
+
+    Vector2 pos = GetRandomPropPosition();
+    _props.push_back(Prop{ pos, _pillarTorchTex, 8, 32, 52, 3.f, 1.f / 10.f, 17 });
+}
+
+void Engine::ApplyBiome(Biome biome)
+{
+    // The active map swaps between dungeon and forest. ForestMap is authored at
+    // half the pixel dimensions of the dungeon map, so it uses 2x the scale to
+    // preserve the same playable world size and camera feel.
+    if (_navRefreshJob.valid())
+        _navRefreshJob.wait();
+    _navRefreshInFlight = false;
+    _lastPlayerNavIndex = -1;
+
+    if (_map.id != 0)
+        UnloadTexture(_map);
+
+    if (biome == Biome::Forest)
+    {
+        _map = LoadTexture(AssetPath("ForestLevel/ForestMap.png").c_str());
+        _mapScale = 6.f;
+    }
+    else
+    {
+        _map = LoadTexture(AssetPath("TileSet/Map.png").c_str());
+        _mapScale = 3.f;
+    }
+
+    _currentBiome = biome;
+    PopulatePropsForBiome(biome);
+    BuildNavigationGrid();
+
+    // Biome swaps happen between waves, so recentering the player gives them
+    // a clean neutral start in the new arena before enemies spawn in.
+    _player.SetWorldPos(Vector2{ _map.width * _mapScale * 0.5f, _map.height * _mapScale * 0.5f });
+    _navRefreshTimer = 0.f;
+}
+
+void Engine::UpdateBiomeTransition(float dt)
+{
+    if (!_biomeTransitionActive)
+        return;
+
+    float totalDuration = kBiomeFadeOutDuration + kBiomeFadeInDuration;
+    float previousElapsed = totalDuration - _biomeTransitionTimer;
+    _biomeTransitionTimer = std::max(0.f, _biomeTransitionTimer - dt);
+    float currentElapsed = totalDuration - _biomeTransitionTimer;
+
+    if (!_biomeTransitionSwapped &&
+        previousElapsed < kBiomeFadeOutDuration &&
+        currentElapsed >= kBiomeFadeOutDuration)
+    {
+        ApplyBiome(_pendingBiome);
+        RefreshNavigationField();
+        if (_navRefreshJob.valid())
+            _navRefreshJob.wait();
+        ApplyCompletedNavigationRefresh();
+        _biomeTransitionSwapped = true;
+    }
+
+    if (_biomeTransitionTimer <= 0.f)
+    {
+        _biomeTransitionActive = false;
+        _biomeTransitionSwapped = false;
+    }
+}
+
+float Engine::GetBiomeTransitionAlpha() const
+{
+    if (!_biomeTransitionActive)
+        return 0.f;
+
+    float totalDuration = kBiomeFadeOutDuration + kBiomeFadeInDuration;
+    float elapsed = totalDuration - _biomeTransitionTimer;
+    if (elapsed < kBiomeFadeOutDuration)
+        return elapsed / kBiomeFadeOutDuration;
+
+    float fadeInElapsed = elapsed - kBiomeFadeOutDuration;
+    return 1.f - std::min(1.f, fadeInElapsed / kBiomeFadeInDuration);
 }
 
 void Engine::BuildNavigationGrid()
@@ -3782,6 +3922,9 @@ void Engine::ResetRunState()
     _waveStarting        = true;
     _wave1LevelUpDone    = false;
     _bossWarningTimer    = 0.f;
+    _biomeTransitionActive = false;
+    _biomeTransitionSwapped = false;
+    _biomeTransitionTimer = 0.f;
     _ultimatePhase       = UltimatePhase::None;
     _ultimatePhaseTimer  = 0.f;
     _ultimateCircleAngle = 0.f;
@@ -3798,7 +3941,9 @@ void Engine::ResetRunState()
     _pickups.clear();
     _effects.clear();
     _player.Init();
-    _player.SetWorldPos(Vector2{ _map.width * _mapScale * 0.5f, _map.height * _mapScale * 0.5f });
+    _currentBiome = Biome::Dungeon;
+    _pendingBiome = Biome::Dungeon;
+    ApplyBiome(_currentBiome);
     _bossCyclopsSupport = {};
     _bossOgreSupport = {};
 
