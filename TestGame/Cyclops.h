@@ -37,6 +37,7 @@ public:
     void ApplyFreeze(float duration) override;
     void ApplyBurn(float delay, int damage, Vector2 sourcePos) override;
     void ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation) override;
+    void OnForcedPushCollision() override;
     void TakeDamage(int damage, Vector2 attackerPos) override;
     void ApplyElectricCharge() override;
     Cyclops* AsCyclops() override { return this; }
@@ -90,15 +91,18 @@ private:
     bool    _wantsToFire      = false;
     Vector2 _fireDirection    = {};
 
-    static constexpr float _chargeDuration  = 1.5f;
-    static constexpr float _attackCooldownMax = 3.5f;
-    static constexpr float _chargeRange     = 480.f;  // start charging within this world-px
     static constexpr float _fleeRange       = 220.f;  // back away if player closer than this
     static constexpr float _fleeSpeed       = 110.f;  // retreat speed (px/s)
 
     static constexpr float _stuckThreshold = 0.8f;
     static constexpr float _stuckMinMove   = 8.f;
     bool _chargeCanBeInterrupted = true;
+
+    // These start at their design-default values and are tuned by SetWaveScale
+    // so higher-tier cyclops charge faster and fire more often.
+    float _chargeDurationInst   = 1.5f;
+    float _attackCooldownMaxInst = 3.5f;
+    float _chargeRangeInst      = 480.f;
 
     std::vector<PendingBurn> _pendingBurns;
 

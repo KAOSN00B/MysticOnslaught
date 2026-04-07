@@ -3,6 +3,7 @@
 
 #include "raymath.h"
 
+#include <algorithm>
 #include <cmath>
 
 Character::Character()
@@ -107,6 +108,7 @@ void Character::Init()
     _playDashParticles = false;
     _queuedCast = CastType::None;
     for (int i = 0; i < _hardAbilityCap; i++) _learnedAbilities[i] = AbilityType::None;
+    for (int i = 0; i < _hardAbilityCap; i++) _abilityLevels[i] = 1;
     _learnedCount    = 0;
     _maxAbilitySlots = 4;
     _bindings = KeyBindings{};
@@ -123,6 +125,7 @@ void Character::Init()
 
     _mana    = 60;
     _maxMana = 60;
+    _abilityDamageMultiplier = 1.0f;
     _defense = 0.f;
     _attackRangeMultiplier = 1.5f;
 
@@ -698,54 +701,67 @@ void Character::PlayHurtSound()
     PlaySound(_hurtSound);
 }
 
+// Returns true if the given type is an ultimate ability.
+static bool IsUltimateAbility(AbilityType type)
+{
+    return type == AbilityType::FireUltimate ||
+           type == AbilityType::IceUltimate  ||
+           type == AbilityType::ElectricUltimate;
+}
+
 bool Character::LearnAbility(AbilityType type)
 {
     if (type == AbilityType::None || HasLearnedAbility(type))
         return false;
-    if (_learnedCount >= _maxAbilitySlots)
-        return false;
 
-    _learnedAbilities[_learnedCount++] = type;
-    return true;
+    if (IsUltimateAbility(type))
+    {
+        // Slot 3 (key 4) is permanently reserved for the ultimate.
+        _learnedAbilities[3] = type;
+        _abilityLevels[3]    = 1;
+        if (_learnedCount < 4) _learnedCount = 4;
+        return true;
+    }
+
+    // Non-ultimates fill slots 0-2 in order.
+    for (int i = 0; i < 3; i++)
+    {
+        if (_learnedAbilities[i] == AbilityType::None)
+        {
+            _learnedAbilities[i] = type;
+            _abilityLevels[i]    = 1;
+            if (i + 1 > _learnedCount && _learnedCount < 3)
+                _learnedCount = i + 1;
+            return true;
+        }
+    }
+    return false; // all three non-ultimate slots occupied
 }
 
 void Character::RemoveUltimateIfPresent()
 {
-    for (int i = 0; i < _learnedCount; i++)
+    // Ultimate lives exclusively at slot 3 — just clear it.
+    if (IsUltimateAbility(_learnedAbilities[3]))
     {
-        AbilityType a = _learnedAbilities[i];
-        if (a == AbilityType::FireUltimate ||
-            a == AbilityType::IceUltimate  ||
-            a == AbilityType::ElectricUltimate)
-        {
-            // Shift the remaining slots down to fill the gap
-            for (int j = i; j < _learnedCount - 1; j++)
-                _learnedAbilities[j] = _learnedAbilities[j + 1];
-            _learnedAbilities[--_learnedCount] = AbilityType::None;
-            break;
-        }
+        _learnedAbilities[3] = AbilityType::None;
+        _abilityLevels[3]    = 1;
+        if (_learnedCount == 4) _learnedCount = 3;
     }
 }
 
 bool Character::HasLearnedAbility(AbilityType type) const
 {
-    for (int i = 0; i < _learnedCount; i++)
+    // Scan all slots so slot 3 (ultimate) is always checked.
+    for (int i = 0; i < _maxAbilitySlots; i++)
         if (_learnedAbilities[i] == type) return true;
     return false;
 }
 
 AbilityType Character::GetLearnedAbility(int slot) const
 {
-    if (slot < 0 || slot >= _learnedCount) return AbilityType::None;
+    if (slot < 0 || slot >= _maxAbilitySlots) return AbilityType::None;
     return _learnedAbilities[slot];
 }
-
-// [SHELVED] — ammo stubs: FireBallPickup/SwordBeamPickup/FreezePickup call these
-// but are never spawned. The mana system (RestoreMana / TriggerAbilityCast) is
-// the only active resource path. These can be deleted once those pickup files are
-// removed from the project.
-void Character::AddFireballAmmo(int amount)  { (void)amount; }
-void Character::AddSwordBeamAmmo(int amount) { (void)amount; }
 
 Character::CastType Character::ConsumeCastRequest()
 {
@@ -768,8 +784,7 @@ Rectangle Character::GetAttackCollisionRec() const
 {
     Rectangle attackRec = GetCollisionRec();
     attackRec.x      += _rightLeft * 8.f * _attackRangeMultiplier;
-    attackRec.y      += 20.f;
-    attackRec.height += 130.f;                    // vertical reach is fixed — only horizontal scales
+    attackRec.height *= _attackRangeMultiplier;
     attackRec.width  *= _attackRangeMultiplier;
     return attackRec;
 }
@@ -803,8 +818,6 @@ int Character::ConsumeHealEffectRequests()
     return pending;
 }
 
-void Character::AddFreezeAmmo(int amount)    { (void)amount; } // [SHELVED] — see AddFireballAmmo note above
-
 int Character::GetSpecialDamageBonus() const
 {
     // Specials now use flat damage bonuses instead of percentages so the
@@ -825,36 +838,22 @@ int Character::GetSpecialDamageBonus() const
 
 int Character::GetSpreadHitDamage() const
 {
-    return (int)_spreadBaseDamage + GetSpecialDamageBonus();
+    return (int)((_spreadBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
 }
 
 int Character::GetSpreadBurnDamage() const
 {
-    return (int)_spreadBurnBaseDamage + GetSpecialDamageBonus();
+    return (int)((_spreadBurnBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
 }
 
 int Character::GetBoltHitDamage() const
 {
-    return (int)_boltBaseDamage + GetSpecialDamageBonus();
+    return (int)((_boltBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
 }
 
 int Character::GetBoltBurnDamage() const
 {
-    return (int)_boltBurnBaseDamage + GetSpecialDamageBonus();
-}
-
-int Character::GetSwordBeamDamage() const
-{
-    // Sword beam starts from a higher base because it is a rarer, directional
-    // piercing ability. It still uses the same conservative flat bonus.
-    return (int)_swordBeamBaseDamage + GetSpecialDamageBonus();
-}
-
-int Character::GetFreezeDamage() const
-{
-    // Freeze keeps its main identity as crowd control, so it uses the same
-    // slow flat bonus but starts from a light 1-damage base.
-    return (int)_freezeBaseDamage + GetSpecialDamageBonus();
+    return (int)((_boltBurnBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
 }
 
 void Character::AddExp(int amount)
@@ -868,14 +867,9 @@ void Character::AddExp(int amount)
     {
         _exp -= _expToNextLevel;
         _level++;
-        // EXP thresholds rise by ~20 each level so the curve stays steep but
-        // never becomes a pure grind wall the way doubling does past level 5.
+        // EXP thresholds rise by ~20 each level. Stats no longer auto-apply
+        // here — the player chooses all upgrades from the level-up card screen.
         _expToNextLevel += 20;  // 15 → 35 → 55 → 75 → 95 ...
-
-        _maxHealth  += 2;
-        _attackPower += 2.f;
-        _speed      += 10.f;
-        Heal(1);
     }
 
     // Clamp leftover EXP at max level
@@ -906,27 +900,81 @@ void Character::ApplyUpgrade(UpgradeType type)
     switch (type)
     {
     case UpgradeType::AttackPower:
-        _attackPower *= 1.08f;
+        _attackPower *= 1.10f;
         break;
     case UpgradeType::AttackRange:
         _attackRangeMultiplier *= 1.10f;
         break;
     case UpgradeType::MaxHealth:
     {
-        int bonus = std::max(1, (int)std::ceil(_maxHealth * 0.12f));
+        int bonus = std::max(1, (int)std::ceil(_maxHealth * 0.15f));
         _maxHealth += bonus;
         Heal(bonus);
         break;
     }
     case UpgradeType::MaxMana:
-        _maxMana += 20;
-        _mana = std::min(_mana + 20, _maxMana);
+        _maxMana += 15;
+        _mana = std::min(_mana + 15, _maxMana);
         break;
     case UpgradeType::Defense:
-        _defense = std::min(_defense + 0.05f, 0.60f);
+        _defense = std::min(_defense + 0.06f, 0.60f);
         break;
     case UpgradeType::MoveSpeed:
-        _speed *= 1.08f;
+        _speed *= 1.10f;
+        break;
+    // ── Rare ──────────────────────────────────────────────────────────────────
+    case UpgradeType::IronConstitution:
+    {
+        int bonus = std::max(2, (int)std::ceil(_maxHealth * 0.25f));
+        _maxHealth += bonus;
+        Heal(bonus);
+        break;
+    }
+    case UpgradeType::SwiftFeet:
+        _speed *= 1.15f;
+        break;
+    case UpgradeType::Ferocity:
+        _attackPower *= 1.15f;
+        break;
+    case UpgradeType::ArcaneMind:
+        _maxMana += 25;
+        _mana = std::min(_mana + 25, _maxMana);
+        break;
+    case UpgradeType::IronSkin:
+        _defense = std::min(_defense + 0.08f, 0.60f);
+        break;
+    case UpgradeType::BladeEdge:
+        _attackPower *= 1.10f;
+        _attackRangeMultiplier *= 1.08f;
+        break;
+    // ── Epic ──────────────────────────────────────────────────────────────────
+    case UpgradeType::WarGod:
+        _attackPower *= 1.20f;
+        _attackRangeMultiplier *= 1.10f;
+        break;
+    case UpgradeType::Resilience:
+    {
+        int bonus = std::max(2, (int)std::ceil(_maxHealth * 0.30f));
+        _maxHealth += bonus;
+        Heal(3);
+        break;
+    }
+    case UpgradeType::BladeStorm:
+        _attackPower *= 1.18f;
+        _speed *= 1.18f;
+        break;
+    case UpgradeType::Juggernaut:
+    {
+        int bonus = std::max(2, (int)std::ceil(_maxHealth * 0.20f));
+        _maxHealth += bonus;
+        Heal(bonus);
+        _defense = std::min(_defense + 0.08f, 0.60f);
+        break;
+    }
+    case UpgradeType::ArcaneColossus:
+        _maxMana += 30;
+        _mana = std::min(_mana + 30, _maxMana);
+        _attackPower *= 1.15f;
         break;
     case UpgradeType::LearnFireSpread:
         LearnAbility(AbilityType::FireSpread);
@@ -960,7 +1008,77 @@ void Character::ApplyUpgrade(UpgradeType type)
         RemoveUltimateIfPresent();
         LearnAbility(AbilityType::ElectricUltimate);
         break;
+    // ── Ability upgrades (level existing ability from 1→2 or 2→3) ─────────────
+    case UpgradeType::UpgradeFireSpread:     UpgradeAbility(AbilityType::FireSpread);      break;
+    case UpgradeType::UpgradeIceSpread:      UpgradeAbility(AbilityType::IceSpread);       break;
+    case UpgradeType::UpgradeElectricSpread: UpgradeAbility(AbilityType::ElectricSpread);  break;
+    case UpgradeType::UpgradeFireBolt:       UpgradeAbility(AbilityType::FireBolt);        break;
+    case UpgradeType::UpgradeIceBolt:        UpgradeAbility(AbilityType::IceBolt);         break;
+    case UpgradeType::UpgradeElectricBolt:   UpgradeAbility(AbilityType::ElectricBolt);    break;
+    case UpgradeType::UpgradeFireUltimate:   UpgradeAbility(AbilityType::FireUltimate);    break;
+    case UpgradeType::UpgradeIceUltimate:    UpgradeAbility(AbilityType::IceUltimate);     break;
+    case UpgradeType::UpgradeElectricUltimate: UpgradeAbility(AbilityType::ElectricUltimate); break;
     default:
         break;
+    }
+}
+
+UpgradeRarity Character::GetUpgradeRarity(UpgradeType type) const
+{
+    int t = (int)type;
+    if (t <= (int)UpgradeType::MoveSpeed)       return UpgradeRarity::Common;  // 0-5
+    if (t <= (int)UpgradeType::BladeEdge)        return UpgradeRarity::Rare;    // 6-11
+    if (t <= (int)UpgradeType::ArcaneColossus)   return UpgradeRarity::Epic;    // 12-16
+    return UpgradeRarity::Rare;  // ability types — default for display purposes
+}
+
+int Character::GetAbilityLevel(AbilityType type) const
+{
+    for (int i = 0; i < _maxAbilitySlots; i++)
+        if (_learnedAbilities[i] == type) return _abilityLevels[i];
+    return 0;
+}
+
+bool Character::CanUpgradeAbility(AbilityType type) const
+{
+    for (int i = 0; i < _maxAbilitySlots; i++)
+        if (_learnedAbilities[i] == type) return _abilityLevels[i] < 3;
+    return false;
+}
+
+void Character::UpgradeAbility(AbilityType type)
+{
+    for (int i = 0; i < _maxAbilitySlots; i++)
+    {
+        if (_learnedAbilities[i] == type && _abilityLevels[i] < 3)
+        {
+            _abilityLevels[i]++;
+            _abilityDamageMultiplier += 0.25f;
+            return;
+        }
+    }
+}
+
+void Character::RemoveAbilityAtSlot(int slot)
+{
+    // Slot 3 is the reserved ultimate slot — clear it directly, no shift.
+    if (slot == 3)
+    {
+        _learnedAbilities[3] = AbilityType::None;
+        _abilityLevels[3]    = 1;
+        if (_learnedCount == 4) _learnedCount = 3;
+        return;
+    }
+    if (slot < 0 || slot >= _learnedCount)
+        return;
+    for (int i = slot; i < std::min(_learnedCount - 1, 3); i++)
+    {
+        _learnedAbilities[i] = _learnedAbilities[i + 1];
+        _abilityLevels[i]    = _abilityLevels[i + 1];
+    }
+    if (_learnedCount > 0 && _learnedCount <= 3)
+    {
+        _learnedAbilities[--_learnedCount] = AbilityType::None;
+        _abilityLevels[_learnedCount]      = 1;
     }
 }

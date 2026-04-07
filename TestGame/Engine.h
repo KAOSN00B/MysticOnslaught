@@ -20,12 +20,6 @@
 #include "HealPickup.h"
 #include "ManaGemPickup.h"
 #include "SpreadProjectile.h"
-// [SHELVED] SwordBeamProjectile.h / FreezeProjectile.h
-//   Kept because SpawnSwordBeam() and SpawnFreezeWave() still reference them.
-//   Those functions are unreachable (no UpgradeType to learn SwordBeam/Freeze),
-//   so _swordBeamProjectiles and _freezeProjectiles are always empty at runtime.
-#include "SwordBeamProjectile.h"
-#include "FreezeProjectile.h"
 #include "CyclopsLaserProjectile.h"
 #include "LavaBallProjectile.h"
 #include "Leaderboard.h"
@@ -36,6 +30,8 @@
 #include <future>
 #include <chrono>
 
+enum class Biome { Dungeon, Forest };
+
 enum class GameState
 {
     Menu,
@@ -45,7 +41,8 @@ enum class GameState
     HowToPlay,
     Leaderboard,
     Keybindings,
-    LevelUpChoice
+    LevelUpChoice,
+    AbilityChoice
 };
 
 class Engine
@@ -104,11 +101,6 @@ private:
     void ApplyUltimateImpact();
     void GenerateStartingAbilityOptions();
     void UpdateSpreadProjectiles(float dt);
-    // [SHELVED] — SwordBeam and FreezeWave have no learn path in the upgrade system
-    void SpawnSwordBeam();
-    void SpawnFreezeWave();
-    void UpdateSwordBeamProjectiles(float dt);
-    void UpdateFreezeProjectiles(float dt);
     void UpdateEffects(float dt);
     void DrawEffects(Vector2 worldOffset);
     void SpawnCastEffect(Character::CastType castType);
@@ -124,6 +116,7 @@ private:
     void RefreshNavigationField();
     void ApplyCompletedNavigationRefresh();
     int GetClosestOpenNavigationIndex(int col, int row) const;
+    void SpawnFloatingText(Vector2 worldPos, int value, Color color);
     void SpawnEnemyDrop(Vector2 worldPos);
     void SpawnTimedPickup();
     void SpawnBossSupportAdds();
@@ -132,6 +125,8 @@ private:
     void DrawMiniMap();
     void DrawLevelUpChoice();
     void GenerateLevelUpOptions();
+    void DrawAbilityChoice();
+    void GenerateAbilityChoiceOptions();
     void ResetRunState();
     void SaveKeybindings();
     void LoadKeybindings();
@@ -177,6 +172,15 @@ private:
         bool active = false;
     };
 
+    struct FloatingText
+    {
+        Vector2 worldPos{};
+        int     value     = 0;
+        Color   color     = WHITE;
+        float   spawnTime = 0.f;
+        static constexpr float kLifetime = 0.75f;
+    };
+
     GameState _gameState = GameState::Menu;
 
     bool _shouldExit = false;
@@ -220,6 +224,13 @@ private:
     bool        _showUltimateRow     = false;
     bool        _ultimateRowPicked   = false;
     bool        _regularRowPicked    = false;
+    // Ability choice state (shown after every 5th-wave boss clear)
+    UpgradeType _abilityChoiceOptions[3] = { UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread };
+    int         _abilityChoiceOptionCount = 0;
+    bool        _abilityChoiceSwapPending = false;
+    UpgradeType _abilityChoiceSwapTarget  = UpgradeType::AttackPower;
+    int         _lastAbilityChoiceWave    = -1;
+    float       _abilityChoiceOpenTimer   = 0.f;
 
     // Upgrade icon textures (loaded once, never reloaded)
     Texture2D _upgradeAttackPowerTex{};
@@ -233,7 +244,6 @@ private:
     Sound _fireballCastSound{};
     Sound _explosionSound{};
     Sound _lavaBallImpactSound{};
-    Sound _bladeBeamSound{};         // [SHELVED] — only played by shelved SwordBeam path
     Sound _buttonPressSound{};
 
     Texture2D _map{};
@@ -251,10 +261,8 @@ private:
     Texture2D _pillarTorchTex{}; // PillarTorch.png — 290x52, 8 frames of 32x52 (content offset x=17)
     Texture2D _fireballCastTex{};
     Texture2D _fireballHitTex{};
-    Texture2D _swordBeamCastTex{};  // [SHELVED] — only used by shelved SwordBeam path
-    Texture2D _swordBeamHitTex{};   // [SHELVED]
-    Texture2D _freezeCastTex{};     // [SHELVED] — only used by shelved FreezeWave path
-    Texture2D _freezeHitTex{};      // [SHELVED]
+    Texture2D _genericHitTex{};   // Hit03.png — melee hit splat + electric impact sprite
+    Texture2D _iceHitTex{};       // Ice_Shard_Hit.png — ice ability impact
     Texture2D _lightningCastTex{};
     Texture2D _healEffectTex{};
 
@@ -293,9 +301,8 @@ private:
 
     std::vector<UltimateBlast>       _ultimateBlasts;
     std::vector<SpreadProjectile>    _spreadProjectiles;
-    std::vector<SwordBeamProjectile> _swordBeamProjectiles; // [SHELVED] always empty at runtime
-    std::vector<FreezeProjectile>    _freezeProjectiles;    // [SHELVED] always empty at runtime
     std::vector<AnimatedEffect> _effects;
+    std::vector<FloatingText>   _floatingTexts;
     std::vector<bool> _navBlocked;
     std::vector<int>  _navDistance;
     std::future<NavigationRefreshResult> _navRefreshJob;

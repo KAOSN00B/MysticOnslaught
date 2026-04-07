@@ -85,6 +85,9 @@ void Ogre::ResetForSpawn(Vector2 pos)
     _impactShakeRequested = false;
     _rushDirection = Vector2Zero();
     _rushedEnemies.clear();
+    // Reset to design defaults; SetWaveScale will override these.
+    _chargeDurationInst         = 3.0f;
+    _chargeCooldownDurationInst = 6.0f;
 }
 
 void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
@@ -152,15 +155,17 @@ void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool
 
 void Ogre::SetWaveScale(int wave)
 {
-    // Ogre is intentionally a little bulkier than Cyclops in every band so it
-    // reads as a frontline disruptor rather than another ranged pressure unit.
-    _expValue = 5; // 5 exp — disruptor, worth more than a regular enemy
+    // Fixed base profile — stat growth comes from ApplyEnemyPowerLevel.
+    // Charge timing still tightens each 5-wave band for behavioural escalation.
+    _expValue    = 5;
+    _health      = 10.f;
+    _maxHealth   = 10.f;
+    _speed       = _walkSpeed;
+    _attackPower = _rushDamage;
 
     int tier = (wave - 1) / 5;
-    _health      = 12.f + tier * 8.f;
-    _maxHealth   = _health;
-    _speed       = _walkSpeed + tier * 10.f;
-    _attackPower = _rushDamage;
+    _chargeDurationInst         = std::max(1.5f, 3.0f - tier * 0.25f);
+    _chargeCooldownDurationInst = std::max(3.0f, 6.0f - tier * 0.5f);
 }
 
 void Ogre::DrawEnemy(Vector2 cameraRef)
@@ -185,7 +190,7 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
 
     if (_rushState == RushState::Charging)
     {
-        float chargeRatio = _chargeTimer / _chargeDuration;
+        float chargeRatio = _chargeTimer / _chargeDurationInst;
 
         // Ogre charge telegraph should live on the character itself rather
         // than on a separate ground circle. As the charge fills, the sprite
@@ -483,7 +488,7 @@ void Ogre::HandleCharging(float dt)
     else if (dx >  20.f) _rightLeft =  1.f;
 
     _chargeTimer += dt;
-    if (_chargeTimer >= _chargeDuration)
+    if (_chargeTimer >= _chargeDurationInst)
     {
         _rushState = RushState::Rushing;
         _chargeTimer = 0.f;
@@ -518,8 +523,26 @@ void Ogre::HandleRush(float dt, const std::vector<std::unique_ptr<Enemy>>& enemi
 
         if (CheckCollisionRecs(GetCollisionRec(), enemy->GetCollisionRec()))
         {
-            // Throw the enemy along the rush direction with a strong impulse
-            enemy->ApplyExternalImpulse(Vector2Scale(_rushDirection, _playerPushSpeed * 6.f), true);
+            // Push direction: away from the Ogre's centre so enemies that are
+            // to the side get knocked sideways, not all forward. Add a random
+            // lateral kick for extra scatter between enemies in the same pile.
+            Vector2 away = Vector2Subtract(enemy->GetWorldPos(), _worldPos);
+            Vector2 pushDir = (Vector2Length(away) > 0.01f)
+                ? Vector2Normalize(away)
+                : _rushDirection;
+
+            Vector2 lateral{ -_rushDirection.y, _rushDirection.x };
+            float sideSign = (GetRandomValue(0, 1) == 0) ? 1.f : -1.f;
+            pushDir = Vector2Add(pushDir, Vector2Scale(lateral, 0.5f * sideSign));
+            if (Vector2Length(pushDir) > 0.01f)
+                pushDir = Vector2Normalize(pushDir);
+
+            // Grunts and Cyclops get the full sustained push (slides to wall/prop).
+            // Ogres and bosses just get the impulse scatter instead.
+            if (!enemy->AsOgre() && !enemy->IsBoss())
+                enemy->StartForcedPush(pushDir, _playerPushSpeed);
+            else
+                enemy->ApplyExternalImpulse(Vector2Scale(pushDir, _playerPushSpeed * 6.f), true);
             enemy->PlayHurtSound();
             PlayRushHitSound();
             _rushedEnemies.push_back(enemy.get());
@@ -650,7 +673,7 @@ void Ogre::FinishRush(bool stunnedOnImpact)
     // of the screen-shake system.
     _impactShakeRequested = true;
     _attacking = false;
-    _rushCooldown = _chargeCooldownDuration;
+    _rushCooldown = _chargeCooldownDurationInst;
     _rushedEnemies.clear();
     _velocity = Vector2Zero();
 

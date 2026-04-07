@@ -98,9 +98,10 @@ private:
     // Charge begins one player-length farther out than the cyclops range so
     // the ogre has time to telegraph before it launches.
     static constexpr float _chargeRange = 480.f + 192.f;
-    static constexpr float _chargeDuration = 3.0f;
     static constexpr float _rushSpeed = 750.f;
-    static constexpr float _chargeCooldownDuration = 6.0f;
+    // Tuned by SetWaveScale so higher-tier ogres charge and recover faster.
+    float _chargeDurationInst       = 3.0f;
+    float _chargeCooldownDurationInst = 6.0f;
     static constexpr float _stunDuration = 0.6f;
     static constexpr float _playerPushSpeed = 1200.f;
     static constexpr float _rushDamage = 2.f;

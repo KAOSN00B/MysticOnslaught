@@ -168,6 +168,7 @@
     <ClInclude Include="FreezePickup.h" />
     <ClInclude Include="FreezeProjectile.h" />
     <ClInclude Include="Game.h" />
+    <ClInclude Include="GameBalance.h" />
     <ClInclude Include="HealPickup.h" />
     <ClInclude Include="KeyBindings.h" />
     <ClInclude Include="LavaBallProjectile.h" />

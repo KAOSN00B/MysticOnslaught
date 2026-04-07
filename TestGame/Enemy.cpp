@@ -2,6 +2,7 @@
 #include "AssetPaths.h"
 
 #include "raymath.h"
+#include <algorithm>
 #include <cmath>
 
 Texture2D Enemy::_sharedIdleAnim{};
@@ -74,6 +75,9 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _stuckTimer    = 0.f;
     _stuckCheckPos = _worldPos;
+    _forcedPushActive    = false;
+    _forcedPushDirection = Vector2Zero();
+    _forcedPushSpeed     = 0.f;
 
     // Each enemy gets its own flank slot so nearby enemies naturally choose
     // slightly different approach lanes around the player instead of piling
@@ -130,6 +134,13 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
     // drop world position can be captured before Death() teleports the enemy.
 
     _worldPosLastFrame = _worldPos;
+
+    // Slide in the push direction; Engine::HandleCollisions stops us on walls/props.
+    if (_forcedPushActive)
+    {
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(_forcedPushDirection, _forcedPushSpeed * dt));
+        return;
+    }
 
     ApplyVelocity(dt);
     UpdateHit(dt);
@@ -540,6 +551,45 @@ void Enemy::UpdateElectricCharge(float dt)
     }
 }
 
+void Enemy::StartForcedPush(Vector2 direction, float speed)
+{
+    _forcedPushDirection = (Vector2Length(direction) > 0.01f)
+        ? Vector2Normalize(direction)
+        : Vector2{ 1.f, 0.f };
+    _forcedPushSpeed  = speed;
+    _forcedPushActive = true;
+
+    _attacking = false;
+    _velocity  = Vector2Zero();
+    _launchHoldingHurtPose = false;
+    _launchVisualTimer     = 0.f;
+
+    // Hold on frame 3 of the hurt animation while sliding.
+    _texture     = _takeDamageAnim;
+    _maxFrames   = _texture.width / _width;
+    _frame       = std::min(3, _maxFrames - 1);
+    _runningTime = 0.f;
+    _updateTime  = 1.f / 12.f;
+}
+
+void Enemy::OnForcedPushCollision()
+{
+    if (!_forcedPushActive)
+        return;
+
+    UndoMovement();
+    _forcedPushActive    = false;
+    _forcedPushSpeed     = 0.f;
+    _forcedPushDirection = Vector2Zero();
+    _velocity            = Vector2Zero();
+
+    _texture     = _idleAnim;
+    _frame       = 0;
+    _runningTime = 0.f;
+    _maxFrames   = _texture.width / _width;
+    _updateTime  = 1.f / 10.f;
+}
+
 void Enemy::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
 {
     // This helper lets special enemies, like the ogre, throw other enemies
@@ -582,41 +632,31 @@ void Enemy::UpdateLaunchVisual(float dt)
     }
 }
 
-void Enemy::SetWaveScale(int wave)
+void Enemy::SetWaveScale(int /*wave*/)
 {
-    // Tier advances after every boss wave (every 5 waves), endlessly.
-    // tier 0 = waves 1-5, tier 1 = waves 6-10, tier 2 = waves 11-15, etc.
-    _expValue = 3; // 3 exp per regular enemy kill
-    int tier = (wave - 1) / 5;
-
-    _health      = 6.f  + tier * 4.f;
-    _maxHealth   = _health;
-    _attackPower = 1.f  + tier * 0.5f;
-    _speed       = 190.f + tier * 15.f;
+    // Fixed base profile — all stat growth comes from ApplyEnemyPowerLevel.
+    // Wave parameter kept for virtual signature compatibility.
+    _expValue    = 3;
+    _health      = 4.f;
+    _maxHealth   = 4.f;
+    _attackPower = 1.f;
+    _speed       = 185.f;
+    _attackDelay = 0.6f;
 }
 
 void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
 {
-    // Enemy power level is the long-run progression layer that advances every
-    // five waves. It is intentionally much softer than the per-wave archetype
-    // bands so later difficulty comes from sustained pressure, not giant stat
-    // jumps on every boss interval.
+    // Single growth system: advances every 10 waves.
+    // +10% HP, +5% damage, +3% speed per power level above 1.
     if (enemyPowerLevel <= 1)
         return;
 
-    const int bonusTiers = enemyPowerLevel - 1;
-    const float healthMultiplier = 1.f + 0.08f * (float)bonusTiers;
-    const float damageMultiplier = 1.f + 0.04f * (float)bonusTiers;
-    const float speedMultiplier = 1.f + 0.02f * (float)bonusTiers;
-
-    _maxHealth = std::ceil(_maxHealth * healthMultiplier);
-    _health = _maxHealth;
-    _attackPower *= damageMultiplier;
-    _speed *= speedMultiplier;
-
-    // EXP uses a small flat bonus per enemy power tier so rewards rise with
-    // wave progression without compounding aggressively across pooled respawns.
-    _expValue += bonusTiers;
+    const float t = (float)(enemyPowerLevel - 1);
+    _maxHealth   = std::ceil(_maxHealth   * (1.f + 0.10f * t));
+    _health      = _maxHealth;
+    _attackPower *= (1.f + 0.05f * t);
+    _speed       *= (1.f + 0.03f * t);
+    _expValue    += (enemyPowerLevel - 1);
 }
 
 void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)

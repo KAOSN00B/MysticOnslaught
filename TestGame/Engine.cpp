@@ -187,14 +187,11 @@ Engine::~Engine()
     HealPickup::UnloadSharedResources();
     ManaGemPickup::UnloadSharedResources();
     SpreadProjectile::UnloadSharedResources();
-    SwordBeamProjectile::UnloadSharedResources();
-    FreezeProjectile::UnloadSharedResources();
     LavaBallProjectile::UnloadSharedResources();
     UnloadSound(_pickupSound);
     UnloadSound(_fireballCastSound);
     UnloadSound(_explosionSound);
     UnloadSound(_lavaBallImpactSound);
-    UnloadSound(_bladeBeamSound);
     UnloadSound(_buttonPressSound);
     UnloadTexture(_map);
     UnloadTexture(_pillarTex);
@@ -202,10 +199,8 @@ Engine::~Engine()
     UnloadTexture(_pillarTorchTex);
     UnloadTexture(_fireballCastTex);
     UnloadTexture(_fireballHitTex);
-    UnloadTexture(_swordBeamCastTex);
-    UnloadTexture(_swordBeamHitTex);
-    UnloadTexture(_freezeCastTex);
-    UnloadTexture(_freezeHitTex);
+    UnloadTexture(_genericHitTex);
+    UnloadTexture(_iceHitTex);
     UnloadTexture(_lightningCastTex);
     UnloadTexture(_healEffectTex);
     UnloadTexture(_abilityIconFireTex);
@@ -245,7 +240,6 @@ void Engine::Init()
         _lavaBallImpactSound = LoadSoundFromWave(lavaImpactWave);
         UnloadWave(lavaImpactWave);
     }
-    _bladeBeamSound   = LoadSound(AssetPath("Sounds/GS1_BladeBeam.mp3").c_str());
     _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.mp3").c_str());
 
     SetSoundPitch (_buttonPressSound, 1.25f);
@@ -265,11 +259,9 @@ void Engine::Init()
     _torchTex       = LoadTexture(AssetPath("TileSet/Torch.png").c_str());
     _pillarTorchTex = LoadTexture(AssetPath("TileSet/PillarTorch.png").c_str());
     _fireballCastTex = LoadTexture(AssetPath("PowerUps/Fireball_Cast.png").c_str());
-    _fireballHitTex = LoadTexture(AssetPath("PowerUps/Fireball_Hit.png").c_str());
-    _swordBeamCastTex = LoadTexture(AssetPath("PowerUps/BladeBeam_Cast.png").c_str());
-    _swordBeamHitTex = LoadTexture(AssetPath("PowerUps/Hit03.png").c_str());
-    _freezeCastTex = LoadTexture(AssetPath("PowerUps/Ice_Shard_Cast.png").c_str());
-    _freezeHitTex = LoadTexture(AssetPath("PowerUps/Ice_Shard_Hit.png").c_str());
+    _fireballHitTex  = LoadTexture(AssetPath("PowerUps/Fireball_Hit.png").c_str());
+    _genericHitTex   = LoadTexture(AssetPath("PowerUps/Hit03.png").c_str());
+    _iceHitTex       = LoadTexture(AssetPath("PowerUps/Ice_Shard_Hit.png").c_str());
     _lightningCastTex = LoadTexture(AssetPath("PowerUps/LightningCast.png").c_str());
     _healEffectTex = LoadTexture(AssetPath("PowerUps/Health_Up.png").c_str());
     _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
@@ -287,8 +279,6 @@ void Engine::Init()
     _pickups.clear();
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
-    _swordBeamProjectiles.clear();
-    _freezeProjectiles.clear();
     _lavaBalls.clear();
     _effects.clear();
     _enemies.clear();
@@ -338,8 +328,7 @@ void Engine::SpawnEnemies()
     float mapW = _map.width * _mapScale;
     float mapH = _map.height * _mapScale;
 
-    // Proper wave flow: every 5th wave is a solo boss fight for now. That
-    // keeps the boss readable until the later "boss plus adds" rules are added.
+    // Every 5th wave is a boss fight.
     if (_wave > 0 && _wave % 5 == 0)
     {
         Vector2 pos{ mapW * 0.5f, mapH * 0.28f };
@@ -348,63 +337,65 @@ void Engine::SpawnEnemies()
         return;
     }
 
-    // Regular enemies and cyclops share the same active budget so the HUD,
-    // wave-complete checks, and performance cap all measure total pressure.
-    const int cyclopsCount = GetCyclopsSpawnCountForWave(_wave);
-    const int ogreCount = GetOgreSpawnCountForWave(_wave);
-    const int enemyCount = std::max(0, std::min(_wave * 2, _maxActiveEnemies) - cyclopsCount - ogreCount);
+    // Curated wave composition table.
+    // Waves 1-4 introduce enemy types gradually.
+    // Waves 6-9 are the standard combat template.
+    // Waves 11+ repeat the 6-9 template (power level carries the difficulty).
+    //
+    //  template | regular | cyclops | ogre
+    //     1     |    2    |    0    |   0
+    //     2     |    4    |    0    |   0
+    //     3     |    5    |    1    |   0
+    //     4     |    6    |    1    |   0
+    //     6     |    7    |    1    |   1
+    //     7     |    8    |    1    |   1
+    //     8     |    8    |    2    |   2
+    //     9     |   10    |    2    |   2
 
-    for (int i = 0; i < enemyCount; i++)
+    int pos5   = ((_wave - 1) % 5);     // 0-3 = non-boss position within 5-wave group
+    int group  = ((_wave - 1) / 5);
+    int tpl    = (group == 0) ? (pos5 + 1) : (pos5 + 6);  // 1-4 for group 0, 6-9 for group 1+
+
+    int regularCount = 0, cyclopsCount = 0, ogreCount = 0;
+    switch (tpl)
     {
-        Vector2 pos{};
-        int attempts = 0;
+    case 1: regularCount =  2; cyclopsCount = 0; ogreCount = 0; break;
+    case 2: regularCount =  4; cyclopsCount = 0; ogreCount = 0; break;
+    case 3: regularCount =  5; cyclopsCount = 1; ogreCount = 0; break;
+    case 4: regularCount =  6; cyclopsCount = 1; ogreCount = 0; break;
+    case 6: regularCount =  7; cyclopsCount = 1; ogreCount = 1; break;
+    case 7: regularCount =  8; cyclopsCount = 1; ogreCount = 1; break;
+    case 8: regularCount =  8; cyclopsCount = 2; ogreCount = 2; break;
+    case 9: regularCount = 10; cyclopsCount = 2; ogreCount = 2; break;
+    default: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
+    }
 
-        do
+    auto spawnPos = [&]() -> Vector2 {
+        Vector2 p{};
+        for (int a = 0; a < 40; a++)
         {
-            pos.x = (float)GetRandomValue(300, (int)mapW - 300);
-            pos.y = (float)GetRandomValue(300, (int)mapH - 300);
-            attempts++;
-        } while (!IsSpawnPositionValid(pos) && attempts < 40);
+            p.x = (float)GetRandomValue(300, (int)mapW - 300);
+            p.y = (float)GetRandomValue(300, (int)mapH - 300);
+            if (IsSpawnPositionValid(p)) break;
+        }
+        return p;
+    };
 
-        if (TryGetPooledEnemySpawn(pos))
-            continue;
-
-        auto enemy = std::make_unique<Enemy>(pos);
+    for (int i = 0; i < regularCount; i++)
+    {
+        Vector2 p = spawnPos();
+        if (TryGetPooledEnemySpawn(p)) continue;
+        auto enemy = std::make_unique<Enemy>(p);
         enemy->Init();
         ConfigureSpawnedEnemy(*enemy);
         _enemies.push_back(std::move(enemy));
     }
 
-    // Cyclops use the same shared enemy pool, but only start appearing once
-    // the player has had a few waves to learn melee and pickup usage.
     for (int i = 0; i < cyclopsCount; i++)
-    {
-        Vector2 pos{};
-        int attempts = 0;
-        do
-        {
-            pos.x = (float)GetRandomValue(300, (int)mapW - 300);
-            pos.y = (float)GetRandomValue(300, (int)mapH - 300);
-            attempts++;
-        } while (!IsSpawnPositionValid(pos) && attempts < 40);
-
-        SpawnCyclops(pos);
-    }
+        SpawnCyclops(spawnPos());
 
     for (int i = 0; i < ogreCount; i++)
-    {
-        Vector2 pos{};
-        int attempts = 0;
-
-        do
-        {
-            pos.x = (float)GetRandomValue(300, (int)mapW - 300);
-            pos.y = (float)GetRandomValue(300, (int)mapH - 300);
-            attempts++;
-        } while (!IsSpawnPositionValid(pos) && attempts < 40);
-
-        SpawnOgre(pos);
-    }
+        SpawnOgre(spawnPos());
 }
 
 void Engine::Run()
@@ -492,6 +483,11 @@ void Engine::Update(float dt)
         if (_levelUpOpenTimer > 0.f)
             _levelUpOpenTimer -= dt;
         break;
+
+    case GameState::AbilityChoice:
+        if (_abilityChoiceOpenTimer > 0.f)
+            _abilityChoiceOpenTimer -= dt;
+        break;
     }
 }
 
@@ -565,22 +561,6 @@ void Engine::UpdateGamePlay(float dt)
         PlaySound(_fireballCastSound);
         SpawnBolt(element);
     }
-    // [SHELVED] — SwordBeam and FreezeWave dispatch. These branches are never
-    // reached because no UpgradeType in GenerateLevelUpOptions can teach either
-    // ability. The projectile vectors (_swordBeamProjectiles, _freezeProjectiles)
-    // are always empty. Code preserved in case these are reintegrated later.
-    else if (castType == Character::CastType::SwordBeam)
-    {
-        SpawnCastEffect(castType);
-        StopSound(_bladeBeamSound);
-        PlaySound(_bladeBeamSound);
-        SpawnSwordBeam();
-    }
-    else if (castType == Character::CastType::Freeze)
-    {
-        SpawnCastEffect(castType);
-        SpawnFreezeWave();
-    }
 
     if (_player.GetHealthValue() <= 0.f && !_playerDying)
     {
@@ -630,8 +610,6 @@ void Engine::UpdateGamePlay(float dt)
         if (GetActiveEnemyCount() == 0)
         {
             // After wave 1 clears, guarantee a level-up before wave 2 begins.
-            // Top up the player's exp to the next threshold so the level-up
-            // screen fires naturally, keeping the level/exp counters in sync.
             if (_wave == 1 && !_wave1LevelUpDone)
             {
                 _wave1LevelUpDone = true;
@@ -645,9 +623,20 @@ void Engine::UpdateGamePlay(float dt)
                     _levelUpReturnState = GameState::Play;
                     _levelUpOpenTimer   = 0.25f;
                     _gameState          = GameState::LevelUpChoice;
-                    return; // wave 2 spawns when we come back to Play
+                    return;
                 }
             }
+
+            // After every 5th-wave boss clears, offer an ability upgrade.
+            if (_wave > 0 && _wave % 5 == 0 && _lastAbilityChoiceWave != _wave)
+            {
+                _lastAbilityChoiceWave = _wave;
+                GenerateAbilityChoiceOptions();
+                _abilityChoiceOpenTimer = 0.5f;
+                _gameState = GameState::AbilityChoice;
+                return;
+            }
+
             SpawnWave();
         }
 
@@ -737,8 +726,6 @@ void Engine::UpdateGamePlay(float dt)
 
         HandlePlayerMeleeDamage();
         UpdateSpreadProjectiles(dt);
-        UpdateSwordBeamProjectiles(dt);
-        UpdateFreezeProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         UpdateEffects(dt);
         UpdateEnemyCount(dt);
@@ -848,12 +835,6 @@ void Engine::Draw()
         for (const auto& projectile : _spreadProjectiles)
             projectile.Draw(worldOffset);
 
-        for (const auto& projectile : _swordBeamProjectiles)
-            projectile.Draw(worldOffset);
-
-        for (const auto& projectile : _freezeProjectiles)
-            projectile.Draw(worldOffset);
-
         for (const auto& projectile : _lavaBalls)
             projectile.Draw(worldOffset);
 
@@ -949,6 +930,14 @@ void Engine::Draw()
         break;
     }
 
+    case GameState::AbilityChoice:
+    {
+        DrawWorld();
+        DrawHUD();
+        DrawAbilityChoice();
+        break;
+    }
+
     }
 }
 
@@ -1009,6 +998,12 @@ void Engine::HandleCollisions()
                 continue;
             if (CheckCollisionCircleRec(prop.GetEnemyCollisionCenter(), prop.GetEnemyCollisionRadius(), enemy->GetCollisionRec()))
             {
+                if (enemy->IsBeingForcedPushed())
+                {
+                    enemy->OnForcedPushCollision();
+                    continue;
+                }
+
                 if (Ogre* ogre = enemy->AsOgre())
                 {
                     if (ogre->IsRushing())
@@ -1061,7 +1056,9 @@ void Engine::HandleCollisions()
           if (pos.x < marginLeft  || pos.x > mapW - marginRight ||
               pos.y < marginTop   || pos.y > mapH - marginBottom)
           {
-              if (Ogre* ogre = enemy->AsOgre())
+              if (enemy->IsBeingForcedPushed())
+                  enemy->OnForcedPushCollision();
+              else if (Ogre* ogre = enemy->AsOgre())
               {
                   if (ogre->IsRushing())
                       ogre->OnRushBlocked();
@@ -1207,12 +1204,6 @@ void Engine::DrawWorld()
 
     DrawUltimateBlasts(worldOffset);
 
-    for (const auto& projectile : _swordBeamProjectiles)
-        projectile.Draw(worldOffset);
-
-    for (const auto& projectile : _freezeProjectiles)
-        projectile.Draw(worldOffset);
-
     for (const auto& projectile : _lavaBalls)
         projectile.Draw(worldOffset);
 
@@ -1229,6 +1220,30 @@ void Engine::DrawWorld()
     }
 
     _player.DrawPlayer(cameraRef);
+
+    // Floating damage numbers — cull expired then draw remaining
+    {
+        float now = (float)GetTime();
+        _floatingTexts.erase(
+            std::remove_if(_floatingTexts.begin(), _floatingTexts.end(),
+                [now](const FloatingText& ft)
+                { return now - ft.spawnTime >= FloatingText::kLifetime; }),
+            _floatingTexts.end());
+
+        const float sw2 = GetScreenWidth()  / 2.f;
+        const float sh2 = GetScreenHeight() / 2.f;
+        for (const auto& ft : _floatingTexts)
+        {
+            float t     = (now - ft.spawnTime) / FloatingText::kLifetime;
+            float yOff  = -55.f * t;
+            float screenX = ft.worldPos.x + worldOffset.x + sw2;
+            float screenY = ft.worldPos.y + worldOffset.y + sh2 + yOff;
+            const char* txt = TextFormat("%d", ft.value);
+            int   tw    = MeasureText(txt, 22);
+            float alpha = 1.f - t;
+            DrawText(txt, (int)(screenX - tw / 2.f), (int)screenY, 22, Fade(ft.color, alpha));
+        }
+    }
 }
 
 void Engine::DrawHUD()
@@ -1308,16 +1323,17 @@ void Engine::DrawHUD()
         int   level    = _player.GetLevel();
         int   exp      = _player.GetExp();
         int   expToNext= _player.GetExpToNext();
-        float expPct   = (level < 10 && expToNext > 0) ? (float)exp / (float)expToNext : 1.f;
+        int   maxLevel = _player.GetMaxLevel();
+        float expPct   = (level < maxLevel && expToNext > 0) ? (float)exp / (float)expToNext : 1.f;
 
         static const Color kExpFill = { 255, 210, 0, 230 };
 
         DrawRectangleRounded({ barX, expBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
-        if (level < 10)
+        if (level < maxLevel)
             DrawRectangleRounded({ barX, expBarY, kBarW * expPct, kBarH }, 0.3f, 6, kExpFill);
         DrawRectangleRoundedLines({ barX, expBarY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
 
-        const char* levelText = (level < 10)
+        const char* levelText = (level < maxLevel)
             ? TextFormat("Lv.%d  %d/%d EXP", level, exp, expToNext)
             : "Lv.MAX";
         int textW = MeasureText(levelText, 18);
@@ -1345,76 +1361,95 @@ void Engine::DrawHUD()
 
 void Engine::DrawAbilityBar()
 {
-    // Only render slots the player has unlocked (picked up at least once)
-    const int   learnedCount = _player.GetLearnedCount();
-    if (learnedCount == 0)
-        return;
+    const int   totalSlots = _player.GetMaxAbilitySlots();  // always 4
+    const float slotSize   = 80.f;
+    const float slotGap    = 10.f;
 
-    const float slotSize = 90.f;
-    const float slotGap  = 10.f;
-
-    // Compute slotY — must match DrawHUD() constants
+    // Position just above the HP bar — mirrors DrawHUD() bottom-bar layout.
     static constexpr float kBarH   = 28.f;
     static constexpr float kBarGap = 8.f;
     static constexpr float kBotPad = 12.f;
     const float expBarY  = (float)GetScreenHeight() - kBotPad - kBarH;
-    const float manaBarY = expBarY - kBarGap - kBarH;
+    const float manaBarY = expBarY  - kBarGap - kBarH;
     const float hpBarY   = manaBarY - kBarGap - kBarH;
-    const float slotY    = hpBarY - 12.f - slotSize;
-
-    const float totalW = learnedCount * slotSize + (learnedCount - 1) * slotGap;
+    const float slotY    = hpBarY   - 10.f - slotSize;
+    const float totalW = totalSlots * slotSize + (totalSlots - 1) * slotGap;
     const float startX = GetScreenWidth() / 2.f - totalW / 2.f;
 
     Vector2 mouse = GetMousePosition();
 
-    for (int i = 0; i < learnedCount; i++)
+    for (int i = 0; i < totalSlots; i++)
     {
         AbilityType ability = _player.GetLearnedAbility(i);
-        bool canCast = _player.GetMana() >= GetAbilityManaCost(ability);
-        float x = startX + i * (slotSize + slotGap);
-        Rectangle slot{ x, slotY, slotSize, slotSize };
-        bool hovered = CheckCollisionPointRec(mouse, slot);
+        bool        isEmpty  = (ability == AbilityType::None);
+        bool        canCast  = !isEmpty && _player.GetMana() >= GetAbilityManaCost(ability);
+        float       x        = startX + i * (slotSize + slotGap);
+        Rectangle   slot     { x, slotY, slotSize, slotSize };
+        bool        hovered  = !isEmpty && CheckCollisionPointRec(mouse, slot);
 
         // Background + border
-        DrawRectangleRounded(slot, 0.18f, 6, hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
-        DrawRectangleRoundedLines(slot, 0.18f, 6,
-            hovered ? Fade(GOLD, 0.70f) :
-            canCast  ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f));
+        Color bgColor     = isEmpty ? Fade(BLACK, 0.30f) : (hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
+        Color borderColor = isEmpty ? Fade(WHITE,  0.12f) :
+                            hovered ? Fade(GOLD,   0.70f) :
+                            canCast ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
+        DrawRectangleRounded(slot, 0.18f, 6, bgColor);
+        DrawRectangleRoundedLines(slot, 0.18f, 6, borderColor);
+
+        if (isEmpty)
+        {
+            // Show key label only so the player knows the slot exists
+            DrawText(GetKeyName(_player.GetAbilityKey(i)),
+                (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.25f));
+            continue;
+        }
 
         // Key label
         DrawText(GetKeyName(_player.GetAbilityKey(i)),
-            (int)(x + 6.f), (int)(slotY + 6.f), 16, Fade(WHITE, 0.6f));
+            (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.6f));
 
         // Click to cast
         if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _player.TriggerAbilityCast(i);
 
-        // Icon — per-element pickup sprite, dimmed when out of mana
+        // Icon
         const Texture2D* iconTex = &_abilityIconFireTex;
         if      (ability == AbilityType::IceSpread      ||
                  ability == AbilityType::IceBolt        ||
-                 ability == AbilityType::IceUltimate)    iconTex = &_abilityIconIceTex;
+                 ability == AbilityType::IceUltimate)      iconTex = &_abilityIconIceTex;
         else if (ability == AbilityType::ElectricSpread ||
                  ability == AbilityType::ElectricBolt   ||
                  ability == AbilityType::ElectricUltimate) iconTex = &_abilityIconElectricTex;
 
-        Color iconTint = canCast ? WHITE : Fade(WHITE, 0.35f);
-        float maxIconSize = slotSize * 0.60f;
+        Color iconTint    = canCast ? WHITE : Fade(WHITE, 0.35f);
+        float maxIconSize = slotSize * 0.55f;
         float iconScale   = std::min(maxIconSize / (float)iconTex->width,
                                      maxIconSize / (float)iconTex->height);
         float iw = iconTex->width  * iconScale;
         float ih = iconTex->height * iconScale;
         float cx = x + slotSize * 0.5f;
-        float cy = slotY + slotSize * 0.44f;
+        float cy = slotY + slotSize * 0.42f;
         DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
 
-        // Ability name below icon
+        // Ability name
         const char* abilityName = GetAbilityName(ability);
-        int nameW = MeasureText(abilityName, 14);
+        int nameW = MeasureText(abilityName, 12);
         DrawText(abilityName,
             (int)(x + slotSize / 2.f - nameW / 2.f),
-            (int)(slotY + slotSize - 22.f),
-            14, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
+            (int)(slotY + slotSize - 18.f),
+            12, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
+
+        // Level badge
+        int abilityLv = _player.GetAbilityLevel(ability);
+        if (abilityLv > 1)
+        {
+            const char* badge  = TextFormat("Lv%d", abilityLv);
+            int         badgeW = MeasureText(badge, 12);
+            Color       badgeColor = (abilityLv >= 3) ? GOLD : Fade(SKYBLUE, 0.9f);
+            DrawText(badge,
+                (int)(x + slotSize - badgeW - 4.f),
+                (int)(slotY + slotSize - 16.f),
+                12, badgeColor);
+        }
     }
 }
 
@@ -1481,60 +1516,323 @@ void Engine::GenerateStartingAbilityOptions()
 
 void Engine::GenerateLevelUpOptions()
 {
-    // Build pool of stat boosts + unlearned abilities
-    UpgradeType pool[15];
+    // Separate pools by rarity — abilities are reserved for the 5th-wave screen.
+    UpgradeType commonPool[6] = {
+        UpgradeType::AttackPower, UpgradeType::AttackRange,
+        UpgradeType::MaxHealth,   UpgradeType::MaxMana,
+        UpgradeType::Defense,     UpgradeType::MoveSpeed
+    };
+    UpgradeType rarePool[6] = {
+        UpgradeType::IronConstitution, UpgradeType::SwiftFeet, UpgradeType::Ferocity,
+        UpgradeType::ArcaneMind,       UpgradeType::IronSkin,  UpgradeType::BladeEdge
+    };
+    UpgradeType epicPool[5] = {
+        UpgradeType::WarGod,    UpgradeType::Resilience, UpgradeType::BladeStorm,
+        UpgradeType::Juggernaut, UpgradeType::ArcaneColossus
+    };
+
+    // Rarity weights shift toward higher-quality cards as the player levels up.
+    int level = _player.GetLevel();
+    int commonW, rareW, epicW;
+    if      (level <= 5)  { commonW = 70; rareW = 25; epicW =  5; }
+    else if (level <= 10) { commonW = 40; rareW = 45; epicW = 15; }
+    else if (level <= 15) { commonW = 20; rareW = 45; epicW = 35; }
+    else                  { commonW = 10; rareW = 35; epicW = 55; }
+
+    // Shuffle each pool so we don't always draw from the same end.
+    auto shuffle3 = [](UpgradeType* pool, int size) {
+        for (int i = 0; i < size; i++) {
+            int j = GetRandomValue(i, size - 1);
+            UpgradeType tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+        }
+    };
+    shuffle3(commonPool, 6);
+    shuffle3(rarePool,   6);
+    shuffle3(epicPool,   5);
+
+    int cIdx = 0, rIdx = 0, eIdx = 0;
+    for (int i = 0; i < 3; i++)
+    {
+        int total = commonW + rareW + epicW;
+        int roll  = GetRandomValue(0, total - 1);
+
+        UpgradeType picked = UpgradeType::AttackPower;
+        if (roll < commonW && cIdx < 6)          picked = commonPool[cIdx++];
+        else if (roll < commonW + rareW && rIdx < 6) picked = rarePool[rIdx++];
+        else if (eIdx < 5)                         picked = epicPool[eIdx++];
+        else if (cIdx < 6)                         picked = commonPool[cIdx++];
+        else if (rIdx < 6)                         picked = rarePool[rIdx++];
+
+        _levelUpOptions[i] = picked;
+    }
+
+    // Abilities are now handled exclusively by the 5th-wave ability screen.
+    _showUltimateRow   = false;
+    _ultimateRowPicked = false;
+    _regularRowPicked  = false;
+}
+
+// =============================================================================
+// 5th-wave ability choice screen
+// =============================================================================
+
+void Engine::GenerateAbilityChoiceOptions()
+{
+    _abilityChoiceOptionCount = 0;
+    _abilityChoiceSwapPending = false;
+
+    // All base ability types in the same order as AbilityType enum
+    static const AbilityType allAbilities[9] = {
+        AbilityType::FireSpread,     AbilityType::IceSpread,     AbilityType::ElectricSpread,
+        AbilityType::FireBolt,       AbilityType::IceBolt,       AbilityType::ElectricBolt,
+        AbilityType::FireUltimate,   AbilityType::IceUltimate,   AbilityType::ElectricUltimate
+    };
+    static const UpgradeType learnTypes[9] = {
+        UpgradeType::LearnFireSpread,    UpgradeType::LearnIceSpread,    UpgradeType::LearnElectricSpread,
+        UpgradeType::LearnFireBolt,      UpgradeType::LearnIceBolt,      UpgradeType::LearnElectricBolt,
+        UpgradeType::LearnFireUltimate,  UpgradeType::LearnIceUltimate,  UpgradeType::LearnElectricUltimate
+    };
+    static const UpgradeType upgradeTypes[9] = {
+        UpgradeType::UpgradeFireSpread,    UpgradeType::UpgradeIceSpread,    UpgradeType::UpgradeElectricSpread,
+        UpgradeType::UpgradeFireBolt,      UpgradeType::UpgradeIceBolt,      UpgradeType::UpgradeElectricBolt,
+        UpgradeType::UpgradeFireUltimate,  UpgradeType::UpgradeIceUltimate,  UpgradeType::UpgradeElectricUltimate
+    };
+
+    UpgradeType pool[18];
     int poolSize = 0;
 
-    // Always include all 6 stat upgrades
-    pool[poolSize++] = UpgradeType::AttackPower;
-    pool[poolSize++] = UpgradeType::AttackRange;
-    pool[poolSize++] = UpgradeType::MaxHealth;
-    pool[poolSize++] = UpgradeType::MaxMana;
-    pool[poolSize++] = UpgradeType::Defense;
-    pool[poolSize++] = UpgradeType::MoveSpeed;
+    for (int i = 0; i < 9; i++)
+    {
+        if (!_player.HasLearnedAbility(allAbilities[i]))
+            pool[poolSize++] = learnTypes[i];
+        else if (_player.CanUpgradeAbility(allAbilities[i]))
+            pool[poolSize++] = upgradeTypes[i];
+    }
 
-    // Add ability unlocks the player hasn't learned yet (and has a free slot for)
-    if (!_player.HasLearnedAbility(AbilityType::FireSpread) &&
-        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
-        pool[poolSize++] = UpgradeType::LearnFireSpread;
-
-    if (!_player.HasLearnedAbility(AbilityType::IceSpread) &&
-        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
-        pool[poolSize++] = UpgradeType::LearnIceSpread;
-
-    if (!_player.HasLearnedAbility(AbilityType::ElectricSpread) &&
-        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
-        pool[poolSize++] = UpgradeType::LearnElectricSpread;
-
-    if (!_player.HasLearnedAbility(AbilityType::FireBolt) &&
-        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
-        pool[poolSize++] = UpgradeType::LearnFireBolt;
-
-    if (!_player.HasLearnedAbility(AbilityType::IceBolt) &&
-        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
-        pool[poolSize++] = UpgradeType::LearnIceBolt;
-
-    if (!_player.HasLearnedAbility(AbilityType::ElectricBolt) &&
-        _player.GetLearnedCount() < _player.GetMaxAbilitySlots())
-        pool[poolSize++] = UpgradeType::LearnElectricBolt;
-
-    // Ultimates have their own dedicated row at level 3 — keep them out of here.
-
-    // Fisher-Yates shuffle first 3
-    for (int i = 0; i < 3 && i < poolSize; i++)
+    // Fisher-Yates shuffle then pick up to 3
+    for (int i = 0; i < poolSize; i++)
     {
         int j = GetRandomValue(i, poolSize - 1);
         UpgradeType tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
     }
 
-    _levelUpOptions[0] = pool[0];
-    _levelUpOptions[1] = (poolSize > 1) ? pool[1] : pool[0];
-    _levelUpOptions[2] = (poolSize > 2) ? pool[2] : pool[0];
+    _abilityChoiceOptionCount = (poolSize < 3) ? poolSize : 3;
+    for (int i = 0; i < _abilityChoiceOptionCount; i++)
+        _abilityChoiceOptions[i] = pool[i];
+}
 
-    // Show the ultimate row only at level 3
-    _showUltimateRow   = (_player.GetLevel() == 3);
-    _ultimateRowPicked = false;
-    _regularRowPicked  = false;
+void Engine::DrawAbilityChoice()
+{
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.68f));
+
+    bool ready = (_abilityChoiceOpenTimer <= 0.f);
+    Vector2 mouse = GetMousePosition();
+
+    // Helper: map Learn*/Upgrade* → the underlying AbilityType
+    auto upgradeToAbility = [](UpgradeType ut) -> AbilityType
+    {
+        int base = (int)ut;
+        if (base >= (int)UpgradeType::UpgradeFireSpread)
+            return (AbilityType)(base - (int)UpgradeType::UpgradeFireSpread);
+        if (base >= (int)UpgradeType::LearnFireSpread)
+            return (AbilityType)(base - (int)UpgradeType::LearnFireSpread);
+        return AbilityType::None;
+    };
+
+    auto elementColor = [](AbilityType ab) -> Color
+    {
+        if (ab == AbilityType::FireSpread  || ab == AbilityType::FireBolt  || ab == AbilityType::FireUltimate)
+            return Color{255, 110,  20, 255};
+        if (ab == AbilityType::IceSpread   || ab == AbilityType::IceBolt   || ab == AbilityType::IceUltimate)
+            return Color{100, 210, 255, 255};
+        return Color{255, 220,  30, 255};  // electric
+    };
+
+    // ── Swap sub-mode ─────────────────────────────────────────────────────────
+    if (_abilityChoiceSwapPending)
+    {
+        const char* title = "Replace which ability?";
+        int tSz = 42;
+        DrawText(title, (int)(sw/2.f - MeasureText(title, tSz)/2.f), (int)(sh*0.06f), tSz, GOLD);
+
+        const float cardW = 210.f, cardH = 260.f, cardGap = 28.f;
+        int count = _player.GetLearnedCount();
+        float totalW = count * (cardW + cardGap) - cardGap;
+        float sx = sw/2.f - totalW/2.f;
+
+        for (int i = 0; i < count; i++)
+        {
+            float cx = sx + i * (cardW + cardGap);
+            Rectangle card{cx, sh/2.f - cardH/2.f, cardW, cardH};
+            bool hov = ready && CheckCollisionPointRec(mouse, card);
+
+            DrawRectangleRounded(card, 0.12f, 8, hov ? Color{80,20,20,235} : Color{40,15,15,210});
+            DrawRectangleRoundedLines(card, 0.12f, 8, hov ? RED : Color{180,55,55,160});
+
+            AbilityType ab = _player.GetLearnedAbility(i);
+            Color ec = elementColor(ab);
+            // Small element dot
+            DrawCircleV({cx + cardW/2.f, card.y + cardH*0.30f}, 22.f, Fade(ec, 0.3f));
+            DrawCircleV({cx + cardW/2.f, card.y + cardH*0.30f}, 14.f, Fade(ec, 0.7f));
+
+            const char* abName = GetAbilityName(ab);
+            int nSz = 20;
+            DrawText(abName, (int)(cx + cardW/2.f - MeasureText(abName, nSz)/2.f),
+                     (int)(card.y + cardH*0.56f), nSz, hov ? GOLD : RAYWHITE);
+
+            int lv = _player.GetAbilityLevel(ab);
+            char lvStr[16]; snprintf(lvStr, sizeof(lvStr), "Lv %d", lv);
+            int lvSz = 17;
+            DrawText(lvStr, (int)(cx + cardW/2.f - MeasureText(lvStr, lvSz)/2.f),
+                     (int)(card.y + cardH*0.70f), lvSz, Color{255,200,80,255});
+
+            if (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            {
+                _player.RemoveAbilityAtSlot(i);
+                _player.ApplyUpgrade(_abilityChoiceSwapTarget);
+                _abilityChoiceSwapPending = false;
+                _gameState = GameState::Play;
+            }
+        }
+
+        // Cancel button
+        Rectangle cancelBtn{sw/2.f - 90.f, sh*0.82f, 180.f, 44.f};
+        bool cHov = ready && CheckCollisionPointRec(mouse, cancelBtn);
+        DrawRectangleRounded(cancelBtn, 0.4f, 8, cHov ? Color{55,55,55,230} : Color{28,28,28,200});
+        DrawRectangleRoundedLines(cancelBtn, 0.4f, 8, cHov ? WHITE : GRAY);
+        const char* cTxt = "Cancel";
+        int cSz = 22;
+        DrawText(cTxt, (int)(cancelBtn.x + cancelBtn.width/2.f - MeasureText(cTxt,cSz)/2.f),
+                 (int)(cancelBtn.y + cancelBtn.height/2.f - cSz/2.f), cSz, RAYWHITE);
+        if (ready && cHov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            _abilityChoiceSwapPending = false;
+        return;
+    }
+
+    // ── Main ability choice ────────────────────────────────────────────────────
+    const char* title = "Ability Upgrade!";
+    int tSz = 46;
+    DrawText(title, (int)(sw/2.f - MeasureText(title, tSz)/2.f), (int)(sh*0.06f), tSz, GOLD);
+
+    const char* sub = "Choose an ability to learn or upgrade:";
+    int subSz = 24;
+    DrawText(sub, (int)(sw/2.f - MeasureText(sub, subSz)/2.f),
+             (int)(sh*0.06f + tSz + 8.f), subSz, Color{200,200,200,200});
+
+    const float cardW = 280.f, cardH = 360.f, cardGap = 40.f;
+    int count = _abilityChoiceOptionCount;
+    float totalW = count * (cardW + cardGap) - cardGap;
+    float sx = sw/2.f - totalW/2.f;
+    float cardY = sh/2.f - cardH/2.f - 10.f;
+
+    for (int i = 0; i < count; i++)
+    {
+        float cx = sx + i * (cardW + cardGap);
+        Rectangle card{cx, cardY, cardW, cardH};
+        bool hov = ready && CheckCollisionPointRec(mouse, card);
+
+        UpgradeType opt = _abilityChoiceOptions[i];
+        bool isLearn   = ((int)opt >= (int)UpgradeType::LearnFireSpread &&
+                          (int)opt <= (int)UpgradeType::LearnElectricUltimate);
+        AbilityType ab = upgradeToAbility(opt);
+        Color ec       = elementColor(ab);
+
+        // Card background tinted by element
+        Color bgN = Color{(uint8_t)(ec.r/7), (uint8_t)(ec.g/7), (uint8_t)(ec.b/7), 210};
+        Color bgH = Color{(uint8_t)(ec.r/4), (uint8_t)(ec.g/4), (uint8_t)(ec.b/4), 235};
+        DrawRectangleRounded(card, 0.12f, 8, hov ? bgH : bgN);
+        DrawRectangleRoundedLines(card, 0.12f, 8, hov ? ec : Color{ec.r,ec.g,ec.b,120});
+
+        // Tag: NEW / UPGRADE
+        const char* tag = isLearn ? "NEW" : "UPGRADE";
+        Color tagColor  = isLearn ? Color{100,255,120,255} : Color{255,200,50,255};
+        int tagSz = 17;
+        DrawText(tag, (int)(cx + cardW/2.f - MeasureText(tag, tagSz)/2.f),
+                 (int)(cardY + 12.f), tagSz, tagColor);
+
+        // Element icon circle
+        float circleY = cardY + cardH * 0.30f;
+        DrawCircleV({cx + cardW/2.f, circleY}, 42.f, Fade(ec, 0.20f));
+        DrawCircleV({cx + cardW/2.f, circleY}, 28.f, Fade(ec, 0.55f));
+
+        // Ability name
+        const char* abName = GetAbilityName(ab);
+        int nSz = 26;
+        DrawText(abName, (int)(cx + cardW/2.f - MeasureText(abName, nSz)/2.f),
+                 (int)(cardY + cardH*0.54f), nSz, hov ? GOLD : RAYWHITE);
+
+        // Level info / description
+        if (!isLearn)
+        {
+            int lv = _player.GetAbilityLevel(ab);
+            char lvStr[32]; snprintf(lvStr, sizeof(lvStr), "Lv %d  \xE2\x86\x92  Lv %d", lv, lv + 1);
+            int lvSz = 19;
+            DrawText(lvStr, (int)(cx + cardW/2.f - MeasureText(lvStr, lvSz)/2.f),
+                     (int)(cardY + cardH*0.66f), lvSz, Color{255,200,80,255});
+            const char* upDesc = "+10% attack power";
+            int udSz = 17;
+            DrawText(upDesc, (int)(cx + cardW/2.f - MeasureText(upDesc, udSz)/2.f),
+                     (int)(cardY + cardH*0.76f), udSz, LIGHTGRAY);
+        }
+        else
+        {
+            // Split ability description across two lines
+            const char* abDesc = GetAbilityDesc(ab);
+            std::string ds = abDesc;
+            int nl = (int)ds.find('\n');
+            int dSz = 19;
+            if (nl != (int)std::string::npos)
+            {
+                std::string l1 = ds.substr(0, nl), l2 = ds.substr(nl + 1);
+                DrawText(l1.c_str(), (int)(cx + cardW/2.f - MeasureText(l1.c_str(),dSz)/2.f),
+                         (int)(cardY + cardH*0.66f), dSz, LIGHTGRAY);
+                DrawText(l2.c_str(), (int)(cx + cardW/2.f - MeasureText(l2.c_str(),dSz)/2.f),
+                         (int)(cardY + cardH*0.66f + dSz + 4), dSz, LIGHTGRAY);
+            }
+            else
+                DrawText(abDesc, (int)(cx + cardW/2.f - MeasureText(abDesc,dSz)/2.f),
+                         (int)(cardY + cardH*0.66f), dSz, LIGHTGRAY);
+        }
+
+        if (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            if (isLearn && _player.GetLearnedCount() >= _player.GetMaxAbilitySlots())
+            {
+                // No free slot — enter swap mode
+                _abilityChoiceSwapPending = true;
+                _abilityChoiceSwapTarget  = opt;
+            }
+            else
+            {
+                _player.ApplyUpgrade(opt);
+                _abilityChoiceSwapPending = false;
+                _gameState = GameState::Play;
+            }
+        }
+    }
+
+    if (count == 0)
+    {
+        const char* msg = "All abilities are at max level!";
+        int mSz = 28;
+        DrawText(msg, (int)(sw/2.f - MeasureText(msg, mSz)/2.f), (int)(sh/2.f - mSz/2.f), mSz, LIGHTGRAY);
+    }
+
+    // Continue button
+    Rectangle contBtn{sw/2.f - 110.f, sh*0.87f, 220.f, 52.f};
+    bool contHov = ready && CheckCollisionPointRec(mouse, contBtn);
+    DrawRectangleRounded(contBtn, 0.4f, 8, contHov ? Color{35,60,35,235} : Color{18,35,18,200});
+    DrawRectangleRoundedLines(contBtn, 0.4f, 8, contHov ? Color{100,210,100,255} : Color{55,120,55,160});
+    const char* contTxt = "Continue";
+    int contSz = 24;
+    DrawText(contTxt, (int)(contBtn.x + contBtn.width/2.f - MeasureText(contTxt, contSz)/2.f),
+             (int)(contBtn.y + contBtn.height/2.f - contSz/2.f), contSz,
+             contHov ? Color{160,255,160,255} : RAYWHITE);
+    if (ready && contHov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        _gameState = GameState::Play;
 }
 
 void Engine::DrawLevelUpChoice()
@@ -1625,6 +1923,63 @@ void Engine::DrawLevelUpChoice()
             name = "Move Speed";
             desc = "+8% movement\nspeed";
             icon = &_upgradeMoveSpeedTex;
+            break;
+        // ── Rare ──────────────────────────────────────────────────────────────
+        case UpgradeType::IronConstitution:
+            name = "Iron Constitution";
+            desc = "+25% max HP\n(heals too)";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::SwiftFeet:
+            name = "Swift Feet";
+            desc = "+15% move\nspeed";
+            icon = &_upgradeMoveSpeedTex;
+            break;
+        case UpgradeType::Ferocity:
+            name = "Ferocity";
+            desc = "+15% attack\npower";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::ArcaneMind:
+            name = "Arcane Mind";
+            desc = "+40 max mana";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::IronSkin:
+            name = "Iron Skin";
+            desc = "+8% damage\nreduction";
+            icon = &_upgradeDefenseTex;
+            break;
+        case UpgradeType::BladeEdge:
+            name = "Blade Edge";
+            desc = "+10% attack power\n+8% range";
+            icon = &_upgradeAttackRangeTex;
+            break;
+        // ── Epic ──────────────────────────────────────────────────────────────
+        case UpgradeType::WarGod:
+            name = "War God";
+            desc = "+20% attack power\n+10% range";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::Resilience:
+            name = "Resilience";
+            desc = "+30% max HP\nheal 3";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::BladeStorm:
+            name = "Blade Storm";
+            desc = "+18% attack power\n+18% speed";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::Juggernaut:
+            name = "Juggernaut";
+            desc = "+20% max HP\n+8% defense";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::ArcaneColossus:
+            name = "Arcane Colossus";
+            desc = "+50 mana\n+15% attack power";
+            icon = &_upgradeMagicTex;
             break;
         case UpgradeType::LearnFireSpread:
             name = "Fire Spread";
@@ -1793,11 +2148,29 @@ void Engine::DrawLevelUpChoice()
 
         bool hovered = ready && CheckCollisionPointRec(mouse, card);
 
-        // Card background
-        Color bgColor = hovered ? Color{ 50, 45, 25, 230 } : Color{ 25, 22, 12, 210 };
+        // Rarity-based colors
+        UpgradeRarity rarity = _player.GetUpgradeRarity(_levelUpOptions[i]);
+        Color bgNormal, bgHover, borderNormal, borderHover, stripColor;
+        Color nameColor;
+        const char* rarityLabel;
+        switch (rarity)
+        {
+        case UpgradeRarity::Common:
+            bgNormal = Color{22,22,25,210}; bgHover = Color{42,42,50,230};
+            borderNormal = Color{120,120,120,130}; borderHover = Color{200,200,200,220};
+            stripColor = Color{80,80,80,200}; nameColor = RAYWHITE; rarityLabel = "COMMON"; break;
+        case UpgradeRarity::Rare:
+            bgNormal = Color{15,20,42,210}; bgHover = Color{25,40,85,230};
+            borderNormal = Color{55,100,200,150}; borderHover = Color{100,160,255,255};
+            stripColor = Color{35,75,180,210}; nameColor = Color{160,210,255,255}; rarityLabel = "RARE"; break;
+        default: // Epic
+            bgNormal = Color{30,15,42,210}; bgHover = Color{60,25,85,230};
+            borderNormal = Color{130,45,200,150}; borderHover = Color{210,100,255,255};
+            stripColor = Color{100,35,165,220}; nameColor = Color{225,155,255,255}; rarityLabel = "EPIC"; break;
+        }
+        Color bgColor = hovered ? bgHover : bgNormal;
         DrawRectangleRounded(card, 0.12f, 8, bgColor);
-        DrawRectangleRoundedLines(card, 0.12f, 8,
-            hovered ? Color{ 255, 200, 0, 220 } : Color{ 180, 160, 80, 120 });
+        DrawRectangleRoundedLines(card, 0.12f, 8, hovered ? borderHover : borderNormal);
 
         const char* name = "";
         const char* desc = "";
@@ -1924,13 +2297,13 @@ void Engine::DrawLevelUpChoice()
             }
         }
 
-        // Name
+        // Name (rarity-tinted when not hovered)
         int nameSz = 26;
         int nameW  = MeasureText(name, nameSz);
         DrawText(name,
             (int)(x + cardW / 2.f - nameW / 2.f),
             (int)(cardY + cardH * 0.58f),
-            nameSz, hovered ? GOLD : RAYWHITE);
+            nameSz, hovered ? GOLD : nameColor);
 
         // Description — manual newline split
         std::string descStr = desc;
@@ -1955,6 +2328,18 @@ void Engine::DrawLevelUpChoice()
             DrawText(desc,
                 (int)(x + cardW / 2.f - dW / 2.f),
                 (int)(cardY + cardH * 0.72f), descSz, LIGHTGRAY);
+        }
+
+        // Rarity strip at card bottom
+        {
+            const float stripH = 26.f;
+            Rectangle stripRect{ x + 2.f, cardY + cardH - stripH - 2.f, cardW - 4.f, stripH };
+            DrawRectangleRec(stripRect, stripColor);
+            int rarSz = 15;
+            DrawText(rarityLabel,
+                (int)(x + cardW / 2.f - MeasureText(rarityLabel, rarSz) / 2.f),
+                (int)(cardY + cardH - stripH - 2.f + (stripH - rarSz) / 2.f),
+                rarSz, WHITE);
         }
 
         // Click to select — blocked until open timer expires
@@ -2001,7 +2386,9 @@ void Engine::HandlePlayerMeleeDamage()
 
         if (CheckCollisionRecs(attackRec, enemy->GetHitCollisionRec()))
         {
-            enemy->TakeDamage(_player.GetMeleeDamage(), _player.GetWorldPos());
+            int dmg = _player.GetMeleeDamage();
+            enemy->TakeDamage(dmg, _player.GetWorldPos());
+            SpawnFloatingText(enemy->GetWorldPos(), dmg, YELLOW);
             SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
             hitAny = true;
         }
@@ -2314,20 +2701,6 @@ void Engine::DrawUltimateBlasts(Vector2 worldOffset)
     }
 }
 
-void Engine::SpawnSwordBeam()
-{
-    SwordBeamProjectile projectile;
-    projectile.Init(_player.GetCastOrigin(), _player.GetFacingDirection());
-    _swordBeamProjectiles.push_back(projectile);
-}
-
-void Engine::SpawnFreezeWave()
-{
-    FreezeProjectile projectile;
-    projectile.Init(_player.GetCastOrigin(), _player.GetFacingDirection());
-    _freezeProjectiles.push_back(projectile);
-}
-
 void Engine::UpdateEffects(float dt)
 {
     for (auto& effect : _effects)
@@ -2399,7 +2772,7 @@ void Engine::SpawnCastEffect(Character::CastType castType)
         effect.scale = 4.f;
         break;
     case Character::CastType::IceSpread:
-        effect.texture = &_freezeCastTex;
+        effect.texture = &_iceHitTex;
         effect.frameCount = 8;
         effect.scale = 4.f;
         effect.tint = Color{ 100, 200, 255, 255 };
@@ -2409,19 +2782,6 @@ void Engine::SpawnCastEffect(Character::CastType castType)
         effect.frameCount = 8;
         effect.scale = 4.f;
         break;
-
-    case Character::CastType::SwordBeam:
-        effect.texture = &_swordBeamCastTex;
-        effect.frameCount = 10;
-        effect.scale = 4.f;
-        break;
-
-    case Character::CastType::Freeze:
-        effect.texture = &_freezeCastTex;
-        effect.frameCount = 8;
-        effect.scale = 4.f;
-        break;
-
     default:
         effect.active = false;
         break;
@@ -2443,7 +2803,7 @@ void Engine::SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vect
     switch (castType)
     {
     case Character::CastType::None:
-        effect.texture = &_swordBeamHitTex;
+        effect.texture = &_genericHitTex;
         effect.frameCount = 5;
         effect.scale = 3.5f;
         effect.tint = Color{ 255, 150, 150, 255 };
@@ -2456,30 +2816,16 @@ void Engine::SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vect
         effect.tint = WHITE;
         break;
     case Character::CastType::IceSpread:
-        effect.texture = &_freezeHitTex;
+        effect.texture = &_iceHitTex;
         effect.frameCount = 5;
         effect.scale = 4.f;
         effect.tint = Color{ 100, 200, 255, 255 };
         break;
     case Character::CastType::ElectricSpread:
-        effect.texture = &_swordBeamHitTex;  // Hit03.png — the lightning impact sprite
+        effect.texture = &_genericHitTex;   // Hit03.png — lightning impact sprite
         effect.frameCount = 5;
         effect.scale = 4.f;
         effect.tint = WHITE;
-        break;
-
-    case Character::CastType::SwordBeam:
-        effect.texture = &_swordBeamHitTex;
-        effect.frameCount = 5;
-        effect.scale = 3.5f;
-        effect.tint = Color{ 150, 220, 255, 255 };
-        break;
-
-    case Character::CastType::Freeze:
-        effect.texture = &_freezeHitTex;
-        effect.frameCount = 5;
-        effect.scale = 4.f;
-        effect.tint = Color{ 70, 110, 210, 255 };
         break;
 
     default:
@@ -2507,59 +2853,6 @@ void Engine::SpawnHealEffect()
 
     if (effect.active)
         _effects.push_back(effect);
-}
-
-void Engine::UpdateFreezeProjectiles(float dt)
-{
-    for (auto& projectile : _freezeProjectiles)
-    {
-        if (!projectile.IsActive())
-            continue;
-
-        projectile.Update(dt);
-
-        if (!projectile.IsActive())
-            continue;
-
-        // Destroyed by walls / props
-        for (auto& prop : _props)
-        {
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
-            {
-                projectile.Destroy();
-                break;
-            }
-        }
-
-        if (!projectile.IsActive())
-            continue;
-
-        // Freeze still keeps its crowd-control role, but it also chips for a
-        // light amount of direct damage so it scales with the player's special
-        // damage multiplier instead of falling off completely.
-        for (auto& enemy : _enemies)
-        {
-            if (!enemy->IsActive() || !enemy->IsAlive())
-                continue;
-
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetHitCollisionRec()))
-            {
-                float duration = GetRandomValue(3, 5) * 1.f;
-                enemy->TakeDamage(_player.GetFreezeDamage(), _player.GetWorldPos());
-                enemy->ApplyFreeze(duration);
-                SpawnHitEffect(Character::CastType::Freeze, projectile.GetWorldPos(), projectile.GetDirection());
-                projectile.Destroy();
-                TriggerScreenShake(3.f, 0.04f);
-                break;
-            }
-        }
-
-    }
-
-    _freezeProjectiles.erase(
-        std::remove_if(_freezeProjectiles.begin(), _freezeProjectiles.end(),
-            [](const FreezeProjectile& p) { return !p.IsActive(); }),
-        _freezeProjectiles.end());
 }
 
 void Engine::UpdateSpreadProjectiles(float dt)
@@ -2632,6 +2925,11 @@ void Engine::UpdateSpreadProjectiles(float dt)
             else
                 hitDamage = isBolt ? _player.GetBoltHitDamage() : _player.GetSpreadHitDamage();
             enemy->TakeDamage(hitDamage, _player.GetWorldPos());
+            {
+                Color dmgColor = (element == AbilityType::IceSpread   || element == AbilityType::IceBolt)      ? SKYBLUE  :
+                                 (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt) ? YELLOW   : ORANGE;
+                SpawnFloatingText(enemy->GetWorldPos(), hitDamage, dmgColor);
+            }
 
             // Per-element on-hit effect — same for both spread and bolt of the same element
             Character::CastType hitEffectType = Character::CastType::FireSpread;
@@ -2667,54 +2965,15 @@ void Engine::UpdateSpreadProjectiles(float dt)
         _spreadProjectiles.end());
 }
 
-void Engine::UpdateSwordBeamProjectiles(float dt)
+void Engine::SpawnFloatingText(Vector2 worldPos, int value, Color color)
 {
-    for (auto& projectile : _swordBeamProjectiles)
-    {
-        if (!projectile.IsActive())
-            continue;
-
-        projectile.Update(dt);
-
-        if (!projectile.IsActive())
-            continue;
-
-        // Disappears when it travels beyond visible range (approx screen diagonal)
-        if (Vector2Distance(projectile.GetWorldPos(), _player.GetWorldPos()) > 900.f)
-        {
-            projectile.Destroy();
-            continue;
-        }
-
-        for (auto& enemy : _enemies)
-        {
-            if (!enemy->IsActive() || !enemy->IsAlive() || projectile.HasHitEnemy(enemy.get()))
-                continue;
-
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetHitCollisionRec()))
-            {
-                // Boss tuning: blade beam is the strongest special tool in the
-                // fight, so it always lands for 2 direct damage on the
-                // Molarbeast while regular enemies still use the player's
-                // scaled sword-beam value.
-                int swordBeamDamage = (enemy->AsMolarbeast() != nullptr)
-                    ? 2
-                    : _player.GetSwordBeamDamage();
-                enemy->TakeDamage(swordBeamDamage, _player.GetWorldPos());
-                projectile.RegisterHitEnemy(enemy.get());
-                SpawnHitEffect(Character::CastType::SwordBeam, enemy->GetWorldPos(), projectile.GetDirection());
-                TriggerScreenShake(5.f, 0.06f);
-            }
-        }
-
-    }
-
-    _swordBeamProjectiles.erase(
-        std::remove_if(_swordBeamProjectiles.begin(), _swordBeamProjectiles.end(),
-            [](const SwordBeamProjectile& projectile) { return !projectile.IsActive(); }),
-        _swordBeamProjectiles.end());
+    FloatingText ft;
+    ft.worldPos  = worldPos;
+    ft.value     = value;
+    ft.color     = color;
+    ft.spawnTime = (float)GetTime();
+    _floatingTexts.push_back(ft);
 }
-
 
 void Engine::SpawnEnemyDrop(Vector2 worldPos)
 {
@@ -3529,10 +3788,11 @@ void Engine::ResetRunState()
     _showUltimateRow     = false;
     _ultimateRowPicked   = false;
     _regularRowPicked    = false;
+    _lastAbilityChoiceWave    = -1;
+    _abilityChoiceSwapPending = false;
+    _abilityChoiceOptionCount = 0;
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
-    _swordBeamProjectiles.clear();
-    _freezeProjectiles.clear();
     _lavaBalls.clear();
     _cyclopsLasers.clear();
     _pickups.clear();
@@ -3720,13 +3980,10 @@ bool Engine::TryGetPooledCyclopsSpawn(Vector2 pos)
 
 int Engine::GetCyclopsSpawnCountForWave(int wave) const
 {
-    // Cyclops joins the main enemy pool instead of being a separate testing
-    // stream. Early waves stay melee-focused, then ranged pressure ramps in.
-    if (wave <= 2)
-        return 0;
-    if (wave <= 4)
-        return 1;
-    return std::min(2, _maxActiveEnemies);
+    // Superseded by the curated wave table in SpawnEnemies — kept for
+    // any legacy call sites that may still reference it.
+    (void)wave;
+    return 0;
 }
 
 bool Engine::TryGetPooledOgreSpawn(Vector2 pos)
@@ -3769,35 +4026,30 @@ bool Engine::TryGetPooledMolarbeastSpawn(Vector2 pos)
 
 int Engine::GetOgreSpawnCountForWave(int wave) const
 {
-    // Ogre starts as a single wave-4 threat, then gains a second slot later
-    // so it remains readable and fair while the player is learning the charge.
-    if (wave < 1)
-        return 0;
-    if (wave < 8)
-        return 1;
-    return std::min(2, _maxActiveEnemies);
+    // Superseded by the curated wave table in SpawnEnemies — kept for
+    // any legacy call sites that may still reference it.
+    (void)wave;
+    return 0;
 }
 
 int Engine::GetEnemyPowerLevelForWave(int wave) const
 {
-    // Enemy power level advances once per completed 5-wave block:
-    // waves 1-5   = level 1
-    // waves 6-10  = level 2
-    // waves 11-15 = level 3
-    // This keeps the long-run curve readable and lets per-wave composition do
-    // most of the heavy lifting in the early and mid game.
+    // Power level advances every 10 waves so stat growth is slower and more
+    // readable. Composition and behaviour scaling carry the early game feel.
+    // waves  1-9:  power 1   waves 10-19: power 2
+    // waves 20-29: power 3   etc.
     if (wave <= 0)
         return 1;
 
-    return 1 + ((wave - 1) / 5);
+    return 1 + ((wave - 1) / 10);
 }
 
 void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
 {
     // All enemy types share the same spawn-tuning path:
-    // 1. Apply their archetype stats for the current wave band.
-    // 2. Apply the softer global enemy power level that advances every 5 waves.
-    // 3. Restore the player target so pooled enemies rejoin the current run.
+    // 1. SetWaveScale — fixed base stats + behavioural timing for this wave.
+    // 2. ApplyEnemyPowerLevel — single global multiplier, advances every 10 waves.
+    // 3. SetTarget — restore player pointer so pooled enemies rejoin the run.
     enemy.SetWaveScale(_wave);
     enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
     enemy.SetTarget(&_player);
@@ -3895,7 +4147,9 @@ void Engine::UpdateCyclopsLasers(float dt)
         if (_player.IsAlive() &&
             CheckCollisionRecs(laser.GetCollisionRec(), _player.GetCollisionRec()))
         {
-            _player.TakeDamage(laser.GetDamage(), laser.GetWorldPos());
+            int laserDmg = laser.GetDamage();
+            _player.TakeDamage(laserDmg, laser.GetWorldPos());
+            SpawnFloatingText(_player.GetWorldPos(), -laserDmg, RED);
             laser.Destroy();
 
             // Cyclops laser already has a strong visual read from the charge

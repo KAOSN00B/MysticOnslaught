@@ -1,6 +1,7 @@
 #include "Cyclops.h"
 #include "AssetPaths.h"
 #include "raymath.h"
+#include <algorithm>
 
 // ---- Static member definitions ----------------------------------------------
 Texture2D Cyclops::_sharedIdleAnim{};
@@ -97,10 +98,11 @@ void Cyclops::ResetForSpawn(Vector2 pos)
     _charging       = false;
     _wantsToFire    = false;
     _fireDirection  = Vector2Zero();
-    // Temporary rule: charge is always interruptible until the global enemy
-    // level system exists. Later this should be driven by the shared enemy
-    // power tier instead of wave index.
-    _chargeCanBeInterrupted = true;
+    _chargeCanBeInterrupted  = true;
+    // Reset timing to design defaults; SetWaveScale will override these.
+    _chargeDurationInst    = 1.5f;
+    _attackCooldownMaxInst = 3.5f;
+    _chargeRangeInst       = 480.f;
 
     _pendingBurns.clear();
 }
@@ -154,6 +156,13 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
 
     _worldPosLastFrame = _worldPos;
 
+    // Ogre forced push — slide until Engine::HandleCollisions stops us.
+    if (_forcedPushActive)
+    {
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(_forcedPushDirection, _forcedPushSpeed * dt));
+        return;
+    }
+
     // Lock position during charge — prevents knockback impulses from
     // displacing the sprite while the laser telegraph is playing.
     if (_charging || _wantsToFire)
@@ -185,7 +194,7 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
             float distToPlayer = Vector2Distance(_worldPos, heroWorldPos);
             bool  hasLOS       = !hasNavigationTarget;
 
-            if (_attackCooldown <= 0.f && distToPlayer < _chargeRange && hasLOS)
+            if (_attackCooldown <= 0.f && distToPlayer < _chargeRangeInst && hasLOS)
             {
                 _charging    = true;
                 _chargeTimer = 0.f;
@@ -208,13 +217,13 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
         if (_charging)
         {
             _chargeTimer += dt;
-            if (_chargeTimer >= _chargeDuration)
+            if (_chargeTimer >= _chargeDurationInst)
             {
                 _wantsToFire    = true;
                 _fireDirection  = Vector2Normalize(
                     Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
                 _charging       = false;
-                _attackCooldown = _attackCooldownMax;
+                _attackCooldown = _attackCooldownMaxInst;
 
                 // Hold the idle pose on the release frame as well. This keeps
                 // the laser attack from being visually overwritten by movement
@@ -464,7 +473,7 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     if (_charging)
     {
         float pulse       = sinf((float)GetTime() * 14.f) * 0.5f + 0.5f;
-        float chargeRatio = _chargeTimer / _chargeDuration;
+        float chargeRatio = _chargeTimer / _chargeDurationInst;
         float radius      = 30.f + chargeRatio * 70.f;
 
         DrawCircleV(screenPos, radius * 1.35f, Fade(Color{ 255, 200, 50, 255 }, 0.18f * pulse));
@@ -615,17 +624,19 @@ void Cyclops::UpdateBurns(float dt)
 // =============================================================================
 void Cyclops::SetWaveScale(int wave)
 {
-    // Temporary rule: cyclops can always be interrupted while charging.
-    // When the game gets a real enemy power-level system, this flag should be
-    // set from that shared progression state instead of the current wave.
+    // Fixed base profile — stat growth comes from ApplyEnemyPowerLevel.
+    // Charge timing still tightens each 5-wave band for behavioural escalation.
     _chargeCanBeInterrupted = true;
-    _expValue = 5;
+    _expValue    = 5;
+    _health      = 7.f;
+    _maxHealth   = 7.f;
+    _speed       = 190.f;
+    _attackPower = 1.f;
 
     int tier = (wave - 1) / 5;
-    _health      = 8.f   + tier * 6.f;
-    _maxHealth   = _health;
-    _speed       = 195.f + tier * 15.f;
-    _attackPower = 1.f   + tier * 0.5f;
+    _chargeDurationInst    = std::max(0.8f,  1.5f - tier * 0.12f);
+    _attackCooldownMaxInst = std::max(1.8f,  3.5f - tier * 0.28f);
+    _chargeRangeInst       = std::min(640.f, 480.f + tier * 20.f);
 }
 
 // =============================================================================
@@ -671,6 +682,19 @@ void Cyclops::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
     _maxFrames = kCyclopsFrameCount;
     _frame = 1;
     _runningTime = 0.f;
+}
+
+void Cyclops::OnForcedPushCollision()
+{
+    if (!_forcedPushActive)
+        return;
+
+    UndoMovement();
+    _forcedPushActive    = false;
+    _forcedPushSpeed     = 0.f;
+    _forcedPushDirection = Vector2Zero();
+    _velocity            = Vector2Zero();
+    SetIdleAnimation(true);
 }
 
 // =============================================================================

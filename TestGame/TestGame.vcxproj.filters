@@ -42,19 +42,7 @@
     <ClCompile Include="PauseAndGameOver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="FireBallPickup.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="FireballProjectile.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="SwordBeamPickup.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="SwordBeamProjectile.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="FreezePickup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Game.cpp">
@@ -70,9 +58,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Ogre.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="FreezeProjectile.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Cyclops.cpp">
@@ -116,22 +101,13 @@
     <ClInclude Include="PauseAndGameOver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="FireBallPickup.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="FireballProjectile.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="SwordBeamPickup.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="SwordBeamProjectile.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="FreezePickup.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="Game.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="GameBalance.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="HealPickup.h">
@@ -144,9 +120,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Molarbeast.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="FreezeProjectile.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AnimationUtils.h">

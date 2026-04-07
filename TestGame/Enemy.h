@@ -33,6 +33,11 @@ public:
     virtual void ApplyElectricCharge();
     virtual void ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation);
 
+    // Ogre charge — sustained push until the enemy slides into a wall or prop.
+    void StartForcedPush(Vector2 direction, float speed);
+    virtual void OnForcedPushCollision();
+    bool IsBeingForcedPushed() const { return _forcedPushActive; }
+
     virtual bool IsFrozen()        const { return _freezeTimer > 0.f; }
     virtual bool IsElectroStunned() const { return _isCharged && _takingDamage; }
     bool IsCharged()               const { return _isCharged; }
@@ -104,6 +109,10 @@ protected:
     Vector2 _stuckCheckPos  = {};
     static constexpr float _stuckThreshold  = 0.8f;
     static constexpr float _stuckMinMove    = 8.f;   // pixels needed to not be considered stuck
+
+    bool    _forcedPushActive    = false;
+    Vector2 _forcedPushDirection = {};
+    float   _forcedPushSpeed     = 0.f;
 
     float _attackRange = 85.f;
     float _attackUpdateTime = 1.f / 8.f;

@@ -4,25 +4,33 @@
 #include "AbilityType.h"
 #include <vector>
 
+enum class UpgradeRarity { Common, Rare, Epic };
+
 enum class UpgradeType
 {
-    // Stat boosts
-    AttackPower,
-    AttackRange,
-    MaxHealth,
-    MaxMana,
-    Defense,
-    MoveSpeed,
-    // Ability unlocks
-    LearnFireSpread,
-    LearnIceSpread,
-    LearnElectricSpread,
-    LearnFireBolt,
-    LearnIceBolt,
-    LearnElectricBolt,
-    LearnFireUltimate,
-    LearnIceUltimate,
-    LearnElectricUltimate,
+    // ── Common ─────────────────────────────────────────────────────────────────
+    AttackPower, AttackRange, MaxHealth, MaxMana, Defense, MoveSpeed,
+    // ── Rare ───────────────────────────────────────────────────────────────────
+    IronConstitution,  // +25% max HP (heals too)
+    SwiftFeet,         // +15% move speed
+    Ferocity,          // +15% attack power
+    ArcaneMind,        // +40 max mana
+    IronSkin,          // +8% damage reduction
+    BladeEdge,         // +15% attack range
+    // ── Epic ───────────────────────────────────────────────────────────────────
+    WarGod,            // +20% attack power, +10% attack range
+    Resilience,        // +30% max HP, heal 3
+    BladeStorm,        // +18% attack power, +18% move speed
+    Juggernaut,        // +20% max HP, +8% defense
+    ArcaneColossus,    // +50 max mana, +15% attack power
+    // ── Ability unlocks (5th-wave ability screen only) ─────────────────────────
+    LearnFireSpread, LearnIceSpread, LearnElectricSpread,
+    LearnFireBolt, LearnIceBolt, LearnElectricBolt,
+    LearnFireUltimate, LearnIceUltimate, LearnElectricUltimate,
+    // ── Ability upgrades (5th-wave ability screen only) ────────────────────────
+    UpgradeFireSpread, UpgradeIceSpread, UpgradeElectricSpread,
+    UpgradeFireBolt, UpgradeIceBolt, UpgradeElectricBolt,
+    UpgradeFireUltimate, UpgradeIceUltimate, UpgradeElectricUltimate,
     Count   // keep last
 };
 
@@ -41,10 +49,6 @@ public:
         FireUltimate,
         IceUltimate,
         ElectricUltimate,
-        // [SHELVED] — no UpgradeType exists to learn these; dispatch in Engine is
-        // never reached. Kept so SpawnSwordBeam/SpawnFreezeWave still compile.
-        SwordBeam,
-        Freeze
     };
 
     Character();
@@ -80,12 +84,11 @@ public:
     int  GetLearnedCount()     const { return _learnedCount; }
     int  GetMaxAbilitySlots()  const { return _maxAbilitySlots; }
 
-    // [SHELVED] — ammo stubs kept so FireBallPickup/SwordBeamPickup/FreezePickup
-    // still compile. Those pickup classes are never spawned by Engine and the
-    // ammo system has been fully replaced by mana (see AbilityType.h).
-    void AddFireballAmmo(int amount);
-    void AddSwordBeamAmmo(int amount);
-    void AddFreezeAmmo(int amount);
+    // Ammo stubs — kept so FireBallPickup/SwordBeamPickup/FreezePickup still compile.
+    // Delete those pickup files from the project to remove these.
+    void AddFireballAmmo(int)  {}
+    void AddSwordBeamAmmo(int) {}
+    void AddFreezeAmmo(int)    {}
 
     // Full keybindings — includes movement, dash, attack, and ability slots
     const KeyBindings& GetBindings() const { return _bindings; }
@@ -109,9 +112,15 @@ public:
 
     void AddExp(int amount);
     void Heal(int amount);
-    int  GetLevel() const { return _level; }
-    int  GetExp() const { return _exp; }
+    int  GetLevel()    const { return _level; }
+    int  GetMaxLevel() const { return _maxLevel; }
+    int  GetExp()      const { return _exp; }
     int  GetExpToNext() const { return _expToNextLevel; }
+    UpgradeRarity GetUpgradeRarity(UpgradeType type) const;
+    int  GetAbilityLevel(AbilityType type) const;
+    bool CanUpgradeAbility(AbilityType type) const;
+    void UpgradeAbility(AbilityType type);
+    void RemoveAbilityAtSlot(int slot);
 
     // Mana
     void  RestoreMana(int amount);
@@ -126,16 +135,14 @@ public:
     // Melee scales through _attackPower from level-ups, so it already has a
     // strong progression path. Special abilities are burst / piercing tools,
     // so they only receive a small multiplier-based increase over the run.
-    int   GetMeleeDamage()       const { return (int)_attackPower; }
-    int   GetSpecialDamageBonus() const;
+    int   GetMeleeDamage()            const { return (int)_attackPower; }
+    float GetAbilityDamageMultiplier() const { return _abilityDamageMultiplier; }
+    int   GetSpecialDamageBonus()     const;
     // Spread ability damage — all elements share the same base for now
     int   GetSpreadHitDamage()   const;
     int   GetSpreadBurnDamage()  const;   // fire element DoT tick
     int   GetBoltHitDamage()     const;
     int   GetBoltBurnDamage()    const;   // fire bolt DoT tick
-    // [SHELVED] — damage values for the unreachable SwordBeam/Freeze cast paths
-    int   GetSwordBeamDamage()   const;
-    int   GetFreezeDamage()      const;
 
 private:
     void HandleInput();
@@ -173,6 +180,7 @@ private:
         AbilityType::None, AbilityType::None, AbilityType::None,
         AbilityType::None, AbilityType::None, AbilityType::None
     };
+    int _abilityLevels[_hardAbilityCap] = { 1, 1, 1, 1, 1, 1 };
     int _learnedCount     = 0;
     int _maxAbilitySlots  = 4;
 
@@ -196,7 +204,7 @@ private:
     int _exp = 0;
     int _level = 1;
     int _expToNextLevel = 10;
-    static constexpr int _maxLevel = 10;
+    static constexpr int _maxLevel = 20;
 
     int   _mana    = 60;
     int   _maxMana = 60;
@@ -215,11 +223,11 @@ private:
     };
     std::vector<PendingBurnTick> _pendingBurnTicks;
 
+    float _abilityDamageMultiplier = 1.0f;   // grows by +0.25 each time an ability is levelled up
+
     // Base ability damage values
     static constexpr float _spreadBaseDamage     = 1.0f;
     static constexpr float _spreadBurnBaseDamage = 1.0f;
     static constexpr float _boltBaseDamage       = 3.0f;   // single shot, 3× spread
     static constexpr float _boltBurnBaseDamage   = 2.0f;
-    static constexpr float _swordBeamBaseDamage  = 2.0f;
-    static constexpr float _freezeBaseDamage     = 1.0f;
 };
