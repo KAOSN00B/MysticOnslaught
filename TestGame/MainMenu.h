@@ -18,6 +18,7 @@ public:
     bool QuitPressed()        const;
     bool HowToPressed()       const;
     bool LeaderboardPressed() const;
+    bool IsTouchMode()        const { return _touchModeActive; }
 
 private:
 
@@ -38,4 +39,5 @@ private:
     bool _quitPressed        = false;
     bool _howToPressed       = false;
     bool _leaderboardPressed = false;
+    bool _touchModeActive    = false;
 };

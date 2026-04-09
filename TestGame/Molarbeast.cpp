@@ -92,6 +92,11 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _dashedEnemies.clear();
     _stuckTimer = 0.f;
     _stuckCheckPos = _worldPos;
+    _lockedNavTarget = _worldPos;
+    _hasLockedNavTarget = false;
+    _navTargetLockTimer = 0.f;
+    _escapeDirection = Vector2Zero();
+    _escapeTimer = 0.f;
     _deathTimer = 0.6f;
     // Start each spawn at a random orbit angle so multiple Molarbeasts
     // don't circle in sync.
@@ -134,7 +139,7 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
     switch (_state)
     {
     case State::Chasing:
-        HandleChasing(dt);
+        HandleChasing(dt, propCenters);
         break;
     case State::MeleeAttacking:
         HandleMelee();
@@ -163,16 +168,15 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
 
 void Molarbeast::SetWaveScale(int wave)
 {
-    // The boss is intentionally close to ogre durability for the first pass so
-    // the fight stays testable while its multi-attack state machine is being
-    // tuned. Later balance can raise health after attack feel is locked in.
+    // Fixed first-boss profile. Boss progression now follows the same global
+    // enemy power-level system as the rest of the cast so we avoid stacking
+    // a per-5-wave stat jump on top of the slower every-10-wave scaling.
+    // Wave only affects cadence/readability, not raw boss stats.
     _expValue = _bossBaseExpValue;
-
-    int tier = (wave - 1) / 5;
-    _health      = 40.f + tier * 25.f;
+    _health      = 44.f;
     _maxHealth   = _health;
-    _speed       = _moveSpeed + tier * 10.f;
-    _attackPower = 2.f  + tier * 0.5f;
+    _speed       = _moveSpeed;
+    _attackPower = 2.f;
 
     _attackRange = _attackRangeBase;
     ResetSpecialCooldown();
@@ -558,7 +562,7 @@ void Molarbeast::SetDeathAnimation(bool resetFrame)
     }
 }
 
-void Molarbeast::HandleChasing(float dt)
+void Molarbeast::HandleChasing(float dt, const std::vector<Vector2>& propCenters)
 {
     Vector2 oldPos = _worldPos;
     Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
@@ -594,8 +598,9 @@ void Molarbeast::HandleChasing(float dt)
     }
 
     // Orbit the player at a preferred radius, spinning around them rather than
-    // charging straight in. When a prop blocks the path the engine's A* waypoint
-    // overrides the orbit target so the boss can route around obstacles.
+    // charging straight in. When a prop blocks the path, A* waypoints take
+    // priority and are briefly locked so the boss commits to routing around
+    // the obstacle instead of re-deciding every frame and pushing into corners.
     //
     // The orbit angle advances at a fixed rate; the target point is a position
     // on a circle of _orbitRadius around the player. If the boss is still far
@@ -618,34 +623,89 @@ void Molarbeast::HandleChasing(float dt)
         playerCenter.y + sinf(_orbitAngle) * _orbitRadius
     };
 
-    // When A* is routing us around a prop, use the waypoint instead so the boss
-    // doesn't try to orbit through a wall.
-    Vector2 moveTarget = _hasNavTarget ? _navTarget : orbitPoint;
+    if (_navTargetLockTimer > 0.f)
+        _navTargetLockTimer -= dt;
+
+    if (_hasNavTarget)
+    {
+        bool needsNewLock = !_hasLockedNavTarget ||
+            _navTargetLockTimer <= 0.f ||
+            Vector2Distance(_lockedNavTarget, _navTarget) > _navTargetRefreshDistance ||
+            Vector2Distance(_worldPos, _lockedNavTarget) <= _navTargetReachDistance;
+
+        if (needsNewLock)
+        {
+            _lockedNavTarget = _navTarget;
+            _hasLockedNavTarget = true;
+            _navTargetLockTimer = _navTargetLockDuration;
+        }
+    }
+    else
+    {
+        _hasLockedNavTarget = false;
+        _navTargetLockTimer = 0.f;
+    }
+
+    Vector2 moveTarget = (_hasLockedNavTarget ? _lockedNavTarget : orbitPoint);
     Vector2 toTarget   = Vector2Subtract(moveTarget, _worldPos);
 
     if (Vector2Length(toTarget) > 0.01f)
     {
         Vector2 moveDir = Vector2Normalize(toTarget);
+
+        if (_escapeTimer > 0.f && Vector2Length(_escapeDirection) > 0.01f)
+        {
+            _escapeTimer -= dt;
+            moveDir = Vector2Normalize(Vector2Add(
+                Vector2Scale(moveDir, 1.f - _escapeBlendStrength),
+                Vector2Scale(_escapeDirection, _escapeBlendStrength)));
+        }
+
         _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
         SetWalkAnimation(false);
 
-        // Boss-specific stuck recovery: A* gives the next waypoint, but the
-        // Molarbeast's large body can still pin itself on pillar corners. When
-        // it hasn't made real progress for a short period, add a small
-        // sideways nudge plus some forward push so the next frame can break the
-        // deadlock without teleporting the boss or ignoring the arena layout.
+        // Boss-specific stuck recovery: if progress stalls, choose a
+        // deterministic tangent around the nearest prop and commit to it
+        // briefly. This gives the large boss enough local steering to escape
+        // corner pressure without replacing the engine's A* routing.
         _stuckTimer += dt;
         if (_stuckTimer >= _stuckThreshold)
         {
             float moved = Vector2Distance(_worldPos, _stuckCheckPos);
             if (moved < _stuckMinMove)
             {
-                Vector2 perp{ -moveDir.y, moveDir.x };
-                float sign = (GetRandomValue(0, 1) == 0) ? 1.f : -1.f;
-                Vector2 escapeVelocity = Vector2Add(
-                    Vector2Scale(moveDir, _speed * 0.55f),
-                    Vector2Scale(perp, sign * _speed * 0.9f));
-                _velocity = Vector2Add(_velocity, escapeVelocity);
+                Vector2 bestEscape = Vector2Zero();
+                float bestPropDist = _stuckPropSearchRadius;
+
+                for (const Vector2& propCenter : propCenters)
+                {
+                    float propDist = Vector2Distance(_worldPos, propCenter);
+                    if (propDist >= bestPropDist || propDist <= 0.01f)
+                        continue;
+
+                    Vector2 awayFromProp = Vector2Normalize(Vector2Subtract(_worldPos, propCenter));
+                    Vector2 tangentA{ -awayFromProp.y, awayFromProp.x };
+                    Vector2 tangentB{ awayFromProp.y, -awayFromProp.x };
+                    bestEscape = (Vector2DotProduct(tangentA, moveDir) >= Vector2DotProduct(tangentB, moveDir))
+                        ? tangentA
+                        : tangentB;
+                    bestPropDist = propDist;
+                }
+
+                if (Vector2Length(bestEscape) <= 0.01f)
+                {
+                    Vector2 radialFromPlayer = Vector2Subtract(_worldPos, playerCenter);
+                    if (Vector2Length(radialFromPlayer) > 0.01f)
+                        bestEscape = Vector2Normalize(Vector2{ -radialFromPlayer.y, radialFromPlayer.x });
+                    else
+                        bestEscape = Vector2{ -moveDir.y, moveDir.x };
+                }
+
+                _escapeDirection = Vector2Normalize(Vector2Add(
+                    Vector2Scale(bestEscape, 0.85f),
+                    Vector2Scale(moveDir, 0.35f)));
+                _escapeTimer = _escapeDuration;
+                _navTargetLockTimer = std::max(_navTargetLockTimer, _navTargetLockDuration);
             }
 
             _stuckTimer = 0.f;
@@ -657,6 +717,7 @@ void Molarbeast::HandleChasing(float dt)
         SetIdleAnimation(false);
         _stuckTimer = 0.f;
         _stuckCheckPos = _worldPos;
+        _escapeTimer = 0.f;
     }
 
     if (Vector2Distance(_worldPos, oldPos) > 0.5f)
@@ -871,7 +932,10 @@ void Molarbeast::TryDealContactDamage()
         return;
     if (_target->IsBeingForcedPushed())
         return;
-    if (_state == State::MeleeAttacking || _state == State::Dashing)
+    // No contact damage during melee (its own hitbox handles damage), dash
+    // (handled by HandleDash), or ranged volley (gives the player a close-range
+    // dodge window — step in to avoid lavaballs without being simultaneously punished).
+    if (_state == State::MeleeAttacking || _state == State::Dashing || _state == State::RangedVolley)
         return;
     if (_contactCooldown > 0.f)
         return;
@@ -979,18 +1043,18 @@ Vector2 Molarbeast::GetPushDirectionToPlayer() const
 
 float Molarbeast::GetSpecialCooldownMin() const
 {
-    // Specials should enter play after about ten seconds of normal chase and
-    // melee pressure. Under 30% health the boss becomes more aggressive, but
-    // still leaves enough downtime for the player to read the next charge.
-    return (_health <= _maxHealth * 0.3f) ? 2.f : 3.f;
+    // Boss pressure should stay high, but the player still needs short read
+    // windows between specials so the fight doesn't feel like uninterrupted
+    // dash/fireball spam.
+    return (_health <= _maxHealth * 0.3f) ? 3.5f : 4.5f;
 }
 
 float Molarbeast::GetSpecialCooldownMax() const
 {
-    return (_health <= _maxHealth * 0.3f) ? 3.f : 3.f;
+    return (_health <= _maxHealth * 0.3f) ? 4.0f : 5.5f;
 }
 
 float Molarbeast::GetChargeDuration() const
 {
-    return 1.0f;
+    return 1.25f;
 }

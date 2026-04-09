@@ -137,20 +137,21 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
 
     // Slot table: name, pointer to the key, clearable (KEY_NULL allowed)
     struct SlotDef { const char* name; KeyboardKey* key; bool clearable; };
-    SlotDef slots[9] = {
+    SlotDef slots[10] = {
         { "Move Up",    &bindings.moveUp,      false },
         { "Move Down",  &bindings.moveDown,    false },
         { "Move Left",  &bindings.moveLeft,    false },
         { "Move Right", &bindings.moveRight,   false },
         { "Dash",       &bindings.dash,        false },
         { "Attack Key", &bindings.attack,      true  },
-        { "Fireball",   &bindings.ability[0],  true  },
-        { "Sword Beam", &bindings.ability[1],  true  },
-        { "Freeze",     &bindings.ability[2],  true  },
+        { "Ability 1",  &bindings.ability[0],  true  },
+        { "Ability 2",  &bindings.ability[1],  true  },
+        { "Ability 3",  &bindings.ability[2],  true  },
+        { "Ability 4",  &bindings.ability[3],  true  },
     };
 
     // Poll for a key press when rebinding
-    if (_rebindingSlot >= 0 && _rebindingSlot < 9)
+    if (_rebindingSlot >= 0 && _rebindingSlot < 10)
     {
         if (IsKeyPressed(KEY_BACKSPACE) && slots[_rebindingSlot].clearable)
         {
@@ -185,13 +186,13 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
     const float backH       = sh * 0.062f;
     const float hintH       = sh * 0.022f;
 
-    // 3 groups: 4 + 2 + 3 rows
+    // 3 groups: 4 + 2 + 4 rows
     const float panelH = padV + titleH
         + groupLabelH + 4.f * (rowH + rowGap)
         + groupGap
         + groupLabelH + 2.f * (rowH + rowGap)
         + groupGap
-        + groupLabelH + 3.f * (rowH + rowGap)
+        + groupLabelH + 4.f * (rowH + rowGap)
         + groupGap + hintH + rowGap + backH + padV;
 
     float panelX = sw / 2.f - panelW / 2.f;
@@ -215,7 +216,7 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
     GroupDef groups[3] = {
         { "MOVEMENT",  0, 4 },
         { "ACTIONS",   4, 2 },
-        { "ABILITIES", 6, 3 },
+        { "ABILITIES", 6, 4 },
     };
 
     float rowY = panelY + padV + titleH;
@@ -295,7 +296,7 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
 
 // ── Game Over ─────────────────────────────────────────────────────────────────
 // Returns: 0=nothing  1=play again  2=main menu  3=quit
-int PauseAndGameOver::DrawGameOver(int wave, float gameTimer, int kills, const std::vector<LeaderboardEntry>& scores)
+int PauseAndGameOver::DrawGameOver(int wave, int kills, const std::vector<LeaderboardEntry>& scores)
 {
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
@@ -312,8 +313,7 @@ int PauseAndGameOver::DrawGameOver(int wave, float gameTimer, int kills, const s
     // Column positions (x-start of each field)
     float colName  = lbLeft;
     float colWave  = lbLeft + sw * 0.14f;
-    float colKills = lbLeft + sw * 0.20f;
-    float colTime  = lbLeft + sw * 0.27f;
+    float colKills = lbLeft + sw * 0.22f;
 
     // Header
     const char* hTitle = "-- TOP SCORES --";
@@ -324,11 +324,10 @@ int PauseAndGameOver::DrawGameOver(int wave, float gameTimer, int kills, const s
     DrawText("Name",  (int)colName,  lbY, lbHeaderSz, WHITE);
     DrawText("Wave",  (int)colWave,  lbY, lbHeaderSz, WHITE);
     DrawText("Kills", (int)colKills, lbY, lbHeaderSz, WHITE);
-    DrawText("Time",  (int)colTime,  lbY, lbHeaderSz, WHITE);
     lbY += lbHeaderSz + 2;
 
     // Underline
-    DrawRectangle((int)colName, lbY, (int)(colTime + sw * 0.07f - colName), 2, GRAY);
+    DrawRectangle((int)colName, lbY, (int)(colKills + sw * 0.07f - colName), 2, GRAY);
     lbY += 8;
 
     if (scores.empty())
@@ -344,7 +343,6 @@ int PauseAndGameOver::DrawGameOver(int wave, float gameTimer, int kills, const s
             DrawText(n.c_str(),                                         (int)colName,  lbY, lbEntrySz, entryColor);
             DrawText(TextFormat("%d",   scores[i].wave),                (int)colWave,  lbY, lbEntrySz, entryColor);
             DrawText(TextFormat("%d",   scores[i].kills),               (int)colKills, lbY, lbEntrySz, entryColor);
-            DrawText(TextFormat("%.1fs", scores[i].time),               (int)colTime,  lbY, lbEntrySz, entryColor);
             lbY += lbEntrySz + 6;
         }
     }
@@ -360,12 +358,10 @@ int PauseAndGameOver::DrawGameOver(int wave, float gameTimer, int kills, const s
     // Current run stats
     int statSz = (int)(sh * 0.034f);
     const char* waveTxt  = TextFormat("Wave: %d", wave);
-    const char* timeTxt  = TextFormat("Time: %.1f s", gameTimer);
     const char* killsTxt = TextFormat("Kills: %d", kills);
     int statY = (int)(sh * 0.32f);
     DrawText(waveTxt,  (int)(rightCX - MeasureText(waveTxt,  statSz) / 2.f), statY,                    statSz, YELLOW);
-    DrawText(timeTxt,  (int)(rightCX - MeasureText(timeTxt,  statSz) / 2.f), statY + statSz + 10,      statSz, YELLOW);
-    DrawText(killsTxt, (int)(rightCX - MeasureText(killsTxt, statSz) / 2.f), statY + (statSz + 10) * 2, statSz, YELLOW);
+    DrawText(killsTxt, (int)(rightCX - MeasureText(killsTxt, statSz) / 2.f), statY + statSz + 10, statSz, YELLOW);
 
     // Buttons
     const float btnW   = sw * 0.20f;
@@ -393,7 +389,7 @@ int PauseAndGameOver::DrawGameOver(int wave, float gameTimer, int kills, const s
 
 // ── Name Entry ────────────────────────────────────────────────────────────────
 // Returns "" while typing, returns the confirmed name when Enter is pressed.
-std::string PauseAndGameOver::DrawNameEntry(int wave, float gameTimer, int kills)
+std::string PauseAndGameOver::DrawNameEntry(int wave, int kills)
 {
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
@@ -410,12 +406,10 @@ std::string PauseAndGameOver::DrawNameEntry(int wave, float gameTimer, int kills
     // Stats
     int statSz = (int)(sh * 0.034f);
     const char* waveTxt  = TextFormat("Wave: %d",    wave);
-    const char* timeTxt  = TextFormat("Time: %.1f s", gameTimer);
     const char* killsTxt = TextFormat("Kills: %d",   kills);
     int statY = (int)(sh * 0.28f);
     DrawText(waveTxt,  (int)(sw / 2.f - MeasureText(waveTxt,  statSz) / 2.f), statY,                     statSz, YELLOW);
-    DrawText(timeTxt,  (int)(sw / 2.f - MeasureText(timeTxt,  statSz) / 2.f), statY + statSz + 10,       statSz, YELLOW);
-    DrawText(killsTxt, (int)(sw / 2.f - MeasureText(killsTxt, statSz) / 2.f), statY + (statSz + 10) * 2, statSz, YELLOW);
+    DrawText(killsTxt, (int)(sw / 2.f - MeasureText(killsTxt, statSz) / 2.f), statY + statSz + 10, statSz, YELLOW);
 
     // Prompt
     int promptSz = (int)(sh * 0.038f);
@@ -500,8 +494,7 @@ bool PauseAndGameOver::DrawLeaderboardScreen(const std::vector<LeaderboardEntry>
     float blockX  = sw / 2.f - blockW / 2.f;
     float colName  = blockX;
     float colWave  = blockX + blockW * 0.36f;
-    float colKills = blockX + blockW * 0.52f;
-    float colTime  = blockX + blockW * 0.68f;
+    float colKills = blockX + blockW * 0.58f;
 
     int headerSz = (int)(sh * 0.032f);
     int entrySz  = (int)(sh * 0.027f);
@@ -512,7 +505,6 @@ bool PauseAndGameOver::DrawLeaderboardScreen(const std::vector<LeaderboardEntry>
     DrawText("Name",  (int)colName,  lbY, headerSz, WHITE);
     DrawText("Wave",  (int)colWave,  lbY, headerSz, WHITE);
     DrawText("Kills", (int)colKills, lbY, headerSz, WHITE);
-    DrawText("Time",  (int)colTime,  lbY, headerSz, WHITE);
     lbY += headerSz + 4;
 
     // Underline
@@ -538,7 +530,6 @@ bool PauseAndGameOver::DrawLeaderboardScreen(const std::vector<LeaderboardEntry>
             DrawText(n.c_str(),                             (int)colName,               lbY, entrySz, col);
             DrawText(TextFormat("%d",   scores[i].wave),    (int)colWave,               lbY, entrySz, col);
             DrawText(TextFormat("%d",   scores[i].kills),   (int)colKills,              lbY, entrySz, col);
-            DrawText(TextFormat("%.1fs", scores[i].time),   (int)colTime,               lbY, entrySz, col);
             lbY += entrySz + 8;
         }
     }

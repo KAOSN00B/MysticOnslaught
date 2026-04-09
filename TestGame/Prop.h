@@ -16,11 +16,17 @@ public:
 	Vector2 GetEnemyCollisionCenter() const;
 	float GetEnemyCollisionRadius() const;
 	Vector2 GetWorldPos() const { return _worldPos; }
+	// Trims the collision box from the top by a fraction (0.25 = top quarter is passable).
+	void SetCollisionTopFraction(float f) { _collisionTopFraction = f; }
+	// Trims each side inward by a fraction (0.3 = 30% trimmed per side, leaving 40% centered).
+	void SetCollisionSideFraction(float f) { _collisionSideFraction = f; }
 
 protected:
 	Texture2D _texture{};
 	Vector2 _worldPos{};
 	float _scale = 4.0f;
+	float _collisionTopFraction  = 0.f;  // fraction of height removed from the top of the hitbox
+	float _collisionSideFraction = 0.f;  // fraction of width trimmed from each side
 
 	// Animation — only active when _frameCount > 1
 	int   _frameCount   = 1;

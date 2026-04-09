@@ -14,14 +14,23 @@
 
 namespace
 {
-    constexpr float kDefaultTimedPickupInterval = 60.f;
+    // ── Resource economy constants ────────────────────────────────────────────
+    // Mana is now primarily passive-regen (see Character::kManaRegenPerSecond).
+    // Pickups are supplemental / precious, not the main resource source.
+    // Boss fights suppress all timed and drop pickups — they should be won on
+    // build and execution, not on floor loot.
+    //
+    // Store hook: when a store is added between key waves, these intervals can
+    // be raised further and the store becomes the main recovery vector.
+
+    // Seconds between timed heal drops during normal waves.
+    constexpr float kDefaultTimedPickupInterval = 45.f;
+
+    // Drop chance per enemy kill (normal waves only — boss fight suppresses drops).
+    constexpr int kEnemyDropChancePercent = 8;
+
     constexpr float kBiomeFadeOutDuration = 3.f;
     constexpr float kBiomeFadeInDuration = 1.f;
-
-    // Boss fights need a much denser combat-pickup cadence right now because
-    // the boss only takes light chip damage from specials in the current demo
-    // tuning pass.
-    constexpr float kBossTimedPickupInterval = 2.f;
 
     // Spawn protection gives the player time to reposition if a wave enters on
     // top of them or very near the player after pathing/spawn validation.
@@ -30,8 +39,11 @@ namespace
     // Boss support adds keep the fight active, but they should respawn far
     // enough away that the player gets a real reposition window before the
     // next Ogre/Cyclops pressure cycle starts.
-    constexpr float kBossSupportRespawnDelay = 20.f;
+    constexpr float kBossSupportRespawnDelay = 28.f;
     constexpr float kBossSupportMinPlayerDistance = 520.f;
+    // Ogre enters the boss fight on a delay so the player has time to read
+    // the boss before juggling three threats simultaneously.
+    constexpr float kBossOgreInitialDelay = 22.f;
 
     int ClampInt(int value, int minValue, int maxValue)
     {
@@ -336,12 +348,12 @@ void Engine::SpawnEnemies()
     //  template | regular | cyclops | ogre
     //     1     |    2    |    0    |   0
     //     2     |    4    |    0    |   0
-    //     3     |    5    |    1    |   0
-    //     4     |    6    |    1    |   0
-    //     6     |    7    |    1    |   1
-    //     7     |    8    |    1    |   1
-    //     8     |    8    |    2    |   2
-    //     9     |   10    |    2    |   2
+    //     3     |    4    |    1    |   0
+    //     4     |    5    |    1    |   0
+    //     6     |    6    |    1    |   1
+    //     7     |    7    |    1    |   1
+    //     8     |    7    |    2    |   1
+    //     9     |    8    |    2    |   2
 
     int pos5   = ((_wave - 1) % 5);     // 0-3 = non-boss position within 5-wave group
     int group  = ((_wave - 1) / 5);
@@ -352,12 +364,12 @@ void Engine::SpawnEnemies()
     {
     case 1: regularCount =  2; cyclopsCount = 0; ogreCount = 0; break;
     case 2: regularCount =  4; cyclopsCount = 0; ogreCount = 0; break;
-    case 3: regularCount =  5; cyclopsCount = 1; ogreCount = 0; break;
-    case 4: regularCount =  6; cyclopsCount = 1; ogreCount = 0; break;
-    case 6: regularCount =  7; cyclopsCount = 1; ogreCount = 1; break;
-    case 7: regularCount =  8; cyclopsCount = 1; ogreCount = 1; break;
-    case 8: regularCount =  8; cyclopsCount = 2; ogreCount = 2; break;
-    case 9: regularCount = 10; cyclopsCount = 2; ogreCount = 2; break;
+    case 3: regularCount =  4; cyclopsCount = 1; ogreCount = 0; break;
+    case 4: regularCount =  5; cyclopsCount = 1; ogreCount = 0; break;
+    case 6: regularCount =  6; cyclopsCount = 1; ogreCount = 1; break;
+    case 7: regularCount =  7; cyclopsCount = 1; ogreCount = 1; break;
+    case 8: regularCount =  7; cyclopsCount = 2; ogreCount = 1; break;
+    case 9: regularCount =  8; cyclopsCount = 2; ogreCount = 2; break;
     default: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
     }
 
@@ -417,6 +429,7 @@ void Engine::Update(float dt)
 
         if (_menu.StartPressed())
         {
+            _touchModeActive = _menu.IsTouchMode();
             ResetRunState();
             _fadeInTimer = 2.0f;
             GenerateStartingAbilityOptions();
@@ -499,6 +512,12 @@ void Engine::UpdateGamePlay(float dt)
 
     // Block attacks and abilities during wave intro and ultimate cinematic
     _player.SetCombatLocked(_waveStarting || _ultimatePhase != UltimatePhase::None);
+
+    // Touch controls — must be set on player before Update() consumes them
+    _player.SetTouchModeEnabled(_touchModeActive);
+    if (_touchModeActive)
+        UpdateTouchControls();
+
     _player.Update(dt);
 
     // During the cinematic ultimate sequence everything except the player
@@ -591,13 +610,12 @@ void Engine::UpdateGamePlay(float dt)
         _gameTimer += dt;
         ApplyCompletedNavigationRefresh();
 
-        // Testing cadence: during the boss fight, keep combat pickups flowing
-        // constantly so the fight can be tuned without long dry periods.
+        // Timed heal drops — boss fights suppress this entirely (see SpawnTimedPickup).
         _pickupSpawnTimer -= dt;
         if (_pickupSpawnTimer <= 0.f)
         {
             SpawnTimedPickup();
-            _pickupSpawnTimer = IsBossFightActive() ? kBossTimedPickupInterval : kDefaultTimedPickupInterval;
+            _pickupSpawnTimer = kDefaultTimedPickupInterval;
         }
 
         if (GetActiveEnemyCount() == 0)
@@ -871,17 +889,17 @@ void Engine::Draw()
     {
         if (_awaitingNameEntry)
         {
-            std::string confirmed = _pauseUI.DrawNameEntry(_wave, _gameTimer, _enemiesKilled);
+            std::string confirmed = _pauseUI.DrawNameEntry(_wave, _enemiesKilled);
             if (!confirmed.empty())
             {
-                _leaderboard.AddEntry(_wave, _gameTimer, _enemiesKilled, confirmed);
+                _leaderboard.AddEntry(_wave, _enemiesKilled, confirmed);
                 _leaderboard.Save("leaderboard.txt");
                 _awaitingNameEntry = false;
             }
         }
         else
         {
-            int goResult = _pauseUI.DrawGameOver(_wave, _gameTimer, _enemiesKilled, _leaderboard.GetEntries());
+            int goResult = _pauseUI.DrawGameOver(_wave, _enemiesKilled, _leaderboard.GetEntries());
             if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
             if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
             else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
@@ -1188,9 +1206,6 @@ void Engine::DrawWorld()
 
     DrawTextureEx(_map, shakenMapPos, 0.0f, _mapScale, WHITE);
 
-    for (auto& prop : _props)
-        prop.Render(cameraRef);
-
     for (auto& pickup : _pickups)
         pickup->Draw(worldOffset);
 
@@ -1215,6 +1230,10 @@ void Engine::DrawWorld()
     }
 
     _player.DrawPlayer(cameraRef);
+
+    // Props drawn last so trees/rocks render in front of characters (depth illusion)
+    for (auto& prop : _props)
+        prop.Render(cameraRef);
 
     // Floating damage numbers — cull expired then draw remaining
     {
@@ -1243,6 +1262,137 @@ void Engine::DrawWorld()
 
 void Engine::DrawHUD()
 {
+    {
+    static constexpr float kNewBarW   = 400.f;
+    static constexpr float kNewBarH   = 28.f;
+    static constexpr float kNewBarGap = 8.f;
+    static constexpr float kNewBotPad = 12.f;
+    static constexpr float kNewTopPad = 18.f;
+
+    const float hpBarY   = kNewTopPad;
+    const float manaBarY = hpBarY + kNewBarH + kNewBarGap;
+    const float slotY    = (float)GetScreenHeight() - kNewBotPad - 80.f;
+    const float expBarY  = slotY - 14.f - kNewBarH;
+    const float barX     = (float)GetScreenWidth() / 2.f - kNewBarW / 2.f;
+
+    auto drawLabelBox = [&](const char* text, float x, float y, int fontSize, Color textColor)
+    {
+        int textW = MeasureText(text, fontSize);
+        const float padX = 12.f;
+        const float padY = 8.f;
+        DrawRectangleRounded(
+            Rectangle{ x - padX, y - padY, textW + padX * 2.f, fontSize + padY * 2.f },
+            0.18f, 6, Fade(BLACK, 0.55f));
+        DrawText(text, (int)x, (int)y, fontSize, textColor);
+    };
+
+    drawLabelBox(("Enemies Defeated: " + std::to_string(_enemiesKilled)).c_str(), 20.f, 16.f, 28, RAYWHITE);
+    drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20.f, 58.f, 28, RAYWHITE);
+
+    {
+        bool isBoss = (_wave > 0 && _wave % 5 == 0);
+        const char* waveLabel = isBoss
+            ? TextFormat("Wave %d  - BOSS", _wave)
+            : TextFormat("Wave %d", _wave);
+        int waveLabelW = MeasureText(waveLabel, 32);
+        drawLabelBox(waveLabel, (float)(GetScreenWidth() - waveLabelW - 130), 18.f, 32,
+            isBoss ? ORANGE : RAYWHITE);
+    }
+
+    {
+        float maxHp = _player.GetMaxHealthValue();
+        float curHp = _player.GetHealthValue();
+        float hpPct = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
+        Color fillColor = (hpPct > 0.5f) ? GREEN : (hpPct > 0.25f) ? YELLOW : RED;
+
+        DrawRectangleRounded({ barX, hpBarY, kNewBarW * hpPct, kNewBarH }, 0.3f, 6, fillColor);
+        DrawRectangleRoundedLines({ barX, hpBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+
+        const char* hpLabel = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
+        int labelW = MeasureText(hpLabel, 18);
+        DrawText(hpLabel,
+            (int)(barX + kNewBarW / 2.f - labelW / 2.f),
+            (int)(hpBarY + kNewBarH / 2.f - 9.f),
+            18, RAYWHITE);
+    }
+
+    {
+        int curMana = _player.GetMana();
+        int maxMana = _player.GetMaxMana();
+        float manaPct = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
+        static const Color kManaFill = { 60, 120, 255, 230 };
+
+        DrawRectangleRounded({ barX, manaBarY, kNewBarW * manaPct, kNewBarH }, 0.3f, 6, kManaFill);
+        DrawRectangleRoundedLines({ barX, manaBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+
+        const char* manaLabel = TextFormat("MP  %d / %d", curMana, maxMana);
+        int manaLabelW = MeasureText(manaLabel, 18);
+        DrawText(manaLabel,
+            (int)(barX + kNewBarW / 2.f - manaLabelW / 2.f),
+            (int)(manaBarY + kNewBarH / 2.f - 9.f),
+            18, RAYWHITE);
+    }
+
+    {
+        int level = _player.GetLevel();
+        int exp = _player.GetExp();
+        int expToNext = _player.GetExpToNext();
+        int maxLevel = _player.GetMaxLevel();
+        float expPct = (level < maxLevel && expToNext > 0) ? (float)exp / (float)expToNext : 1.f;
+        static const Color kExpFill = { 255, 210, 0, 230 };
+
+        DrawRectangleRounded({ barX, expBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
+        if (level < maxLevel)
+            DrawRectangleRounded({ barX, expBarY, kNewBarW * expPct, kNewBarH }, 0.3f, 6, kExpFill);
+        DrawRectangleRoundedLines({ barX, expBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+
+        const char* levelText = (level < maxLevel)
+            ? TextFormat("Lv.%d  %d/%d EXP", level, exp, expToNext)
+            : "Lv.MAX";
+        int textW = MeasureText(levelText, 18);
+        DrawText(levelText,
+            (int)(barX + kNewBarW / 2.f - textW / 2.f),
+            (int)(expBarY + kNewBarH / 2.f - 9.f),
+            18, kExpFill);
+    }
+
+    if (_touchModeActive)
+    {
+        DrawTouchAbilityArc();
+        _touch.Draw(_windowWidth, _windowHeight);
+
+        // Pause button — top-right corner, above the wave label
+        {
+            static constexpr float kPauseW = 90.f;
+            static constexpr float kPauseH = 48.f;
+            static constexpr float kPausePad = 14.f;
+            Rectangle pauseRec{ (float)_windowWidth - kPauseW - kPausePad, kPausePad, kPauseW, kPauseH };
+            DrawRectangleRounded(pauseRec, 0.22f, 6, Fade(BLACK, 0.55f));
+            DrawRectangleRoundedLines(pauseRec, 0.22f, 6, Fade(WHITE, 0.40f));
+            int pw = MeasureText("II", 26);
+            DrawText("II",
+                (int)(pauseRec.x + pauseRec.width / 2.f - pw / 2.f),
+                (int)(pauseRec.y + pauseRec.height / 2.f - 13.f),
+                26, RAYWHITE);
+        }
+    }
+    else
+    {
+        DrawAbilityBar();
+    }
+    DrawMiniMap();
+
+    if (_bossWarningTimer > 0.f)
+    {
+        const char* warning = "DON'T GET TOO CLOSE";
+        int warningSize = 34;
+        int warningWidth = MeasureText(warning, warningSize);
+        drawLabelBox(warning, (float)(GetScreenWidth() / 2 - warningWidth / 2), 96.f, warningSize, ORANGE);
+    }
+
+    }
+    return;
+
     // ── Shared bottom-bar layout constants (mirrored in DrawAbilityBar) ───────
     static constexpr float kBarW   = 400.f;
     static constexpr float kBarH   = 28.f;
@@ -1356,6 +1506,84 @@ void Engine::DrawHUD()
 
 void Engine::DrawAbilityBar()
 {
+    {
+    const int totalSlots = _player.GetMaxAbilitySlots();
+    const float slotSize = 80.f;
+    const float slotGap = 10.f;
+    static constexpr float kNewBotPad = 12.f;
+    const float slotY = (float)GetScreenHeight() - kNewBotPad - slotSize;
+    const float totalW = totalSlots * slotSize + (totalSlots - 1) * slotGap;
+    const float startX = GetScreenWidth() / 2.f - totalW / 2.f;
+
+    Vector2 mouse = GetMousePosition();
+
+    for (int i = 0; i < totalSlots; i++)
+    {
+        AbilityType ability = _player.GetLearnedAbility(i);
+        bool isEmpty = (ability == AbilityType::None);
+        bool canCast = !isEmpty && _player.GetMana() >= GetAbilityManaCost(ability);
+        float x = startX + i * (slotSize + slotGap);
+        Rectangle slot{ x, slotY, slotSize, slotSize };
+        bool hovered = !isEmpty && CheckCollisionPointRec(mouse, slot);
+
+        Color bgColor = isEmpty ? Fade(BLACK, 0.30f) : (hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
+        Color borderColor = isEmpty ? Fade(WHITE, 0.12f) :
+            hovered ? Fade(GOLD, 0.70f) :
+            canCast ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
+        DrawRectangleRounded(slot, 0.18f, 6, bgColor);
+        DrawRectangleRoundedLines(slot, 0.18f, 6, borderColor);
+
+        if (isEmpty)
+        {
+            DrawText(GetKeyName(_player.GetAbilityKey(i)),
+                (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.25f));
+            continue;
+        }
+
+        DrawText(GetKeyName(_player.GetAbilityKey(i)),
+            (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.6f));
+
+        if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            _player.TriggerAbilityCast(i);
+
+        const Texture2D* iconTex = &_abilityIconFireTex;
+        if (ability == AbilityType::IceSpread || ability == AbilityType::IceBolt || ability == AbilityType::IceUltimate)
+            iconTex = &_abilityIconIceTex;
+        else if (ability == AbilityType::ElectricSpread || ability == AbilityType::ElectricBolt || ability == AbilityType::ElectricUltimate)
+            iconTex = &_abilityIconElectricTex;
+
+        Color iconTint = canCast ? WHITE : Fade(WHITE, 0.35f);
+        float maxIconSize = slotSize * 0.55f;
+        float iconScale = std::min(maxIconSize / (float)iconTex->width, maxIconSize / (float)iconTex->height);
+        float iw = iconTex->width * iconScale;
+        float ih = iconTex->height * iconScale;
+        float cx = x + slotSize * 0.5f;
+        float cy = slotY + slotSize * 0.42f;
+        DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
+
+        const char* abilityName = GetAbilityName(ability);
+        int nameW = MeasureText(abilityName, 12);
+        DrawText(abilityName,
+            (int)(x + slotSize / 2.f - nameW / 2.f),
+            (int)(slotY + slotSize - 18.f),
+            12, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
+
+        int abilityLv = _player.GetAbilityLevel(ability);
+        if (abilityLv > 1)
+        {
+            const char* badge = TextFormat("Lv%d", abilityLv);
+            int badgeW = MeasureText(badge, 12);
+            Color badgeColor = (abilityLv >= 3) ? GOLD : Fade(SKYBLUE, 0.9f);
+            DrawText(badge,
+                (int)(x + slotSize - badgeW - 4.f),
+                (int)(slotY + slotSize - 16.f),
+                12, badgeColor);
+        }
+    }
+
+    }
+    return;
+
     const int   totalSlots = _player.GetMaxAbilitySlots();  // always 4
     const float slotSize   = 80.f;
     const float slotGap    = 10.f;
@@ -1779,7 +2007,7 @@ void Engine::DrawAbilityChoice()
             int lvSz = 19;
             DrawText(lvStr, (int)(cx + cardW/2.f - MeasureText(lvStr, lvSz)/2.f),
                      (int)(cardY + cardH*0.66f), lvSz, Color{255,200,80,255});
-            const char* upDesc = "+10% attack power";
+            const char* upDesc = "+1 spell damage";
             int udSz = 17;
             DrawText(upDesc, (int)(cx + cardW/2.f - MeasureText(upDesc, udSz)/2.f),
                      (int)(cardY + cardH*0.76f), udSz, LIGHTGRAY);
@@ -1903,7 +2131,7 @@ void Engine::DrawLevelUpChoice()
         {
         case UpgradeType::AttackPower:
             name = "Attack Power";
-            desc = "+8% melee\ndamage";
+            desc = "+10% melee\ndamage";
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::AttackRange:
@@ -1913,22 +2141,22 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::MaxHealth:
             name = "Max Health";
-            desc = "+12% max HP\n(heals too)";
+            desc = "+15% max HP\n(heals too)";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::MaxMana:
             name = "Max Mana";
-            desc = "+20 max MP";
+            desc = "+15 max MP";
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::Defense:
             name = "Defense";
-            desc = "+5% damage\nreduction";
+            desc = "+6% damage\nreduction";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::MoveSpeed:
             name = "Move Speed";
-            desc = "+8% movement\nspeed";
+            desc = "+10% movement\nspeed";
             icon = &_upgradeMoveSpeedTex;
             break;
         // ── Rare ──────────────────────────────────────────────────────────────
@@ -1949,7 +2177,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::ArcaneMind:
             name = "Arcane Mind";
-            desc = "+40 max mana";
+            desc = "+25 max mana";
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::IronSkin:
@@ -1985,7 +2213,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::ArcaneColossus:
             name = "Arcane Colossus";
-            desc = "+50 mana\n+15% attack power";
+            desc = "+30 mana\n+15% attack power";
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::LearnFireSpread:
@@ -2569,11 +2797,11 @@ void Engine::ApplyUltimateImpact()
         if (fabsf(delta.x) > halfW || fabsf(delta.y) > halfH)
             continue;
 
-        int dmg = enemy->AsMolarbeast() ? 2 : 4;
+        int dmg = enemy->AsMolarbeast() ? std::min(3, _player.GetUltimateHitDamage(_ultimateElement)) : _player.GetUltimateHitDamage(_ultimateElement);
         enemy->TakeDamage(dmg, playerPos);
 
         if (_ultimateElement == AbilityType::FireUltimate)
-            enemy->ApplyBurn(0.5f, _player.GetBoltBurnDamage(), playerPos);
+            enemy->ApplyBurn(0.5f, _player.GetBoltBurnDamage(_ultimateElement), playerPos);
         else if (_ultimateElement == AbilityType::IceUltimate)
             enemy->ApplyFreeze(3.f);
         else if (_ultimateElement == AbilityType::ElectricUltimate)
@@ -2930,7 +3158,7 @@ void Engine::UpdateSpreadProjectiles(float dt)
             if (enemy->AsMolarbeast() != nullptr)
                 hitDamage = isBolt ? 2 : 1;
             else
-                hitDamage = isBolt ? _player.GetBoltHitDamage() : _player.GetSpreadHitDamage();
+                hitDamage = isBolt ? _player.GetBoltHitDamage(element) : _player.GetSpreadHitDamage(element);
             enemy->TakeDamage(hitDamage, _player.GetWorldPos());
             {
                 Color dmgColor = (element == AbilityType::IceSpread   || element == AbilityType::IceBolt)      ? SKYBLUE  :
@@ -2942,7 +3170,7 @@ void Engine::UpdateSpreadProjectiles(float dt)
             Character::CastType hitEffectType = Character::CastType::FireSpread;
             if (element == AbilityType::FireSpread || element == AbilityType::FireBolt)
             {
-                int burnDmg = isBolt ? _player.GetBoltBurnDamage() : _player.GetSpreadBurnDamage();
+                int burnDmg = isBolt ? _player.GetBoltBurnDamage(element) : _player.GetSpreadBurnDamage(element);
                 enemy->ApplyBurn(1.f, burnDmg, _player.GetWorldPos());
                 hitEffectType = Character::CastType::FireSpread;
             }
@@ -2984,60 +3212,50 @@ void Engine::SpawnFloatingText(Vector2 worldPos, int value, Color color)
 
 void Engine::SpawnEnemyDrop(Vector2 worldPos)
 {
-    const int dropChancePercent = 22;
-    if (GetRandomValue(1, 100) > dropChancePercent)
+    // Boss fights suppress all drops — the fight is won on build + passive regen,
+    // not on floor loot. Support add kills also fall through this path.
+    if (IsBossFightActive())
         return;
 
-    // 50/50 heal or mana gem
-    std::unique_ptr<Pickup> pickup;
-    if (GetRandomValue(0, 1) == 0)
-    {
-        auto p = std::make_unique<HealPickup>();
-        p->Init(worldPos);
-        pickup = std::move(p);
-    }
-    else
-    {
-        auto p = std::make_unique<ManaGemPickup>();
-        p->Init(worldPos);
-        pickup = std::move(p);
-    }
+    // Rare drop: heals only. Mana gems removed from the drop pool —
+    // passive regen (Character::kManaRegenPerSecond) is now the mana source.
+    // ManaGemPickup class kept on disk as legacy, not spawned here.
+    if (GetRandomValue(1, 100) > kEnemyDropChancePercent)
+        return;
 
-    // Move drop away from inside a prop if needed
+    // Find a valid drop position (avoid spawning inside a prop)
     Vector2 dropPos = worldPos;
     if (!IsSpawnPositionValid(dropPos))
     {
         float mapW = _map.width * _mapScale;
         float mapH = _map.height * _mapScale;
-
         for (int attempt = 0; attempt < 20; ++attempt)
         {
             Vector2 candidate{
                 worldPos.x + (float)GetRandomValue(-180, 180),
                 worldPos.y + (float)GetRandomValue(-180, 180)
             };
-
             candidate.x = (float)ClampInt((int)candidate.x, 100, (int)mapW - 100);
             candidate.y = (float)ClampInt((int)candidate.y, 100, (int)mapH - 100);
-
-            if (!IsSpawnPositionValid(candidate))
-                continue;
-
-            dropPos = candidate;
-            break;
+            if (IsSpawnPositionValid(candidate)) { dropPos = candidate; break; }
         }
     }
 
-    if (pickup->GetType() == PickupType::Heal)
-        static_cast<HealPickup*>(pickup.get())->Init(dropPos);
-    else
-        static_cast<ManaGemPickup*>(pickup.get())->Init(dropPos);
-
-    _pickups.push_back(std::move(pickup));
+    auto p = std::make_unique<HealPickup>();
+    p->Init(dropPos);
+    _pickups.push_back(std::move(p));
 }
 
 void Engine::SpawnTimedPickup()
 {
+    // Boss fights are self-contained — no timed pickups during them.
+    // The timer keeps ticking so a pickup is not immediately ready when
+    // the boss dies; it resets naturally after kDefaultTimedPickupInterval.
+    if (IsBossFightActive())
+        return;
+
+    // Timed pickups are heals only. Mana gems removed from the timed pool —
+    // passive regen covers mana recovery between waves.
     float mapW = _map.width  * _mapScale;
     float mapH = _map.height * _mapScale;
 
@@ -3052,25 +3270,10 @@ void Engine::SpawnTimedPickup()
         attempts++;
     } while (!IsSpawnPositionValid(pos) && attempts < 40);
 
-    // Timed pickups are always health or mana gems
-    std::unique_ptr<Pickup> pickup;
-
-    if (GetRandomValue(0, 1) == 0)
-    {
-        auto p = std::make_unique<HealPickup>();
-        p->Init(pos);
-        p->SetTimerSpawned(true);
-        pickup = std::move(p);
-    }
-    else
-    {
-        auto p = std::make_unique<ManaGemPickup>();
-        p->Init(pos);
-        p->SetTimerSpawned(true);
-        pickup = std::move(p);
-    }
-
-    _pickups.push_back(std::move(pickup));
+    auto p = std::make_unique<HealPickup>();
+    p->Init(pos);
+    p->SetTimerSpawned(true);
+    _pickups.push_back(std::move(p));
 }
 
 void Engine::DrawHowToPlay()
@@ -3137,13 +3340,12 @@ void Engine::DrawHowToPlay()
 
     struct CtrlEntry { const char* key; const char* desc; };
     CtrlEntry controls[] = {
-        { "W A S D",     "Move"                        },
-        { "SPACE",       "Dash  (brief invincibility)" },
-        { "Left Click",  "Melee attack"                },
-        { "Right Click", "Fireball burst (needs ammo)" },
-        { "1 / 2 / 3",  "Select ability slot"         },
-        { "Scroll",      "Cycle ability slot"          },
-        { "ESC",         "Pause / unpause"             },
+        { "W A S D",         "Move"                        },
+        { "SPACE",           "Dash  (brief invincibility)" },
+        { "Left Click",      "Melee attack"                },
+        { "1 / 2 / 3 / 4",  "Use learned ability"         },
+        { "Scroll",          "Cycle active ability slot"   },
+        { "ESC",             "Pause / unpause"             },
     };
 
     for (auto& c : controls)
@@ -3163,10 +3365,10 @@ void Engine::DrawHowToPlay()
     rowY += sh * 0.01f;
     DrawText("EXP & LEVELS", (int)colL, (int)rowY, headerSz, ORANGE);
     rowY += headerSz + sh * 0.012f;
-    DrawText("Every enemy kill grants 1 EXP.",                  (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
-    DrawText("Level up: +1 ATK, +1 Max HP, +1 HP restored.",    (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
+    DrawText("Kill enemies to earn EXP and level up.",                   (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
+    DrawText("Choose 1 of 3 upgrade cards each level.",                  (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
     DrawText("EXP threshold doubles each level (10, 20, 40\xE2\x80\xA6)", (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
-    DrawText("Max level: 10.",                                   (int)colL, (int)rowY, descSz, LIGHTGRAY);
+    DrawText("Max level: 20.",                                           (int)colL, (int)rowY, descSz, LIGHTGRAY);
 
     // ── RIGHT column — Pickups & Enemies ─────────────────────────────────────
     float rowR = contentY;
@@ -3175,11 +3377,10 @@ void Engine::DrawHowToPlay()
 
     struct PickupEntry { const char* name; const char* desc; int shape; };
     PickupEntry entries[] = {
-        { "Fireball Ammo",   "Right-click — 8 fireballs outward.",  0 },
-        { "Sword Beam Ammo", "Right-click — piercing beam forward.", 1 },
-        { "Freeze Ammo",     "Right-click — freezes all enemies.",   2 },
-        { "Heal",            "Restores 1 HP (rare drop).",           3 },
-        { "Enemy",           "Chases you. Drops a pickup on death.", 4 },
+        // shape 0 = mana gem (blue/purple), 1 = heal (red cross), 2 = enemy blob
+        { "Mana Gem",  "Restores mana. Cast abilities with 1–4.",  0 },
+        { "Heal",      "Restores 1 HP.",                           1 },
+        { "Enemy",     "Chases you. Drops a pickup on death.",     2 },
     };
 
     for (auto& e : entries)
@@ -3189,27 +3390,14 @@ void Engine::DrawHowToPlay()
         // Icon — drawn at iconCX, well to the right of the divider
         if (e.shape == 0)
         {
-            DrawCircleV({ iconCX, cy }, 20.f, Fade(ORANGE, 0.5f));
-            DrawCircleV({ iconCX, cy }, 13.f, Fade(RED,    0.8f));
-            DrawCircleV({ iconCX, cy },  5.f, Fade(YELLOW, 0.9f));
+            // Mana gem — blue/purple
+            DrawCircleV({ iconCX, cy }, 20.f, Fade(PURPLE,  0.45f));
+            DrawCircleV({ iconCX, cy }, 13.f, Fade(SKYBLUE, 0.85f));
+            DrawCircleV({ iconCX, cy },  5.f, Fade(WHITE,   0.90f));
         }
         else if (e.shape == 1)
         {
-            DrawCircleV({ iconCX + 6.f,  cy      }, 18.f, Fade(BLUE,  0.8f));
-            DrawCircleV({ iconCX + 15.f, cy - 2.f}, 17.f, Fade(BLACK, 0.95f));
-            DrawLineEx({ iconCX - 14.f, cy - 6.f }, { iconCX - 34.f, cy - 10.f }, 4.f, Fade(SKYBLUE, 0.7f));
-            DrawLineEx({ iconCX - 12.f, cy + 7.f }, { iconCX - 30.f, cy + 13.f }, 3.f, Fade(SKYBLUE, 0.55f));
-        }
-        else if (e.shape == 2)
-        {
-            DrawCircleV({ iconCX, cy }, 20.f, Fade(BLUE,    0.35f));
-            DrawCircleV({ iconCX, cy }, 14.f, Fade(SKYBLUE, 0.85f));
-            DrawCircleV({ iconCX, cy },  6.f, Fade(WHITE,   0.90f));
-            DrawLineEx({ iconCX - 12.f, cy }, { iconCX + 12.f, cy }, 2.f, WHITE);
-            DrawLineEx({ iconCX, cy - 12.f }, { iconCX, cy + 12.f }, 2.f, WHITE);
-        }
-        else if (e.shape == 3)
-        {
+            // Heal — red cross
             DrawCircleV({ iconCX, cy }, 20.f, Fade(RED,  0.35f));
             DrawCircleV({ iconCX, cy }, 14.f, Fade(RED,  0.85f));
             DrawCircleV({ iconCX, cy },  6.f, Fade(PINK, 0.90f));
@@ -3218,6 +3406,7 @@ void Engine::DrawHowToPlay()
         }
         else
         {
+            // Enemy
             DrawCircleV({ iconCX, cy }, 20.f, Fade(MAROON, 0.7f));
             DrawCircleV({ iconCX, cy - 7.f }, 10.f, Fade(RED,    0.85f));
             DrawCircleV({ iconCX, cy + 9.f }, 13.f, Fade(MAROON, 0.9f));
@@ -3269,7 +3458,7 @@ void Engine::DrawMiniMap()
     const float miniH = miniW * (mapH / mapW);
     const float padding = 12.f;
     const float originX = padding;
-    const float originY = GetScreenHeight() - miniH - padding;
+    const float originY = 112.f;
 
     // Background
     DrawRectangleRounded(Rectangle{ originX - 2.f, originY - 2.f, miniW + 4.f, miniH + 4.f },
@@ -3327,10 +3516,10 @@ Vector2 Engine::GetRandomPropPosition()
     float mapH = _map.height * _mapScale;
     Vector2 playerStart{ mapW * 0.5f, mapH * 0.5f };
 
-    float minX = mapW * 0.05f;
-    float maxX = mapW * 0.95f;
-    float minY = mapH * 0.05f;
-    float maxY = mapH * (_currentBiome == Biome::Forest ? 0.88f : 0.85f);
+    float minX = mapW * (_currentBiome == Biome::Forest ? 0.13f : 0.05f);
+    float maxX = mapW * (_currentBiome == Biome::Forest ? 0.87f : 0.95f);
+    float minY = mapH * (_currentBiome == Biome::Forest ? 0.13f : 0.05f);
+    float maxY = mapH * (_currentBiome == Biome::Forest ? 0.80f : 0.85f);
 
     float minSpacing = 308.f;
     float playerSafeRadius = 320.f;
@@ -3374,7 +3563,7 @@ Biome Engine::GetBiomeForWave(int wave) const
     if (wave <= 0)
         return Biome::Dungeon;
 
-    return (((wave - 1) / 5) % 2 == 0) ? Biome::Dungeon : Biome::Forest;
+    return (((wave - 1) / 5) % 2 == 0) ? Biome::Forest : Biome::Dungeon;
 }
 
 const char* Engine::GetBiomeName(Biome biome) const
@@ -3395,12 +3584,26 @@ void Engine::PopulatePropsForBiome(Biome biome)
         for (int i = 0; i < propCount; ++i)
         {
             Vector2 pos = GetRandomPropPosition();
-            switch (GetRandomValue(0, 3))
+            int choice = GetRandomValue(0, 3);
+            if (choice == 0)
             {
-            case 0: _props.push_back(Prop{ pos, _treeTex, 1, 0, 0, 3.f }); break;
-            case 1: _props.push_back(Prop{ pos, _smallTreeTex, 1, 0, 0, 3.f }); break;
-            case 2: _props.push_back(Prop{ pos, _rockTex, 1, 0, 0, 5.f }); break;
-            default:_props.push_back(Prop{ pos, _bigRockTex, 1, 0, 0, 4.f }); break;
+                _props.push_back(Prop{ pos, _treeTex, 1, 0, 0, 6.f });
+                _props.back().SetCollisionTopFraction(0.25f);
+                _props.back().SetCollisionSideFraction(0.30f);
+            }
+            else if (choice == 1)
+            {
+                _props.push_back(Prop{ pos, _smallTreeTex, 1, 0, 0, 6.f });
+                _props.back().SetCollisionTopFraction(0.25f);
+                _props.back().SetCollisionSideFraction(0.30f);
+            }
+            else if (choice == 2)
+            {
+                _props.push_back(Prop{ pos, _rockTex, 1, 0, 0, 5.f });
+            }
+            else
+            {
+                _props.push_back(Prop{ pos, _bigRockTex, 1, 0, 0, 4.f });
             }
         }
         return;
@@ -3525,7 +3728,14 @@ void Engine::BuildNavigationGrid()
 
             for (auto& prop : _props)
             {
-                if (CheckCollisionRecs(cellRect, prop.GetCollisionRec()))
+                // Inflate the prop's collision rect by half a nav cell on every
+                // side. This ensures enemies route around props with a clearance
+                // margin rather than hugging the edge of the hitbox and wedging.
+                Rectangle rec = prop.GetCollisionRec();
+                const float pad = _navCellSize * 0.5f;
+                Rectangle inflated{ rec.x - pad, rec.y - pad,
+                                    rec.width + pad * 2.f, rec.height + pad * 2.f };
+                if (CheckCollisionRecs(cellRect, inflated))
                 {
                     _navBlocked[GetNavigationIndex(col, row)] = true;
                     break;
@@ -3597,16 +3807,27 @@ bool Engine::HasLineOfSight(Vector2 start, Vector2 end) const
         return true;
 
     dir = Vector2Normalize(dir);
+
+    // Perpendicular offset for tube sampling — wide enough to catch an enemy
+    // approaching at an angle whose body overlaps a blocked cell that the
+    // center line just misses.
+    Vector2 perp{ -dir.y, dir.x };
+    const float tubeHalfWidth = _navCellSize * 0.4f;
     float step = _navCellSize * 0.5f;
 
     for (float t = 0.f; t < dist; t += step)
     {
-        Vector2 point = Vector2Add(start, Vector2Scale(dir, t));
-        int col = (int)(point.x / _navCellSize);
-        int row = (int)(point.y / _navCellSize);
+        Vector2 center = Vector2Add(start, Vector2Scale(dir, t));
 
-        if (IsNavigationCellBlocked(col, row))
-            return false;
+        // Check center plus left and right offsets
+        for (float side : { 0.f, tubeHalfWidth, -tubeHalfWidth })
+        {
+            Vector2 point = Vector2Add(center, Vector2Scale(perp, side));
+            int col = (int)(point.x / _navCellSize);
+            int row = (int)(point.y / _navCellSize);
+            if (IsNavigationCellBlocked(col, row))
+                return false;
+        }
     }
 
     return true;
@@ -3941,8 +4162,8 @@ void Engine::ResetRunState()
     _pickups.clear();
     _effects.clear();
     _player.Init();
-    _currentBiome = Biome::Dungeon;
-    _pendingBiome = Biome::Dungeon;
+    _currentBiome = Biome::Forest;
+    _pendingBiome = Biome::Forest;
     ApplyBiome(_currentBiome);
     _bossCyclopsSupport = {};
     _bossOgreSupport = {};
@@ -4016,16 +4237,17 @@ bool Engine::TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance)
 
 void Engine::SpawnBossSupportAdds()
 {
+    // Cyclops arrives immediately — ranged pressure from a distance is readable.
     Vector2 cyclopsPos{};
     if (TryGetFarSpawnPosition(cyclopsPos, kBossSupportMinPlayerDistance))
         _bossCyclopsSupport.enemy = SpawnCyclops(cyclopsPos);
-
-    Vector2 ogrePos{};
-    if (TryGetFarSpawnPosition(ogrePos, kBossSupportMinPlayerDistance))
-        _bossOgreSupport.enemy = SpawnOgre(ogrePos);
-
     _bossCyclopsSupport.respawnTimer = 0.f;
-    _bossOgreSupport.respawnTimer = 0.f;
+
+    // Ogre is held back so the player gets ~22s to learn the boss before a
+    // second melee threat joins. The pending-spawn path in UpdateBossSupportRespawns
+    // handles the null-enemy timer countdown.
+    _bossOgreSupport.enemy = nullptr;
+    _bossOgreSupport.respawnTimer = kBossOgreInitialDelay;
 }
 
 void Engine::ClearBossSupportAdds()
@@ -4068,9 +4290,11 @@ void Engine::UpdateBossSupportRespawns(float dt)
         }
     }
 
-    if (_bossOgreSupport.enemy != nullptr &&
-        !_bossOgreSupport.enemy->IsActive() &&
-        _bossOgreSupport.respawnTimer > 0.f)
+    // Ogre: handles both the initial delayed entry (enemy == nullptr) and
+    // subsequent respawns after it has been killed.
+    bool ogrePendingSpawn = (_bossOgreSupport.enemy == nullptr && _bossOgreSupport.respawnTimer > 0.f);
+    bool ogrePendingRespawn = (_bossOgreSupport.enemy != nullptr && !_bossOgreSupport.enemy->IsActive() && _bossOgreSupport.respawnTimer > 0.f);
+    if (ogrePendingSpawn || ogrePendingRespawn)
     {
         _bossOgreSupport.respawnTimer -= dt;
         if (_bossOgreSupport.respawnTimer <= 0.f)
@@ -4254,7 +4478,6 @@ void Engine::SpawnMolarbeast(Vector2 pos)
     if (TryGetPooledMolarbeastSpawn(pos))
     {
         _bossWarningTimer = 4.f;
-        _pickupSpawnTimer = std::min(_pickupSpawnTimer, kBossTimedPickupInterval);
         return;
     }
 
@@ -4263,7 +4486,6 @@ void Engine::SpawnMolarbeast(Vector2 pos)
     ConfigureSpawnedEnemy(*molarbeast);
     _enemies.push_back(std::move(molarbeast));
     _bossWarningTimer = 4.f;
-    _pickupSpawnTimer = std::min(_pickupSpawnTimer, kBossTimedPickupInterval);
 }
 
 // =============================================================================
@@ -4365,14 +4587,14 @@ void Engine::UpdateLavaBallProjectiles(float dt)
             }
         }
 
-        // Player collision is active during both flying and the explosion so
-        // a direct hit always registers. HasHitPlayer guards against applying
-        // the burn twice from the same projectile.
+        // Player collision — only register once per projectile (HasHitPlayer guard).
         if (_player.IsAlive() &&
             !projectile.HasHitPlayer() &&
             CheckCollisionRecs(collisionRec, _player.GetCollisionRec()))
         {
-            _player.ApplyBurnTicks(1.0f, 2, 0.2f, projectile.GetWorldPos());
+            static constexpr int kLavaBallDamage = 2;
+            _player.TakeDamage(kLavaBallDamage, projectile.GetWorldPos());
+            SpawnFloatingText(_player.GetWorldPos(), -kLavaBallDamage, RED);
             projectile.OnPlayerHit();
             if (projectile.IsFlying())
             {
@@ -4429,5 +4651,209 @@ void Engine::LoadKeybindings()
     }
     std::fclose(f);
     _player.SetBindings(b);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Touch Controls
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Returns the screen-space centre of touch-mode ability arc button for `slot`.
+// Buttons are arranged in a quarter-circle arc above the ATK button.
+// Screen angles: 270° = straight up, 210° = upper-left.
+// Free helper — computes the bounding rect for touch-mode ability slot `slot`.
+// 4 square slots in a right-aligned row, above the ATK/DASH buttons.
+static Rectangle TouchAbilityRect(int slot, int screenW, int screenH)
+{
+    static constexpr float kTouchSlotSize = 96.f;
+    static constexpr float kTouchSlotGap  = 16.f;
+    static constexpr float kRightPad      = 24.f;
+    const float slotY  = (float)screenH - TouchControls::kBtnBotPad
+                         - TouchControls::kBtnRadius - 20.f - kTouchSlotSize;
+    const float totalW = 4.f * kTouchSlotSize + 3.f * kTouchSlotGap;
+    const float startX = (float)screenW - kRightPad - totalW;
+    return { startX + (float)slot * (kTouchSlotSize + kTouchSlotGap),
+             slotY, kTouchSlotSize, kTouchSlotSize };
+}
+
+// Sets player touch direction/attack/dash from _touch, then scans for new
+// touches on the ability arc.  Called each gameplay frame when touch mode is on.
+void Engine::UpdateTouchControls()
+{
+    _touch.Update(_windowWidth, _windowHeight);
+
+    _player.SetTouchDirection(_touch.joystickDir);
+    if (_touch.attackPressed) _player.SetTouchAttack();
+    if (_touch.dashPressed)   _player.SetTouchDash();
+
+    ScanAbilityArcTaps();
+
+    // Pause button (top-right corner) — same rect as DrawHUD draws it
+    static constexpr float kPauseW   = 90.f;
+    static constexpr float kPauseH   = 48.f;
+    static constexpr float kPausePad = 14.f;
+    const Rectangle pauseRec{ (float)_windowWidth - kPauseW - kPausePad, kPausePad, kPauseW, kPauseH };
+
+    const int tc = GetTouchPointCount();
+    if (tc == 0)
+    {
+        // Mouse simulation
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+            CheckCollisionPointRec(GetMousePosition(), pauseRec))
+        {
+            _gameState = GameState::Pause;
+        }
+    }
+    else
+    {
+        // Real touch — check any new touch ID not already owned by other controls
+        int joyId  = _touch.GetJoyTouchId();
+        int atkId  = _touch.GetAtkTouchId();
+        int dashId = _touch.GetDashTouchId();
+        for (int i = 0; i < tc; i++)
+        {
+            int id = GetTouchPointId(i);
+            if (id == joyId || id == atkId || id == dashId) continue;
+            bool seen = false;
+            for (int sid : _abilityTapSeenIds) if (sid == id) { seen = true; break; }
+            if (!seen && CheckCollisionPointRec(GetTouchPosition(i), pauseRec))
+            {
+                _gameState = GameState::Pause;
+                return;
+            }
+        }
+    }
+}
+
+// Detects new touches on ability arc buttons and triggers the matching cast.
+// Tracks seen touch IDs to avoid re-triggering on hold.
+void Engine::ScanAbilityArcTaps()
+{
+    if (_waveStarting || _ultimatePhase != UltimatePhase::None)
+        return;
+
+    const int tc         = GetTouchPointCount();
+    const int totalSlots = _player.GetMaxAbilitySlots();
+
+    auto hitSlot = [&](Vector2 pos) -> int
+    {
+        for (int s = 0; s < totalSlots; s++)
+            if (CheckCollisionPointRec(pos, TouchAbilityRect(s, _windowWidth, _windowHeight))) return s;
+        return -1;
+    };
+
+    // ── Mouse simulation path ─────────────────────────────────────────────────
+    if (tc == 0)
+    {
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            int slot = hitSlot(GetMousePosition());
+            if (slot >= 0) _player.TriggerAbilityCast(slot);
+        }
+        return;
+    }
+
+    // ── Real touch path ───────────────────────────────────────────────────────
+    // Remove IDs that have lifted
+    _abilityTapSeenIds.erase(
+        std::remove_if(_abilityTapSeenIds.begin(), _abilityTapSeenIds.end(),
+            [tc](int id)
+            {
+                for (int i = 0; i < tc; i++)
+                    if (GetTouchPointId(i) == id) return false;
+                return true;
+            }),
+        _abilityTapSeenIds.end());
+
+    int joyId  = _touch.GetJoyTouchId();
+    int atkId  = _touch.GetAtkTouchId();
+    int dashId = _touch.GetDashTouchId();
+
+    for (int i = 0; i < tc; i++)
+    {
+        int id = GetTouchPointId(i);
+        if (id == joyId || id == atkId || id == dashId) continue;
+
+        bool seen = false;
+        for (int sid : _abilityTapSeenIds) if (sid == id) { seen = true; break; }
+        if (seen) continue;
+
+        _abilityTapSeenIds.push_back(id);
+        int slot = hitSlot(GetTouchPosition(i));
+        if (slot >= 0) _player.TriggerAbilityCast(slot);
+    }
+}
+
+// Draws touch-mode ability slots as square icons — same visual language as the
+// desktop bar, just repositioned and slightly larger for thumb tapping.
+void Engine::DrawTouchAbilityArc()
+{
+    const int totalSlots = _player.GetMaxAbilitySlots();
+
+    for (int slot = 0; slot < totalSlots; slot++)
+    {
+        AbilityType ability = _player.GetLearnedAbility(slot);
+        Rectangle   rec     = TouchAbilityRect(slot, _windowWidth, _windowHeight);
+        bool isEmpty = (ability == AbilityType::None);
+        bool canCast = !isEmpty && (_player.GetMana() >= GetAbilityManaCost(ability));
+
+        Color bgColor     = isEmpty ? Fade(BLACK, 0.30f) : Fade(BLACK, 0.55f);
+        Color borderColor = isEmpty ? Fade(WHITE, 0.12f)
+                          : canCast  ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
+
+        DrawRectangleRounded(rec, 0.18f, 6, bgColor);
+        DrawRectangleRoundedLines(rec, 0.18f, 6, borderColor);
+
+        if (isEmpty)
+        {
+            // Show slot number dimly, same as desktop bar
+            DrawText(GetKeyName(_player.GetAbilityKey(slot)),
+                (int)(rec.x + 6.f), (int)(rec.y + 6.f), 14, Fade(WHITE, 0.25f));
+            continue;
+        }
+
+        // Slot number in top-left corner
+        DrawText(GetKeyName(_player.GetAbilityKey(slot)),
+            (int)(rec.x + 6.f), (int)(rec.y + 6.f), 14, Fade(WHITE, 0.6f));
+
+        // Element icon centred in the upper portion of the slot
+        const Texture2D* iconTex = &_abilityIconFireTex;
+        if (ability == AbilityType::IceSpread || ability == AbilityType::IceBolt ||
+            ability == AbilityType::IceUltimate)
+            iconTex = &_abilityIconIceTex;
+        else if (ability == AbilityType::ElectricSpread || ability == AbilityType::ElectricBolt ||
+                 ability == AbilityType::ElectricUltimate)
+            iconTex = &_abilityIconElectricTex;
+
+        Color iconTint  = canCast ? WHITE : Fade(WHITE, 0.35f);
+        float maxIconSz = rec.width * 0.55f;
+        float iconScale = std::min(maxIconSz / (float)iconTex->width,
+                                   maxIconSz / (float)iconTex->height);
+        float iw = iconTex->width  * iconScale;
+        float ih = iconTex->height * iconScale;
+        float cx = rec.x + rec.width  * 0.5f;
+        float cy = rec.y + rec.height * 0.42f;
+        DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
+
+        // Ability name at the bottom, matching desktop bar
+        const char* abilityName = GetAbilityName(ability);
+        int nameW = MeasureText(abilityName, 12);
+        DrawText(abilityName,
+            (int)(rec.x + rec.width / 2.f - nameW / 2.f),
+            (int)(rec.y + rec.height - 18.f),
+            12, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
+
+        // Level badge
+        int abilityLv = _player.GetAbilityLevel(ability);
+        if (abilityLv > 1)
+        {
+            const char* badge = TextFormat("Lv%d", abilityLv);
+            int badgeW = MeasureText(badge, 12);
+            Color badgeColor = (abilityLv >= 3) ? GOLD : Fade(SKYBLUE, 0.9f);
+            DrawText(badge,
+                (int)(rec.x + rec.width - badgeW - 4.f),
+                (int)(rec.y + rec.height - 16.f),
+                12, badgeColor);
+        }
+    }
 }
 

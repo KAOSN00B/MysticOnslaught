@@ -34,14 +34,19 @@ void MainMenu::Init()
     float startX = sw / 2.f - buttonWidth / 2.f;
     float firstY = sh * 0.47f;
 
-    _buttons.push_back({ "Start Game",  { startX, firstY,                         buttonWidth, buttonHeight } });
-    _buttons.push_back({ "How To Play", { startX, firstY + (buttonHeight + gap),   buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Start Game",  { startX, firstY,                       buttonWidth, buttonHeight } });
+    _buttons.push_back({ "How To Play", { startX, firstY + (buttonHeight + gap), buttonWidth, buttonHeight } });
     _buttons.push_back({ "Quit",        { startX, firstY + (buttonHeight + gap)*2, buttonWidth, buttonHeight } });
 
-    // Bottom-left leaderboard button (smaller, corner)
+    // Corner buttons (smaller)
     float lbW = sw * 0.14f;
     float lbH = sh * 0.055f;
-    _buttons.push_back({ "Leaderboard", { sw * 0.018f, sh - lbH - sh * 0.018f, lbW, lbH } });
+    float cornerPad = sw * 0.018f;
+    _buttons.push_back({ "Leaderboard", { cornerPad, sh - lbH - sh * 0.018f, lbW, lbH } });
+
+    // Controls toggle — bottom-right corner, same size as Leaderboard
+    std::string ctrlLabel = _touchModeActive ? "Controls: Touch" : "Controls: Standard";
+    _buttons.push_back({ ctrlLabel, { sw - cornerPad - lbW, sh - lbH - sh * 0.018f, lbW, lbH } });
 
     _startPressed       = false;
     _quitPressed        = false;
@@ -72,6 +77,12 @@ void MainMenu::Update()
             if (button.text == "Quit")         _quitPressed        = true;
             if (button.text == "How To Play")  _howToPressed       = true;
             if (button.text == "Leaderboard")  _leaderboardPressed = true;
+            // Controls toggle — identified by prefix since text changes with state
+            if (button.text.rfind("Controls:", 0) == 0)
+            {
+                _touchModeActive = !_touchModeActive;
+                button.text = _touchModeActive ? "Controls: Touch" : "Controls: Standard";
+            }
         }
     }
 }
@@ -160,6 +171,25 @@ void MainMenu::Draw()
                 (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
                 (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
                 fs, WHITE);
+            continue;
+        }
+
+        // Controls toggle button — drawn differently to signal it's a toggle
+        bool isControlsBtn = (button.text.rfind("Controls:", 0) == 0);
+        if (isControlsBtn)
+        {
+            bool isTouchOn = (button.text == "Controls: Touch");
+            Color fill   = isTouchOn ? Color{ 40, 160, 200, 200 } : Color{ 80, 80, 100, 200 };
+            Color border = isTouchOn ? Color{ 100, 220, 255, 200 } : Color{ 160, 160, 180, 180 };
+            if (button.hovered) fill = Fade(fill, 0.75f);
+            DrawRectangleRounded(button.bounds, 0.22f, 6, fill);
+            DrawRectangleRoundedLines(button.bounds, 0.22f, 6, border);
+            int fs = (int)(sh * 0.030f);
+            int tw = MeasureText(button.text.c_str(), fs);
+            DrawText(button.text.c_str(),
+                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
+                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                fs, RAYWHITE);
             continue;
         }
 

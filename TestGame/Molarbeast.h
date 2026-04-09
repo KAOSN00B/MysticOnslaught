@@ -65,7 +65,7 @@ private:
     void SetHurtAnimation(bool resetFrame);
     void SetDeathAnimation(bool resetFrame);
 
-    void HandleChasing(float dt);
+    void HandleChasing(float dt, const std::vector<Vector2>& propCenters);
     void HandleMelee();
     void HandleDashCharge(float dt);
     void HandleDash(float dt, const std::vector<std::unique_ptr<Enemy>>& enemies);
@@ -95,6 +95,11 @@ private:
     float _stableFrameH = 0.f;
     Vector2 _navTarget{};        // A* waypoint supplied by the engine each frame
     bool _hasNavTarget = false;
+    Vector2 _lockedNavTarget{};
+    bool _hasLockedNavTarget = false;
+    float _navTargetLockTimer = 0.f;
+    Vector2 _escapeDirection{};
+    float _escapeTimer = 0.f;
     float _specialTimer = 0.f;
     float _meleeCooldown = 0.f;
     float _contactCooldown = 0.f;
@@ -122,6 +127,12 @@ private:
     static constexpr float _recoveryDuration = 0.35f;
     static constexpr float _volleyShotSpacing = 0.25f;
     static constexpr float _scatterImpulse = 1700.f;
+    static constexpr float _navTargetReachDistance = 26.f;
+    static constexpr float _navTargetRefreshDistance = 42.f;
+    static constexpr float _navTargetLockDuration = 0.18f;
+    static constexpr float _escapeDuration = 0.35f;
+    static constexpr float _escapeBlendStrength = 0.82f;
+    static constexpr float _stuckPropSearchRadius = 180.f;
     static constexpr int _bossBaseExpValue = 15;
     // Hurtbox: this is intentionally generous so the player's sword can connect
     // cleanly against the large boss sprite even though the art has a lot of

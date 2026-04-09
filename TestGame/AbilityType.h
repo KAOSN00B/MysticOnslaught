@@ -24,16 +24,15 @@
 //   4. Engine spawns the matching projectile(s) or triggers the cinematic.
 //
 // RESOURCE FLOW:
-//   Mana   — restored by ManaGemPickup (+30 mana).
+//   Mana   — restored by ManaGemPickup (+18 mana).
 //   Health — restored by HealPickup    (+1 HP).
 //   Both drop at ~22% chance per enemy kill, 50/50 between heal and mana.
 //   Timed pickups also spawn on a fixed interval (faster during boss waves).
 //
-// SHELVED SYSTEMS (code exists but is unreachable in normal gameplay):
-//   SwordBeam  — old directional projectile, no UpgradeType to learn it.
-//   FreezeWave — old area freeze wave, no UpgradeType to learn it.
-//   FireBallPickup / SwordBeamPickup / FreezePickup — replaced by mana system.
-//   See [SHELVED] markers in Engine.h and Character.h for details.
+// REMOVED SYSTEMS:
+//   FireBallPickup / SwordBeamPickup / FreezePickup / SwordBeamProjectile /
+//   FreezeProjectile / FireballProjectile — old ammo-pickup combat model.
+//   Replaced by the mana economy. Source files kept on disk, removed from build.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // All learnable ability types. New abilities are added here first.
@@ -95,13 +94,13 @@ inline int GetAbilityManaCost(AbilityType type)
     case AbilityType::FireBolt:
     case AbilityType::IceBolt:
     case AbilityType::ElectricBolt:
-        return 2;   // single shot costs less than the 8-way burst
+        return 4;   // stronger single-target spell, higher mana commitment
     case AbilityType::FireUltimate:
     case AbilityType::IceUltimate:
     case AbilityType::ElectricUltimate:
         return 1;   // needs at least 1 mana; actual cast drains everything
     default:
-        return 3;   // spread abilities
+        return 2;   // spread is the bread-and-butter crowd-clear cast
     }
 }
 

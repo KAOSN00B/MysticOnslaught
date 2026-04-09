@@ -74,6 +74,17 @@ public:
     bool IsDashing() const { return _isDashing; }
     void SetCombatLocked(bool locked) { _combatLocked = locked; }
 
+    // ── Touch input (set by Engine each frame before Update) ─────────────────
+    // joystickDir is a [-1,1] normalised vector from the virtual joystick.
+    // The two "JustPressed" flags are consumed inside HandleInput /
+    // HandleAttackInput and must be set BEFORE Character::Update is called.
+    void SetTouchDirection(Vector2 dir)  { _touchMoveDir = dir; }
+    void SetTouchAttack()                { _touchAttackJustPressed = true; }
+    void SetTouchDash()                  { _touchDashJustPressed   = true; }
+    // Engine sets this once when starting a run so HandleAttackInput knows to
+    // suppress the mouse melee path even when no real touches are present.
+    void SetTouchModeEnabled(bool on)    { _touchModeEnabled = on; }
+
     // ── Dynamic ability slot system ──────────────────────────────────────────
     // Learns an ability if not already known and a slot is free.
     // Returns true if successfully learned.
@@ -83,12 +94,6 @@ public:
     AbilityType GetLearnedAbility(int slot) const;
     int  GetLearnedCount()     const { return _learnedCount; }
     int  GetMaxAbilitySlots()  const { return _maxAbilitySlots; }
-
-    // Ammo stubs — kept so FireBallPickup/SwordBeamPickup/FreezePickup still compile.
-    // Delete those pickup files from the project to remove these.
-    void AddFireballAmmo(int)  {}
-    void AddSwordBeamAmmo(int) {}
-    void AddFreezeAmmo(int)    {}
 
     // Full keybindings — includes movement, dash, attack, and ability slots
     const KeyBindings& GetBindings() const { return _bindings; }
@@ -127,6 +132,12 @@ public:
     int   GetMana()    const { return _mana; }
     int   GetMaxMana() const { return _maxMana; }
 
+    // Passive mana regen — decay curve so regen slows as mana fills.
+    // rate = kManaRegenBase * _manaRegenMultiplier * (remaining / max)
+    // At base ×1.0 with max=10: ~2/s empty, ~1/s half-full, ~0.2/s near-full.
+    // _manaRegenMultiplier scales via upgrades and (eventually) the store.
+    static constexpr float kManaRegenBase = 2.0f;
+
     // Defense & upgrade
     float GetDefense() const { return _defense; }
     void  ApplyUpgrade(UpgradeType type);
@@ -139,10 +150,11 @@ public:
     float GetAbilityDamageMultiplier() const { return _abilityDamageMultiplier; }
     int   GetSpecialDamageBonus()     const;
     // Spread ability damage — all elements share the same base for now
-    int   GetSpreadHitDamage()   const;
-    int   GetSpreadBurnDamage()  const;   // fire element DoT tick
-    int   GetBoltHitDamage()     const;
-    int   GetBoltBurnDamage()    const;   // fire bolt DoT tick
+    int   GetSpreadHitDamage(AbilityType type)   const;
+    int   GetSpreadBurnDamage(AbilityType type)  const;   // fire element DoT tick
+    int   GetBoltHitDamage(AbilityType type)     const;
+    int   GetBoltBurnDamage(AbilityType type)    const;   // fire bolt DoT tick
+    int   GetUltimateHitDamage(AbilityType type) const;
 
 private:
     void HandleInput();
@@ -151,6 +163,7 @@ private:
     bool HandleForcedPush(float dt);
     void UpdatePendingBurns(float dt);
     void ApplyBurnTickDamage(float damage, Vector2 sourcePos);
+    int GetAbilityUpgradeBonus(AbilityType type) const;
 
     void HandleAnimation(float dt);
     bool Dashing(float dt);
@@ -161,6 +174,12 @@ private:
     Vector2 _direction{};
     Vector2 _dashDirection{};
     Vector2 _forcedPushDirection{};
+
+    // Touch-input state set by Engine before Character::Update
+    Vector2 _touchMoveDir{};
+    bool    _touchAttackJustPressed = false;
+    bool    _touchDashJustPressed   = false;
+    bool    _touchModeEnabled       = false;
 
     bool _attacking = false;
     bool _damageApplied = false;
@@ -206,8 +225,8 @@ private:
     int _expToNextLevel = 10;
     static constexpr int _maxLevel = 20;
 
-    int   _mana    = 60;
-    int   _maxMana = 60;
+    int   _mana    = 0;
+    int   _maxMana = 10;
     float _defense = 0.f;           // 0.0 – 1.0 damage reduction fraction
     float _attackRangeMultiplier = 1.f;
 
@@ -223,11 +242,14 @@ private:
     };
     std::vector<PendingBurnTick> _pendingBurnTicks;
 
-    float _abilityDamageMultiplier = 1.0f;   // grows by +0.25 each time an ability is levelled up
+    float _manaRegenAccum      = 0.f;    // fractional accumulator — avoids float drift on int mana
+    float _manaRegenMultiplier = 1.0f;   // boosted by upgrades / future store purchases
+    float _abilityDamageMultiplier = 1.0f;   // reserved for future global spell mods
 
     // Base ability damage values
     static constexpr float _spreadBaseDamage     = 1.0f;
     static constexpr float _spreadBurnBaseDamage = 1.0f;
     static constexpr float _boltBaseDamage       = 3.0f;   // single shot, 3× spread
     static constexpr float _boltBurnBaseDamage   = 2.0f;
+    static constexpr float _ultimateBaseDamage   = 4.0f;
 };

@@ -12,17 +12,17 @@
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
 #include "Pickup.h"
-// [SHELVED] FireBallPickup.h / SwordBeamPickup.h / FreezePickup.h
-//   These ammo-pickup classes are no longer spawned. Engine used to hand out
-//   ability ammo via pickups; that system was replaced by the mana economy.
-//   The .cpp files are still in the project so they compile, but Engine has no
-//   dependency on them. Remove from .vcxproj when confirmed safe to delete.
+// FireBallPickup / SwordBeamPickup / FreezePickup / SwordBeamProjectile /
+// FreezeProjectile / FireballProjectile — removed from vcxproj.
+// These were the old ammo-pickup combat system, replaced by the mana economy.
+// The .cpp/.h source files are still on disk but no longer compiled.
 #include "HealPickup.h"
 #include "ManaGemPickup.h"
 #include "SpreadProjectile.h"
 #include "CyclopsLaserProjectile.h"
 #include "LavaBallProjectile.h"
 #include "Leaderboard.h"
+#include "TouchControls.h"
 
 #include <vector>
 #include <string>
@@ -134,6 +134,11 @@ private:
     void DrawAbilityChoice();
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
+
+    // Touch-mode helpers
+    void UpdateTouchControls();
+    void DrawTouchAbilityArc();
+    void ScanAbilityArcTaps();
     void SaveKeybindings();
     void LoadKeybindings();
     int GetActiveEnemyCount() const;
@@ -330,4 +335,11 @@ private:
     float _biomeTransitionTimer = 0.f;
 
     Leaderboard _leaderboard;
+
+    // ── Touch mode ───────────────────────────────────────────────────────────
+    bool          _touchModeActive = false;
+    TouchControls _touch;
+    // Touch IDs that have already triggered an ability cast this press.
+    // Cleared each frame when the touch lifts; prevents repeat casts on hold.
+    std::vector<int> _abilityTapSeenIds;
 };

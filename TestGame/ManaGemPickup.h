@@ -1,6 +1,16 @@
 #pragma once
 #include "Pickup.h"
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ManaGemPickup — LEGACY / NOT CURRENTLY SPAWNED
+//
+// Mana is now restored by passive regeneration (Character::kManaRegenPerSecond).
+// This class is kept on disk and compiles cleanly, but it is not referenced by
+// SpawnEnemyDrop or SpawnTimedPickup.
+//
+// Store hook: if a future store sells mana refills, this class (or a variant)
+// can be re-activated as the delivery mechanism for that purchase.
+// ─────────────────────────────────────────────────────────────────────────────
 class ManaGemPickup : public Pickup
 {
 public:

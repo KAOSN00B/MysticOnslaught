@@ -123,8 +123,9 @@ void Character::Init()
     _expToNextLevel = 15;
     _pendingBurnTicks.clear();
 
-    _mana    = 60;
-    _maxMana = 60;
+    _mana                = 0;
+    _maxMana             = 10;
+    _manaRegenMultiplier = 1.0f;
     _abilityDamageMultiplier = 1.0f;
     _defense = 0.f;
     _attackRangeMultiplier = 1.5f;
@@ -141,6 +142,25 @@ void Character::Init()
 void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;
+
+    // Passive mana regen — decay curve so it fills fast when empty and slows
+    // near full. rate = kManaRegenBase * multiplier * (remaining / max).
+    // _manaRegenMultiplier is boosted by upgrades / future store items.
+    if (_mana < _maxMana)
+    {
+        float remaining = (float)(_maxMana - _mana) / (float)_maxMana;
+        _manaRegenAccum += kManaRegenBase * _manaRegenMultiplier * remaining * dt;
+        if (_manaRegenAccum >= 1.f)
+        {
+            int gained = (int)_manaRegenAccum;
+            _manaRegenAccum -= (float)gained;
+            _mana = std::min(_mana + gained, _maxMana);
+        }
+    }
+    else
+    {
+        _manaRegenAccum = 0.f;
+    }
 
     ApplyVelocity(dt);
     UpdateHit(dt);
@@ -190,20 +210,38 @@ void Character::HandleInput()
 
     _direction = Vector2Zero();
 
-    if (IsKeyDown(_bindings.moveLeft))  _direction.x -= 1;
-    if (IsKeyDown(_bindings.moveRight)) _direction.x += 1;
-    if (IsKeyDown(_bindings.moveUp))    _direction.y -= 1;
-    if (IsKeyDown(_bindings.moveDown))  _direction.y += 1;
+    if (!_touchModeEnabled)
+    {
+        // Keyboard movement (disabled in touch mode)
+        if (IsKeyDown(_bindings.moveLeft))  _direction.x -= 1;
+        if (IsKeyDown(_bindings.moveRight)) _direction.x += 1;
+        if (IsKeyDown(_bindings.moveUp))    _direction.y -= 1;
+        if (IsKeyDown(_bindings.moveDown))  _direction.y += 1;
+    }
 
-    // Ability hotkeys — blocked during wave intro or other combat-locked states
+    // Virtual joystick (only active in touch mode, zero otherwise)
+    _direction.x += _touchMoveDir.x;
+    _direction.y += _touchMoveDir.y;
+
+    // Clamp combined input to unit circle
+    if (Vector2Length(_direction) > 1.f)
+        _direction = Vector2Normalize(_direction);
+
+    // Ability hotkeys and dash — blocked during wave intro or other combat-locked states
     if (_combatLocked)
         return;
 
-    for (int i = 0; i < _learnedCount; i++)
-        if (_bindings.ability[i] != KEY_NULL && IsKeyPressed(_bindings.ability[i]))
-            TriggerAbilityCast(i);
+    if (!_touchModeEnabled)
+    {
+        for (int i = 0; i < _learnedCount; i++)
+            if (_bindings.ability[i] != KEY_NULL && IsKeyPressed(_bindings.ability[i]))
+                TriggerAbilityCast(i);
+    }
 
-    if (IsKeyPressed(_bindings.dash) && !_isDashing && _dashCooldown <= 0.f)
+    bool dashTrigger = (!_touchModeEnabled && IsKeyPressed(_bindings.dash)) || _touchDashJustPressed;
+    _touchDashJustPressed = false; // always consume
+
+    if (dashTrigger && !_isDashing && _dashCooldown <= 0.f)
     {
         // Cancel any ongoing attack or cast so movement isn't blocked after the dash
         _attacking = false;
@@ -263,8 +301,40 @@ void Character::HandleAttackInput()
     if (_takingDamage || _dying || _isDashing || IsForceLocked() || _combatLocked)
         return;
 
-    bool attackPressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
-                         (_bindings.attack != KEY_NULL && IsKeyPressed(_bindings.attack));
+    bool attackPressed = false;
+
+    // In touch mode (real device OR mouse-simulated), all melee triggers come
+    // from the dedicated ATK button — not from raw mouse clicks — to prevent
+    // the joystick/drag from accidentally firing attacks.
+    if (_touchModeEnabled)
+    {
+        attackPressed = _touchAttackJustPressed;
+    }
+    else
+    {
+        // Mouse clicks on the bottom ability bar should not also count as melee
+        // attacks. The HUD resolves those clicks into TriggerAbilityCast during
+        // draw, so block the base attack path when the press lands in that UI row.
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            static constexpr float kSlotSize = 80.f;
+            static constexpr float kSlotGap  = 10.f;
+            static constexpr float kBottomPad = 12.f;
+            const int   totalSlots = _maxAbilitySlots;
+            const float totalW     = totalSlots * kSlotSize + (totalSlots - 1) * kSlotGap;
+            const float startX     = GetScreenWidth() / 2.f - totalW / 2.f;
+            const float slotY      = (float)GetScreenHeight() - kBottomPad - kSlotSize;
+            Rectangle abilityBarBounds{ startX, slotY, totalW, kSlotSize };
+
+            if (CheckCollisionPointRec(GetMousePosition(), abilityBarBounds))
+                return;
+        }
+
+        attackPressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+                        (_bindings.attack != KEY_NULL && IsKeyPressed(_bindings.attack));
+    }
+
+    _touchAttackJustPressed = false; // always consume
 
     if (!_attacking && !_castingAbility && attackPressed)
     {
@@ -277,7 +347,6 @@ void Character::HandleAttackInput()
         _updateTime = _attackUpdateTime;
         PlayAttackSound();
     }
-
 }
 
 void Character::TriggerAbilityCast(int slot)
@@ -820,40 +889,43 @@ int Character::ConsumeHealEffectRequests()
 
 int Character::GetSpecialDamageBonus() const
 {
-    // Specials now use flat damage bonuses instead of percentages so the
-    // player's growth stays easy to read. The bonus still ramps by level band
-    // rather than every single level to keep pickup abilities powerful without
-    // letting them completely replace melee.
-    if (_level <= 2)
+    // Raw level no longer grants hidden spell damage. Spell growth now comes
+    // from upgrading that specific learned ability on the boss reward screen.
+    return 0;
+}
+
+int Character::GetAbilityUpgradeBonus(AbilityType type) const
+{
+    int abilityLevel = GetAbilityLevel(type);
+    if (abilityLevel <= 1)
         return 0;
 
-    if (_level <= 5)
-        return 1;
-
-    if (_level <= 8)
-        return 2;
-
-    return 3;
+    return abilityLevel - 1;
 }
 
-int Character::GetSpreadHitDamage() const
+int Character::GetSpreadHitDamage(AbilityType type) const
 {
-    return (int)((_spreadBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
+    return (int)((_spreadBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
 }
 
-int Character::GetSpreadBurnDamage() const
+int Character::GetSpreadBurnDamage(AbilityType type) const
 {
-    return (int)((_spreadBurnBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
+    return (int)((_spreadBurnBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
 }
 
-int Character::GetBoltHitDamage() const
+int Character::GetBoltHitDamage(AbilityType type) const
 {
-    return (int)((_boltBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
+    return (int)((_boltBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
 }
 
-int Character::GetBoltBurnDamage() const
+int Character::GetBoltBurnDamage(AbilityType type) const
 {
-    return (int)((_boltBurnBaseDamage + GetSpecialDamageBonus()) * _abilityDamageMultiplier);
+    return (int)((_boltBurnBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
+}
+
+int Character::GetUltimateHitDamage(AbilityType type) const
+{
+    return (int)((_ultimateBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
 }
 
 void Character::AddExp(int amount)
@@ -939,6 +1011,7 @@ void Character::ApplyUpgrade(UpgradeType type)
     case UpgradeType::ArcaneMind:
         _maxMana += 25;
         _mana = std::min(_mana + 25, _maxMana);
+        _manaRegenMultiplier += 0.20f;   // +20% regen speed
         break;
     case UpgradeType::IronSkin:
         _defense = std::min(_defense + 0.08f, 0.60f);
@@ -975,6 +1048,7 @@ void Character::ApplyUpgrade(UpgradeType type)
         _maxMana += 30;
         _mana = std::min(_mana + 30, _maxMana);
         _attackPower *= 1.15f;
+        _manaRegenMultiplier += 0.25f;   // +25% regen speed (epic bonus)
         break;
     case UpgradeType::LearnFireSpread:
         LearnAbility(AbilityType::FireSpread);
@@ -1053,7 +1127,6 @@ void Character::UpgradeAbility(AbilityType type)
         if (_learnedAbilities[i] == type && _abilityLevels[i] < 3)
         {
             _abilityLevels[i]++;
-            _abilityDamageMultiplier += 0.25f;
             return;
         }
     }

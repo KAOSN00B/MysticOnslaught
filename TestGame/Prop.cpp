@@ -41,11 +41,13 @@ Rectangle Prop::GetCollisionRec() const
     float hitboxWidth  = (_frameCount > 1 ? (float)_frameWidth  : (float)_texture.width)  * _scale;
     float hitboxHeight = (_frameCount > 1 ? (float)_frameHeight : (float)_texture.height) * _scale;
 
+    float topInset  = hitboxHeight * _collisionTopFraction;
+    float sideInset = hitboxWidth  * _collisionSideFraction;
     return Rectangle{
-        _worldPos.x,
-        _worldPos.y,
-        hitboxWidth,
-        hitboxHeight
+        _worldPos.x + sideInset,
+        _worldPos.y + topInset,
+        hitboxWidth  - sideInset * 2.f,
+        hitboxHeight - topInset
     };
 }
 

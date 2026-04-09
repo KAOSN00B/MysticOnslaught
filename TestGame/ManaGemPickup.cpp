@@ -45,7 +45,7 @@ void ManaGemPickup::Draw(Vector2 worldOffset)
 
 void ManaGemPickup::OnCollect(Character& player)
 {
-    player.RestoreMana(20);
+    player.RestoreMana(18);
     _isActive = false;
 }
 
