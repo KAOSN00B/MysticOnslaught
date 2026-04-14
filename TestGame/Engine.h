@@ -54,6 +54,7 @@ enum class GameState
     Keybindings,
     LevelUpChoice,
     AbilityChoice,
+    ExpTally,       // post-battle EXP tally screen — bar fills, level-ups interrupt
     Map,            // Slay-the-Spire–style act map — player clicks a node to enter the next room
 };
 
@@ -146,6 +147,10 @@ private:
     void DrawAbilityChoice();
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
+
+    // ── EXP Tally screen ─────────────────────────────────────────────────────
+    void UpdateExpTally(float dt);
+    void DrawExpTally();
 
     // ── Room-based run progression ────────────────────────────────────────────
     void StartNextRoom(RoomType type);    // internal setup helper (biome + wave intro)
@@ -273,6 +278,14 @@ private:
     bool     _roomClearPending   = false; // combat finished — waiting for player to click Continue
     float    _roomClearTimer     = 0.f;  // non-combat rooms wait before advancing (Rest/Store)
 
+    // EXP tally state
+    float _pendingExp             = 0.f;   // EXP accumulated during combat, drained during tally
+    float _expTallyAccum          = 0.f;   // fractional drain accumulator
+    bool  _expTallyDone           = false; // bar fully drained — show dismiss hint
+    int   _tallyStartLevel        = 1;     // player level when tally begins, to count level-ups
+    int   _tallyLevelUpsRemaining = 0;     // level-up choices still to show after tally
+    bool  _tallyChoiceChaining    = false; // true once player pressed Continue to start chain
+
     // Act map state (Slay-the-Spire–style node graph)
     std::vector<MapNode> _actMap;
     int   _currentMapNodeIdx  = -1;         // index of the node currently in / last completed
@@ -337,6 +350,12 @@ private:
     Texture2D _abilityIconFireTex{};
     Texture2D _abilityIconIceTex{};
     Texture2D _abilityIconElectricTex{};
+
+    // Map node icons (TileSet/MapIcons/)
+    Texture2D _mapIconNormal{};
+    Texture2D _mapIconElite{};
+    Texture2D _mapIconShop{};
+    Texture2D _mapIconTreasure{};
 
     Character _player;
     MainMenu _menu;

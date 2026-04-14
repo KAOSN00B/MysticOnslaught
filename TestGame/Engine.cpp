@@ -224,6 +224,10 @@ Engine::~Engine()
     UnloadTexture(_abilityIconFireTex);
     UnloadTexture(_abilityIconIceTex);
     UnloadTexture(_abilityIconElectricTex);
+    UnloadTexture(_mapIconNormal);
+    UnloadTexture(_mapIconElite);
+    UnloadTexture(_mapIconShop);
+    UnloadTexture(_mapIconTreasure);
     UnloadTexture(_upgradeAttackPowerTex);
     UnloadTexture(_upgradeAttackRangeTex);
     UnloadTexture(_upgradeHealthTex);
@@ -288,6 +292,11 @@ void Engine::Init()
     _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
     _abilityIconIceTex      = LoadTexture(AssetPath("PowerUps/IceSpellPickup.png").c_str());
     _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
+
+    _mapIconNormal   = LoadTexture(AssetPath("TileSet/MapIcons/NormalRoom.png").c_str());
+    _mapIconElite    = LoadTexture(AssetPath("TileSet/MapIcons/EliteRoom.png").c_str());
+    _mapIconShop     = LoadTexture(AssetPath("TileSet/MapIcons/ShopRoom.png").c_str());
+    _mapIconTreasure = LoadTexture(AssetPath("TileSet/MapIcons/TreasureRoom.png").c_str());
 
     _upgradeAttackPowerTex = LoadTexture(AssetPath("UI/Upgrades/AttackPower.png").c_str());
     _upgradeAttackRangeTex = LoadTexture(AssetPath("UI/Upgrades/AttackRange.png").c_str());
@@ -399,6 +408,11 @@ RoomType Engine::PickRoomTypeForRow(int row)
 // Builds the full 6-row directed-acyclic node graph for the current act.
 // Row 0 = entry (Standard), rows 1-4 = branching options, row 5 = Boss.
 // All rows and connections are visible immediately (Slay the Spire style).
+//
+// Rest and Treasure rules:
+//   • 2-row gap — never in rows 1 or 2 (player must fight first).
+//   • Same-row — both live in one chosen "special row" (3 or 4) as separate
+//     nodes, forcing the player to pick a path: heal OR loot, never both.
 void Engine::GenerateActMap()
 {
     _actMap.clear();
@@ -412,11 +426,37 @@ void Engine::GenerateActMap()
     for (int r = 1; r <= 4; r++)
         rowCounts[r] = GetRandomValue(1, 3);
 
+    // ── Pre-plan Rest / Treasure placement ────────────────────────────────
+    // Both types land in one "special row" (3 or 4) as separate nodes so the
+    // player must choose a path — they cannot reach both in the same run.
+    bool hasRest     = (GetRandomValue(0, 9) < 7);  // 70% chance per act
+    bool hasTreasure = (GetRandomValue(0, 9) < 6);  // 60% chance per act
+    int  specialRow  = GetRandomValue(3, 4);         // only rows 3 or 4
+
+    int specialCount = (hasRest ? 1 : 0) + (hasTreasure ? 1 : 0);
+    // Make sure the special row has enough nodes for both (max 3 total).
+    if (specialCount > rowCounts[specialRow])
+        rowCounts[specialRow] = std::min(3, specialCount);
+
+    // Build a shuffled type list for the special row:
+    // fill special types first, pad remaining slots with Standard/Elite.
+    std::vector<RoomType> specialTypes;
+    if (hasRest)     specialTypes.push_back(RoomType::Rest);
+    if (hasTreasure) specialTypes.push_back(RoomType::Treasure);
+    while ((int)specialTypes.size() < rowCounts[specialRow])
+        specialTypes.push_back((GetRandomValue(0, 1) == 0) ? RoomType::Standard : RoomType::Elite);
+    // Fisher-Yates shuffle using Raylib RNG
+    for (int i = (int)specialTypes.size() - 1; i > 0; i--)
+        std::swap(specialTypes[i], specialTypes[GetRandomValue(0, i)]);
+
     // ── 2. Create nodes ───────────────────────────────────────────────────
     int rowStart[6];
+    int specialSlot = 0;   // index into specialTypes for the special row
     for (int r = 0; r < 6; r++)
     {
         rowStart[r] = (int)_actMap.size();
+        if (r == specialRow) specialSlot = 0;
+
         for (int i = 0; i < rowCounts[r]; i++)
         {
             MapNode n;
@@ -424,12 +464,23 @@ void Engine::GenerateActMap()
             n.normX = (rowCounts[r] == 1) ? 0.5f
                       : 0.2f + (float)i / (rowCounts[r] - 1) * 0.6f;
 
-            if (r == 0)       n.type = RoomType::Standard;
-            else if (r == 5)  n.type = RoomType::Boss;
-            else              n.type = PickRoomTypeForRow(r);
+            if (r == 0)             { n.type = RoomType::Standard; }
+            else if (r == 5)        { n.type = RoomType::Boss; }
+            else if (r == specialRow)
+            {
+                n.type = specialTypes[specialSlot++];
+            }
+            else
+            {
+                // All other rows: Standard / Elite / Store only — no Rest or Treasure.
+                RoomType t = PickRoomTypeForRow(r);
+                if (t == RoomType::Rest || t == RoomType::Treasure)
+                    t = (GetRandomValue(0, 1) == 0) ? RoomType::Standard : RoomType::Elite;
+                n.type = t;
+            }
 
-            n.available  = (r == 0);   // only the entry node starts clickable
-            n.completed  = false;
+            n.available = (r == 0);
+            n.completed = false;
             _actMap.push_back(n);
         }
     }
@@ -495,11 +546,12 @@ void Engine::GenerateActMap()
 
     // ── 4. Compute draw positions ─────────────────────────────────────────
     // Boss (row 5) sits at the top; entry (row 0) at the bottom.
+    // Map is shifted right to leave room for the stats/legend panel on the left.
     const float mapTop  = 130.f;
     const float mapBot  = (float)_windowHeight - 110.f;
     const float rowH    = (mapBot - mapTop) / 5.f;
-    const float mapLeft = (float)_windowWidth  * 0.20f;
-    const float mapRight= (float)_windowWidth  * 0.80f;
+    const float mapLeft = (float)_windowWidth  * 0.30f;
+    const float mapRight= (float)_windowWidth  * 0.97f;
 
     for (auto& node : _actMap)
     {
@@ -763,6 +815,10 @@ void Engine::Update(float dt)
             _abilityChoiceOpenTimer -= dt;
         break;
 
+    case GameState::ExpTally:
+        UpdateExpTally(dt);
+        break;
+
     case GameState::Map:
         if (_mapOpenTimer > 0.f)
         {
@@ -997,36 +1053,24 @@ void Engine::UpdateGamePlay(float dt)
         else if (!_roomClearPending && GetActiveEnemyCount() == 0)
         {
             // After the very first room clears, guarantee a level-up.
+            // Bank the top-up into _pendingExp so the tally screen handles it.
             if (_wave == 1 && !_wave1LevelUpDone)
             {
                 _wave1LevelUpDone = true;
-                int prevLevel  = _player.GetLevel();
-                int remaining  = _player.GetExpToNext() - _player.GetExp();
+                int alreadyPending = (int)_pendingExp;
+                int remaining = _player.GetExpToNext() - _player.GetExp() - alreadyPending;
                 if (remaining > 0)
-                    _player.AddExp(remaining);
-                if (_player.GetLevel() > prevLevel)
-                {
-                    GenerateLevelUpOptions();
-                    _levelUpReturnState = GameState::Play;
-                    _levelUpOpenTimer   = 0.25f;
-                    _gameState          = GameState::LevelUpChoice;
-                    return;
-                }
+                    _pendingExp += remaining;
             }
 
-            // Boss room cleared — offer ability upgrade (AbilityChoice is its own break).
-            if (_currentRoomType == RoomType::Boss && _lastAbilityChoiceWave != _wave)
-            {
-                _lastAbilityChoiceWave  = _wave;
-                GenerateAbilityChoiceOptions();
-                _abilityChoiceOpenTimer = 0.5f;
-                _pendingRoomChoice      = true;  // after picking ability → new act map
-                _gameState = GameState::AbilityChoice;
-                return;
-            }
-
-            // All other combat rooms: wait for the player to deliberately advance.
-            _roomClearPending = true;
+            // Transition to post-battle EXP tally.
+            // Boss AbilityChoice is triggered from UpdateExpTally once the tally finishes.
+            _expTallyDone           = false;
+            _expTallyAccum          = 0.f;
+            _tallyStartLevel        = _player.GetLevel();
+            _tallyLevelUpsRemaining = 0;
+            _tallyChoiceChaining    = false;
+            _gameState              = GameState::ExpTally;
         }
 
         _navRefreshTimer -= dt;
@@ -1369,6 +1413,14 @@ void Engine::Draw()
         break;
     }
 
+    case GameState::ExpTally:
+    {
+        DrawWorld();
+        DrawHUD();
+        DrawExpTally();
+        break;
+    }
+
     case GameState::Map:
     {
         DrawMap();
@@ -1587,22 +1639,15 @@ void Engine::UpdateEnemyCount(float dt)
             //  Boss kill    → flat bonus of 10 × rooms-entered (grows each act)
             //  Support add  → no exp while boss is alive (block easy farming)
             //  Normal enemy → standard per-enemy exp
+            // EXP is banked into _pendingExp and drained on the post-battle tally screen.
             bool isBoss = (dynamic_cast<Molarbeast*>(enemy.get()) != nullptr);
-            int prevLevel = _player.GetLevel();
 
             if (isBoss)
-                _player.AddExp(10 * _wave);  // _wave = total rooms entered
+                _pendingExp += 10.f * _wave;
             else if (!IsBossFightActive())
-                _player.AddExp(enemy->GetExpValue());
+                _pendingExp += (float)enemy->GetExpValue();
             // else: support add during active boss fight — no exp
 
-            if (_player.GetLevel() > prevLevel)
-            {
-                GenerateLevelUpOptions();
-                _levelUpReturnState = GameState::Play;
-                _levelUpOpenTimer = 0.25f;
-                _gameState = GameState::LevelUpChoice;
-            }
             _enemiesKilled++;
             SpawnEnemyDrop(dropPos);
             enemy->SetActive(false);
@@ -1696,7 +1741,6 @@ void Engine::DrawHUD()
     const float hpBarY   = kNewTopPad;
     const float manaBarY = hpBarY + kNewBarH + kNewBarGap;
     const float slotY    = (float)GetScreenHeight() - kNewBotPad - 80.f;
-    const float expBarY  = slotY - 14.f - kNewBarH;
     const float barX     = (float)GetScreenWidth() / 2.f - kNewBarW / 2.f;
 
     auto drawLabelBox = [&](const char* text, float x, float y, int fontSize, Color textColor)
@@ -1761,29 +1805,6 @@ void Engine::DrawHUD()
             (int)(barX + kNewBarW / 2.f - manaLabelW / 2.f),
             (int)(manaBarY + kNewBarH / 2.f - 9.f),
             18, RAYWHITE);
-    }
-
-    {
-        int level = _player.GetLevel();
-        int exp = _player.GetExp();
-        int expToNext = _player.GetExpToNext();
-        int maxLevel = _player.GetMaxLevel();
-        float expPct = (level < maxLevel && expToNext > 0) ? (float)exp / (float)expToNext : 1.f;
-        static const Color kExpFill = { 255, 210, 0, 230 };
-
-        DrawRectangleRounded({ barX, expBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
-        if (level < maxLevel)
-            DrawRectangleRounded({ barX, expBarY, kNewBarW * expPct, kNewBarH }, 0.3f, 6, kExpFill);
-        DrawRectangleRoundedLines({ barX, expBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
-
-        const char* levelText = (level < maxLevel)
-            ? TextFormat("Lv.%d  %d/%d EXP", level, exp, expToNext)
-            : "Lv.MAX";
-        int textW = MeasureText(levelText, 18);
-        DrawText(levelText,
-            (int)(barX + kNewBarW / 2.f - textW / 2.f),
-            (int)(expBarY + kNewBarH / 2.f - 9.f),
-            18, kExpFill);
     }
 
     if (_touchModeActive)
@@ -2555,6 +2576,188 @@ void Engine::DrawAbilityChoice()
     }
 }
 
+// ── UpdateExpTally ────────────────────────────────────────────────────────────
+// Drains _pendingExp into the player at 50 EXP/sec with NO interruptions.
+// Once the bar is full the player presses Continue, then level-up choices
+// fire (one per level gained).  Skip input drains the remainder instantly.
+void Engine::UpdateExpTally(float dt)
+{
+    bool skip = IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_M)
+             || (_touchModeActive && IsMouseButtonPressed(MOUSE_LEFT_BUTTON));
+
+    if (_expTallyDone)
+    {
+        // Auto-chain remaining level-up choices (no extra press needed after the first).
+        if (_tallyChoiceChaining && _tallyLevelUpsRemaining > 0)
+        {
+            _tallyLevelUpsRemaining--;
+            GenerateLevelUpOptions();
+            _levelUpReturnState = GameState::ExpTally;
+            _levelUpOpenTimer   = 0.25f;
+            _gameState          = GameState::LevelUpChoice;
+            return;
+        }
+
+        if (skip)
+        {
+            if (_tallyLevelUpsRemaining > 0)
+            {
+                // First Continue press — start chaining level-up choices.
+                _tallyChoiceChaining = true;
+                _tallyLevelUpsRemaining--;
+                GenerateLevelUpOptions();
+                _levelUpReturnState = GameState::ExpTally;
+                _levelUpOpenTimer   = 0.25f;
+                _gameState          = GameState::LevelUpChoice;
+            }
+            else
+            {
+                // No (more) level-ups — advance to next phase.
+                _tallyChoiceChaining = false;
+                if (_currentRoomType == RoomType::Boss && _lastAbilityChoiceWave != _wave)
+                {
+                    _lastAbilityChoiceWave  = _wave;
+                    GenerateAbilityChoiceOptions();
+                    _abilityChoiceOpenTimer = 0.5f;
+                    _pendingRoomChoice      = true;
+                    _gameState = GameState::AbilityChoice;
+                }
+                else
+                {
+                    _roomClearPending = true;
+                    _gameState = GameState::Play;
+                }
+            }
+        }
+        return;
+    }
+
+    // ── Bar still draining ────────────────────────────────────────────────────
+
+    if (skip)
+    {
+        // Instantly drain all remaining EXP — no level-up interruption during drain.
+        if (_pendingExp > 0.f)
+        {
+            _player.AddExp((int)_pendingExp);
+            _pendingExp    = 0.f;
+            _expTallyAccum = 0.f;
+        }
+        _tallyLevelUpsRemaining = _player.GetLevel() - _tallyStartLevel;
+        _expTallyDone = true;
+        return;
+    }
+
+    // Animated drain — 50 EXP per second, no interruptions.
+    static constexpr float kDrainRate = 50.f;
+    float drain = std::min(kDrainRate * dt, _pendingExp);
+    _pendingExp    -= drain;
+    _expTallyAccum += drain;
+
+    int wholeExp = (int)_expTallyAccum;
+    if (wholeExp > 0)
+    {
+        _expTallyAccum -= (float)wholeExp;
+        _player.AddExp(wholeExp);   // level-ups handled silently inside AddExp
+    }
+
+    if (_pendingExp <= 0.f)
+    {
+        _pendingExp             = 0.f;
+        _expTallyAccum          = 0.f;
+        _tallyLevelUpsRemaining = _player.GetLevel() - _tallyStartLevel;
+        _expTallyDone           = true;
+    }
+}
+
+// ── DrawExpTally ──────────────────────────────────────────────────────────────
+// Dark overlay drawn on top of the game world showing EXP bar filling and
+// the player's current level.  Dismiss hint appears once the bar is full.
+void Engine::DrawExpTally()
+{
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.65f));
+
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+    const float cx = sw * 0.5f;
+
+    // Title
+    const char* title = "Room Cleared!";
+    static constexpr int kTitleSize = 52;
+    int titleW = MeasureText(title, kTitleSize);
+    DrawText(title, (int)(cx - titleW * 0.5f), (int)(sh * 0.28f), kTitleSize, RAYWHITE);
+
+    // Level display
+    int level    = _player.GetLevel();
+    int maxLevel = _player.GetMaxLevel();
+    const char* levelStr = TextFormat("Level  %d", level);
+    static constexpr int kLevelSize = 38;
+    int levelW = MeasureText(levelStr, kLevelSize);
+    DrawText(levelStr, (int)(cx - levelW * 0.5f), (int)(sh * 0.41f), kLevelSize,
+        Color{ 255, 210, 0, 255 });
+
+    // EXP bar
+    static const Color kExpFill = { 255, 210, 0, 230 };
+    static constexpr float kBarW = 520.f;
+    static constexpr float kBarH = 38.f;
+    const float barX = cx - kBarW * 0.5f;
+    const float barY = sh * 0.51f;
+
+    int curExp    = _player.GetExp();
+    int expToNext = _player.GetExpToNext();
+    float expPct  = (level < maxLevel && expToNext > 0)
+        ? (float)curExp / (float)expToNext : 1.f;
+
+    DrawRectangleRounded({ barX, barY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
+    if (level < maxLevel)
+        DrawRectangleRounded({ barX, barY, kBarW * expPct, kBarH }, 0.3f, 6, kExpFill);
+    DrawRectangleRoundedLines({ barX, barY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.30f));
+
+    const char* expLabel = (level < maxLevel)
+        ? TextFormat("%d / %d  EXP", curExp, expToNext)
+        : "MAX LEVEL";
+    int expLabelW = MeasureText(expLabel, 20);
+    DrawText(expLabel,
+        (int)(cx - expLabelW * 0.5f),
+        (int)(barY + kBarH * 0.5f - 10.f),
+        20, RAYWHITE);
+
+    // Pending EXP still to arrive
+    if (_pendingExp > 0.f)
+    {
+        const char* pendingStr = TextFormat("+%d EXP incoming", (int)_pendingExp);
+        int pendingW = MeasureText(pendingStr, 26);
+        DrawText(pendingStr,
+            (int)(cx - pendingW * 0.5f),
+            (int)(barY + kBarH + 14.f),
+            26, Fade(kExpFill, 0.85f));
+    }
+
+    // Dismiss / skip hint
+    float pulse = 0.60f + 0.40f * sinf((float)GetTime() * 4.f);
+    if (_expTallyDone)
+    {
+        const char* hint;
+        if (_tallyLevelUpsRemaining > 0 && !_tallyChoiceChaining)
+        {
+            // Level-up(s) waiting — tell the player something exciting is coming.
+            hint = _touchModeActive ? "Tap to choose an upgrade!" : "Space / Enter  —  Choose an Upgrade!";
+        }
+        else
+        {
+            hint = _touchModeActive ? "Tap to Continue" : "Space / Enter  to Continue";
+        }
+        int hintW = MeasureText(hint, 26);
+        DrawText(hint, (int)(cx - hintW * 0.5f), (int)(sh * 0.70f), 26, Fade(RAYWHITE, pulse));
+    }
+    else if (!_touchModeActive)
+    {
+        const char* skipHint = "Space / Enter  to skip";
+        int skipW = MeasureText(skipHint, 20);
+        DrawText(skipHint, (int)(cx - skipW * 0.5f), (int)(sh * 0.70f), 20, Fade(RAYWHITE, 0.45f));
+    }
+}
+
 // ── DrawMap ───────────────────────────────────────────────────────────────────
 // Full-screen Slay-the-Spire–style act map.  Shows the entire node graph for
 // the current act; available nodes are highlighted and clickable.
@@ -2568,21 +2771,22 @@ void Engine::DrawMap()
     // ── Background ────────────────────────────────────────────────────────
     DrawRectangle(0, 0, (int)sw, (int)sh, Color{10, 8, 20, 255});
 
-    // ── Header ────────────────────────────────────────────────────────────
+    // ── Header — centred over the map area (right of the panel) ──────────
+    // Map area centre X mirrors GenerateActMap: mapLeft=30%, mapRight=97%.
+    const float mapCentreX = sw * 0.635f;
     std::string header = "Act " + std::to_string(_currentAct)
-                       + "  —  " + GetBiomeName(GetBiomeForAct(_currentAct));
+                       + "  -  " + GetBiomeName(GetBiomeForAct(_currentAct));
     int hSz = 42;
     DrawText(header.c_str(),
-             (int)(sw/2.f - MeasureText(header.c_str(), hSz)/2.f), 28, hSz, GOLD);
-
+        (int)(mapCentreX - MeasureText(header.c_str(), hSz) / 2.f), 28, hSz, GOLD);
     const char* sub = "Choose your path";
-    int subSz = 22;
-    DrawText(sub, (int)(sw/2.f - MeasureText(sub, subSz)/2.f), 78, subSz,
-             Color{180, 180, 180, 200});
+    DrawText(sub,
+        (int)(mapCentreX - MeasureText(sub, 22) / 2.f), 78, 22,
+        Color{180, 180, 180, 200});
 
     if (_actMap.empty()) return;
 
-    // ── Node colour / name helpers ────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────
     auto nodeColor = [](RoomType rt) -> Color {
         switch (rt) {
         case RoomType::Boss:     return Color{220,  40,  40, 255};
@@ -2593,26 +2797,157 @@ void Engine::DrawMap()
         default:                 return Color{ 80, 130, 220, 255};
         }
     };
-    auto nodeName = [](RoomType rt) -> const char* {
+    auto roomIcon = [&](RoomType rt) -> Texture2D* {
         switch (rt) {
-        case RoomType::Boss:     return "BOSS";
-        case RoomType::Elite:    return "ELITE";
-        case RoomType::Rest:     return "REST";
-        case RoomType::Treasure: return "CHEST";
-        case RoomType::Store:    return "SHOP";
-        default:                 return "FIGHT";
+        case RoomType::Standard: return &_mapIconNormal;
+        case RoomType::Elite:    return &_mapIconElite;
+        case RoomType::Store:    return &_mapIconShop;
+        case RoomType::Treasure: return &_mapIconTreasure;
+        default:                 return nullptr; // Rest / Boss keep circles
         }
     };
     auto nodeDesc = [](RoomType rt) -> const char* {
         switch (rt) {
-        case RoomType::Boss:     return "Act finale - ability upgrade on clear";
-        case RoomType::Elite:    return "Harder encounter - better EXP reward";
-        case RoomType::Rest:     return "No combat - heal pickups appear";
-        case RoomType::Treasure: return "No combat - free upgrade card";
-        case RoomType::Store:    return "No combat - shop (coming soon)";
-        default:                 return "Mixed enemies - standard EXP reward";
+        case RoomType::Boss:     return "Act finale  -  ability upgrade on clear";
+        case RoomType::Elite:    return "Harder encounter  -  better EXP reward";
+        case RoomType::Rest:     return "No combat  -  heal pickups appear";
+        case RoomType::Treasure: return "No combat  -  free upgrade card";
+        case RoomType::Store:    return "No combat  -  shop (coming soon)";
+        default:                 return "Mixed enemies  -  standard room reward";
         }
     };
+
+    // ── Left panel: stats + legend ────────────────────────────────────────
+    {
+        const float pX  = 48.f;
+        const float pY  = 98.f;
+        const float pH  = sh - pY - 98.f;
+        const float pW  = 468.f;
+        const float pad = 30.f;
+        const float legendIndent = 20.f;
+        const float titleSize = 28.f;
+        const float statFont = 24.f;
+        const float baseStatRowH = 36.f;
+        const float legendIconSize = 44.f;
+        const float legendLabelSize = 24.f;
+        const float legendDescSize = 17.f;
+        const float baseLegendRowH = 66.f;
+        const float legendGap = 18.f;
+        const float titleToRuleGap = 8.f;
+        const float ruleToRowsGap = 16.f;
+        const float sectionGapBase = 22.f;
+
+        // Pre-calculate content height so the panel can grow to roughly match
+        // the graph height without clipping smaller screens.
+        int statRows = 5;  // Level, HP, MP, Attack, Defense
+        if (_player.GetLevel() < _player.GetMaxLevel()) statRows++;  // EXP row
+        float contentH = pad
+                       + titleSize
+                       + titleToRuleGap
+                       + ruleToRowsGap
+                       + statRows * baseStatRowH
+                       + sectionGapBase
+                       + titleSize
+                       + titleToRuleGap
+                       + ruleToRowsGap
+                       + 6.f * baseLegendRowH
+                       + pad;
+        float panelH = std::max(contentH, pH);
+        float extraSpace = panelH - contentH;
+        float statRowH = baseStatRowH + extraSpace * 0.12f / (float)statRows;
+        float legendRowH = baseLegendRowH + extraSpace * 0.88f / 6.f;
+        float sectionGap = sectionGapBase + extraSpace * 0.08f;
+
+        // Panel background
+        DrawRectangleRounded({ pX, pY, pW, panelH }, 0.05f, 8,
+            Fade(Color{18, 16, 32, 255}, 0.94f));
+        DrawRectangleRoundedLines({ pX, pY, pW, panelH }, 0.05f, 8,
+            Fade(GOLD, 0.22f));
+
+        float cy         = pY + pad;
+        float rightEdge  = pX + pW - pad;
+
+        // ── Stats ──────────────────────────────────────────────────────
+        DrawText("PLAYER STATS", (int)(pX + pad), (int)cy, (int)titleSize, GOLD);
+        cy += titleSize + titleToRuleGap;
+        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(GOLD, 0.40f));
+        cy += ruleToRowsGap;
+
+        // stat row: label left, coloured value right
+        auto statRow = [&](const char* lbl, const char* val, Color valCol = RAYWHITE)
+        {
+            DrawText(lbl, (int)(pX + pad), (int)cy, (int)statFont, Color{155, 155, 185, 220});
+            int vw = MeasureText(val, (int)statFont);
+            DrawText(val, (int)(rightEdge - vw), (int)cy, (int)statFont, valCol);
+            cy += statRowH;
+        };
+
+        statRow("Level",   TextFormat("%d / %d", _player.GetLevel(), _player.GetMaxLevel()));
+
+        float hpPct = (_player.GetMaxHealthValue() > 0.f)
+            ? _player.GetHealthValue() / _player.GetMaxHealthValue() : 0.f;
+        Color hpCol = hpPct > 0.6f ? GREEN : hpPct > 0.30f ? YELLOW : RED;
+        statRow("HP",
+            TextFormat("%d / %d",
+                (int)std::ceil(_player.GetHealthValue()),
+                (int)std::ceil(_player.GetMaxHealthValue())), hpCol);
+
+        statRow("MP",
+            TextFormat("%d / %d", _player.GetMana(), _player.GetMaxMana()),
+            Color{100, 160, 255, 255});
+
+        statRow("Attack",  TextFormat("%d", (int)std::ceil((float)_player.GetMeleeDamage())));
+        statRow("Defense", TextFormat("%d%%", (int)std::ceil(_player.GetDefense() * 100.f)));
+
+        if (_player.GetLevel() < _player.GetMaxLevel())
+            statRow("EXP",
+                TextFormat("%d / %d", _player.GetExp(), _player.GetExpToNext()),
+                Color{220, 190, 50, 220});
+
+        // ── Section divider ────────────────────────────────────────────
+        cy += sectionGap;
+        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(WHITE, 0.12f));
+        cy += 18.f;
+
+        // ── Legend ─────────────────────────────────────────────────────
+        DrawText("LEGEND", (int)(pX + pad), (int)cy, (int)titleSize, GOLD);
+        cy += titleSize + titleToRuleGap;
+        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(GOLD, 0.40f));
+        cy += ruleToRowsGap;
+
+        const float iconX = pX + pad + legendIndent;
+        const float txtX  = iconX + legendIconSize + legendGap;
+
+        auto legendRow = [&](Texture2D* icon, Color circleCol,
+                             const char* name, const char* desc)
+        {
+            float iconY = cy + (legendRowH - legendIconSize) * 0.5f;
+            if (icon && icon->id > 0)
+            {
+                Rectangle src = { 0, 0, (float)icon->width, (float)icon->height };
+                DrawTexturePro(*icon, src, { iconX, iconY, legendIconSize, legendIconSize }, {}, 0.f, WHITE);
+            }
+            else
+            {
+                // Coloured circle for rooms without a PNG icon (Rest, Boss)
+                Vector2 c = { iconX + legendIconSize * 0.5f, iconY + legendIconSize * 0.5f };
+                DrawCircleV(c, legendIconSize * 0.44f, Fade(circleCol, 0.65f));
+                DrawCircleLines((int)c.x, (int)c.y, legendIconSize * 0.44f, circleCol);
+            }
+            float labelY = cy + 3.f;
+            float descY  = cy + legendLabelSize + 7.f;
+            DrawText(name, (int)txtX, (int)labelY, (int)legendLabelSize, RAYWHITE);
+            DrawText(desc, (int)txtX, (int)descY, (int)legendDescSize, Color{130, 130, 155, 200});
+            cy += legendRowH;
+        };
+
+        legendRow(&_mapIconNormal,   { 80,130,220,255 }, "NORMAL",   "Standard combat room");
+        legendRow(&_mapIconElite,    {230,130, 20,255 }, "ELITE",    "Harder room, extra EXP");
+        legendRow(nullptr,           { 60,190, 90,255 }, "REST",     "No combat, heal pickups");
+        legendRow(&_mapIconTreasure, {220,190, 30,255 }, "TREASURE", "Free upgrade card");
+        legendRow(&_mapIconShop,     { 80,190,230,255 }, "SHOP",     "Store room");
+        legendRow(nullptr,           {220, 40, 40,255 }, "BOSS",     "Act finale");
+    }
 
     // ── Connection lines ──────────────────────────────────────────────────
     for (int i = 0; i < (int)_actMap.size(); i++)
@@ -2628,99 +2963,113 @@ void Engine::DrawMap()
     }
 
     // ── Nodes ─────────────────────────────────────────────────────────────
-    const float nodeR = 28.f;
+    static constexpr float kIconSz   = 52.f;
+    static constexpr float kIconHalf = kIconSz * 0.5f;
     int hoveredIdx = -1;
 
     for (int i = 0; i < (int)_actMap.size(); i++)
     {
-        const MapNode& n = _actMap[i];
-        Color ec = nodeColor(n.type);
+        const MapNode& n  = _actMap[i];
+        Color   ec        = nodeColor(n.type);
+        Texture2D* icon   = roomIcon(n.type);
+        bool    hasIcon   = (icon && icon->id > 0);
 
-        bool hov = ready && !n.completed &&
-                   CheckCollisionPointCircle(mouse, n.drawPos, nodeR + 5.f);
+        Rectangle hitRect = { n.drawPos.x - kIconHalf - 4.f,
+                               n.drawPos.y - kIconHalf - 4.f,
+                               kIconSz + 8.f, kIconSz + 8.f };
+        bool hov = ready && !n.completed && CheckCollisionPointRec(mouse, hitRect);
         if (hov) hoveredIdx = i;
 
-        if (n.completed)
+        // Glow halo behind available nodes
+        if (n.available)
         {
-            DrawCircleV(n.drawPos, nodeR, Fade(ec, 0.22f));
-            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR, Fade(ec, 0.40f));
-            DrawCircleV(n.drawPos, 7.f, Fade(ec, 0.55f));   // dim centre dot
-        }
-        else if (n.available)
-        {
-            float pulse  = (float)GetTime();
-            float glow   = 0.22f + 0.10f * sinf(pulse * 3.0f);
-            DrawCircleV(n.drawPos, nodeR + 7.f, Fade(ec, glow));
-            DrawCircleV(n.drawPos, nodeR, Fade(ec, hov ? 0.60f : 0.42f));
-            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR,
-                            hov ? ec : Color{ec.r, ec.g, ec.b, 200});
+            float glow = 0.18f + 0.10f * sinf((float)GetTime() * 3.0f);
+            DrawCircleV(n.drawPos, kIconHalf + 14.f, Fade(ec, glow));
             if (hov)
-                DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR + 5.f,
-                                Fade(ec, 0.45f));
+                DrawCircleV(n.drawPos, kIconHalf + 8.f, Fade(ec, 0.35f));
+        }
+
+        if (hasIcon)
+        {
+            Rectangle src = { 0, 0, (float)icon->width, (float)icon->height };
+            Rectangle dst = { n.drawPos.x - kIconHalf, n.drawPos.y - kIconHalf,
+                               kIconSz, kIconSz };
+            Color tint = n.completed ? Fade(DARKGRAY, 0.45f)
+                       : n.available ? (hov ? WHITE : Fade(WHITE, 0.88f))
+                       :               Fade(WHITE, 0.20f);
+            DrawTexturePro(*icon, src, dst, {}, 0.f, tint);
         }
         else
         {
-            // Future node — visible but greyed
-            DrawCircleV(n.drawPos, nodeR, Fade(ec, 0.14f));
-            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR, Fade(ec, 0.28f));
+            // Circle fallback for Rest (green) and Boss (red)
+            float r = kIconHalf - 2.f;
+            float alpha = n.completed ? 0.28f : n.available ? 0.72f : 0.18f;
+            DrawCircleV(n.drawPos, r, Fade(ec, alpha));
+            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, r,
+                n.available ? ec : Fade(ec, 0.45f));
+            if (n.available && hov)
+                DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, r + 4.f,
+                    Fade(ec, 0.55f));
+            // Label inside circle
+            const char* lbl = (n.type == RoomType::Rest) ? "REST" : "BOSS";
+            int lSz = 13;
+            Color lblC = n.completed ? Fade(LIGHTGRAY, 0.40f)
+                       : n.available ? (hov ? GOLD : RAYWHITE)
+                       : Fade(LIGHTGRAY, 0.35f);
+            DrawText(lbl,
+                (int)(n.drawPos.x - MeasureText(lbl, lSz) / 2.f),
+                (int)(n.drawPos.y - lSz / 2.f), lSz, lblC);
         }
-
-        // Label inside the node
-        const char* nm = nodeName(n.type);
-        int nSz = 13;
-        Color lblC = n.completed ? Fade(LIGHTGRAY, 0.45f) :
-                     n.available ? (hov ? GOLD : RAYWHITE) :
-                     Fade(LIGHTGRAY, 0.40f);
-        DrawText(nm, (int)(n.drawPos.x - MeasureText(nm, nSz)/2.f),
-                 (int)(n.drawPos.y - nSz/2.f), nSz, lblC);
 
         // Click
         if (ready && n.available && !n.completed &&
-            CheckCollisionPointCircle(mouse, n.drawPos, nodeR) &&
+            CheckCollisionPointRec(mouse, hitRect) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
             EnterMapRoom(i);
         }
     }
 
-    // ── Hovered node description ──────────────────────────────────────────
-    if (hoveredIdx >= 0)
-    {
-        const MapNode& hn = _actMap[hoveredIdx];
-        const char* dsc = nodeDesc(hn.type);
-        int dSz = 20;
-        int dw  = MeasureText(dsc, dSz);
-        DrawText(dsc, (int)(sw/2.f - dw/2.f), (int)(sh - 90.f), dSz, LIGHTGRAY);
-    }
-
-    // ── Keyboard-selected node highlight ─────────────────────────────────
+    // ── Keyboard-selected node ring ───────────────────────────────────────
     if (_mapKeySelectedIdx >= 0 && _mapKeySelectedIdx < (int)_actMap.size())
     {
         const MapNode& kn = _actMap[_mapKeySelectedIdx];
         if (kn.available && !kn.completed)
         {
-            // White dashed-style double ring to distinguish from mouse hover
-            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y, nodeR + 7.f,  WHITE);
-            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y, nodeR + 11.f, Fade(WHITE, 0.35f));
+            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y,
+                kIconHalf + 9.f,  WHITE);
+            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y,
+                kIconHalf + 14.f, Fade(WHITE, 0.35f));
         }
     }
 
-    // ── Current node indicator ────────────────────────────────────────────
+    // ── Current-node indicator (yellow ring on last completed node) ───────
     if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
     {
         const MapNode& cur = _actMap[_currentMapNodeIdx];
         if (cur.completed)
-            DrawCircleLines((int)cur.drawPos.x, (int)cur.drawPos.y, nodeR + 9.f,
-                            Fade(YELLOW, 0.55f));
+            DrawCircleLines((int)cur.drawPos.x, (int)cur.drawPos.y,
+                kIconHalf + 11.f, Fade(YELLOW, 0.55f));
+    }
+
+    // ── Hovered node description ──────────────────────────────────────────
+    if (hoveredIdx >= 0)
+    {
+        const char* dsc = nodeDesc(_actMap[hoveredIdx].type);
+        int dSz = 20;
+        DrawText(dsc,
+            (int)(mapCentreX - MeasureText(dsc, dSz) / 2.f),
+            (int)(sh - 90.f), dSz, LIGHTGRAY);
     }
 
     // ── Footer hint ───────────────────────────────────────────────────────
     const char* hint = _touchModeActive
         ? "Tap a highlighted node to enter"
-        : "Click node  or  A/D  ←/→  to select  •  Enter / Space  to confirm";
+        : "Click node  or  A/D  to select  -  Enter / Space  to confirm";
     int ftSz = 18;
-    DrawText(hint, (int)(sw/2.f - MeasureText(hint, ftSz)/2.f),
-             (int)(sh - 55.f), ftSz, Color{140, 140, 140, 170});
+    DrawText(hint,
+        (int)(mapCentreX - MeasureText(hint, ftSz) / 2.f),
+        (int)(sh - 55.f), ftSz, Color{140, 140, 140, 170});
 }
 
 void Engine::DrawLevelUpChoice()
@@ -4822,6 +5171,12 @@ void Engine::ResetRunState()
     _pendingRoomChoice  = false;
     _roomClearPending   = false;
     _roomClearTimer     = 0.f;
+    _pendingExp             = 0.f;
+    _expTallyAccum          = 0.f;
+    _expTallyDone           = false;
+    _tallyStartLevel        = 1;
+    _tallyLevelUpsRemaining = 0;
+    _tallyChoiceChaining    = false;
     _currentMapNodeIdx  = -1;
     _mapKeySelectedIdx  = -1;
     _mapOpenTimer       = 0.f;
