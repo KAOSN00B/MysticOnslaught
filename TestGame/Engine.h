@@ -257,7 +257,8 @@ private:
 
     float _gameOverTimer  = 0.f;
     float _gameOverDelay  = 2.f;
-    float _fadeInTimer   = 0.f;
+    float _fadeInTimer    = 0.f;
+    float _fadeInDuration = 2.f;  // set alongside _fadeInTimer; controls fade speed
     float _bossWarningTimer = 0.f;
     float _levelUpOpenTimer = 0.f;  // blocks card clicks briefly after panel opens
 
@@ -268,14 +269,16 @@ private:
     int      _currentAct      = 1;                  // 1-indexed; advances after each boss clear
     int      _currentRoom     = 0;                  // 1-5 normal + 6 boss within the act
     RoomType _currentRoomType = RoomType::Standard; // drives SpawnEnemies and reward logic
-    bool     _pendingRoomChoice = false;  // after AbilityChoice (boss clear), show new-act map
-    float    _roomClearTimer    = 0.f;   // non-combat rooms wait before advancing (Rest/Store)
+    bool     _pendingRoomChoice  = false; // after AbilityChoice (boss clear), show new-act map
+    bool     _roomClearPending   = false; // combat finished — waiting for player to click Continue
+    float    _roomClearTimer     = 0.f;  // non-combat rooms wait before advancing (Rest/Store)
 
     // Act map state (Slay-the-Spire–style node graph)
     std::vector<MapNode> _actMap;
-    int   _currentMapNodeIdx = -1;          // index of the node currently in / last completed
-    float _mapOpenTimer      = 0.f;         // brief block after the map opens to prevent accidental clicks
-    bool  _startBiomeDungeon = true;        // randomised each run; true = act 1 is Dungeon
+    int   _currentMapNodeIdx  = -1;         // index of the node currently in / last completed
+    int   _mapKeySelectedIdx  = -1;         // keyboard-highlighted node on the map screen (-1 = none)
+    float _mapOpenTimer       = 0.f;        // brief block after the map opens to prevent accidental clicks
+    bool  _startBiomeDungeon  = true;       // randomised each run; true = act 1 is Dungeon
 
     // Level-up choice state
     UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };

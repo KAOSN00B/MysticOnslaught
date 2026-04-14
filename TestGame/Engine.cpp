@@ -516,6 +516,8 @@ void Engine::EnterMapRoom(int idx)
 {
     if (idx < 0 || idx >= (int)_actMap.size()) return;
 
+    _roomClearPending = false;
+
     // Lock all nodes at or behind the entered row so the player can never go backward.
     int enteredRow = _actMap[idx].row;
     for (auto& n : _actMap)
@@ -547,6 +549,17 @@ void Engine::EnterMapRoom(int idx)
         _biomeTransitionSwapped = false;
         _biomeTransitionTimer   = kBiomeFadeOutDuration + kBiomeFadeInDuration;
     }
+    else
+    {
+        // Same biome — re-randomise prop layout so every room feels distinct.
+        PopulatePropsForBiome(_currentBiome);
+        BuildNavigationGrid();
+        _navRefreshTimer = 0.f;   // force distance-field recompute next frame
+    }
+
+    // Fade in from black each time a room is entered.
+    _fadeInTimer    = 1.2f;
+    _fadeInDuration = 1.2f;
 
     _gameState = GameState::Play;
 }
@@ -688,7 +701,7 @@ void Engine::Update(float dt)
         {
             _touchModeActive = _menu.IsTouchMode();
             ResetRunState();
-            _fadeInTimer = 2.0f;
+            _fadeInTimer = 2.0f; _fadeInDuration = 2.0f;
             GenerateStartingAbilityOptions();
             _awaitingStartingAbility = true;
             _levelUpReturnState = GameState::Map;  // after picking, show the act map
@@ -752,7 +765,44 @@ void Engine::Update(float dt)
 
     case GameState::Map:
         if (_mapOpenTimer > 0.f)
+        {
             _mapOpenTimer -= dt;
+        }
+        else
+        {
+            // Collect available (clickable) node indices in left-to-right order.
+            std::vector<int> avail;
+            for (int i = 0; i < (int)_actMap.size(); i++)
+                if (_actMap[i].available && !_actMap[i].completed)
+                    avail.push_back(i);
+
+            // Sort by horizontal draw position so Left/Right feel spatial.
+            std::sort(avail.begin(), avail.end(), [this](int a, int b){
+                return _actMap[a].drawPos.x < _actMap[b].drawPos.x;
+            });
+
+            if (!avail.empty())
+            {
+                // Auto-select the first node if nothing is selected yet.
+                auto it = std::find(avail.begin(), avail.end(), _mapKeySelectedIdx);
+                if (it == avail.end())
+                {
+                    _mapKeySelectedIdx = avail[0];
+                    it = avail.begin();
+                }
+
+                int pos = (int)(it - avail.begin());
+                int n   = (int)avail.size();
+
+                if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D))
+                    _mapKeySelectedIdx = avail[(pos + 1) % n];
+                if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A))
+                    _mapKeySelectedIdx = avail[(pos + n - 1) % n];
+
+                if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE))
+                    EnterMapRoom(_mapKeySelectedIdx);
+            }
+        }
         break;
     }
 }
@@ -762,6 +812,23 @@ void Engine::UpdateGamePlay(float dt)
     if (IsKeyPressed(KEY_ESCAPE))
     {
         _gameState = GameState::Pause;
+        return;
+    }
+
+    // M key opens the map as soon as combat ends — same effect as clicking Continue.
+    if (_roomClearPending && IsKeyPressed(KEY_M))
+    {
+        _roomClearPending = false;
+        if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
+        {
+            _actMap[_currentMapNodeIdx].completed = true;
+            for (int next : _actMap[_currentMapNodeIdx].nextNodes)
+                if (next >= 0 && next < (int)_actMap.size())
+                    _actMap[next].available = true;
+        }
+        _mapKeySelectedIdx = -1;
+        _mapOpenTimer = 0.4f;
+        _gameState = GameState::Map;
         return;
     }
 
@@ -927,7 +994,7 @@ void Engine::UpdateGamePlay(float dt)
             }
             // Don't fall into the enemy-count check below for these rooms
         }
-        else if (GetActiveEnemyCount() == 0)
+        else if (!_roomClearPending && GetActiveEnemyCount() == 0)
         {
             // After the very first room clears, guarantee a level-up.
             if (_wave == 1 && !_wave1LevelUpDone)
@@ -947,7 +1014,7 @@ void Engine::UpdateGamePlay(float dt)
                 }
             }
 
-            // Boss room cleared — offer ability upgrade, then show new-act map.
+            // Boss room cleared — offer ability upgrade (AbilityChoice is its own break).
             if (_currentRoomType == RoomType::Boss && _lastAbilityChoiceWave != _wave)
             {
                 _lastAbilityChoiceWave  = _wave;
@@ -958,16 +1025,8 @@ void Engine::UpdateGamePlay(float dt)
                 return;
             }
 
-            // Normal room cleared — open next nodes and show map.
-            if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
-            {
-                _actMap[_currentMapNodeIdx].completed = true;
-                for (int next : _actMap[_currentMapNodeIdx].nextNodes)
-                    if (next >= 0 && next < (int)_actMap.size())
-                        _actMap[next].available = true;
-            }
-            _mapOpenTimer = 0.4f;
-            _gameState = GameState::Map;
+            // All other combat rooms: wait for the player to deliberately advance.
+            _roomClearPending = true;
         }
 
         _navRefreshTimer -= dt;
@@ -1138,11 +1197,51 @@ void Engine::Draw()
         DrawWorld();
         DrawUltimateSequence();
         DrawHUD();
-        DrawWaveIntro();
+
+        // ── "Continue" button — shown after all enemies are defeated ─────────
+        if (_roomClearPending)
+        {
+            const float sw = (float)GetScreenWidth();
+            const float sh = (float)GetScreenHeight();
+
+            const char* btnTxt = _touchModeActive ? "Continue" : "Continue  [M]";
+            int btnTxtSz = 28;
+            const float btnW = 220.f, btnH = 58.f;
+            float btnX = sw / 2.f - btnW / 2.f;
+            float btnY = sh * 0.82f;
+            Rectangle btn{ btnX, btnY, btnW, btnH };
+
+            Vector2 mouse = GetMousePosition();
+            bool hov = CheckCollisionPointRec(mouse, btn);
+
+            DrawRectangleRounded(btn, 0.35f, 8,
+                hov ? Color{50, 160, 80, 235} : Color{25, 90, 45, 210});
+            DrawRectangleRoundedLines(btn, 0.35f, 8,
+                hov ? Color{120, 255, 150, 255} : Color{60, 180, 90, 180});
+            DrawText(btnTxt,
+                (int)(btnX + btnW / 2.f - MeasureText(btnTxt, btnTxtSz) / 2.f),
+                (int)(btnY + btnH / 2.f - btnTxtSz / 2.f),
+                btnTxtSz, hov ? Color{210, 255, 220, 255} : RAYWHITE);
+
+            if (hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            {
+                _roomClearPending = false;
+                if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
+                {
+                    _actMap[_currentMapNodeIdx].completed = true;
+                    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
+                        if (next >= 0 && next < (int)_actMap.size())
+                            _actMap[next].available = true;
+                }
+                _mapKeySelectedIdx = -1;
+                _mapOpenTimer = 0.4f;
+                _gameState = GameState::Map;
+            }
+        }
 
         if (_fadeInTimer > 0.f)
         {
-            float alpha = _fadeInTimer / 2.0f;   // 1.0 → 0.0 over two seconds
+            float alpha = (_fadeInDuration > 0.f) ? (_fadeInTimer / _fadeInDuration) : 0.f;
             DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, alpha));
         }
         if (_biomeTransitionActive)
@@ -1220,7 +1319,7 @@ void Engine::Draw()
         {
             int goResult = _pauseUI.DrawGameOver(_wave, _enemiesKilled, _leaderboard.GetEntries());
             if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Map; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
+            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _fadeInDuration = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Map; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
             else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
             else if (goResult == 3) _shouldClose = true;
         }
@@ -2594,6 +2693,18 @@ void Engine::DrawMap()
         DrawText(dsc, (int)(sw/2.f - dw/2.f), (int)(sh - 90.f), dSz, LIGHTGRAY);
     }
 
+    // ── Keyboard-selected node highlight ─────────────────────────────────
+    if (_mapKeySelectedIdx >= 0 && _mapKeySelectedIdx < (int)_actMap.size())
+    {
+        const MapNode& kn = _actMap[_mapKeySelectedIdx];
+        if (kn.available && !kn.completed)
+        {
+            // White dashed-style double ring to distinguish from mouse hover
+            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y, nodeR + 7.f,  WHITE);
+            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y, nodeR + 11.f, Fade(WHITE, 0.35f));
+        }
+    }
+
     // ── Current node indicator ────────────────────────────────────────────
     if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
     {
@@ -2604,8 +2715,10 @@ void Engine::DrawMap()
     }
 
     // ── Footer hint ───────────────────────────────────────────────────────
-    const char* hint = "Click a highlighted node to enter";
-    int ftSz = 19;
+    const char* hint = _touchModeActive
+        ? "Tap a highlighted node to enter"
+        : "Click node  or  A/D  ←/→  to select  •  Enter / Space  to confirm";
+    int ftSz = 18;
     DrawText(hint, (int)(sw/2.f - MeasureText(hint, ftSz)/2.f),
              (int)(sh - 55.f), ftSz, Color{140, 140, 140, 170});
 }
@@ -4706,10 +4819,12 @@ void Engine::ResetRunState()
     _currentAct        = 1;
     _currentRoom       = 0;
     _currentRoomType   = RoomType::Standard;
-    _pendingRoomChoice = false;
-    _roomClearTimer    = 0.f;
-    _currentMapNodeIdx = -1;
-    _mapOpenTimer      = 0.f;
+    _pendingRoomChoice  = false;
+    _roomClearPending   = false;
+    _roomClearTimer     = 0.f;
+    _currentMapNodeIdx  = -1;
+    _mapKeySelectedIdx  = -1;
+    _mapOpenTimer       = 0.f;
     _actMap.clear();
 
     // Random starting biome so the player doesn't always begin in the same world.
