@@ -143,13 +143,11 @@ void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;
 
-    // Passive mana regen — decay curve so it fills fast when empty and slows
-    // near full. rate = kManaRegenBase * multiplier * (remaining / max).
-    // _manaRegenMultiplier is boosted by upgrades / future store items.
+    // Passive mana regen — flat rate scaled only by the current regen
+    // multiplier. It should not slow down just because the bar is filling.
     if (_mana < _maxMana)
     {
-        float remaining = (float)(_maxMana - _mana) / (float)_maxMana;
-        _manaRegenAccum += kManaRegenBase * _manaRegenMultiplier * remaining * dt;
+        _manaRegenAccum += kManaRegenBase * _manaRegenMultiplier * dt;
         if (_manaRegenAccum >= 1.f)
         {
             int gained = (int)_manaRegenAccum;

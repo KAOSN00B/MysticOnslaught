@@ -309,21 +309,246 @@ void Engine::Init()
     ResetRunState();
 }
 
-void Engine::SpawnWave()
+// ── Room progression — replaces the old SpawnWave() system ───────────────────
+// Called whenever the player is about to enter a specific room type.
+// Handles act advancement, biome transitions, and encounter setup.
+void Engine::StartNextRoom(RoomType type)
 {
-    _wave++;
-    _message = "Wave " + std::to_string(_wave);
-    _waveStarting = true;
+    _currentRoom++;
+    if (_currentRoom > 6)
+    {
+        _currentRoom = 1;
+        _currentAct++;
+    }
+    _wave++;  // _wave = total rooms entered — feeds GetEnemyPowerLevelForWave()
+    _currentRoomType = type;
+
+    // Non-combat rooms get a rest timer before the choice screen appears.
+    if (type == RoomType::Rest || type == RoomType::Store)
+        _roomClearTimer = 5.0f;
+    else
+        _roomClearTimer = 0.f;
+
+    std::string actName = GetBiomeName(GetBiomeForAct(_currentAct));
+    _message = "Act " + std::to_string(_currentAct) + " - " + actName;
+
+    _waveStarting   = true;
     _waveIntroTimer = _waveIntroDuration;
 
-    Biome nextBiome = GetBiomeForWave(_wave);
+    // Biome transition when the act changes
+    Biome nextBiome = GetBiomeForAct(_currentAct);
     if (nextBiome != _currentBiome)
     {
-        _pendingBiome = nextBiome;
-        _biomeTransitionActive = true;
-        _biomeTransitionSwapped = false;
-        _biomeTransitionTimer = kBiomeFadeOutDuration + kBiomeFadeInDuration;
+        _pendingBiome              = nextBiome;
+        _biomeTransitionActive     = true;
+        _biomeTransitionSwapped    = false;
+        _biomeTransitionTimer      = kBiomeFadeOutDuration + kBiomeFadeInDuration;
     }
+}
+
+// (ShowRoomChoiceScreen / GenerateRoomChoices removed — replaced by map system)
+
+Biome Engine::GetBiomeForAct(int act) const
+{
+    // Alternates Dungeon / Forest.  _startBiomeDungeon flips each run for variety.
+    bool isDungeon = _startBiomeDungeon ? ((act % 2) == 1) : ((act % 2) == 0);
+    return isDungeon ? Biome::Dungeon : Biome::Forest;
+}
+
+// ── PickRoomTypeForRow ────────────────────────────────────────────────────────
+// Weighted random room type based on depth within the act (row 1 = early, 4 = pre-boss).
+RoomType Engine::PickRoomTypeForRow(int row)
+{
+    switch (row)
+    {
+    case 1:
+    {
+        int r = GetRandomValue(0, 9);
+        if (r <= 4) return RoomType::Standard;
+        if (r <= 6) return RoomType::Rest;
+        if (r <= 8) return RoomType::Elite;
+        return RoomType::Treasure;
+    }
+    case 2:
+    {
+        int r = GetRandomValue(0, 9);
+        if (r <= 2) return RoomType::Standard;
+        if (r <= 4) return RoomType::Elite;
+        if (r <= 6) return RoomType::Rest;
+        if (r <= 7) return RoomType::Treasure;
+        return RoomType::Store;
+    }
+    case 3:
+    {
+        int r = GetRandomValue(0, 9);
+        if (r <= 2) return RoomType::Standard;
+        if (r <= 4) return RoomType::Elite;
+        if (r <= 6) return RoomType::Treasure;
+        if (r <= 7) return RoomType::Rest;
+        return RoomType::Store;
+    }
+    case 4:
+        // Pre-boss: Standard or Elite only
+        return (GetRandomValue(0, 1) == 0) ? RoomType::Standard : RoomType::Elite;
+    default:
+        return RoomType::Standard;
+    }
+}
+
+// ── GenerateActMap ────────────────────────────────────────────────────────────
+// Builds the full 6-row directed-acyclic node graph for the current act.
+// Row 0 = entry (Standard), rows 1-4 = branching options, row 5 = Boss.
+// All rows and connections are visible immediately (Slay the Spire style).
+void Engine::GenerateActMap()
+{
+    _actMap.clear();
+    _currentMapNodeIdx = -1;
+    _mapOpenTimer = 0.f;
+
+    // ── 1. Decide per-row node counts ──────────────────────────────────────
+    int rowCounts[6];
+    rowCounts[0] = 1;
+    rowCounts[5] = 1;
+    for (int r = 1; r <= 4; r++)
+        rowCounts[r] = GetRandomValue(1, 3);
+
+    // ── 2. Create nodes ───────────────────────────────────────────────────
+    int rowStart[6];
+    for (int r = 0; r < 6; r++)
+    {
+        rowStart[r] = (int)_actMap.size();
+        for (int i = 0; i < rowCounts[r]; i++)
+        {
+            MapNode n;
+            n.row = r;
+            n.normX = (rowCounts[r] == 1) ? 0.5f
+                      : 0.2f + (float)i / (rowCounts[r] - 1) * 0.6f;
+
+            if (r == 0)       n.type = RoomType::Standard;
+            else if (r == 5)  n.type = RoomType::Boss;
+            else              n.type = PickRoomTypeForRow(r);
+
+            n.available  = (r == 0);   // only the entry node starts clickable
+            n.completed  = false;
+            _actMap.push_back(n);
+        }
+    }
+
+    // ── 3. Build connections ──────────────────────────────────────────────
+    for (int r = 0; r < 5; r++)
+    {
+        int sR  = rowStart[r],     cR  = rowCounts[r];
+        int sR1 = rowStart[r + 1], cR1 = rowCounts[r + 1];
+
+        // Primary: map each row-r node proportionally to a row-(r+1) node
+        for (int i = 0; i < cR; i++)
+        {
+            float t = (cR > 1) ? (float)i / (cR - 1) : 0.5f;
+            int j = (int)roundf(t * (float)(cR1 - 1));
+            j = std::max(0, std::min(cR1 - 1, j));
+            int src = sR + i, dst = sR1 + j;
+            auto& nxt = _actMap[src].nextNodes;
+            if (std::find(nxt.begin(), nxt.end(), dst) == nxt.end())
+                nxt.push_back(dst);
+        }
+
+        // Guarantee every row-(r+1) node has at least one incoming connection
+        for (int j = 0; j < cR1; j++)
+        {
+            int dst = sR1 + j;
+            bool found = false;
+            for (int i = 0; i < cR && !found; i++)
+            {
+                auto& nxt = _actMap[sR + i].nextNodes;
+                found = std::find(nxt.begin(), nxt.end(), dst) != nxt.end();
+            }
+            if (!found)
+            {
+                float dX = _actMap[dst].normX;
+                int bestSrc = sR;
+                float bestD = 999.f;
+                for (int i = 0; i < cR; i++)
+                {
+                    float d = fabsf(_actMap[sR + i].normX - dX);
+                    if (d < bestD) { bestD = d; bestSrc = sR + i; }
+                }
+                _actMap[bestSrc].nextNodes.push_back(dst);
+            }
+        }
+
+        // Optional extra branches (~30% chance) for wider path variety
+        for (int i = 0; i < cR; i++)
+        {
+            if (cR1 > 1 && GetRandomValue(0, 9) < 3)
+            {
+                auto& nxt = _actMap[sR + i].nextNodes;
+                if (nxt.empty()) continue;
+                int baseJ = nxt[0] - sR1;
+                int altJ  = (baseJ > 0) ? baseJ - 1 : baseJ + 1;
+                altJ = std::max(0, std::min(cR1 - 1, altJ));
+                int alt = sR1 + altJ;
+                if (std::find(nxt.begin(), nxt.end(), alt) == nxt.end())
+                    nxt.push_back(alt);
+            }
+        }
+    }
+
+    // ── 4. Compute draw positions ─────────────────────────────────────────
+    // Boss (row 5) sits at the top; entry (row 0) at the bottom.
+    const float mapTop  = 130.f;
+    const float mapBot  = (float)_windowHeight - 110.f;
+    const float rowH    = (mapBot - mapTop) / 5.f;
+    const float mapLeft = (float)_windowWidth  * 0.20f;
+    const float mapRight= (float)_windowWidth  * 0.80f;
+
+    for (auto& node : _actMap)
+    {
+        float y = mapBot - node.row * rowH;
+        float x = mapLeft + node.normX * (mapRight - mapLeft);
+        node.drawPos = { x, y };
+    }
+}
+
+// ── EnterMapRoom ──────────────────────────────────────────────────────────────
+// Called when the player clicks an available map node.
+// Sets up the room state and transitions to Play.
+void Engine::EnterMapRoom(int idx)
+{
+    if (idx < 0 || idx >= (int)_actMap.size()) return;
+
+    // Lock all nodes at or behind the entered row so the player can never go backward.
+    int enteredRow = _actMap[idx].row;
+    for (auto& n : _actMap)
+        if (n.row <= enteredRow)
+            n.available = false;
+
+    _currentMapNodeIdx = idx;
+
+    // Row 0 = Room 1, Row 5 = Room 6 (Boss)
+    _currentRoom     = _actMap[idx].row + 1;
+    _wave++;
+    _currentRoomType = _actMap[idx].type;
+
+    if (_currentRoomType == RoomType::Rest || _currentRoomType == RoomType::Store)
+        _roomClearTimer = 5.0f;
+    else
+        _roomClearTimer = 0.f;
+
+    _message = "Act " + std::to_string(_currentAct) + " - " + GetBiomeName(GetBiomeForAct(_currentAct));
+
+    _waveStarting   = true;
+    _waveIntroTimer = _waveIntroDuration;
+
+    Biome nextBiome = GetBiomeForAct(_currentAct);
+    if (nextBiome != _currentBiome)
+    {
+        _pendingBiome           = nextBiome;
+        _biomeTransitionActive  = true;
+        _biomeTransitionSwapped = false;
+        _biomeTransitionTimer   = kBiomeFadeOutDuration + kBiomeFadeInDuration;
+    }
+
+    _gameState = GameState::Play;
 }
 
 void Engine::SpawnEnemies()
@@ -331,8 +556,8 @@ void Engine::SpawnEnemies()
     float mapW = _map.width * _mapScale;
     float mapH = _map.height * _mapScale;
 
-    // Every 5th wave is a boss fight.
-    if (_wave > 0 && _wave % 5 == 0)
+    // Boss room — Molarbeast + supports
+    if (_currentRoomType == RoomType::Boss)
     {
         Vector2 pos{ mapW * 0.5f, mapH * 0.28f };
         SpawnMolarbeast(pos);
@@ -340,37 +565,69 @@ void Engine::SpawnEnemies()
         return;
     }
 
-    // Curated wave composition table.
-    // Waves 1-4 introduce enemy types gradually.
-    // Waves 6-9 are the standard combat template.
-    // Waves 11+ repeat the 6-9 template (power level carries the difficulty).
-    //
-    //  template | regular | cyclops | ogre
-    //     1     |    2    |    0    |   0
-    //     2     |    4    |    0    |   0
-    //     3     |    4    |    1    |   0
-    //     4     |    5    |    1    |   0
-    //     6     |    6    |    1    |   1
-    //     7     |    7    |    1    |   1
-    //     8     |    7    |    2    |   1
-    //     9     |    8    |    2    |   2
-
-    int pos5   = ((_wave - 1) % 5);     // 0-3 = non-boss position within 5-wave group
-    int group  = ((_wave - 1) / 5);
-    int tpl    = (group == 0) ? (pos5 + 1) : (pos5 + 6);  // 1-4 for group 0, 6-9 for group 1+
-
-    int regularCount = 0, cyclopsCount = 0, ogreCount = 0;
-    switch (tpl)
+    // Non-combat rooms — Rest, Store spawn no enemies here.
+    // Treasure is handled before SpawnEnemies() is called (via UpdateGamePlay).
+    if (_currentRoomType == RoomType::Rest ||
+        _currentRoomType == RoomType::Store)
     {
-    case 1: regularCount =  2; cyclopsCount = 0; ogreCount = 0; break;
-    case 2: regularCount =  4; cyclopsCount = 0; ogreCount = 0; break;
-    case 3: regularCount =  4; cyclopsCount = 1; ogreCount = 0; break;
-    case 4: regularCount =  5; cyclopsCount = 1; ogreCount = 0; break;
-    case 6: regularCount =  6; cyclopsCount = 1; ogreCount = 1; break;
-    case 7: regularCount =  7; cyclopsCount = 1; ogreCount = 1; break;
-    case 8: regularCount =  7; cyclopsCount = 2; ogreCount = 1; break;
-    case 9: regularCount =  8; cyclopsCount = 2; ogreCount = 2; break;
-    default: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
+        // Spawn heal pickups for rest rooms
+        if (_currentRoomType == RoomType::Rest)
+        {
+            int healCount = GetRandomValue(2, 3);
+            for (int i = 0; i < healCount; i++)
+            {
+                Vector2 pos{};
+                for (int a = 0; a < 30; a++)
+                {
+                    pos.x = (float)GetRandomValue(300, (int)mapW - 300);
+                    pos.y = (float)GetRandomValue(300, (int)mapH - 300);
+                    if (IsSpawnPositionValid(pos)) break;
+                }
+                auto p = std::make_unique<HealPickup>();
+                p->Init(pos);
+                _pickups.push_back(std::move(p));
+            }
+        }
+        return;
+    }
+
+    // ── Combat room composition table ────────────────────────────────────────
+    // Act 1 introduces enemy types gradually (rooms 1-5).
+    // Act 2+ uses a consistently harder baseline.
+    // Elite rooms add bonus enemies on top of the standard count.
+    int regularCount = 0, cyclopsCount = 0, ogreCount = 0;
+
+    if (_currentAct == 1)
+    {
+        switch (_currentRoom)
+        {
+        case 1: regularCount = 2; cyclopsCount = 0; ogreCount = 0; break;
+        case 2: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
+        case 3: regularCount = 4; cyclopsCount = 1; ogreCount = 0; break;
+        case 4: regularCount = 5; cyclopsCount = 1; ogreCount = 0; break;
+        case 5: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
+        default: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
+        }
+    }
+    else
+    {
+        // Acts 2+: full pressure from room 1
+        switch (_currentRoom)
+        {
+        case 1: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
+        case 2: regularCount = 7; cyclopsCount = 1; ogreCount = 1; break;
+        case 3: regularCount = 7; cyclopsCount = 2; ogreCount = 1; break;
+        case 4: regularCount = 8; cyclopsCount = 2; ogreCount = 2; break;
+        case 5: regularCount = 8; cyclopsCount = 2; ogreCount = 2; break;
+        default: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
+        }
+    }
+
+    // Elite modifier: harder variant of the standard composition
+    if (_currentRoomType == RoomType::Elite)
+    {
+        regularCount  += 2;
+        cyclopsCount  += 1;
     }
 
     auto spawnPos = [&]() -> Vector2 {
@@ -434,7 +691,7 @@ void Engine::Update(float dt)
             _fadeInTimer = 2.0f;
             GenerateStartingAbilityOptions();
             _awaitingStartingAbility = true;
-            _levelUpReturnState = GameState::Play;
+            _levelUpReturnState = GameState::Map;  // after picking, show the act map
             _levelUpOpenTimer = 0.8f;
             _gameState = GameState::LevelUpChoice;
         }
@@ -492,6 +749,11 @@ void Engine::Update(float dt)
         if (_abilityChoiceOpenTimer > 0.f)
             _abilityChoiceOpenTimer -= dt;
         break;
+
+    case GameState::Map:
+        if (_mapOpenTimer > 0.f)
+            _mapOpenTimer -= dt;
+        break;
     }
 }
 
@@ -510,8 +772,13 @@ void Engine::UpdateGamePlay(float dt)
     if (_biomeTransitionActive)
         UpdateBiomeTransition(dt);
 
-    // Block attacks and abilities during wave intro and ultimate cinematic
-    _player.SetCombatLocked(_waveStarting || _ultimatePhase != UltimatePhase::None);
+    // Block attacks during room intro and ultimate cinematic.
+    // Also lock combat in non-combat rooms (rest/store/treasure) so the player
+    // can't accidentally trigger the attack animation while browsing.
+    bool inNonCombatRoom = (_currentRoomType == RoomType::Rest  ||
+                            _currentRoomType == RoomType::Store ||
+                            _currentRoomType == RoomType::Treasure);
+    _player.SetCombatLocked(_waveStarting || _ultimatePhase != UltimatePhase::None || inNonCombatRoom);
 
     // Touch controls — must be set on player before Update() consumes them
     _player.SetTouchModeEnabled(_touchModeActive);
@@ -601,6 +868,25 @@ void Engine::UpdateGamePlay(float dt)
         if (!_biomeTransitionActive && _waveIntroTimer <= 0.f)
         {
             _waveStarting = false;
+
+            // Treasure room: grant a free upgrade card, then return to map.
+            if (_currentRoomType == RoomType::Treasure)
+            {
+                // Mark this node complete now so the map is ready on return.
+                if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
+                {
+                    _actMap[_currentMapNodeIdx].completed = true;
+                    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
+                        if (next >= 0 && next < (int)_actMap.size())
+                            _actMap[next].available = true;
+                }
+                GenerateLevelUpOptions();
+                _levelUpReturnState = GameState::Map;
+                _levelUpOpenTimer   = 0.25f;
+                _gameState          = GameState::LevelUpChoice;
+                return;
+            }
+
             SpawnEnemies();
             _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
         }
@@ -610,17 +896,40 @@ void Engine::UpdateGamePlay(float dt)
         _gameTimer += dt;
         ApplyCompletedNavigationRefresh();
 
-        // Timed heal drops — boss fights suppress this entirely (see SpawnTimedPickup).
-        _pickupSpawnTimer -= dt;
-        if (_pickupSpawnTimer <= 0.f)
+        // Timed heal drops — boss fights and non-combat rooms suppress this.
+        if (_currentRoomType != RoomType::Rest  &&
+            _currentRoomType != RoomType::Store &&
+            _currentRoomType != RoomType::Treasure)
         {
-            SpawnTimedPickup();
-            _pickupSpawnTimer = kDefaultTimedPickupInterval;
+            _pickupSpawnTimer -= dt;
+            if (_pickupSpawnTimer <= 0.f)
+            {
+                SpawnTimedPickup();
+                _pickupSpawnTimer = kDefaultTimedPickupInterval;
+            }
         }
 
-        if (GetActiveEnemyCount() == 0)
+        // Non-combat rooms (Rest/Store) use a countdown timer before showing the map.
+        if (_currentRoomType == RoomType::Rest || _currentRoomType == RoomType::Store)
         {
-            // After wave 1 clears, guarantee a level-up before wave 2 begins.
+            _roomClearTimer -= dt;
+            if (_roomClearTimer <= 0.f)
+            {
+                if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
+                {
+                    _actMap[_currentMapNodeIdx].completed = true;
+                    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
+                        if (next >= 0 && next < (int)_actMap.size())
+                            _actMap[next].available = true;
+                }
+                _mapOpenTimer = 0.4f;
+                _gameState = GameState::Map;
+            }
+            // Don't fall into the enemy-count check below for these rooms
+        }
+        else if (GetActiveEnemyCount() == 0)
+        {
+            // After the very first room clears, guarantee a level-up.
             if (_wave == 1 && !_wave1LevelUpDone)
             {
                 _wave1LevelUpDone = true;
@@ -638,17 +947,27 @@ void Engine::UpdateGamePlay(float dt)
                 }
             }
 
-            // After every 5th-wave boss clears, offer an ability upgrade.
-            if (_wave > 0 && _wave % 5 == 0 && _lastAbilityChoiceWave != _wave)
+            // Boss room cleared — offer ability upgrade, then show new-act map.
+            if (_currentRoomType == RoomType::Boss && _lastAbilityChoiceWave != _wave)
             {
-                _lastAbilityChoiceWave = _wave;
+                _lastAbilityChoiceWave  = _wave;
                 GenerateAbilityChoiceOptions();
                 _abilityChoiceOpenTimer = 0.5f;
+                _pendingRoomChoice      = true;  // after picking ability → new act map
                 _gameState = GameState::AbilityChoice;
                 return;
             }
 
-            SpawnWave();
+            // Normal room cleared — open next nodes and show map.
+            if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
+            {
+                _actMap[_currentMapNodeIdx].completed = true;
+                for (int next : _actMap[_currentMapNodeIdx].nextNodes)
+                    if (next >= 0 && next < (int)_actMap.size())
+                        _actMap[next].available = true;
+            }
+            _mapOpenTimer = 0.4f;
+            _gameState = GameState::Map;
         }
 
         _navRefreshTimer -= dt;
@@ -889,7 +1208,7 @@ void Engine::Draw()
     {
         if (_awaitingNameEntry)
         {
-            std::string confirmed = _pauseUI.DrawNameEntry(_wave, _enemiesKilled);
+            std::string confirmed = _pauseUI.DrawNameEntry(_wave, _enemiesKilled);  // _wave = rooms entered
             if (!confirmed.empty())
             {
                 _leaderboard.AddEntry(_wave, _enemiesKilled, confirmed);
@@ -901,7 +1220,7 @@ void Engine::Draw()
         {
             int goResult = _pauseUI.DrawGameOver(_wave, _enemiesKilled, _leaderboard.GetEntries());
             if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
+            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Map; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
             else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
             else if (goResult == 3) _shouldClose = true;
         }
@@ -948,6 +1267,12 @@ void Engine::Draw()
         DrawWorld();
         DrawHUD();
         DrawAbilityChoice();
+        break;
+    }
+
+    case GameState::Map:
+    {
+        DrawMap();
         break;
     }
 
@@ -1160,14 +1485,14 @@ void Engine::UpdateEnemyCount(float dt)
                 _bossOgreSupport.respawnTimer = kBossSupportRespawnDelay;
 
             // Exp rules:
-            //  Boss kill     → flat bonus of 10 × wave (grows each boss fight)
-            //  Support add   → no exp while boss is alive (block easy farming)
-            //  Normal enemy  → standard per-enemy exp
+            //  Boss kill    → flat bonus of 10 × rooms-entered (grows each act)
+            //  Support add  → no exp while boss is alive (block easy farming)
+            //  Normal enemy → standard per-enemy exp
             bool isBoss = (dynamic_cast<Molarbeast*>(enemy.get()) != nullptr);
             int prevLevel = _player.GetLevel();
 
             if (isBoss)
-                _player.AddExp(10 * _wave);
+                _player.AddExp(10 * _wave);  // _wave = total rooms entered
             else if (!IsBossFightActive())
                 _player.AddExp(enemy->GetExpValue());
             // else: support add during active boss fight — no exp
@@ -1290,13 +1615,19 @@ void Engine::DrawHUD()
     drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20.f, 58.f, 28, RAYWHITE);
 
     {
-        bool isBoss = (_wave > 0 && _wave % 5 == 0);
-        const char* waveLabel = isBoss
-            ? TextFormat("Wave %d  - BOSS", _wave)
-            : TextFormat("Wave %d", _wave);
-        int waveLabelW = MeasureText(waveLabel, 32);
-        drawLabelBox(waveLabel, (float)(GetScreenWidth() - waveLabelW - 130), 18.f, 32,
-            isBoss ? ORANGE : RAYWHITE);
+        bool isBoss = (_currentRoomType == RoomType::Boss);
+        bool isElite = (_currentRoomType == RoomType::Elite);
+        const char* roomTypeSuffix =
+            isBoss    ? "  BOSS" :
+            isElite   ? "  ELITE" :
+            (_currentRoomType == RoomType::Rest)     ? "  REST" :
+            (_currentRoomType == RoomType::Treasure) ? "  TREASURE" :
+            (_currentRoomType == RoomType::Store)    ? "  SHOP" : "";
+        const char* roomLabel = TextFormat("Act %d  Room %d%s",
+            _currentAct, _currentRoom, roomTypeSuffix);
+        int roomLabelW = MeasureText(roomLabel, 32);
+        Color labelColor = isBoss ? ORANGE : (isElite ? Color{255,140,0,255} : RAYWHITE);
+        drawLabelBox(roomLabel, (float)(GetScreenWidth() - roomLabelW - 130), 18.f, 32, labelColor);
     }
 
     {
@@ -1683,47 +2014,73 @@ void Engine::DrawWaveIntro()
 
     DrawRectangle(0, GetScreenHeight() / 2 - 80, GetScreenWidth(), 160, Fade(BLACK, 0.7f));
 
+    int sw = GetScreenWidth();
+    int sh = GetScreenHeight();
     int fontSize = 60;
+    int midY     = sh / 2;
 
-    if (_wave == 1)
+    // ── Room type label (center, primary) ────────────────────────────────────
+    const char* roomLabel = nullptr;
+    Color       roomColor = YELLOW;
+
+    switch (_currentRoomType)
     {
-        const char* line1 = "Objective:";
-        const char* line2 = "Survive";
-        const char* biomeName = GetBiomeName(_currentBiome);
-
-        int w1 = MeasureText(line1, fontSize);
-        int w2 = MeasureText(line2, fontSize);
-        int w3 = MeasureText(biomeName, 42);
-
-        DrawText(line1, GetScreenWidth() / 2 - w1 / 2, GetScreenHeight() / 2 - 60, fontSize, YELLOW);
-        DrawText(line2, GetScreenWidth() / 2 - w2 / 2, GetScreenHeight() / 2 + 10, fontSize, YELLOW);
-        DrawText(biomeName, GetScreenWidth() / 2 - w3 / 2, GetScreenHeight() / 2 + 72, 42, LIGHTGRAY);
+    case RoomType::Boss:
+        roomLabel = "- Boss Room -";
+        roomColor = RED;
+        break;
+    case RoomType::Elite:
+        roomLabel = "Elite Room";
+        roomColor = Color{ 255, 140, 0, 255 };  // orange
+        break;
+    case RoomType::Rest:
+        roomLabel = "Rest";
+        roomColor = Color{ 100, 230, 120, 255 }; // green
+        break;
+    case RoomType::Treasure:
+        roomLabel = "Treasure Room";
+        roomColor = GOLD;
+        break;
+    case RoomType::Store:
+        roomLabel = "Shop";
+        roomColor = Color{ 220, 200, 60, 255 };
+        break;
+    default:  // Standard
+        roomLabel = "Standard";
+        roomColor = YELLOW;
+        break;
     }
-    else
+
+    // Very first room of the run — just show the biome name as the intro.
+    if (_wave == 1 && _currentAct == 1)
     {
-        bool isBossWave = (_wave % 5 == 0);
-        bool isBiomeIntroWave = ((_wave - 1) % 5 == 0);
+        const char* biomeName = GetBiomeName(_currentBiome);
+        int bw = MeasureText(biomeName, fontSize);
+        DrawText(biomeName, sw / 2 - bw / 2, midY - 30, fontSize, GOLD);
+        return;
+    }
 
-        std::string waveText = "Wave " + std::to_string(_wave);
-        int textWidth = MeasureText(waveText.c_str(), fontSize);
+    // New act intro (room 1 of any act after act 1)
+    bool isFirstRoomOfNewAct = (_currentRoom == 1 && _currentAct > 1);
+    int roomLabelY = (isFirstRoomOfNewAct || _currentRoomType == RoomType::Boss) ? midY - 55 : midY - 30;
 
-        int waveY = (isBossWave || isBiomeIntroWave) ? GetScreenHeight() / 2 - 55 : GetScreenHeight() / 2 - 30;
-        DrawText(waveText.c_str(), GetScreenWidth() / 2 - textWidth / 2, waveY, fontSize, YELLOW);
+    // Act label line (shown on new acts and boss rooms)
+    if (isFirstRoomOfNewAct)
+    {
+        std::string actStr = "Act " + std::to_string(_currentAct) + " — " + GetBiomeName(GetBiomeForAct(_currentAct));
+        int aw = MeasureText(actStr.c_str(), 42);
+        DrawText(actStr.c_str(), sw / 2 - aw / 2, roomLabelY - 52, 42, LIGHTGRAY);
+    }
 
-        if (isBiomeIntroWave)
-        {
-            const char* biomeName = GetBiomeName(_currentBiome);
-            int biomeWidth = MeasureText(biomeName, 42);
-            DrawText(biomeName, GetScreenWidth() / 2 - biomeWidth / 2, waveY + fontSize + 8, 42, LIGHTGRAY);
-        }
+    // Room label
+    int rw = MeasureText(roomLabel, fontSize);
+    DrawText(roomLabel, sw / 2 - rw / 2, roomLabelY, fontSize, roomColor);
 
-        if (isBossWave)
-        {
-            const char* bossLine = "- Boss Incoming -";
-            int bossLineW = MeasureText(bossLine, fontSize);
-            int bossY = waveY + fontSize + (isBiomeIntroWave ? 52 : 10);
-            DrawText(bossLine, GetScreenWidth() / 2 - bossLineW / 2, bossY, fontSize, RED);
-        }
+    if (_currentRoomType == RoomType::Boss)
+    {
+        const char* actLine = (_message).c_str();
+        int aw = MeasureText(actLine, 36);
+        DrawText(actLine, sw / 2 - aw / 2, roomLabelY + fontSize + 10, 36, LIGHTGRAY);
     }
 }
 
@@ -1929,7 +2286,16 @@ void Engine::DrawAbilityChoice()
                 _player.RemoveAbilityAtSlot(i);
                 _player.ApplyUpgrade(_abilityChoiceSwapTarget);
                 _abilityChoiceSwapPending = false;
-                _gameState = GameState::Play;
+                if (_pendingRoomChoice)
+                {
+                    _pendingRoomChoice = false;
+                    _currentAct++;
+                    GenerateActMap();
+                    _mapOpenTimer = 0.4f;
+                    _gameState = GameState::Map;
+                }
+                else
+                    _gameState = GameState::Play;
             }
         }
 
@@ -2044,7 +2410,16 @@ void Engine::DrawAbilityChoice()
             {
                 _player.ApplyUpgrade(opt);
                 _abilityChoiceSwapPending = false;
-                _gameState = GameState::Play;
+                if (_pendingRoomChoice)
+                {
+                    _pendingRoomChoice = false;
+                    _currentAct++;
+                    GenerateActMap();
+                    _mapOpenTimer = 0.4f;
+                    _gameState = GameState::Map;
+                }
+                else
+                    _gameState = GameState::Play;
             }
         }
     }
@@ -2067,7 +2442,172 @@ void Engine::DrawAbilityChoice()
              (int)(contBtn.y + contBtn.height/2.f - contSz/2.f), contSz,
              contHov ? Color{160,255,160,255} : RAYWHITE);
     if (ready && contHov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-        _gameState = GameState::Play;
+    {
+        if (_pendingRoomChoice)
+        {
+            _pendingRoomChoice = false;
+            _currentAct++;
+            GenerateActMap();
+            _mapOpenTimer = 0.4f;
+            _gameState = GameState::Map;
+        }
+        else
+            _gameState = GameState::Play;
+    }
+}
+
+// ── DrawMap ───────────────────────────────────────────────────────────────────
+// Full-screen Slay-the-Spire–style act map.  Shows the entire node graph for
+// the current act; available nodes are highlighted and clickable.
+void Engine::DrawMap()
+{
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+    bool ready     = (_mapOpenTimer <= 0.f);
+    Vector2 mouse  = GetMousePosition();
+
+    // ── Background ────────────────────────────────────────────────────────
+    DrawRectangle(0, 0, (int)sw, (int)sh, Color{10, 8, 20, 255});
+
+    // ── Header ────────────────────────────────────────────────────────────
+    std::string header = "Act " + std::to_string(_currentAct)
+                       + "  —  " + GetBiomeName(GetBiomeForAct(_currentAct));
+    int hSz = 42;
+    DrawText(header.c_str(),
+             (int)(sw/2.f - MeasureText(header.c_str(), hSz)/2.f), 28, hSz, GOLD);
+
+    const char* sub = "Choose your path";
+    int subSz = 22;
+    DrawText(sub, (int)(sw/2.f - MeasureText(sub, subSz)/2.f), 78, subSz,
+             Color{180, 180, 180, 200});
+
+    if (_actMap.empty()) return;
+
+    // ── Node colour / name helpers ────────────────────────────────────────
+    auto nodeColor = [](RoomType rt) -> Color {
+        switch (rt) {
+        case RoomType::Boss:     return Color{220,  40,  40, 255};
+        case RoomType::Elite:    return Color{230, 130,  20, 255};
+        case RoomType::Rest:     return Color{ 60, 190,  90, 255};
+        case RoomType::Treasure: return Color{220, 190,  30, 255};
+        case RoomType::Store:    return Color{ 80, 190, 230, 255};
+        default:                 return Color{ 80, 130, 220, 255};
+        }
+    };
+    auto nodeName = [](RoomType rt) -> const char* {
+        switch (rt) {
+        case RoomType::Boss:     return "BOSS";
+        case RoomType::Elite:    return "ELITE";
+        case RoomType::Rest:     return "REST";
+        case RoomType::Treasure: return "CHEST";
+        case RoomType::Store:    return "SHOP";
+        default:                 return "FIGHT";
+        }
+    };
+    auto nodeDesc = [](RoomType rt) -> const char* {
+        switch (rt) {
+        case RoomType::Boss:     return "Act finale - ability upgrade on clear";
+        case RoomType::Elite:    return "Harder encounter - better EXP reward";
+        case RoomType::Rest:     return "No combat - heal pickups appear";
+        case RoomType::Treasure: return "No combat - free upgrade card";
+        case RoomType::Store:    return "No combat - shop (coming soon)";
+        default:                 return "Mixed enemies - standard EXP reward";
+        }
+    };
+
+    // ── Connection lines ──────────────────────────────────────────────────
+    for (int i = 0; i < (int)_actMap.size(); i++)
+    {
+        const MapNode& n = _actMap[i];
+        for (int nextIdx : n.nextNodes)
+        {
+            if (nextIdx < 0 || nextIdx >= (int)_actMap.size()) continue;
+            const MapNode& m = _actMap[nextIdx];
+            Color lc = n.completed ? Color{70, 70, 90, 180} : Color{110, 110, 140, 110};
+            DrawLineEx(n.drawPos, m.drawPos, 2.5f, lc);
+        }
+    }
+
+    // ── Nodes ─────────────────────────────────────────────────────────────
+    const float nodeR = 28.f;
+    int hoveredIdx = -1;
+
+    for (int i = 0; i < (int)_actMap.size(); i++)
+    {
+        const MapNode& n = _actMap[i];
+        Color ec = nodeColor(n.type);
+
+        bool hov = ready && !n.completed &&
+                   CheckCollisionPointCircle(mouse, n.drawPos, nodeR + 5.f);
+        if (hov) hoveredIdx = i;
+
+        if (n.completed)
+        {
+            DrawCircleV(n.drawPos, nodeR, Fade(ec, 0.22f));
+            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR, Fade(ec, 0.40f));
+            DrawCircleV(n.drawPos, 7.f, Fade(ec, 0.55f));   // dim centre dot
+        }
+        else if (n.available)
+        {
+            float pulse  = (float)GetTime();
+            float glow   = 0.22f + 0.10f * sinf(pulse * 3.0f);
+            DrawCircleV(n.drawPos, nodeR + 7.f, Fade(ec, glow));
+            DrawCircleV(n.drawPos, nodeR, Fade(ec, hov ? 0.60f : 0.42f));
+            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR,
+                            hov ? ec : Color{ec.r, ec.g, ec.b, 200});
+            if (hov)
+                DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR + 5.f,
+                                Fade(ec, 0.45f));
+        }
+        else
+        {
+            // Future node — visible but greyed
+            DrawCircleV(n.drawPos, nodeR, Fade(ec, 0.14f));
+            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, nodeR, Fade(ec, 0.28f));
+        }
+
+        // Label inside the node
+        const char* nm = nodeName(n.type);
+        int nSz = 13;
+        Color lblC = n.completed ? Fade(LIGHTGRAY, 0.45f) :
+                     n.available ? (hov ? GOLD : RAYWHITE) :
+                     Fade(LIGHTGRAY, 0.40f);
+        DrawText(nm, (int)(n.drawPos.x - MeasureText(nm, nSz)/2.f),
+                 (int)(n.drawPos.y - nSz/2.f), nSz, lblC);
+
+        // Click
+        if (ready && n.available && !n.completed &&
+            CheckCollisionPointCircle(mouse, n.drawPos, nodeR) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            EnterMapRoom(i);
+        }
+    }
+
+    // ── Hovered node description ──────────────────────────────────────────
+    if (hoveredIdx >= 0)
+    {
+        const MapNode& hn = _actMap[hoveredIdx];
+        const char* dsc = nodeDesc(hn.type);
+        int dSz = 20;
+        int dw  = MeasureText(dsc, dSz);
+        DrawText(dsc, (int)(sw/2.f - dw/2.f), (int)(sh - 90.f), dSz, LIGHTGRAY);
+    }
+
+    // ── Current node indicator ────────────────────────────────────────────
+    if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
+    {
+        const MapNode& cur = _actMap[_currentMapNodeIdx];
+        if (cur.completed)
+            DrawCircleLines((int)cur.drawPos.x, (int)cur.drawPos.y, nodeR + 9.f,
+                            Fade(YELLOW, 0.55f));
+    }
+
+    // ── Footer hint ───────────────────────────────────────────────────────
+    const char* hint = "Click a highlighted node to enter";
+    int ftSz = 19;
+    DrawText(hint, (int)(sw/2.f - MeasureText(hint, ftSz)/2.f),
+             (int)(sh - 55.f), ftSz, Color{140, 140, 140, 170});
 }
 
 void Engine::DrawLevelUpChoice()
@@ -2359,7 +2899,10 @@ void Engine::DrawLevelUpChoice()
                 _player.ApplyUpgrade(_levelUpUltimateOptions[i]);
                 _ultimateRowPicked = true;
                 if (_regularRowPicked)
+                {
+                    if (_levelUpReturnState == GameState::Map) _mapOpenTimer = 0.4f;
                     _gameState = _levelUpReturnState;
+                }
             }
         }
     }
@@ -2584,7 +3127,10 @@ void Engine::DrawLevelUpChoice()
             _awaitingStartingAbility = false;
             _regularRowPicked = true;
             if (!_showUltimateRow || _ultimateRowPicked)
+            {
+                if (_levelUpReturnState == GameState::Map) _mapOpenTimer = 0.4f;
                 _gameState = _levelUpReturnState;
+            }
         }
     }
     } // end showReg
@@ -3560,10 +4106,10 @@ Vector2 Engine::GetRandomPropPosition()
 
 Biome Engine::GetBiomeForWave(int wave) const
 {
-    if (wave <= 0)
-        return Biome::Dungeon;
-
-    return (((wave - 1) / 5) % 2 == 0) ? Biome::Forest : Biome::Dungeon;
+    // Legacy — superseded by GetBiomeForAct(). Kept to avoid linker errors
+    // if any call sites remain outside the main progression path.
+    (void)wave;
+    return GetBiomeForAct(_currentAct);
 }
 
 const char* Engine::GetBiomeName(Biome biome) const
@@ -4155,6 +4701,20 @@ void Engine::ResetRunState()
     _lastAbilityChoiceWave    = -1;
     _abilityChoiceSwapPending = false;
     _abilityChoiceOptionCount = 0;
+
+    // ── Room / act progression reset ──────────────────────────────────────
+    _currentAct        = 1;
+    _currentRoom       = 0;
+    _currentRoomType   = RoomType::Standard;
+    _pendingRoomChoice = false;
+    _roomClearTimer    = 0.f;
+    _currentMapNodeIdx = -1;
+    _mapOpenTimer      = 0.f;
+    _actMap.clear();
+
+    // Random starting biome so the player doesn't always begin in the same world.
+    _startBiomeDungeon = (GetRandomValue(0, 1) == 0);
+
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
     _lavaBalls.clear();
@@ -4162,8 +4722,8 @@ void Engine::ResetRunState()
     _pickups.clear();
     _effects.clear();
     _player.Init();
-    _currentBiome = Biome::Forest;
-    _pendingBiome = Biome::Forest;
+    _currentBiome = GetBiomeForAct(1);   // no initial biome transition
+    _pendingBiome = _currentBiome;
     ApplyBiome(_currentBiome);
     _bossCyclopsSupport = {};
     _bossOgreSupport = {};
@@ -4180,8 +4740,7 @@ void Engine::ResetRunState()
     if (_navRefreshJob.valid())
         _navRefreshJob.wait();
     ApplyCompletedNavigationRefresh();
-    SpawnWave();
-
+    GenerateActMap();  // builds the full act 1 node map; player clicks to start
 }
 
 int Engine::GetActiveEnemyCount() const
@@ -4416,9 +4975,10 @@ int Engine::GetEnemyPowerLevelForWave(int wave) const
 void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
 {
     // All enemy types share the same spawn-tuning path:
-    // 1. SetWaveScale — fixed base stats + behavioural timing for this wave.
-    // 2. ApplyEnemyPowerLevel — single global multiplier, advances every 10 waves.
+    // 1. SetWaveScale — fixed base stats + behavioural timing for this room.
+    // 2. ApplyEnemyPowerLevel — single global multiplier, advances every 10 rooms.
     // 3. SetTarget — restore player pointer so pooled enemies rejoin the run.
+    // _wave = total rooms entered this run, used here for scaling only.
     enemy.SetWaveScale(_wave);
     enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
     enemy.SetTarget(&_player);

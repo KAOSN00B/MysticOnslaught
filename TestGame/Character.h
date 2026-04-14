@@ -132,9 +132,8 @@ public:
     int   GetMana()    const { return _mana; }
     int   GetMaxMana() const { return _maxMana; }
 
-    // Passive mana regen — decay curve so regen slows as mana fills.
-    // rate = kManaRegenBase * _manaRegenMultiplier * (remaining / max)
-    // At base ×1.0 with max=10: ~2/s empty, ~1/s half-full, ~0.2/s near-full.
+    // Passive mana regen — flat rate scaled only by the regen multiplier.
+    // Higher regen should always feel faster, regardless of current mana.
     // _manaRegenMultiplier scales via upgrades and (eventually) the store.
     static constexpr float kManaRegenBase = 2.0f;
 

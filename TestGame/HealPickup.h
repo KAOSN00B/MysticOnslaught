@@ -3,7 +3,8 @@
 
 // ─────────────────────────────────────────────────────────────
 // HealPickup — restores 1 HP on collect, capped at player max HP.
-// Drawn as a red cross orb (no texture needed).
+// Uses the world pickup sprite only; the original heal animation still plays
+// on collection through Engine::SpawnHealEffect().
 // Intentionally rare in the drop pool — see Engine::SpawnEnemyDrop().
 // ─────────────────────────────────────────────────────────────
 class HealPickup : public Pickup
@@ -22,13 +23,6 @@ public:
 
 private:
     static void EnsureTextureLoaded();
-
-    float _runningTime = 0.f;
-    float _updateTime = 1.f / 12.f;
-    int _frame = 0;
-    static constexpr int _frameWidth = 32;
-    static constexpr int _frameHeight = 32;
-    static constexpr int _frameCount = 13;
 
     static Texture2D _sharedTexture;
     static bool _textureLoaded;

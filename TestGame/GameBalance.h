@@ -13,8 +13,8 @@ namespace Balance::Player
     inline constexpr int   kStartHealth      = 8;
     inline constexpr float kStartAttackPower = 3.f;
     inline constexpr float kStartSpeed       = 380.f;
-    inline constexpr int   kStartMana        = 60;
-    inline constexpr int   kStartMaxMana     = 60;
+    inline constexpr int   kStartMana        = 0;
+    inline constexpr int   kStartMaxMana     = 10;
 }
 
 // ── Player levelling ─────────────────────────────────────────────────────────
@@ -76,15 +76,18 @@ namespace Balance::Ogre
     inline constexpr float kCooldownStep            = 0.5f;
 }
 
-// ── Wave / enemy power scaling ───────────────────────────────────────────────
+// ── Room / act structure ──────────────────────────────────────────────────────
+namespace Balance::Rooms
+{
+    inline constexpr int kRoomsPerAct  = 6;   // 5 normal + 1 boss
+    inline constexpr int kRoomsPerTier = 10;  // enemy power advances every 10 rooms entered
+}
+
+// ── Wave / enemy power scaling (legacy namespace — use Balance::Rooms) ────────
 namespace Balance::Waves
 {
-    // Enemy power level = 1 + ((wave-1) / kWavesPerTier).
-    // Advancing every kWavesPerTier waves keeps the mid-game readable.
-    inline constexpr int   kWavesPerTier = 5;
-
-    // Max concurrent enemies on the field.
-    inline constexpr int   kMaxActiveEnemies = 16;
+    inline constexpr int kWavesPerTier   = 5;  // kept for reference; superseded by kRoomsPerTier
+    inline constexpr int kMaxActiveEnemies = 16;
 }
 
 // ── Pickup spawn timing ──────────────────────────────────────────────────────

@@ -322,7 +322,7 @@ int PauseAndGameOver::DrawGameOver(int wave, int kills, const std::vector<Leader
 
     // Column header row
     DrawText("Name",  (int)colName,  lbY, lbHeaderSz, WHITE);
-    DrawText("Wave",  (int)colWave,  lbY, lbHeaderSz, WHITE);
+    DrawText("Rooms", (int)colWave,  lbY, lbHeaderSz, WHITE);
     DrawText("Kills", (int)colKills, lbY, lbHeaderSz, WHITE);
     lbY += lbHeaderSz + 2;
 
@@ -357,7 +357,7 @@ int PauseAndGameOver::DrawGameOver(int wave, int kills, const std::vector<Leader
 
     // Current run stats
     int statSz = (int)(sh * 0.034f);
-    const char* waveTxt  = TextFormat("Wave: %d", wave);
+    const char* waveTxt  = TextFormat("Rooms Cleared: %d", wave);
     const char* killsTxt = TextFormat("Kills: %d", kills);
     int statY = (int)(sh * 0.32f);
     DrawText(waveTxt,  (int)(rightCX - MeasureText(waveTxt,  statSz) / 2.f), statY,                    statSz, YELLOW);
@@ -405,7 +405,7 @@ std::string PauseAndGameOver::DrawNameEntry(int wave, int kills)
 
     // Stats
     int statSz = (int)(sh * 0.034f);
-    const char* waveTxt  = TextFormat("Wave: %d",    wave);
+    const char* waveTxt  = TextFormat("Rooms Cleared: %d", wave);
     const char* killsTxt = TextFormat("Kills: %d",   kills);
     int statY = (int)(sh * 0.28f);
     DrawText(waveTxt,  (int)(sw / 2.f - MeasureText(waveTxt,  statSz) / 2.f), statY,                     statSz, YELLOW);
@@ -503,7 +503,7 @@ bool PauseAndGameOver::DrawLeaderboardScreen(const std::vector<LeaderboardEntry>
     // Column headers
     DrawText("#",     (int)(blockX - sw * 0.03f), lbY, headerSz, WHITE);
     DrawText("Name",  (int)colName,  lbY, headerSz, WHITE);
-    DrawText("Wave",  (int)colWave,  lbY, headerSz, WHITE);
+    DrawText("Rooms", (int)colWave,  lbY, headerSz, WHITE);
     DrawText("Kills", (int)colKills, lbY, headerSz, WHITE);
     lbY += headerSz + 4;
 

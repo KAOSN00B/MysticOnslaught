@@ -32,6 +32,17 @@
 
 enum class Biome { Dungeon, Forest };
 
+// ── Room type — drives encounter, reward, and biome logic ─────────────────────
+enum class RoomType
+{
+    Standard,   // mixed enemy wave, EXP reward
+    Elite,      // harder curated wave, better reward
+    Rest,       // no combat — spawns heal pickups, rest timer
+    Treasure,   // no combat — grants a free level-up card pick
+    Store,      // no combat — placeholder for future shop
+    Boss,       // Molarbeast + support adds — ends the act
+};
+
 enum class GameState
 {
     Menu,
@@ -42,7 +53,8 @@ enum class GameState
     Leaderboard,
     Keybindings,
     LevelUpChoice,
-    AbilityChoice
+    AbilityChoice,
+    Map,            // Slay-the-Spire–style act map — player clicks a node to enter the next room
 };
 
 class Engine
@@ -135,6 +147,15 @@ private:
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
 
+    // ── Room-based run progression ────────────────────────────────────────────
+    void StartNextRoom(RoomType type);    // internal setup helper (biome + wave intro)
+    void GenerateActMap();                // builds the full act node graph
+    void EnterMapRoom(int nodeIdx);       // called when the player clicks a map node
+    void DrawMap();                       // Slay-the-Spire–style act map screen
+    RoomType PickRoomTypeForRow(int row); // weighted random room type by act depth
+
+    Biome GetBiomeForAct(int act) const;  // replaces GetBiomeForWave()
+
     // Touch-mode helpers
     void UpdateTouchControls();
     void DrawTouchAbilityArc();
@@ -158,6 +179,18 @@ private:
     bool TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance);
 
 private:
+    // ── Act map node — one room on the Slay-the-Spire–style map ──────────────
+    struct MapNode
+    {
+        int      row       = 0;               // 0 = entry, 5 = boss
+        float    normX     = 0.5f;            // 0–1 horizontal position in row
+        RoomType type      = RoomType::Standard;
+        bool     completed = false;           // player has cleared this room
+        bool     available = false;           // player can click this node now
+        std::vector<int> nextNodes;           // indices into _actMap
+        Vector2  drawPos{};                   // screen-space position (computed in GenerateActMap)
+    };
+
     struct BossSupportState
     {
         Enemy* enemy = nullptr;
@@ -227,6 +260,22 @@ private:
     float _fadeInTimer   = 0.f;
     float _bossWarningTimer = 0.f;
     float _levelUpOpenTimer = 0.f;  // blocks card clicks briefly after panel opens
+
+    // ── Act / room progression ────────────────────────────────────────────────
+    // _wave keeps its name but now means "total rooms entered this run"
+    // (used for enemy scaling via GetEnemyPowerLevelForWave).
+    // _currentAct / _currentRoom drive display and encounter selection.
+    int      _currentAct      = 1;                  // 1-indexed; advances after each boss clear
+    int      _currentRoom     = 0;                  // 1-5 normal + 6 boss within the act
+    RoomType _currentRoomType = RoomType::Standard; // drives SpawnEnemies and reward logic
+    bool     _pendingRoomChoice = false;  // after AbilityChoice (boss clear), show new-act map
+    float    _roomClearTimer    = 0.f;   // non-combat rooms wait before advancing (Rest/Store)
+
+    // Act map state (Slay-the-Spire–style node graph)
+    std::vector<MapNode> _actMap;
+    int   _currentMapNodeIdx = -1;          // index of the node currently in / last completed
+    float _mapOpenTimer      = 0.f;         // brief block after the map opens to prevent accidental clicks
+    bool  _startBiomeDungeon = true;        // randomised each run; true = act 1 is Dungeon
 
     // Level-up choice state
     UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };
