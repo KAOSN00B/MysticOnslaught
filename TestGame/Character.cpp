@@ -849,11 +849,19 @@ void Character::ConsumeMeleeDamageFrame()
 
 Rectangle Character::GetAttackCollisionRec() const
 {
-    Rectangle attackRec = GetCollisionRec();
-    attackRec.x      += _rightLeft * 8.f * _attackRangeMultiplier;
-    attackRec.height *= _attackRangeMultiplier;
-    attackRec.width  *= _attackRangeMultiplier;
-    return attackRec;
+    Rectangle body = GetCollisionRec();
+
+    // Independent sword box: half the body width, full body height, spawns
+    // strictly in front of the player. Range multiplier only extends it forward.
+    float attackWidth = body.width * 0.5f * _attackRangeMultiplier;
+
+    float swordX;
+    if (_rightLeft > 0)
+        swordX = body.x + body.width;           // start at right edge of body
+    else
+        swordX = body.x - attackWidth;          // start attackWidth to the left of body
+
+    return Rectangle{ swordX, body.y, attackWidth, body.height };
 }
 
 Vector2 Character::GetCastOrigin() const

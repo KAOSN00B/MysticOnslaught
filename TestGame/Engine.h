@@ -156,6 +156,8 @@ private:
     void StartNextRoom(RoomType type);    // internal setup helper (biome + wave intro)
     void GenerateActMap();                // builds the full act node graph
     void EnterMapRoom(int nodeIdx);       // called when the player clicks a map node
+    void CompleteCurrentMapNode();        // marks the current node complete and unlocks next nodes
+    void HandleRoomContinueAction();      // shared continue path for cleared/completed rooms
     void DrawMap();                       // Slay-the-Spire–style act map screen
     RoomType PickRoomTypeForRow(int row); // weighted random room type by act depth
 

@@ -14,6 +14,27 @@
 
 namespace
 {
+    void DrawScrollingCheckerboard(float sw, float sh, Color dark, Color light, float speedX, float speedY, int cell = 80)
+    {
+        const int period = cell * 2;
+        float t    = (float)GetTime();
+        int   offX = (int)fmodf(t * speedX, (float)period);
+        int   offY = (int)fmodf(t * speedY, (float)period);
+        int   phaseX = offX / cell;
+        int   phaseY = offY / cell;
+        int   pixX   = offX % cell;
+        int   pixY   = offY % cell;
+
+        for (int gy = -1; gy <= (int)(sh / cell) + 1; gy++)
+        {
+            for (int gx = -1; gx <= (int)(sw / cell) + 1; gx++)
+            {
+                bool isDark = (((gx + phaseX) + (gy + phaseY)) % 2 + 2) % 2 == 0;
+                DrawRectangle(gx * cell - pixX, gy * cell - pixY,
+                    cell, cell, isDark ? dark : light);
+            }
+        }
+    }
     // ── Resource economy constants ────────────────────────────────────────────
     // Mana is now primarily passive-regen (see Character::kManaRegenPerSecond).
     // Pickups are supplemental / precious, not the main resource source.
@@ -616,6 +637,37 @@ void Engine::EnterMapRoom(int idx)
     _gameState = GameState::Play;
 }
 
+void Engine::CompleteCurrentMapNode()
+{
+    if (_currentMapNodeIdx < 0 || _currentMapNodeIdx >= (int)_actMap.size())
+        return;
+
+    _actMap[_currentMapNodeIdx].completed = true;
+    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
+        if (next >= 0 && next < (int)_actMap.size())
+            _actMap[next].available = true;
+}
+
+void Engine::HandleRoomContinueAction()
+{
+    _roomClearPending = false;
+
+    if (_currentRoomType == RoomType::Treasure)
+    {
+        CompleteCurrentMapNode();
+        GenerateLevelUpOptions();
+        _levelUpReturnState = GameState::Map;
+        _levelUpOpenTimer   = 0.25f;
+        _gameState          = GameState::LevelUpChoice;
+        return;
+    }
+
+    CompleteCurrentMapNode();
+    _mapKeySelectedIdx = -1;
+    _mapOpenTimer = 0.4f;
+    _gameState = GameState::Map;
+}
+
 void Engine::SpawnEnemies()
 {
     float mapW = _map.width * _mapScale;
@@ -871,20 +923,10 @@ void Engine::UpdateGamePlay(float dt)
         return;
     }
 
-    // M key opens the map as soon as combat ends — same effect as clicking Continue.
+    // M key confirms the current room's continue action.
     if (_roomClearPending && IsKeyPressed(KEY_M))
     {
-        _roomClearPending = false;
-        if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
-        {
-            _actMap[_currentMapNodeIdx].completed = true;
-            for (int next : _actMap[_currentMapNodeIdx].nextNodes)
-                if (next >= 0 && next < (int)_actMap.size())
-                    _actMap[next].available = true;
-        }
-        _mapKeySelectedIdx = -1;
-        _mapOpenTimer = 0.4f;
-        _gameState = GameState::Map;
+        HandleRoomContinueAction();
         return;
     }
 
@@ -992,21 +1034,11 @@ void Engine::UpdateGamePlay(float dt)
         {
             _waveStarting = false;
 
-            // Treasure room: grant a free upgrade card, then return to map.
+            // Treasure rooms wait for the same explicit Continue input as every
+            // other room. Pressing Continue opens the free upgrade screen.
             if (_currentRoomType == RoomType::Treasure)
             {
-                // Mark this node complete now so the map is ready on return.
-                if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
-                {
-                    _actMap[_currentMapNodeIdx].completed = true;
-                    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
-                        if (next >= 0 && next < (int)_actMap.size())
-                            _actMap[next].available = true;
-                }
-                GenerateLevelUpOptions();
-                _levelUpReturnState = GameState::Map;
-                _levelUpOpenTimer   = 0.25f;
-                _gameState          = GameState::LevelUpChoice;
+                _roomClearPending = true;
                 return;
             }
 
@@ -1032,23 +1064,11 @@ void Engine::UpdateGamePlay(float dt)
             }
         }
 
-        // Non-combat rooms (Rest/Store) use a countdown timer before showing the map.
+        // Non-combat rooms still use the same Continue button flow as combat
+        // rooms; they just complete immediately once their intro ends.
         if (_currentRoomType == RoomType::Rest || _currentRoomType == RoomType::Store)
         {
-            _roomClearTimer -= dt;
-            if (_roomClearTimer <= 0.f)
-            {
-                if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
-                {
-                    _actMap[_currentMapNodeIdx].completed = true;
-                    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
-                        if (next >= 0 && next < (int)_actMap.size())
-                            _actMap[next].available = true;
-                }
-                _mapOpenTimer = 0.4f;
-                _gameState = GameState::Map;
-            }
-            // Don't fall into the enemy-count check below for these rooms
+            _roomClearPending = true;
         }
         else if (!_roomClearPending && GetActiveEnemyCount() == 0)
         {
@@ -1267,19 +1287,25 @@ void Engine::Draw()
                 (int)(btnY + btnH / 2.f - btnTxtSz / 2.f),
                 btnTxtSz, hov ? Color{210, 255, 220, 255} : RAYWHITE);
 
-            if (hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            bool pressed = hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+            if (!pressed)
             {
-                _roomClearPending = false;
-                if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
+                int tc = GetTouchPointCount();
+                for (int i = 0; i < tc; ++i)
                 {
-                    _actMap[_currentMapNodeIdx].completed = true;
-                    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
-                        if (next >= 0 && next < (int)_actMap.size())
-                            _actMap[next].available = true;
+                    if (CheckCollisionPointRec(GetTouchPosition(i), btn))
+                    {
+                        pressed = true;
+                        break;
+                    }
                 }
-                _mapKeySelectedIdx = -1;
-                _mapOpenTimer = 0.4f;
-                _gameState = GameState::Map;
+            }
+
+            if (pressed)
+            {
+                StopSound(_buttonPressSound);
+                PlaySound(_buttonPressSound);
+                HandleRoomContinueAction();
             }
         }
 
@@ -1691,6 +1717,16 @@ void Engine::DrawWorld()
 
     DrawEffects(worldOffset);
 
+    // Depth sort: props whose midpoint is above the player's feet are drawn
+    // after the player (player walks behind their top half / canopy).
+    // Props whose midpoint is below the player's feet are drawn before
+    // (player walks in front of their trunk / base).
+    float playerFeetY = _player.GetFeetWorldPos().y;
+
+    for (auto& prop : _props)
+        if (prop.GetSortY() < playerFeetY)
+            prop.Render(cameraRef);
+
     for (auto& enemy : _enemies)
     {
         if (!enemy->IsActive())
@@ -1700,9 +1736,9 @@ void Engine::DrawWorld()
 
     _player.DrawPlayer(cameraRef);
 
-    // Props drawn last so trees/rocks render in front of characters (depth illusion)
     for (auto& prop : _props)
-        prop.Render(cameraRef);
+        if (prop.GetSortY() >= playerFeetY)
+            prop.Render(cameraRef);
 
     // Floating damage numbers — cull expired then draw remaining
     {
@@ -2769,20 +2805,28 @@ void Engine::DrawMap()
     Vector2 mouse  = GetMousePosition();
 
     // ── Background ────────────────────────────────────────────────────────
-    DrawRectangle(0, 0, (int)sw, (int)sh, Color{10, 8, 20, 255});
+    Biome actBiome = GetBiomeForAct(_currentAct);
+    Color bgDark = Color{ 78, 62, 40, 255 };
+    Color bgLight = Color{ 110, 88, 58, 255 };
+    if (actBiome == Biome::Forest)
+    {
+        bgDark  = Color{ 30, 74, 42, 255 };
+        bgLight = Color{ 48, 112, 66, 255 };
+    }
+    DrawScrollingCheckerboard(sw, sh, bgDark, bgLight, 18.f, 10.f);
 
     // ── Header — centred over the map area (right of the panel) ──────────
     // Map area centre X mirrors GenerateActMap: mapLeft=30%, mapRight=97%.
     const float mapCentreX = sw * 0.635f;
     std::string header = "Act " + std::to_string(_currentAct)
-                       + "  -  " + GetBiomeName(GetBiomeForAct(_currentAct));
+                       + "  -  " + GetBiomeName(actBiome);
     int hSz = 42;
     DrawText(header.c_str(),
-        (int)(mapCentreX - MeasureText(header.c_str(), hSz) / 2.f), 28, hSz, GOLD);
+        (int)(mapCentreX - MeasureText(header.c_str(), hSz) / 2.f), 28, hSz, Color{255, 214, 102, 255});
     const char* sub = "Choose your path";
     DrawText(sub,
         (int)(mapCentreX - MeasureText(sub, 22) / 2.f), 78, 22,
-        Color{180, 180, 180, 200});
+        Color{206, 242, 255, 210});
 
     if (_actMap.empty()) return;
 
@@ -2860,23 +2904,23 @@ void Engine::DrawMap()
 
         // Panel background
         DrawRectangleRounded({ pX, pY, pW, panelH }, 0.05f, 8,
-            Fade(Color{18, 16, 32, 255}, 0.94f));
+            Fade(Color{12, 71, 84, 255}, 0.92f));
         DrawRectangleRoundedLines({ pX, pY, pW, panelH }, 0.05f, 8,
-            Fade(GOLD, 0.22f));
+            Fade(Color{130, 235, 255, 255}, 0.30f));
 
         float cy         = pY + pad;
         float rightEdge  = pX + pW - pad;
 
         // ── Stats ──────────────────────────────────────────────────────
-        DrawText("PLAYER STATS", (int)(pX + pad), (int)cy, (int)titleSize, GOLD);
+        DrawText("PLAYER STATS", (int)(pX + pad), (int)cy, (int)titleSize, Color{255, 214, 102, 255});
         cy += titleSize + titleToRuleGap;
-        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(GOLD, 0.40f));
+        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(Color{130, 235, 255, 255}, 0.55f));
         cy += ruleToRowsGap;
 
         // stat row: label left, coloured value right
         auto statRow = [&](const char* lbl, const char* val, Color valCol = RAYWHITE)
         {
-            DrawText(lbl, (int)(pX + pad), (int)cy, (int)statFont, Color{155, 155, 185, 220});
+            DrawText(lbl, (int)(pX + pad), (int)cy, (int)statFont, Color{188, 228, 238, 228});
             int vw = MeasureText(val, (int)statFont);
             DrawText(val, (int)(rightEdge - vw), (int)cy, (int)statFont, valCol);
             cy += statRowH;
@@ -2906,13 +2950,13 @@ void Engine::DrawMap()
 
         // ── Section divider ────────────────────────────────────────────
         cy += sectionGap;
-        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(WHITE, 0.12f));
+        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(Color{130, 235, 255, 255}, 0.24f));
         cy += 18.f;
 
         // ── Legend ─────────────────────────────────────────────────────
-        DrawText("LEGEND", (int)(pX + pad), (int)cy, (int)titleSize, GOLD);
+        DrawText("LEGEND", (int)(pX + pad), (int)cy, (int)titleSize, Color{255, 214, 102, 255});
         cy += titleSize + titleToRuleGap;
-        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(GOLD, 0.40f));
+        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(Color{130, 235, 255, 255}, 0.55f));
         cy += ruleToRowsGap;
 
         const float iconX = pX + pad + legendIndent;
@@ -2937,7 +2981,7 @@ void Engine::DrawMap()
             float labelY = cy + 3.f;
             float descY  = cy + legendLabelSize + 7.f;
             DrawText(name, (int)txtX, (int)labelY, (int)legendLabelSize, RAYWHITE);
-            DrawText(desc, (int)txtX, (int)descY, (int)legendDescSize, Color{130, 130, 155, 200});
+            DrawText(desc, (int)txtX, (int)descY, (int)legendDescSize, Color{188, 228, 238, 215});
             cy += legendRowH;
         };
 
@@ -2957,7 +3001,7 @@ void Engine::DrawMap()
         {
             if (nextIdx < 0 || nextIdx >= (int)_actMap.size()) continue;
             const MapNode& m = _actMap[nextIdx];
-            Color lc = n.completed ? Color{70, 70, 90, 180} : Color{110, 110, 140, 110};
+            Color lc = n.completed ? Color{70, 136, 152, 185} : Color{120, 214, 234, 120};
             DrawLineEx(n.drawPos, m.drawPos, 2.5f, lc);
         }
     }
@@ -3059,7 +3103,7 @@ void Engine::DrawMap()
         int dSz = 20;
         DrawText(dsc,
             (int)(mapCentreX - MeasureText(dsc, dSz) / 2.f),
-            (int)(sh - 90.f), dSz, LIGHTGRAY);
+            (int)(sh - 90.f), dSz, Color{206, 242, 255, 230});
     }
 
     // ── Footer hint ───────────────────────────────────────────────────────
@@ -3069,7 +3113,7 @@ void Engine::DrawMap()
     int ftSz = 18;
     DrawText(hint,
         (int)(mapCentreX - MeasureText(hint, ftSz) / 2.f),
-        (int)(sh - 55.f), ftSz, Color{140, 140, 140, 170});
+        (int)(sh - 55.f), ftSz, Color{173, 223, 236, 185});
 }
 
 void Engine::DrawLevelUpChoice()
@@ -4296,38 +4340,18 @@ void Engine::DrawHowToPlay()
     const int descSz   = (int)(sh * 0.024f);   // ~26
 
     // ── Background — slow-scrolling checkerboard ────────────────────────────
-    {
-        const int   cell  = 80;
-        const Color dark  = Color{ 52, 38, 26, 255 };
-        const Color light = Color{ 72, 54, 36, 255 };
-
-        const int period = cell * 2;
-        float t    = (float)GetTime();
-        int   offX = (int)fmodf(t * 22.f, (float)period);
-        int   offY = (int)fmodf(t * 12.f, (float)period);
-        int   phaseX = offX / cell;
-        int   phaseY = offY / cell;
-        int   pixX   = offX % cell;
-        int   pixY   = offY % cell;
-
-        for (int gy = -1; gy <= (int)(sh / cell) + 1; gy++)
-        {
-            for (int gx = -1; gx <= (int)(sw / cell) + 1; gx++)
-            {
-                bool isDark = (((gx + phaseX) + (gy + phaseY)) % 2 + 2) % 2 == 0;
-                DrawRectangle(gx * cell - pixX, gy * cell - pixY,
-                    cell, cell, isDark ? dark : light);
-            }
-        }
-    }
+    DrawScrollingCheckerboard(sw, sh,
+        Color{ 96, 34, 86, 255 },
+        Color{ 132, 54, 116, 255 },
+        22.f, 12.f);
 
     // ── Title banner ────────────────────────────────────────────────────────
     float titleBannerY = sh * 0.02f;
     float titleBannerH = titleSz + sh * 0.03f;
-    DrawRectangle(0, (int)titleBannerY, (int)sw, (int)titleBannerH, Fade(BLACK, 0.6f));
+    DrawRectangle(0, (int)titleBannerY, (int)sw, (int)titleBannerH, Fade(Color{68, 20, 74, 255}, 0.72f));
     const char* title = "How To Play";
     int titleW = MeasureText(title, titleSz);
-    DrawText(title, (int)(sw / 2.f - titleW / 2.f), (int)(titleBannerY + sh * 0.012f), titleSz, YELLOW);
+    DrawText(title, (int)(sw / 2.f - titleW / 2.f), (int)(titleBannerY + sh * 0.012f), titleSz, Color{255, 194, 92, 255});
 
     // ── Layout anchors ───────────────────────────────────────────────────────
     const float contentY  = titleBannerY + titleBannerH + sh * 0.025f;
@@ -4339,11 +4363,11 @@ void Engine::DrawHowToPlay()
     const float rowGap    = sh * 0.090f;
 
     // ── Divider ─────────────────────────────────────────────────────────────
-    DrawLineEx({ dividerX, contentY }, { dividerX, sh - sh * 0.09f }, 2.f, Fade(WHITE, 0.30f));
+    DrawLineEx({ dividerX, contentY }, { dividerX, sh - sh * 0.09f }, 2.f, Fade(Color{255, 182, 236, 255}, 0.42f));
 
     // ── LEFT column — Controls ───────────────────────────────────────────────
     float rowY = contentY;
-    DrawText("CONTROLS", (int)colL, (int)rowY, headerSz, ORANGE);
+    DrawText("CONTROLS", (int)colL, (int)rowY, headerSz, Color{255, 194, 92, 255});
     rowY += headerSz + sh * 0.018f;
 
     struct CtrlEntry { const char* key; const char* desc; };
@@ -4361,26 +4385,26 @@ void Engine::DrawHowToPlay()
         int kw = MeasureText(c.key, labelSz);
         float badgeH = (float)labelSz + 10.f;
         DrawRectangleRounded({ colL, rowY - 4.f, (float)kw + 18.f, badgeH },
-            0.3f, 4, Fade(BLACK, 0.7f));
+            0.3f, 4, Fade(Color{70, 18, 66, 255}, 0.74f));
         DrawRectangleRoundedLines({ colL, rowY - 4.f, (float)kw + 18.f, badgeH },
-            0.3f, 4, Fade(WHITE, 0.5f));
-        DrawText(c.key,  (int)colL + 9, (int)rowY, labelSz, WHITE);
-        DrawText(c.desc, (int)(colL + kw + 30.f), (int)rowY, descSz, LIGHTGRAY);
+            0.3f, 4, Fade(Color{255, 182, 236, 255}, 0.55f));
+        DrawText(c.key,  (int)colL + 9, (int)rowY, labelSz, Color{255, 234, 247, 255});
+        DrawText(c.desc, (int)(colL + kw + 30.f), (int)rowY, descSz, Color{240, 204, 238, 255});
         rowY += rowGap * 0.82f;
     }
 
     // EXP section below controls
     rowY += sh * 0.01f;
-    DrawText("EXP & LEVELS", (int)colL, (int)rowY, headerSz, ORANGE);
+    DrawText("EXP & LEVELS", (int)colL, (int)rowY, headerSz, Color{255, 194, 92, 255});
     rowY += headerSz + sh * 0.012f;
-    DrawText("Kill enemies to earn EXP and level up.",                   (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
-    DrawText("Choose 1 of 3 upgrade cards each level.",                  (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
-    DrawText("EXP threshold doubles each level (10, 20, 40\xE2\x80\xA6)", (int)colL, (int)rowY, descSz, LIGHTGRAY); rowY += descSz + 6;
-    DrawText("Max level: 20.",                                           (int)colL, (int)rowY, descSz, LIGHTGRAY);
+    DrawText("Kill enemies to earn EXP and level up.",                   (int)colL, (int)rowY, descSz, Color{240, 204, 238, 255}); rowY += descSz + 6;
+    DrawText("Choose 1 of 3 upgrade cards each level.",                  (int)colL, (int)rowY, descSz, Color{240, 204, 238, 255}); rowY += descSz + 6;
+    DrawText("EXP threshold doubles each level (10, 20, 40\xE2\x80\xA6)", (int)colL, (int)rowY, descSz, Color{240, 204, 238, 255}); rowY += descSz + 6;
+    DrawText("Max level: 20.",                                           (int)colL, (int)rowY, descSz, Color{240, 204, 238, 255});
 
     // ── RIGHT column — Pickups & Enemies ─────────────────────────────────────
     float rowR = contentY;
-    DrawText("PICKUPS & ENEMIES", (int)colRText, (int)rowR, headerSz, ORANGE);
+    DrawText("PICKUPS & ENEMIES", (int)colRText, (int)rowR, headerSz, Color{255, 194, 92, 255});
     rowR += headerSz + sh * 0.018f;
 
     struct PickupEntry { const char* name; const char* desc; int shape; };
@@ -4422,8 +4446,8 @@ void Engine::DrawHowToPlay()
 
         // Name + desc to the right of the icon
         float textX = iconCX + 28.f;
-        DrawText(e.name, (int)textX, (int)rowR, labelSz, WHITE);
-        DrawText(e.desc, (int)textX, (int)(rowR + labelSz + 4), descSz, LIGHTGRAY);
+        DrawText(e.name, (int)textX, (int)rowR, labelSz, Color{255, 234, 247, 255});
+        DrawText(e.desc, (int)textX, (int)(rowR + labelSz + 4), descSz, Color{240, 204, 238, 255});
 
         rowR += rowGap * 1.05f;
     }
@@ -4437,8 +4461,8 @@ void Engine::DrawHowToPlay()
     Rectangle backBtn{ btnX, btnY, btnW, btnH };
     bool hovered = CheckCollisionPointRec(GetMousePosition(), backBtn);
 
-    DrawRectangleRounded(backBtn, 0.3f, 6, hovered ? Fade(GRAY, 0.9f) : Fade(DARKGRAY, 0.85f));
-    DrawRectangleRoundedLines(backBtn, 0.3f, 6, Fade(WHITE, 0.5f));
+    DrawRectangleRounded(backBtn, 0.3f, 6, hovered ? Color{196, 86, 165, 240} : Color{142, 58, 132, 228});
+    DrawRectangleRoundedLines(backBtn, 0.3f, 6, Fade(Color{255, 194, 92, 255}, 0.68f));
 
     const char* backLabel = (_howToPlayFrom == GameState::Pause) ? "Resume Game" : "< Back";
     int backLabelSz = (int)(sh * 0.030f);
@@ -4446,7 +4470,7 @@ void Engine::DrawHowToPlay()
     DrawText(backLabel,
         (int)(btnX + btnW / 2.f - backW / 2.f),
         (int)(btnY + btnH / 2.f - backLabelSz / 2.f),
-        backLabelSz, WHITE);
+        backLabelSz, Color{255, 243, 214, 255});
 
     if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {

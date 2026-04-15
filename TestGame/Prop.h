@@ -16,6 +16,14 @@ public:
 	Vector2 GetEnemyCollisionCenter() const;
 	float GetEnemyCollisionRadius() const;
 	Vector2 GetWorldPos() const { return _worldPos; }
+	// Y midpoint of the sprite in world space — used for depth sorting.
+	// Props with a midpoint above the player's feet are drawn after the player
+	// (player walks behind them); props below are drawn before (player in front).
+	float GetSortY() const
+	{
+		float h = (_frameCount > 1 ? (float)_frameHeight : (float)_texture.height) * _scale;
+		return _worldPos.y + h * 0.5f;
+	}
 	// Trims the collision box from the top by a fraction (0.25 = top quarter is passable).
 	void SetCollisionTopFraction(float f) { _collisionTopFraction = f; }
 	// Trims each side inward by a fraction (0.3 = 30% trimmed per side, leaving 40% centered).

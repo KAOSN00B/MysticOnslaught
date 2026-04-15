@@ -2,11 +2,35 @@
 #include "AssetPaths.h"
 #include "NineSlice.h"
 
+#include <cmath>
+
 // ── 9-slice corner sizes ──────────────────────────────────────────────────────
 static constexpr float BORDER_SRC_CORNER = 16.f;
 static constexpr float BORDER_DST_CORNER = 32.f;
 static constexpr float BTN_SRC_CORNER    = 8.f;
 static constexpr float BTN_DST_CORNER    = 12.f;
+
+static void DrawScrollingCheckerboard(float sw, float sh, Color dark, Color light, float speedX, float speedY, int cell = 80)
+{
+    const int period = cell * 2;
+    float t    = (float)GetTime();
+    int   offX = (int)fmodf(t * speedX, (float)period);
+    int   offY = (int)fmodf(t * speedY, (float)period);
+    int   phaseX = offX / cell;
+    int   phaseY = offY / cell;
+    int   pixX   = offX % cell;
+    int   pixY   = offY % cell;
+
+    for (int gy = -1; gy <= (int)(sh / cell) + 1; gy++)
+    {
+        for (int gx = -1; gx <= (int)(sw / cell) + 1; gx++)
+        {
+            bool isDark = (((gx + phaseX) + (gy + phaseY)) % 2 + 2) % 2 == 0;
+            DrawRectangle(gx * cell - pixX, gy * cell - pixY,
+                cell, cell, isDark ? dark : light);
+        }
+    }
+}
 
 // ── Shared helper: draw a textured button, return true if clicked ─────────────
 static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color tint)
@@ -132,8 +156,10 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
 
-    // Dim overlay
-    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.75f));
+    DrawScrollingCheckerboard(sw, sh,
+        Color{ 20, 74, 54, 255 },
+        Color{ 34, 108, 78, 255 },
+        20.f, 11.f);
 
     // Slot table: name, pointer to the key, clearable (KEY_NULL allowed)
     struct SlotDef { const char* name; KeyboardKey* key; bool clearable; };
@@ -198,15 +224,15 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
     float panelX = sw / 2.f - panelW / 2.f;
     float panelY = sh / 2.f - panelH / 2.f;
 
-    DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(BLACK, 0.93f));
-    DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(WHITE, 0.30f));
+    DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(Color{14, 64, 48, 255}, 0.94f));
+    DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(Color{140, 255, 208, 255}, 0.38f));
 
     // Title
     const char* title   = "KEYBINDINGS";
     int         titleSz = (int)(sh * 0.046f);
     DrawText(title,
         (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
-        (int)(panelY + padV), titleSz, ORANGE);
+        (int)(panelY + padV), titleSz, Color{255, 212, 94, 255});
 
     int nameSz   = (int)(sh * 0.026f);
     int keySz    = (int)(sh * 0.029f);
@@ -228,7 +254,7 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
         // Group label
         DrawText(groups[g].name,
             (int)(panelX + panelW * 0.05f),
-            (int)(rowY), groupSz, Fade(GOLD, 0.72f));
+            (int)(rowY), groupSz, Fade(Color{255, 212, 94, 255}, 0.82f));
         rowY += groupLabelH;
 
         for (int ri = 0; ri < groups[g].count; ri++)
@@ -237,12 +263,12 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
             float rowX     = panelX + panelW * 0.05f;
             float rowRight = panelX + panelW * 0.95f;
 
-            DrawRectangleRounded({ rowX, rowY, panelW * 0.90f, rowH }, 0.2f, 4, Fade(WHITE, 0.06f));
+            DrawRectangleRounded({ rowX, rowY, panelW * 0.90f, rowH }, 0.2f, 4, Fade(Color{170, 255, 216, 255}, 0.12f));
 
             DrawText(slots[slotIdx].name,
                 (int)(rowX + 12.f),
                 (int)(rowY + rowH * 0.5f - nameSz * 0.5f),
-                nameSz, LIGHTGRAY);
+                nameSz, Color{219, 245, 232, 255});
 
             float badgeW = sw * 0.095f;
             float badgeH = rowH * 0.70f;
@@ -254,17 +280,17 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
             bool hovered   = CheckCollisionPointRec(GetMousePosition(), badgeRect) && !rebinding;
 
             Color badgeCol = rebinding ? Fade(GOLD, 0.85f)
-                           : hovered   ? Fade(SKYBLUE, 0.75f)
-                                       : Fade(DARKGRAY, 0.80f);
+                           : hovered   ? Fade(Color{110, 255, 220, 255}, 0.82f)
+                                       : Fade(Color{42, 126, 94, 255}, 0.88f);
             DrawRectangleRounded(badgeRect, 0.3f, 4, badgeCol);
-            DrawRectangleRoundedLines(badgeRect, 0.3f, 4, Fade(WHITE, 0.4f));
+            DrawRectangleRoundedLines(badgeRect, 0.3f, 4, Fade(Color{210, 255, 231, 255}, 0.52f));
 
             const char* keyLabel = rebinding ? "..." : GetKeyName(*slots[slotIdx].key);
             int labelW = MeasureText(keyLabel, keySz);
             DrawText(keyLabel,
                 (int)(badgeX + badgeW / 2.f - labelW / 2.f),
                 (int)(badgeY + badgeH / 2.f - keySz  / 2.f),
-                keySz, rebinding ? BLACK : WHITE);
+                keySz, rebinding ? Color{46, 40, 12, 255} : Color{243, 255, 249, 255});
 
             if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
                 _rebindingSlot = slotIdx;
@@ -283,13 +309,13 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
     int hintSz = (int)(sh * 0.019f);
     DrawText(hintText,
         (int)(sw / 2.f - MeasureText(hintText, hintSz) / 2.f),
-        (int)(rowY), hintSz, Fade(WHITE, 0.45f));
+        (int)(rowY), hintSz, Fade(Color{214, 250, 233, 255}, 0.72f));
 
     // Back button
     rowY += hintH + rowGap;
     float backW = panelW * 0.40f;
     float backX = sw / 2.f - backW / 2.f;
-    bool done   = DrawButton(_btnTex, "Back", { backX, rowY, backW, backH }, Fade(WHITE, 0.85f));
+    bool done   = DrawButton(_btnTex, "Back", { backX, rowY, backW, backH }, Color{ 118, 220, 176, 255 });
 
     return done;
 }
