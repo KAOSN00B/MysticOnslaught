@@ -249,6 +249,8 @@ Engine::~Engine()
     UnloadTexture(_mapIconElite);
     UnloadTexture(_mapIconShop);
     UnloadTexture(_mapIconTreasure);
+    UnloadTexture(_mapIconBoss);
+    UnloadTexture(_mapIconRest);
     UnloadTexture(_upgradeAttackPowerTex);
     UnloadTexture(_upgradeAttackRangeTex);
     UnloadTexture(_upgradeHealthTex);
@@ -318,6 +320,8 @@ void Engine::Init()
     _mapIconElite    = LoadTexture(AssetPath("TileSet/MapIcons/EliteRoom.png").c_str());
     _mapIconShop     = LoadTexture(AssetPath("TileSet/MapIcons/ShopRoom.png").c_str());
     _mapIconTreasure = LoadTexture(AssetPath("TileSet/MapIcons/TreasureRoom.png").c_str());
+    _mapIconBoss     = LoadTexture(AssetPath("TileSet/MapIcons/BossRoom.png").c_str());
+    _mapIconRest     = LoadTexture(AssetPath("PowerUps/FoodPickup.png").c_str());
 
     _upgradeAttackPowerTex = LoadTexture(AssetPath("UI/Upgrades/AttackPower.png").c_str());
     _upgradeAttackRangeTex = LoadTexture(AssetPath("UI/Upgrades/AttackRange.png").c_str());
@@ -363,7 +367,7 @@ void Engine::StartNextRoom(RoomType type)
     _message = "Act " + std::to_string(_currentAct) + " - " + actName;
 
     _waveStarting   = true;
-    _waveIntroTimer = _waveIntroDuration;
+    _waveIntroTimer = 0.f;
 
     // Biome transition when the act changes
     Biome nextBiome = GetBiomeForAct(_currentAct);
@@ -612,7 +616,7 @@ void Engine::EnterMapRoom(int idx)
     _message = "Act " + std::to_string(_currentAct) + " - " + GetBiomeName(GetBiomeForAct(_currentAct));
 
     _waveStarting   = true;
-    _waveIntroTimer = _waveIntroDuration;
+    _waveIntroTimer = 0.f;
 
     Biome nextBiome = GetBiomeForAct(_currentAct);
     if (nextBiome != _currentBiome)
@@ -628,11 +632,26 @@ void Engine::EnterMapRoom(int idx)
         PopulatePropsForBiome(_currentBiome);
         BuildNavigationGrid();
         _navRefreshTimer = 0.f;   // force distance-field recompute next frame
+
+        // Most room-to-room transitions should feel immediate. For same-biome
+        // rooms we start the encounter right away instead of pausing behind
+        // the intro banner.
+        _waveStarting = false;
+        if (_currentRoomType == RoomType::Treasure)
+        {
+            _roomClearPending = true;
+        }
+        else
+        {
+            SpawnEnemies();
+            _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
+        }
     }
 
     // Fade in from black each time a room is entered.
     _fadeInTimer    = 1.2f;
     _fadeInDuration = 1.2f;
+    _eliteRewardGranted = false;
 
     _gameState = GameState::Play;
 }
@@ -655,7 +674,7 @@ void Engine::HandleRoomContinueAction()
     if (_currentRoomType == RoomType::Treasure)
     {
         CompleteCurrentMapNode();
-        GenerateLevelUpOptions();
+        GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
         _levelUpReturnState = GameState::Map;
         _levelUpOpenTimer   = 0.25f;
         _gameState          = GameState::LevelUpChoice;
@@ -712,6 +731,40 @@ void Engine::SpawnEnemies()
     // Act 1 introduces enemy types gradually (rooms 1-5).
     // Act 2+ uses a consistently harder baseline.
     // Elite rooms add bonus enemies on top of the standard count.
+    auto spawnPos = [&]() -> Vector2 {
+        Vector2 p{};
+        for (int a = 0; a < 40; a++)
+        {
+            p.x = (float)GetRandomValue(300, (int)mapW - 300);
+            p.y = (float)GetRandomValue(300, (int)mapH - 300);
+            if (IsSpawnPositionValid(p)) break;
+        }
+        return p;
+    };
+
+    if (_currentRoomType == RoomType::Elite)
+    {
+        const int fodderCount = std::min(7, 3 + _currentAct + std::max(0, _currentRoom - 2));
+        const bool useOgreMiniboss = (_currentAct >= 2 && _currentRoom >= 3)
+            ? (GetRandomValue(0, 1) == 0)
+            : (_currentRoom >= 4);
+
+        Enemy* eliteMiniboss = useOgreMiniboss ? SpawnOgre(spawnPos()) : SpawnCyclops(spawnPos());
+        if (eliteMiniboss != nullptr)
+            eliteMiniboss->SetIsEliteMiniboss(true);
+
+        for (int i = 0; i < fodderCount; i++)
+        {
+            Vector2 p = spawnPos();
+            if (TryGetPooledEnemySpawn(p)) continue;
+            auto enemy = std::make_unique<Enemy>(p);
+            enemy->Init();
+            ConfigureSpawnedEnemy(*enemy);
+            _enemies.push_back(std::move(enemy));
+        }
+        return;
+    }
+
     int regularCount = 0, cyclopsCount = 0, ogreCount = 0;
 
     if (_currentAct == 1)
@@ -739,24 +792,6 @@ void Engine::SpawnEnemies()
         default: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
         }
     }
-
-    // Elite modifier: harder variant of the standard composition
-    if (_currentRoomType == RoomType::Elite)
-    {
-        regularCount  += 2;
-        cyclopsCount  += 1;
-    }
-
-    auto spawnPos = [&]() -> Vector2 {
-        Vector2 p{};
-        for (int a = 0; a < 40; a++)
-        {
-            p.x = (float)GetRandomValue(300, (int)mapW - 300);
-            p.y = (float)GetRandomValue(300, (int)mapH - 300);
-            if (IsSpawnPositionValid(p)) break;
-        }
-        return p;
-    };
 
     for (int i = 0; i < regularCount; i++)
     {
@@ -1072,17 +1107,6 @@ void Engine::UpdateGamePlay(float dt)
         }
         else if (!_roomClearPending && GetActiveEnemyCount() == 0)
         {
-            // After the very first room clears, guarantee a level-up.
-            // Bank the top-up into _pendingExp so the tally screen handles it.
-            if (_wave == 1 && !_wave1LevelUpDone)
-            {
-                _wave1LevelUpDone = true;
-                int alreadyPending = (int)_pendingExp;
-                int remaining = _player.GetExpToNext() - _player.GetExp() - alreadyPending;
-                if (remaining > 0)
-                    _pendingExp += remaining;
-            }
-
             // Transition to post-battle EXP tally.
             // Boss AbilityChoice is triggered from UpdateExpTally once the tally finishes.
             _expTallyDone           = false;
@@ -2182,27 +2206,27 @@ void Engine::DrawWaveIntro()
     switch (_currentRoomType)
     {
     case RoomType::Boss:
-        roomLabel = "- Boss Room -";
+        roomLabel = "- Boss Area -";
         roomColor = RED;
         break;
     case RoomType::Elite:
-        roomLabel = "Elite Room";
+        roomLabel = "Elite Area";
         roomColor = Color{ 255, 140, 0, 255 };  // orange
         break;
     case RoomType::Rest:
-        roomLabel = "Rest";
+        roomLabel = "Rest Area";
         roomColor = Color{ 100, 230, 120, 255 }; // green
         break;
     case RoomType::Treasure:
-        roomLabel = "Treasure Room";
+        roomLabel = "Treasure Area";
         roomColor = GOLD;
         break;
     case RoomType::Store:
-        roomLabel = "Shop";
+        roomLabel = "Shop Area";
         roomColor = Color{ 220, 200, 60, 255 };
         break;
     default:  // Standard
-        roomLabel = "Standard";
+        roomLabel = "Standard Area";
         roomColor = YELLOW;
         break;
     }
@@ -2262,9 +2286,10 @@ void Engine::GenerateStartingAbilityOptions()
     _levelUpOptions[2] = pool[2];
 }
 
-void Engine::GenerateLevelUpOptions()
+void Engine::GenerateLevelUpOptions(LevelUpOfferContext context)
 {
-    // Separate pools by rarity — abilities are reserved for the 5th-wave screen.
+    // Separate pools by rarity. Ability learn/upgrade cards remain on the boss
+    // reward screen; these offers are purely the RPG stat-growth layer.
     UpgradeType commonPool[6] = {
         UpgradeType::AttackPower, UpgradeType::AttackRange,
         UpgradeType::MaxHealth,   UpgradeType::MaxMana,
@@ -2279,42 +2304,70 @@ void Engine::GenerateLevelUpOptions()
         UpgradeType::Juggernaut, UpgradeType::ArcaneColossus
     };
 
-    // Rarity weights shift toward higher-quality cards as the player levels up.
-    int level = _player.GetLevel();
-    int commonW, rareW, epicW;
-    if      (level <= 5)  { commonW = 70; rareW = 25; epicW =  5; }
-    else if (level <= 10) { commonW = 40; rareW = 45; epicW = 15; }
-    else if (level <= 15) { commonW = 20; rareW = 45; epicW = 35; }
-    else                  { commonW = 10; rareW = 35; epicW = 55; }
+    _levelUpOfferContext = context;
 
-    // Shuffle each pool so we don't always draw from the same end.
-    auto shuffle3 = [](UpgradeType* pool, int size) {
-        for (int i = 0; i < size; i++) {
+    auto shufflePool = [](UpgradeType* pool, int size) {
+        for (int i = 0; i < size; i++)
+        {
             int j = GetRandomValue(i, size - 1);
-            UpgradeType tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+            UpgradeType tmp = pool[i];
+            pool[i] = pool[j];
+            pool[j] = tmp;
         }
     };
-    shuffle3(commonPool, 6);
-    shuffle3(rarePool,   6);
-    shuffle3(epicPool,   5);
+    shufflePool(commonPool, 6);
+    shufflePool(rarePool,   6);
+    shufflePool(epicPool,   5);
+
+    const int level = _player.GetLevel();
+    const int roomProgress = ((_currentAct - 1) * 5) + std::max(0, _currentRoom - 1);
+
+    int commonW = 0;
+    int rareW   = 0;
+    int epicW   = 0;
+
+    switch (context)
+    {
+    case LevelUpOfferContext::TreasureBasic:
+        commonW = 100;
+        break;
+
+    case LevelUpOfferContext::EliteReward:
+        rareW = std::max(55, 82 - roomProgress * 3);
+        epicW = std::min(45, 18 + roomProgress * 3 + std::max(0, level - 5) * 2);
+        break;
+
+    case LevelUpOfferContext::StoreStock:
+        commonW = std::max(30, 78 - roomProgress * 4);
+        rareW   = std::min(55, 22 + roomProgress * 3);
+        epicW   = (_currentAct >= 3) ? std::min(15, 5 + (_currentAct - 3) * 5) : 0;
+        break;
+
+    case LevelUpOfferContext::NormalLevel:
+    default:
+        commonW = std::max(18, 72 - level * 5 - roomProgress * 3);
+        rareW   = std::min(57, 20 + level * 4 + roomProgress * 2);
+        epicW   = std::max(6, 8 + std::max(0, level - 4) * 2 + roomProgress);
+        break;
+    }
 
     int cIdx = 0, rIdx = 0, eIdx = 0;
     for (int i = 0; i < 3; i++)
     {
         int total = commonW + rareW + epicW;
-        int roll  = GetRandomValue(0, total - 1);
+        int roll  = (total > 0) ? GetRandomValue(0, total - 1) : 0;
 
         UpgradeType picked = UpgradeType::AttackPower;
-        if (roll < commonW && cIdx < 6)          picked = commonPool[cIdx++];
-        else if (roll < commonW + rareW && rIdx < 6) picked = rarePool[rIdx++];
-        else if (eIdx < 5)                         picked = epicPool[eIdx++];
-        else if (cIdx < 6)                         picked = commonPool[cIdx++];
-        else if (rIdx < 6)                         picked = rarePool[rIdx++];
+        if (roll < commonW && cIdx < 6)                     picked = commonPool[cIdx++];
+        else if (roll < commonW + rareW && rIdx < 6)       picked = rarePool[rIdx++];
+        else if (eIdx < 5)                                 picked = epicPool[eIdx++];
+        else if (rIdx < 6)                                 picked = rarePool[rIdx++];
+        else if (cIdx < 6)                                 picked = commonPool[cIdx++];
 
         _levelUpOptions[i] = picked;
     }
 
-    // Abilities are now handled exclusively by the 5th-wave ability screen.
+    // Ability row is only used for the run-start choice right now.
     _showUltimateRow   = false;
     _ultimateRowPicked = false;
     _regularRowPicked  = false;
@@ -2623,46 +2676,29 @@ void Engine::UpdateExpTally(float dt)
 
     if (_expTallyDone)
     {
-        // Auto-chain remaining level-up choices (no extra press needed after the first).
-        if (_tallyChoiceChaining && _tallyLevelUpsRemaining > 0)
-        {
-            _tallyLevelUpsRemaining--;
-            GenerateLevelUpOptions();
-            _levelUpReturnState = GameState::ExpTally;
-            _levelUpOpenTimer   = 0.25f;
-            _gameState          = GameState::LevelUpChoice;
-            return;
-        }
-
         if (skip)
         {
-            if (_tallyLevelUpsRemaining > 0)
+            _tallyChoiceChaining = false;
+            if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
             {
-                // First Continue press — start chaining level-up choices.
-                _tallyChoiceChaining = true;
-                _tallyLevelUpsRemaining--;
-                GenerateLevelUpOptions();
+                _eliteRewardGranted = true;
+                GenerateLevelUpOptions(LevelUpOfferContext::EliteReward);
                 _levelUpReturnState = GameState::ExpTally;
                 _levelUpOpenTimer   = 0.25f;
                 _gameState          = GameState::LevelUpChoice;
             }
+            else if (_currentRoomType == RoomType::Boss && _lastAbilityChoiceWave != _wave)
+            {
+                _lastAbilityChoiceWave  = _wave;
+                GenerateAbilityChoiceOptions();
+                _abilityChoiceOpenTimer = 0.5f;
+                _pendingRoomChoice      = true;
+                _gameState = GameState::AbilityChoice;
+            }
             else
             {
-                // No (more) level-ups — advance to next phase.
-                _tallyChoiceChaining = false;
-                if (_currentRoomType == RoomType::Boss && _lastAbilityChoiceWave != _wave)
-                {
-                    _lastAbilityChoiceWave  = _wave;
-                    GenerateAbilityChoiceOptions();
-                    _abilityChoiceOpenTimer = 0.5f;
-                    _pendingRoomChoice      = true;
-                    _gameState = GameState::AbilityChoice;
-                }
-                else
-                {
-                    _roomClearPending = true;
-                    _gameState = GameState::Play;
-                }
+                _roomClearPending = true;
+                _gameState = GameState::Play;
             }
         }
         return;
@@ -2716,9 +2752,10 @@ void Engine::DrawExpTally()
     const float sw = (float)GetScreenWidth();
     const float sh = (float)GetScreenHeight();
     const float cx = sw * 0.5f;
+    const int levelsGained = std::max(0, _player.GetLevel() - _tallyStartLevel);
 
     // Title
-    const char* title = "Room Cleared!";
+    const char* title = (levelsGained > 0) ? "Level Up!" : "Room Cleared!";
     static constexpr int kTitleSize = 52;
     int titleW = MeasureText(title, kTitleSize);
     DrawText(title, (int)(cx - titleW * 0.5f), (int)(sh * 0.28f), kTitleSize, RAYWHITE);
@@ -2732,12 +2769,40 @@ void Engine::DrawExpTally()
     DrawText(levelStr, (int)(cx - levelW * 0.5f), (int)(sh * 0.41f), kLevelSize,
         Color{ 255, 210, 0, 255 });
 
+    if (levelsGained > 0)
+    {
+        auto prevInt = [levelsGained](int currentValue, int perLevelGain) -> int
+        {
+            return currentValue - perLevelGain * levelsGained;
+        };
+        auto prevFloat = [levelsGained](float currentValue, float perLevelGain) -> float
+        {
+            return currentValue - perLevelGain * (float)levelsGained;
+        };
+
+        std::string hpLine = "HP  " + std::to_string(prevInt((int)_player.GetMaxHealthValue(), Character::kLevelHpGain))
+            + " -> " + std::to_string((int)_player.GetMaxHealthValue());
+        std::string atkLine = "ATK  " + std::to_string((int)std::ceil(prevFloat(_player.GetAttackPowerValue(), Character::kLevelAttackGain)))
+            + " -> " + std::to_string((int)std::ceil(_player.GetAttackPowerValue()));
+        std::string defLine = "DEF  " + std::to_string((int)std::ceil(prevFloat(_player.GetDefense(), Character::kLevelDefenseGain) * 100.f))
+            + "% -> " + std::to_string((int)std::ceil(_player.GetDefense() * 100.f)) + "%";
+        std::string manaLine = "MP  " + std::to_string(prevInt(_player.GetMaxMana(), Character::kLevelManaGain))
+            + " -> " + std::to_string(_player.GetMaxMana());
+
+        static constexpr int kGainSize = 24;
+        float gainY = sh * 0.465f;
+        DrawText(hpLine.c_str(), (int)(cx - MeasureText(hpLine.c_str(), kGainSize) * 0.5f), (int)gainY, kGainSize, Color{190, 255, 190, 255});
+        DrawText(atkLine.c_str(), (int)(cx - MeasureText(atkLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 30.f), kGainSize, Color{255, 210, 160, 255});
+        DrawText(defLine.c_str(), (int)(cx - MeasureText(defLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 60.f), kGainSize, Color{180, 220, 255, 255});
+        DrawText(manaLine.c_str(), (int)(cx - MeasureText(manaLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 90.f), kGainSize, Color{165, 195, 255, 255});
+    }
+
     // EXP bar
     static const Color kExpFill = { 255, 210, 0, 230 };
     static constexpr float kBarW = 520.f;
     static constexpr float kBarH = 38.f;
     const float barX = cx - kBarW * 0.5f;
-    const float barY = sh * 0.51f;
+    const float barY = (levelsGained > 0) ? sh * 0.64f : sh * 0.51f;
 
     int curExp    = _player.GetExp();
     int expToNext = _player.GetExpToNext();
@@ -2845,19 +2910,21 @@ void Engine::DrawMap()
         switch (rt) {
         case RoomType::Standard: return &_mapIconNormal;
         case RoomType::Elite:    return &_mapIconElite;
+        case RoomType::Rest:     return &_mapIconRest;
         case RoomType::Store:    return &_mapIconShop;
         case RoomType::Treasure: return &_mapIconTreasure;
-        default:                 return nullptr; // Rest / Boss keep circles
+        case RoomType::Boss:     return &_mapIconBoss;
+        default:                 return nullptr;
         }
     };
     auto nodeDesc = [](RoomType rt) -> const char* {
         switch (rt) {
-        case RoomType::Boss:     return "Act finale  -  ability upgrade on clear";
-        case RoomType::Elite:    return "Harder encounter  -  better EXP reward";
-        case RoomType::Rest:     return "No combat  -  heal pickups appear";
-        case RoomType::Treasure: return "No combat  -  free upgrade card";
-        case RoomType::Store:    return "No combat  -  shop (coming soon)";
-        default:                 return "Mixed enemies  -  standard room reward";
+        case RoomType::Boss:     return "Act finale  -  boss area";
+        case RoomType::Elite:    return "Miniboss area  -  rarer reward";
+        case RoomType::Rest:     return "Safe area  -  heal pickups appear";
+        case RoomType::Treasure: return "Reward area  -  free upgrade card";
+        case RoomType::Store:    return "Shop area  -  placeholder for now";
+        default:                 return "Combat area  -  standard area reward";
         }
     };
 
@@ -2985,12 +3052,12 @@ void Engine::DrawMap()
             cy += legendRowH;
         };
 
-        legendRow(&_mapIconNormal,   { 80,130,220,255 }, "NORMAL",   "Standard combat room");
-        legendRow(&_mapIconElite,    {230,130, 20,255 }, "ELITE",    "Harder room, extra EXP");
-        legendRow(nullptr,           { 60,190, 90,255 }, "REST",     "No combat, heal pickups");
-        legendRow(&_mapIconTreasure, {220,190, 30,255 }, "TREASURE", "Free upgrade card");
-        legendRow(&_mapIconShop,     { 80,190,230,255 }, "SHOP",     "Store room");
-        legendRow(nullptr,           {220, 40, 40,255 }, "BOSS",     "Act finale");
+        legendRow(&_mapIconNormal,   { 80,130,220,255 }, "NORMAL AREA",   "Standard combat area");
+        legendRow(&_mapIconElite,    {230,130, 20,255 }, "ELITE AREA",    "Miniboss area");
+        legendRow(&_mapIconRest,     { 60,190, 90,255 }, "REST AREA",     "Safe area with food");
+        legendRow(&_mapIconTreasure, {220,190, 30,255 }, "TREASURE AREA", "Free upgrade card");
+        legendRow(&_mapIconShop,     { 80,190,230,255 }, "SHOP AREA",     "Placeholder shop area");
+        legendRow(&_mapIconBoss,     {220, 40, 40,255 }, "BOSS AREA",     "Act finale");
     }
 
     // ── Connection lines ──────────────────────────────────────────────────
@@ -3045,7 +3112,6 @@ void Engine::DrawMap()
         }
         else
         {
-            // Circle fallback for Rest (green) and Boss (red)
             float r = kIconHalf - 2.f;
             float alpha = n.completed ? 0.28f : n.available ? 0.72f : 0.18f;
             DrawCircleV(n.drawPos, r, Fade(ec, alpha));
@@ -3054,15 +3120,6 @@ void Engine::DrawMap()
             if (n.available && hov)
                 DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, r + 4.f,
                     Fade(ec, 0.55f));
-            // Label inside circle
-            const char* lbl = (n.type == RoomType::Rest) ? "REST" : "BOSS";
-            int lSz = 13;
-            Color lblC = n.completed ? Fade(LIGHTGRAY, 0.40f)
-                       : n.available ? (hov ? GOLD : RAYWHITE)
-                       : Fade(LIGHTGRAY, 0.35f);
-            DrawText(lbl,
-                (int)(n.drawPos.x - MeasureText(lbl, lSz) / 2.f),
-                (int)(n.drawPos.y - lSz / 2.f), lSz, lblC);
         }
 
         // Click
@@ -3132,12 +3189,18 @@ void Engine::DrawLevelUpChoice()
     const char* title;
     if (_awaitingStartingAbility)
         title = "Choose your starting ability:";
+    else if (_levelUpOfferContext == LevelUpOfferContext::TreasureBasic)
+        title = "Treasure Room  -  Choose a basic upgrade:";
+    else if (_levelUpOfferContext == LevelUpOfferContext::EliteReward)
+        title = "Elite Reward  -  Choose a rarer upgrade:";
+    else if (_levelUpOfferContext == LevelUpOfferContext::StoreStock)
+        title = "Shop Stock  -  Choose one item:";
     else if (showUlt && showReg)
         title = "LEVEL UP!  Choose an Ultimate AND an Upgrade:";
     else if (showUlt)
         title = "Now choose your Ultimate:";
     else if (showReg)
-        title = "Now choose an Upgrade:";
+        title = "Level Up  -  Choose a stat upgrade:";
     else
         title = "LEVEL UP!";
 
@@ -3170,96 +3233,137 @@ void Engine::DrawLevelUpChoice()
     // Use cardY to keep the rest of the code below working for the regular row
     const float cardY = regRowY;
 
-    // Map UpgradeType to display info
-    auto getUpgradeInfo = [&](UpgradeType type, const char*& name, const char*& desc, Texture2D*& icon)
+    auto roundedStat = [](float value) -> int
     {
+        return (int)std::ceil(value);
+    };
+    auto pctString = [&](float value) -> std::string
+    {
+        return std::to_string(roundedStat(value * 100.f)) + "%";
+    };
+    auto float1String = [](float value) -> std::string
+    {
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.1f", value);
+        return std::string(buffer);
+    };
+    auto linePreview = [&](const char* label, float currentValue, float newValue, const char* suffix = "") -> std::string
+    {
+        return std::string(label) + " "
+            + std::to_string(roundedStat(currentValue)) + suffix
+            + " -> "
+            + std::to_string(roundedStat(newValue)) + suffix;
+    };
+    auto getUpgradeInfo = [&](UpgradeType type, const char*& name, std::string& desc, Texture2D*& icon)
+    {
+        desc.clear();
         switch (type)
         {
         case UpgradeType::AttackPower:
             name = "Attack Power";
-            desc = "+10% melee\ndamage";
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.10f);
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::AttackRange:
             name = "Attack Range";
-            desc = "+10% melee\nreach";
+            desc = "Range " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
+                + float1String(_player.GetAttackRangeMultiplierValue() * 1.10f) + "x";
             icon = &_upgradeAttackRangeTex;
             break;
         case UpgradeType::MaxHealth:
             name = "Max Health";
-            desc = "+15% max HP\n(heals too)";
+            desc = linePreview("HP", _player.GetMaxHealthValue(),
+                _player.GetMaxHealthValue() + std::max(1, (int)std::ceil(_player.GetMaxHealthValue() * 0.15f)));
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::MaxMana:
             name = "Max Mana";
-            desc = "+15 max MP";
+            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 15));
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::Defense:
             name = "Defense";
-            desc = "+6% damage\nreduction";
+            desc = "Def " + pctString(_player.GetDefense()) + " -> "
+                + pctString(std::min(_player.GetDefense() + 0.06f, 0.60f));
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::MoveSpeed:
             name = "Move Speed";
-            desc = "+10% movement\nspeed";
+            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() * 1.10f);
             icon = &_upgradeMoveSpeedTex;
             break;
         // ── Rare ──────────────────────────────────────────────────────────────
         case UpgradeType::IronConstitution:
             name = "Iron Constitution";
-            desc = "+25% max HP\n(heals too)";
+            desc = linePreview("HP", _player.GetMaxHealthValue(),
+                _player.GetMaxHealthValue() + std::max(2, (int)std::ceil(_player.GetMaxHealthValue() * 0.25f)));
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::SwiftFeet:
             name = "Swift Feet";
-            desc = "+15% move\nspeed";
+            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() * 1.15f);
             icon = &_upgradeMoveSpeedTex;
             break;
         case UpgradeType::Ferocity:
             name = "Ferocity";
-            desc = "+15% attack\npower";
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.15f);
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::ArcaneMind:
             name = "Arcane Mind";
-            desc = "+25 max mana";
+            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 25))
+                + "\nRegen " + std::to_string(roundedStat(_player.GetManaRegenPerSecond()))
+                + " -> " + std::to_string(roundedStat(_player.GetManaRegenPerSecond() * 1.20f));
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::IronSkin:
             name = "Iron Skin";
-            desc = "+8% damage\nreduction";
+            desc = "Def " + pctString(_player.GetDefense()) + " -> "
+                + pctString(std::min(_player.GetDefense() + 0.08f, 0.60f));
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::BladeEdge:
             name = "Blade Edge";
-            desc = "+10% attack power\n+8% range";
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.10f)
+                + "\nRange " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
+                + float1String(_player.GetAttackRangeMultiplierValue() * 1.08f) + "x";
             icon = &_upgradeAttackRangeTex;
             break;
         // ── Epic ──────────────────────────────────────────────────────────────
         case UpgradeType::WarGod:
             name = "War God";
-            desc = "+20% attack power\n+10% range";
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.20f)
+                + "\nRange " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
+                + float1String(_player.GetAttackRangeMultiplierValue() * 1.10f) + "x";
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::Resilience:
             name = "Resilience";
-            desc = "+30% max HP\nheal 3";
+            desc = linePreview("HP", _player.GetMaxHealthValue(),
+                _player.GetMaxHealthValue() + std::max(2, (int)std::ceil(_player.GetMaxHealthValue() * 0.30f)))
+                + "\nHeal +3";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::BladeStorm:
             name = "Blade Storm";
-            desc = "+18% attack power\n+18% speed";
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.18f)
+                + "\nSpeed " + std::to_string(roundedStat(_player.GetMoveSpeedValue())) + " -> "
+                + std::to_string(roundedStat(_player.GetMoveSpeedValue() * 1.18f));
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::Juggernaut:
             name = "Juggernaut";
-            desc = "+20% max HP\n+8% defense";
+            desc = linePreview("HP", _player.GetMaxHealthValue(),
+                _player.GetMaxHealthValue() + std::max(2, (int)std::ceil(_player.GetMaxHealthValue() * 0.20f)))
+                + "\nDef " + pctString(_player.GetDefense()) + " -> "
+                + pctString(std::min(_player.GetDefense() + 0.08f, 0.60f));
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::ArcaneColossus:
             name = "Arcane Colossus";
-            desc = "+30 mana\n+15% attack power";
+            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 30))
+                + "\nAtk " + std::to_string(roundedStat(_player.GetAttackPowerValue()))
+                + " -> " + std::to_string(roundedStat(_player.GetAttackPowerValue() * 1.15f));
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::LearnFireSpread:
@@ -3315,6 +3419,23 @@ void Engine::DrawLevelUpChoice()
         }
     };
 
+    auto drawMultilineCentered = [&](const std::string& text, float centerX, float startY, int fontSize, Color color)
+    {
+        std::size_t start = 0;
+        int lineIndex = 0;
+        while (start <= text.size())
+        {
+            std::size_t end = text.find('\n', start);
+            std::string line = (end == std::string::npos) ? text.substr(start) : text.substr(start, end - start);
+            int lineW = MeasureText(line.c_str(), fontSize);
+            DrawText(line.c_str(), (int)(centerX - lineW / 2.f), (int)(startY + lineIndex * (fontSize + 4)), fontSize, color);
+            if (end == std::string::npos)
+                break;
+            start = end + 1;
+            lineIndex++;
+        }
+    };
+
     Vector2 mouse = GetMousePosition();
     bool ready = (_levelUpOpenTimer <= 0.f);
 
@@ -3339,7 +3460,7 @@ void Engine::DrawLevelUpChoice()
             DrawRectangleRoundedLines(card, 0.12f, 8,
                 hovered ? Color{255,180,0,255} : Color{200,140,30,160});
 
-            const char* name = ""; const char* desc = ""; Texture2D* icon = nullptr;
+            const char* name = ""; std::string desc; Texture2D* icon = nullptr;
             getUpgradeInfo(_levelUpUltimateOptions[i], name, desc, icon);
 
             // Icon / pattern area
@@ -3381,24 +3502,7 @@ void Engine::DrawLevelUpChoice()
             DrawText(name, (int)(x + cardW/2.f - nameW/2.f),
                      (int)(ultRowY + cardH*0.58f), nameSz, hovered ? GOLD : RAYWHITE);
 
-            // Description
-            std::string descStr = desc;
-            int nlPos = (int)descStr.find('\n');
-            int descSz = 20;
-            if (nlPos != (int)std::string::npos)
-            {
-                std::string line1 = descStr.substr(0, nlPos);
-                std::string line2 = descStr.substr(nlPos + 1);
-                DrawText(line1.c_str(), (int)(x + cardW/2.f - MeasureText(line1.c_str(),descSz)/2.f),
-                         (int)(ultRowY + cardH*0.72f), descSz, LIGHTGRAY);
-                DrawText(line2.c_str(), (int)(x + cardW/2.f - MeasureText(line2.c_str(),descSz)/2.f),
-                         (int)(ultRowY + cardH*0.72f + descSz + 4), descSz, LIGHTGRAY);
-            }
-            else
-            {
-                DrawText(desc, (int)(x + cardW/2.f - MeasureText(desc,descSz)/2.f),
-                         (int)(ultRowY + cardH*0.72f), descSz, LIGHTGRAY);
-            }
+            drawMultilineCentered(desc, x + cardW / 2.f, ultRowY + cardH * 0.72f, 20, LIGHTGRAY);
 
             if (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             {
@@ -3457,7 +3561,7 @@ void Engine::DrawLevelUpChoice()
         DrawRectangleRoundedLines(card, 0.12f, 8, hovered ? borderHover : borderNormal);
 
         const char* name = "";
-        const char* desc = "";
+        std::string desc;
         Texture2D* icon  = nullptr;
         getUpgradeInfo(_levelUpOptions[i], name, desc, icon);
 
@@ -3589,30 +3693,7 @@ void Engine::DrawLevelUpChoice()
             (int)(cardY + cardH * 0.58f),
             nameSz, hovered ? GOLD : nameColor);
 
-        // Description — manual newline split
-        std::string descStr = desc;
-        int nlPos = (int)descStr.find('\n');
-        int descSz = 20;
-        if (nlPos != (int)std::string::npos)
-        {
-            std::string line1 = descStr.substr(0, nlPos);
-            std::string line2 = descStr.substr(nlPos + 1);
-            int l1W = MeasureText(line1.c_str(), descSz);
-            int l2W = MeasureText(line2.c_str(), descSz);
-            DrawText(line1.c_str(),
-                (int)(x + cardW / 2.f - l1W / 2.f),
-                (int)(cardY + cardH * 0.72f), descSz, LIGHTGRAY);
-            DrawText(line2.c_str(),
-                (int)(x + cardW / 2.f - l2W / 2.f),
-                (int)(cardY + cardH * 0.72f + descSz + 4), descSz, LIGHTGRAY);
-        }
-        else
-        {
-            int dW = MeasureText(desc, descSz);
-            DrawText(desc,
-                (int)(x + cardW / 2.f - dW / 2.f),
-                (int)(cardY + cardH * 0.72f), descSz, LIGHTGRAY);
-        }
+        drawMultilineCentered(desc, x + cardW / 2.f, cardY + cardH * 0.72f, 20, LIGHTGRAY);
 
         // Rarity strip at card bottom
         {
@@ -5187,6 +5268,8 @@ void Engine::ResetRunState()
     _lastAbilityChoiceWave    = -1;
     _abilityChoiceSwapPending = false;
     _abilityChoiceOptionCount = 0;
+    _levelUpOfferContext      = LevelUpOfferContext::NormalLevel;
+    _eliteRewardGranted       = false;
 
     // ── Room / act progression reset ──────────────────────────────────────
     _currentAct        = 1;

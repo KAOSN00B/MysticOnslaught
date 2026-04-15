@@ -120,7 +120,7 @@ void Character::Init()
 
     _exp            = 0;
     _level          = 1;
-    _expToNextLevel = 15;
+    _expToNextLevel = 24;
     _pendingBurnTicks.clear();
 
     _mana                = 0;
@@ -945,9 +945,19 @@ void Character::AddExp(int amount)
     {
         _exp -= _expToNextLevel;
         _level++;
-        // EXP thresholds rise by ~20 each level. Stats no longer auto-apply
-        // here — the player chooses all upgrades from the level-up card screen.
-        _expToNextLevel += 20;  // 15 → 35 → 55 → 75 → 95 ...
+
+        // Normal leveling is now pure RPG baseline progression:
+        // small automatic gains to the core stats every level.
+        _maxHealth += kLevelHpGain;
+        Heal(kLevelHpGain);
+        _attackPower += kLevelAttackGain;
+        _defense = std::min(_defense + kLevelDefenseGain, 0.60f);
+        _maxMana += kLevelManaGain;
+        _mana = std::min(_mana + kLevelManaGain, _maxMana);
+
+        // Slower pacing: early levels take a few rooms, then the runway
+        // stretches steadily so later levels still feel earned.
+        _expToNextLevel = 12 + _level * 12; // 24, 36, 48, 60, 72 ...
     }
 
     // Clamp leftover EXP at max level

@@ -252,6 +252,8 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
 
     if (_health != _maxHealth)
         DrawHealthBar(screenPos, drawWidth, drawHeight);
+    if (_isEliteMiniboss)
+        DrawEliteLabel(screenPos, drawWidth, drawHeight);
 }
 
 Rectangle Ogre::GetCollisionRec() const

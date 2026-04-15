@@ -488,6 +488,8 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
 
     if (_health != _maxHealth)
         DrawHealthBar(screenPos, w, h);
+    if (_isEliteMiniboss)
+        DrawEliteLabel(screenPos, w, h);
 }
 
 Rectangle Cyclops::GetCollisionRec() const

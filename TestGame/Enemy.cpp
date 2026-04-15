@@ -48,6 +48,7 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _homePos = pos;
     _velocity = Vector2Zero();
     _isActive = true;
+    _isEliteMiniboss = false;
     _texture = _idleAnim;
     _updateTime = 1.f / 8.f;
 
@@ -87,6 +88,20 @@ void Enemy::ResetForSpawn(Vector2 pos)
 
     PickApproachOffset();
     _approachOffsetTimer = (float)GetRandomValue(0, 250) / 100.f;
+}
+
+void Enemy::SetIsEliteMiniboss(bool b)
+{
+    _isEliteMiniboss = b;
+
+    if (!b)
+        return;
+
+    _maxHealth = std::ceil(_maxHealth * 2.5f);
+    _health = _maxHealth;
+    _attackPower *= 1.25f;
+    _speed *= 1.10f;
+    _expValue = std::max(_expValue + 4, (int)std::ceil(_expValue * 2.0f));
 }
 
 Rectangle Enemy::GetCollisionRec() const
@@ -440,6 +455,8 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
 
     if (_health != _maxHealth)
         DrawHealthBar(screenPos, w, h);
+    if (_isEliteMiniboss)
+        DrawEliteLabel(screenPos, w, h);
 }
 
 void Enemy::HandleAnimation(float dt)
@@ -510,6 +527,21 @@ void Enemy::DrawHealthBar(Vector2 screenPos, float w, float h)
 
     DrawRectangle(barX, barY, barWidth, barHeight, RED);
     DrawRectangle(barX, barY, barWidth * healthPercent, barHeight, GREEN);
+}
+
+void Enemy::DrawEliteLabel(Vector2 screenPos, float w, float h)
+{
+    float barWidth = w * 0.8f;
+    float barY = screenPos.y - h / 2.f - 12.f;
+    Vector2 labelPos{ screenPos.x - barWidth * 0.5f, barY - 18.f };
+
+    static Font font = GetFontDefault();
+    static constexpr float kFontSize = 20.f;
+    static constexpr float kSpacing = 1.f;
+    const char* text = "ELITE";
+
+    DrawTextEx(font, text, { labelPos.x + 1.f, labelPos.y + 1.f }, kFontSize, kSpacing, Fade(BLACK, 0.6f));
+    DrawTextEx(font, text, labelPos, kFontSize, kSpacing, Color{255, 210, 70, 255});
 }
 
 void Enemy::ApplyFreeze(float duration)

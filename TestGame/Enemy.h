@@ -53,6 +53,8 @@ public:
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
+    bool IsEliteMiniboss() const { return _isEliteMiniboss; }
+    void SetIsEliteMiniboss(bool b);
     Rectangle GetCollisionRec() const override;
 
     // Wider rect used only for player melee hit-detection; defaults to solid rect.
@@ -80,8 +82,9 @@ protected:
     void UpdateElectricCharge(float dt);
     void UpdateLaunchVisual(float dt);
 
-	void HandleAnimation(float dt);
+    void HandleAnimation(float dt);
     void DrawHealthBar(Vector2 screenPos, float w, float h);
+    void DrawEliteLabel(Vector2 screenPos, float w, float h);
 
     struct PendingBurn
     {
@@ -92,6 +95,7 @@ protected:
 
     Character* _target = nullptr;
     bool _isActive = true;
+    bool _isEliteMiniboss = false;
 
     bool  _attacking    = false;
     bool  _damageApplied = false;

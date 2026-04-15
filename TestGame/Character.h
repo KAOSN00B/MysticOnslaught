@@ -131,6 +131,14 @@ public:
     void  RestoreMana(int amount);
     int   GetMana()    const { return _mana; }
     int   GetMaxMana() const { return _maxMana; }
+    float GetAttackPowerValue() const { return _attackPower; }
+    float GetMoveSpeedValue() const { return _speed; }
+    float GetAttackRangeMultiplierValue() const { return _attackRangeMultiplier; }
+    float GetManaRegenPerSecond() const { return kManaRegenBase * _manaRegenMultiplier; }
+    static constexpr int   kLevelHpGain      = 1;
+    static constexpr float kLevelAttackGain  = 0.4f;
+    static constexpr float kLevelDefenseGain = 0.01f;
+    static constexpr int   kLevelManaGain    = 5;
 
     // Passive mana regen — flat rate scaled only by the regen multiplier.
     // Higher regen should always feel faster, regardless of current mana.

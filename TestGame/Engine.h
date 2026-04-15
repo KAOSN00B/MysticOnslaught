@@ -43,6 +43,14 @@ enum class RoomType
     Boss,       // Molarbeast + support adds — ends the act
 };
 
+enum class LevelUpOfferContext
+{
+    NormalLevel,
+    TreasureBasic,
+    EliteReward,
+    StoreStock,
+};
+
 enum class GameState
 {
     Menu,
@@ -143,7 +151,7 @@ private:
     float GetBiomeTransitionAlpha() const;
     void DrawMiniMap();
     void DrawLevelUpChoice();
-    void GenerateLevelUpOptions();
+    void GenerateLevelUpOptions(LevelUpOfferContext context = LevelUpOfferContext::NormalLevel);
     void DrawAbilityChoice();
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
@@ -299,9 +307,11 @@ private:
     UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };
     UpgradeType _levelUpUltimateOptions[3] = { UpgradeType::LearnFireUltimate, UpgradeType::LearnIceUltimate, UpgradeType::LearnElectricUltimate };
     GameState   _levelUpReturnState  = GameState::Play;
+    LevelUpOfferContext _levelUpOfferContext = LevelUpOfferContext::NormalLevel;
     bool        _showUltimateRow     = false;
     bool        _ultimateRowPicked   = false;
     bool        _regularRowPicked    = false;
+    bool        _eliteRewardGranted  = false;
     // Ability choice state (shown after every 5th-wave boss clear)
     UpgradeType _abilityChoiceOptions[3] = { UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread };
     int         _abilityChoiceOptionCount = 0;
@@ -358,6 +368,8 @@ private:
     Texture2D _mapIconElite{};
     Texture2D _mapIconShop{};
     Texture2D _mapIconTreasure{};
+    Texture2D _mapIconBoss{};
+    Texture2D _mapIconRest{};
 
     Character _player;
     MainMenu _menu;
