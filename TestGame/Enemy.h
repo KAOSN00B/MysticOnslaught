@@ -55,6 +55,15 @@ public:
     virtual bool IsBoss() const { return false; }
     bool IsEliteMiniboss() const { return _isEliteMiniboss; }
     void SetIsEliteMiniboss(bool b);
+
+    // ── Elite-room mechanics ──────────────────────────────────────────────
+    // _isInvulnerable : bodyguard shield — engine clears when all grunts die
+    // _leapInvulnerable: gap-closer wind-up — engine sets/clears around leap
+    void SetInvulnerable(bool v)   { _isInvulnerable    = v; }
+    void SetLeapFrozen(bool v)     { _leapInvulnerable  = v; }
+    bool IsInvulnerable()    const { return _isInvulnerable; }
+    bool IsLeapFrozen()      const { return _leapInvulnerable; }
+    void ApplyEnrage();            // +50% speed, half attack cooldown, called by Engine on elite spawn
     Rectangle GetCollisionRec() const override;
 
     // Wider rect used only for player melee hit-detection; defaults to solid rect.
@@ -94,8 +103,10 @@ protected:
     };
 
     Character* _target = nullptr;
-    bool _isActive = true;
+    bool _isActive        = true;
     bool _isEliteMiniboss = false;
+    bool _isInvulnerable  = false;   // bodyguard shield (engine-driven)
+    bool _leapInvulnerable = false;  // gap-closer wind-up (engine-driven)
 
     bool  _attacking    = false;
     bool  _damageApplied = false;

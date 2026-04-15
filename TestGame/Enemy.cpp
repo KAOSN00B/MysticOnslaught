@@ -47,8 +47,10 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _worldPosLastFrame = pos;
     _homePos = pos;
     _velocity = Vector2Zero();
-    _isActive = true;
-    _isEliteMiniboss = false;
+    _isActive         = true;
+    _isEliteMiniboss  = false;
+    _isInvulnerable   = false;
+    _leapInvulnerable = false;
     _texture = _idleAnim;
     _updateTime = 1.f / 8.f;
 
@@ -102,6 +104,12 @@ void Enemy::SetIsEliteMiniboss(bool b)
     _attackPower *= 1.25f;
     _speed *= 1.10f;
     _expValue = std::max(_expValue + 4, (int)std::ceil(_expValue * 2.0f));
+}
+
+void Enemy::ApplyEnrage()
+{
+    _speed       *= 1.5f;
+    _attackDelay *= 0.5f;
 }
 
 Rectangle Enemy::GetCollisionRec() const

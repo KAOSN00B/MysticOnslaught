@@ -1,7 +1,7 @@
 #pragma once
 #include "raylib.h"
 
-enum class PickupType { Heal, Mana };
+enum class PickupType { Heal, Mana, Gold };
 
 // Forward declare Character so subclasses can call player methods in OnCollect
 class Character;

@@ -33,6 +33,7 @@ namespace
     // higher range keeps the death cue consistent with the cyclops voice.
     constexpr int kCyclopsDeathPitchMin = 120;
     constexpr int kCyclopsDeathPitchMax = 155;
+    constexpr float kLaserSightLength = 2400.f;
 }
 
 // =============================================================================
@@ -98,11 +99,13 @@ void Cyclops::ResetForSpawn(Vector2 pos)
     _charging       = false;
     _wantsToFire    = false;
     _fireDirection  = Vector2Zero();
-    _chargeCanBeInterrupted  = true;
+    _queuedFireMode = FireMode::Sweep;
+    _postFireLockTimer = 0.f;
     // Reset timing to design defaults; SetWaveScale will override these.
-    _chargeDurationInst    = 1.5f;
+    _chargeDurationInst    = 1.0f;
     _attackCooldownMaxInst = 3.5f;
     _chargeRangeInst       = 480.f;
+    _scatterRangeInst      = 170.f;
 
     _pendingBurns.clear();
 }
@@ -176,6 +179,8 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
 
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
+    if (_postFireLockTimer > 0.f)
+        _postFireLockTimer -= dt;
 
     if (!_dying)
     {
@@ -205,13 +210,9 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
             }
         }
 
-        if (_charging && (IsFrozen() || _takingDamage))
+        if (_charging && (IsFrozen() || IsElectroStunned()))
         {
-            _charging      = false;
-            _chargeTimer   = 0.f;
-            _wantsToFire   = false;
-            _fireDirection = Vector2Zero();
-            SetIdleAnimation(true);
+            CancelCharge();
         }
 
         if (_charging)
@@ -219,9 +220,13 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
             _chargeTimer += dt;
             if (_chargeTimer >= _chargeDurationInst)
             {
+                const Vector2 toTarget = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+                const float distToPlayer = Vector2Length(toTarget);
                 _wantsToFire    = true;
-                _fireDirection  = Vector2Normalize(
-                    Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
+                _queuedFireMode = (distToPlayer <= _scatterRangeInst) ? FireMode::Scatter : FireMode::Sweep;
+                _fireDirection  = (distToPlayer > 0.01f)
+                    ? Vector2Normalize(toTarget)
+                    : Vector2{ _rightLeft >= 0.f ? 1.f : -1.f, 0.f };
                 _charging       = false;
                 _attackCooldown = _attackCooldownMaxInst;
 
@@ -252,7 +257,7 @@ void Cyclops::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigat
     // Stand still and face the player while charging or on the frame that the
     // laser is emitted. That prevents movement logic from immediately swapping
     // the charge/release pose back to walk.
-    if (_charging || _wantsToFire)
+    if (_charging || _wantsToFire || _postFireLockTimer > 0.f)
     {
         _velocity = Vector2Zero();
         SetIdleAnimation(_texture.id != _idleAnim.id);
@@ -263,28 +268,15 @@ void Cyclops::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigat
         return;
     }
 
-    float distToPlayer = Vector2Distance(_worldPos, _target->GetFeetWorldPos());
-    bool  fleeing      = (distToPlayer < _fleeRange) && !IsFrozen();
-
     Vector2 moveDir     = Vector2Zero();
-    float   effectSpeed = fleeing ? _fleeSpeed : _speed;
+    float   effectSpeed = _speed;
 
-    if (fleeing)
-    {
-        // Move directly away from the player when they push into the cyclops.
-        Vector2 away = Vector2Subtract(_worldPos, _target->GetFeetWorldPos());
-        if (Vector2Length(away) > 0.01f)
-            moveDir = Vector2Normalize(away);
-    }
-    else
-    {
-        // The engine passes either a navigation waypoint or a direct target
-        // position. The cyclops uses whichever option is currently valid.
-        Vector2 targetPos = hasNavigationTarget ? navigationTarget : _target->GetFeetWorldPos();
-        Vector2 toTarget  = Vector2Subtract(targetPos, _worldPos);
-        if (Vector2Length(toTarget) > 0.01f)
-            moveDir = Vector2Normalize(toTarget);
-    }
+    // The engine passes either a navigation waypoint or a direct target
+    // position. The cyclops uses whichever option is currently valid.
+    Vector2 targetPos = hasNavigationTarget ? navigationTarget : _target->GetFeetWorldPos();
+    Vector2 toTarget  = Vector2Subtract(targetPos, _worldPos);
+    if (Vector2Length(toTarget) > 0.01f)
+        moveDir = Vector2Normalize(toTarget);
 
     // Nearby props push the cyclops away so it slides around pillars instead
     // of tunneling straight into them.
@@ -475,6 +467,15 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
         float pulse       = sinf((float)GetTime() * 14.f) * 0.5f + 0.5f;
         float chargeRatio = _chargeTimer / _chargeDurationInst;
         float radius      = 30.f + chargeRatio * 70.f;
+        Vector2 aimDir = (_target != nullptr)
+            ? Vector2Normalize(Vector2Subtract(_target->GetFeetWorldPos(), _worldPos))
+            : Vector2{ _rightLeft >= 0.f ? 1.f : -1.f, 0.f };
+        if (Vector2LengthSqr(aimDir) < 0.0001f)
+            aimDir = Vector2{ _rightLeft >= 0.f ? 1.f : -1.f, 0.f };
+        Vector2 lineEnd = Vector2Add(screenPos, Vector2Scale(aimDir, kLaserSightLength));
+
+        DrawLineEx(screenPos, lineEnd, 8.f, Fade(Color{ 255, 80, 80, 255 }, 0.18f + 0.08f * pulse));
+        DrawLineEx(screenPos, lineEnd, 3.8f, Fade(Color{ 255, 120, 120, 255 }, 0.72f + 0.10f * pulse));
 
         DrawCircleV(screenPos, radius * 1.35f, Fade(Color{ 255, 200, 50, 255 }, 0.18f * pulse));
         DrawCircleV(screenPos, radius,          Fade(Color{ 255, 230, 80, 255 }, 0.35f * pulse));
@@ -547,6 +548,8 @@ void Cyclops::ApplyFreeze(float duration)
 
     if (duration > _freezeTimer)
         _freezeTimer = duration;
+
+    CancelCharge();
 }
 
 // =============================================================================
@@ -558,17 +561,36 @@ void Cyclops::ApplyBurn(float delay, int damage, Vector2 sourcePos)
     _pendingBurns.push_back(PendingBurn{ delay, damage, sourcePos });
 }
 
-// Cyclops can lose its charge when hit in early waves, but tougher later-wave
-// versions keep charging through damage to increase ranged pressure.
 void Cyclops::TakeDamage(int damage, Vector2 attackerPos)
 {
-    if (_chargeCanBeInterrupted && _charging)
+    if (_isInvulnerable || _leapInvulnerable)
+        return;
+    if (_charging && !_dying)
     {
-        _charging      = false;
-        _chargeTimer   = 0.f;
-        _wantsToFire   = false;
+        _health -= damage;
+
+        if (_health > 0.f)
+        {
+            PlayHurtSound();
+            _hitTimer = 0.02f;
+            return;
+        }
+
+        _health = 0.f;
+        _dying = true;
+        _charging = false;
+        _wantsToFire = false;
         _fireDirection = Vector2Zero();
-        SetIdleAnimation(true);
+        _attacking = false;
+        _takingDamage = false;
+        _deathTimer = 0.4f;
+        _texture = _deathAnim;
+        _frame = 0;
+        _runningTime = 0.f;
+        _maxFrames = _texture.width / _width;
+        _updateTime = 1.f / 4.f;
+        PlayDeathSound();
+        return;
     }
 
     BaseCharacter::TakeDamage(damage, attackerPos);
@@ -581,11 +603,8 @@ void Cyclops::ApplyElectricCharge()
 
     _isCharged = true;
 
-    // Cancel any active laser charge
-    _charging      = false;
-    _chargeTimer   = 0.f;
-    _wantsToFire   = false;
-    _fireDirection = Vector2Zero();
+    // Elemental crowd control is the intended way to break its aim.
+    CancelCharge();
 
     // Set up hurt animation with correct per-frame dimensions
     _texture     = _takeDamageAnim;
@@ -627,8 +646,6 @@ void Cyclops::UpdateBurns(float dt)
 void Cyclops::SetWaveScale(int wave)
 {
     // Fixed base profile — stat growth comes from ApplyEnemyPowerLevel.
-    // Charge timing still tightens each 5-wave band for behavioural escalation.
-    _chargeCanBeInterrupted = true;
     _expValue    = 5;
     _health      = 7.f;
     _maxHealth   = 7.f;
@@ -636,9 +653,10 @@ void Cyclops::SetWaveScale(int wave)
     _attackPower = 1.f;
 
     int tier = (wave - 1) / 5;
-    _chargeDurationInst    = std::max(0.8f,  1.5f - tier * 0.12f);
+    _chargeDurationInst    = 1.0f;
     _attackCooldownMaxInst = std::max(1.8f,  3.5f - tier * 0.28f);
     _chargeRangeInst       = std::min(640.f, 480.f + tier * 20.f);
+    _scatterRangeInst      = 170.f;
 }
 
 // =============================================================================
@@ -696,6 +714,23 @@ void Cyclops::OnForcedPushCollision()
     _forcedPushSpeed     = 0.f;
     _forcedPushDirection = Vector2Zero();
     _velocity            = Vector2Zero();
+    SetIdleAnimation(true);
+}
+
+void Cyclops::OnFired()
+{
+    _wantsToFire = false;
+    _postFireLockTimer = (_queuedFireMode == FireMode::Scatter) ? 0.28f : 0.75f;
+}
+
+void Cyclops::CancelCharge()
+{
+    _charging      = false;
+    _chargeTimer   = 0.f;
+    _wantsToFire   = false;
+    _fireDirection = Vector2Zero();
+    _queuedFireMode = FireMode::Sweep;
+    _postFireLockTimer = 0.f;
     SetIdleAnimation(true);
 }
 

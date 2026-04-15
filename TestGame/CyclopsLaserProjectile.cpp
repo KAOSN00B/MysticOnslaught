@@ -1,67 +1,99 @@
 #include "CyclopsLaserProjectile.h"
 #include "raymath.h"
+#include <algorithm>
 #include <cmath>
 
-void CyclopsLaserProjectile::Init(Vector2 spawnPos, Vector2 direction, int damage)
+namespace
+{
+    constexpr float kSweepLifetime = 0.75f;
+    constexpr float kScatterLifetime = 0.28f;
+    constexpr float kScatterArcDegrees = 70.f;
+    constexpr int   kScatterBeams = 5;
+    constexpr float kSweepGrowDuration = 1.44f;
+}
+
+void CyclopsLaserProjectile::InitSweep(Vector2 spawnPos, Vector2 direction, int damage)
 {
     _worldPos  = spawnPos;
-    _direction = Vector2Normalize(direction);
+    _direction = (Vector2Length(direction) > 0.001f) ? Vector2Normalize(direction) : Vector2{ 1.f, 0.f };
+    _beamDirections[0] = _direction;
     _damage    = damage;
-    _lifeTimer = 2.f;
-    _isActive  = true;
+    _lifeTimer = kSweepLifetime;
+    _playerHitCooldown = 0.f;
+    _beamLength = 1800.f;
+    _beamWidth = 22.f;
+    _drawLengthScale = 0.f;
+    _beamCount = 1;
+    _mode = Mode::Sweep;
+    _isActive = true;
+}
+
+void CyclopsLaserProjectile::InitScatter(Vector2 spawnPos, Vector2 direction, int damage)
+{
+    _worldPos  = spawnPos;
+    _direction = (Vector2Length(direction) > 0.001f) ? Vector2Normalize(direction) : Vector2{ 1.f, 0.f };
+    _damage    = damage;
+    _lifeTimer = kScatterLifetime;
+    _playerHitCooldown = 0.f;
+    _beamLength = 460.f;
+    _beamWidth = 12.f;
+    _drawLengthScale = 1.f;
+    _beamCount = kScatterBeams;
+    _mode = Mode::Scatter;
+    _isActive = true;
+    ConfigureScatterDirections(_direction);
 }
 
 void CyclopsLaserProjectile::Update(float dt)
 {
-    if (!_isActive) return;
+    if (!_isActive)
+        return;
+
+    if (_mode == Mode::Sweep)
+        _drawLengthScale = std::min(1.f, _drawLengthScale + dt / kSweepGrowDuration);
 
     _lifeTimer -= dt;
+    _playerHitCooldown = std::max(0.f, _playerHitCooldown - dt);
     if (_lifeTimer <= 0.f)
     {
         Destroy();
         return;
     }
-
-    _worldPos = Vector2Add(_worldPos, Vector2Scale(_direction, _speed * dt));
 }
 
-void CyclopsLaserProjectile::Draw(Vector2 worldOffset) const
+void CyclopsLaserProjectile::Draw(Vector2 worldOffset, const Vector2* clippedEnds, int clippedEndCount) const
 {
-    if (!_isActive) return;
+    if (!_isActive || clippedEnds == nullptr || clippedEndCount <= 0)
+        return;
 
-    Vector2 screenPos;
-    screenPos.x = _worldPos.x + worldOffset.x + GetScreenWidth()  * 0.5f;
-    screenPos.y = _worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f;
-
-    float angle = atan2f(_direction.y, _direction.x) * RAD2DEG;
-
-    // Outer glow
-    Rectangle outer{ screenPos.x, screenPos.y, _beamLength * 1.3f, _beamWidth * 2.2f };
-    DrawRectanglePro(outer,
-        Vector2{ outer.width * 0.5f, outer.height * 0.5f },
-        angle,
-        Color{ 255, 200, 50, 80 });
-
-    // Core beam
-    Rectangle beam{ screenPos.x, screenPos.y, _beamLength, _beamWidth };
-    DrawRectanglePro(beam,
-        Vector2{ beam.width * 0.5f, beam.height * 0.5f },
-        angle,
-        Color{ 255, 240, 100, 230 });
-
-    // White-hot centre line
-    Rectangle core{ screenPos.x, screenPos.y, _beamLength, _beamWidth * 0.35f };
-    DrawRectanglePro(core,
-        Vector2{ core.width * 0.5f, core.height * 0.5f },
-        angle,
-        Color{ 255, 255, 255, 200 });
-
-    // Bright head circle
-    Vector2 head{
-        screenPos.x + cosf(angle * DEG2RAD) * _beamLength * 0.5f,
-        screenPos.y + sinf(angle * DEG2RAD) * _beamLength * 0.5f
+    const Vector2 screenOrigin{
+        _worldPos.x + worldOffset.x + GetScreenWidth() * 0.5f,
+        _worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f
     };
-    DrawCircleV(head, _beamWidth * 1.1f, Color{ 255, 255, 180, 220 });
+
+    for (int i = 0; i < clippedEndCount; ++i)
+    {
+        const Vector2 screenEnd{
+            clippedEnds[i].x + worldOffset.x + GetScreenWidth() * 0.5f,
+            clippedEnds[i].y + worldOffset.y + GetScreenHeight() * 0.5f
+        };
+
+        const float outerWidth = (_mode == Mode::Sweep) ? _beamWidth * 1.9f : _beamWidth * 2.1f;
+        const float coreWidth  = (_mode == Mode::Sweep) ? _beamWidth : _beamWidth * 0.9f;
+        const float innerWidth = (_mode == Mode::Sweep) ? _beamWidth * 0.34f : _beamWidth * 0.28f;
+
+        const Color glowColor  = (_mode == Mode::Sweep)
+            ? Color{ 255, 70, 70, 70 }
+            : Color{ 255, 100, 80, 88 };
+        const Color beamColor  = (_mode == Mode::Sweep)
+            ? Color{ 255, 95, 95, 215 }
+            : Color{ 255, 135, 95, 225 };
+
+        DrawLineEx(screenOrigin, screenEnd, outerWidth, glowColor);
+        DrawLineEx(screenOrigin, screenEnd, coreWidth, beamColor);
+        DrawLineEx(screenOrigin, screenEnd, innerWidth, Color{ 255, 245, 235, 210 });
+        DrawCircleV(screenOrigin, coreWidth * 0.44f, Fade(beamColor, 0.65f));
+    }
 }
 
 void CyclopsLaserProjectile::Destroy()
@@ -69,12 +101,21 @@ void CyclopsLaserProjectile::Destroy()
     _isActive = false;
 }
 
-Rectangle CyclopsLaserProjectile::GetCollisionRec() const
+Vector2 CyclopsLaserProjectile::GetBeamDirection(int index) const
 {
-    return Rectangle{
-        _worldPos.x - _hitRadius,
-        _worldPos.y - _hitRadius,
-        _hitRadius * 2.f,
-        _hitRadius * 2.f
-    };
+    if (index < 0 || index >= _beamCount)
+        return Vector2Zero();
+    return _beamDirections[index];
+}
+
+void CyclopsLaserProjectile::ConfigureScatterDirections(Vector2 centerDirection)
+{
+    const float baseAngle = atan2f(centerDirection.y, centerDirection.x);
+    for (int i = 0; i < kScatterBeams; ++i)
+    {
+        float t = (kScatterBeams == 1) ? 0.5f : (float)i / (float)(kScatterBeams - 1);
+        float offset = Lerp(-kScatterArcDegrees * 0.5f, kScatterArcDegrees * 0.5f, t) * DEG2RAD;
+        float angle = baseAngle + offset;
+        _beamDirections[i] = Vector2Normalize(Vector2{ cosf(angle), sinf(angle) });
+    }
 }

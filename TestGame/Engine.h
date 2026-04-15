@@ -18,6 +18,7 @@
 // The .cpp/.h source files are still on disk but no longer compiled.
 #include "HealPickup.h"
 #include "ManaGemPickup.h"
+#include "GoldPickup.h"
 #include "SpreadProjectile.h"
 #include "CyclopsLaserProjectile.h"
 #include "LavaBallProjectile.h"
@@ -97,14 +98,21 @@ private:
     void SpawnEnemies();
     void HandleCollisions();
     void UpdateEnemyCount(float dt);
+    Enemy* SpawnBasicEnemy(Vector2 pos);
     Enemy* SpawnCyclops(Vector2 pos);
     Enemy* SpawnOgre(Vector2 pos);
     void SpawnMolarbeast(Vector2 pos);
     void UpdateCyclopsLasers(float dt);
     void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
+    void DrawCyclopsLasers(Vector2 worldOffset);
     void DrawWorld();
     void DrawHUD();
+    void UpdateDebugPanel();
+    void DrawDebugPanel();
+    void DebugStartRun();
+    void DebugRestartRoomAs(RoomType type);
+    void DebugSetEliteMechanic(int mechanic);
     void DrawHowToPlay();
     void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
     void DrawWaveIntro();
@@ -167,7 +175,8 @@ private:
     void CompleteCurrentMapNode();        // marks the current node complete and unlocks next nodes
     void HandleRoomContinueAction();      // shared continue path for cleared/completed rooms
     void DrawMap();                       // Slay-the-Spire–style act map screen
-    RoomType PickRoomTypeForRow(int row); // weighted random room type by act depth
+    std::vector<Vector2> GetCyclopsLaserEndpoints(const CyclopsLaserProjectile& laser) const;
+    bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
 
     Biome GetBiomeForAct(int act) const;  // replaces GetBiomeForWave()
 
@@ -238,6 +247,15 @@ private:
         Color   color     = WHITE;
         float   spawnTime = 0.f;
         static constexpr float kLifetime = 0.75f;
+    };
+
+    // ── Elite-room hazard ─────────────────────────────────────────────────
+    struct EliteHazard
+    {
+        Vector2 worldPos{};
+        float   warningTimer    = 0.f;   // counts down; strike fires when reaches 0
+        bool    struck          = false;
+        float   strikeFlashTimer = 0.f;  // brief flash after impact
     };
 
     GameState _gameState = GameState::Menu;
@@ -312,6 +330,36 @@ private:
     bool        _ultimateRowPicked   = false;
     bool        _regularRowPicked    = false;
     bool        _eliteRewardGranted  = false;
+
+    // ── Elite-room state (all reset in StartNextRoom) ─────────────────────
+    // Active mechanic index: 0=Cage, 1=Bodyguard, 2=Enrage, 3=Leap, 4=Hazards; -1=none
+    int     _eliteMechanic            = -1;
+    Enemy*  _eliteMinibossPtr         = nullptr;  // non-owning ptr into _enemies
+    Vector2 _eliteCageCenter          = {};
+    float   _eliteCageRadius          = 0.f;
+    float   _eliteCageDamageTimer     = 0.f;
+    float   _eliteEnrageWarningTimer  = 0.f;
+    bool    _eliteIsLeaping           = false;
+    Vector2 _eliteLeapStartPos        = {};
+    Vector2 _eliteLeapTarget          = {};
+    float   _eliteLeapCooldown        = 0.f;
+    float   _eliteLeapTimer           = 0.f;
+    std::vector<EliteHazard> _eliteHazards;
+    float   _eliteHazardSpawnTimer    = 0.f;
+
+    // ── Elite constants ───────────────────────────────────────────────────
+    static constexpr float kEliteCageRadius             = 500.f;
+    static constexpr float kEliteCageDamageInterval     = 0.5f;
+    static constexpr float kEliteEnrageWarningDuration  = 4.0f;
+    static constexpr float kLeapInterval                = 8.0f;
+    static constexpr float kLeapDuration                = 1.5f;
+    static constexpr float kLeapAoERadius               = 90.f;
+    static constexpr int   kLeapAoEDamage               = 3;
+    static constexpr float kHazardVolleyMinInterval     = 0.55f;
+    static constexpr float kHazardVolleyMaxInterval     = 0.95f;
+    static constexpr int   kHazardVolleyMinCount        = 3;
+    static constexpr int   kHazardVolleyMaxCount        = 6;
+
     // Ability choice state (shown after every 5th-wave boss clear)
     UpgradeType _abilityChoiceOptions[3] = { UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread };
     int         _abilityChoiceOptionCount = 0;
@@ -427,4 +475,11 @@ private:
     // Touch IDs that have already triggered an ability cast this press.
     // Cleared each frame when the touch lifts; prevents repeat casts on hold.
     std::vector<int> _abilityTapSeenIds;
+
+    // Debug mode
+    bool  _debugModeActive = false;
+    bool  _debugPanelOpen  = false;
+    bool  _debugGodMode    = false;
+    float _debugScrollY    = 0.f;
+    int   _debugForcedEliteMechanic = -1; // -1=random, 0-4 specific elite mechanic
 };

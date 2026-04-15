@@ -280,6 +280,8 @@ void Ogre::TakeDamage(int damage, Vector2 attackerPos)
 {
     if (_dying)
         return;
+    if (_isInvulnerable || _leapInvulnerable)
+        return;
 
     const bool stayCharging = (_rushState == RushState::Charging);
 

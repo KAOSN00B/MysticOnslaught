@@ -13,6 +13,11 @@
 class Cyclops : public Enemy
 {
 public:
+    enum class FireMode
+    {
+        Sweep,
+        Scatter
+    };
 
     Cyclops(Vector2 pos);
     ~Cyclops() override;
@@ -45,7 +50,8 @@ public:
     // Laser firing interface (read by Engine after Update)
     bool    WantsToFire()      const { return _wantsToFire; }
     Vector2 GetFireDirection() const { return _fireDirection; }
-    void    OnFired()                { _wantsToFire = false; }
+    FireMode GetFireMode()     const { return _queuedFireMode; }
+    void    OnFired();
 
     void PlayAttackSound() override;
     void PlayDeathSound()  override;
@@ -74,6 +80,7 @@ private:
     void HandleAnimation(float dt);
     void UpdateBurns(float dt);
     void DrawHealthBar(Vector2 screenPos, float w, float h);
+    void CancelCharge();
 
     struct PendingBurn
     {
@@ -90,19 +97,18 @@ private:
     bool    _charging         = false;
     bool    _wantsToFire      = false;
     Vector2 _fireDirection    = {};
-
-    static constexpr float _fleeRange       = 220.f;  // back away if player closer than this
-    static constexpr float _fleeSpeed       = 110.f;  // retreat speed (px/s)
+    FireMode _queuedFireMode  = FireMode::Sweep;
+    float   _postFireLockTimer = 0.f;
 
     static constexpr float _stuckThreshold = 0.8f;
     static constexpr float _stuckMinMove   = 8.f;
-    bool _chargeCanBeInterrupted = true;
 
     // These start at their design-default values and are tuned by SetWaveScale
     // so higher-tier cyclops charge faster and fire more often.
-    float _chargeDurationInst   = 1.5f;
+    float _chargeDurationInst   = 1.0f;
     float _attackCooldownMaxInst = 3.5f;
     float _chargeRangeInst      = 480.f;
+    float _scatterRangeInst     = 170.f;
 
     std::vector<PendingBurn> _pendingBurns;
 

@@ -37,6 +37,7 @@ void MainMenu::Init()
     _buttons.push_back({ "Start Game",  { startX, firstY,                       buttonWidth, buttonHeight } });
     _buttons.push_back({ "How To Play", { startX, firstY + (buttonHeight + gap), buttonWidth, buttonHeight } });
     _buttons.push_back({ "Quit",        { startX, firstY + (buttonHeight + gap)*2, buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Debug Mode",  { sw * 0.71f, sh * 0.54f, buttonWidth * 0.90f, buttonHeight * 0.95f } });
 
     // Corner buttons (smaller)
     float lbW = sw * 0.14f;
@@ -52,6 +53,7 @@ void MainMenu::Init()
     _quitPressed        = false;
     _howToPressed       = false;
     _leaderboardPressed = false;
+    _debugPressed       = false;
 
     if (_borderTex.id == 0)
         _borderTex  = LoadTexture(AssetPath("UI/MainMenuBorder.png").c_str());
@@ -77,6 +79,7 @@ void MainMenu::Update()
             if (button.text == "Quit")         _quitPressed        = true;
             if (button.text == "How To Play")  _howToPressed       = true;
             if (button.text == "Leaderboard")  _leaderboardPressed = true;
+            if (button.text == "Debug Mode")   _debugPressed       = true;
             // Controls toggle — identified by prefix since text changes with state
             if (button.text.rfind("Controls:", 0) == 0)
             {
@@ -174,6 +177,21 @@ void MainMenu::Draw()
             continue;
         }
 
+        if (button.text == "Debug Mode")
+        {
+            Color fill = button.hovered ? Color{ 180, 105, 55, 245 } : Color{ 126, 74, 38, 225 };
+            Color edge = button.hovered ? Color{ 255, 205, 135, 255 } : Color{ 220, 168, 105, 215 };
+            DrawRectangleRounded(button.bounds, 0.24f, 8, fill);
+            DrawRectangleRoundedLines(button.bounds, 0.24f, 8, edge);
+            int fs = (int)(sh * 0.032f);
+            int tw = MeasureText(button.text.c_str(), fs);
+            DrawText(button.text.c_str(),
+                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
+                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                fs, Color{ 255, 244, 220, 255 });
+            continue;
+        }
+
         // Controls toggle button — drawn differently to signal it's a toggle
         bool isControlsBtn = (button.text.rfind("Controls:", 0) == 0);
         if (isControlsBtn)
@@ -223,3 +241,4 @@ bool MainMenu::StartPressed()       const { return _startPressed;       }
 bool MainMenu::QuitPressed()        const { return _quitPressed;        }
 bool MainMenu::HowToPressed()       const { return _howToPressed;       }
 bool MainMenu::LeaderboardPressed() const { return _leaderboardPressed; }
+bool MainMenu::DebugPressed()       const { return _debugPressed;       }

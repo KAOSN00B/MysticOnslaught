@@ -119,6 +119,7 @@ void Character::Init()
     _forcedPushStunTimer = 0.f;
 
     _exp            = 0;
+    _gold           = 0;
     _level          = 1;
     _expToNextLevel = 24;
     _pendingBurnTicks.clear();

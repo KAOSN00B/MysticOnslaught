@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <queue>
 
@@ -78,6 +79,129 @@ namespace
     int GetNavigationIndexForGrid(int col, int row, int cols)
     {
         return row * cols + col;
+    }
+
+    const char* GetDebugRoomTypeName(RoomType type)
+    {
+        switch (type)
+        {
+        case RoomType::Elite:    return "Elite";
+        case RoomType::Rest:     return "Rest";
+        case RoomType::Treasure: return "Treasure";
+        case RoomType::Store:    return "Shop";
+        case RoomType::Boss:     return "Boss";
+        default:                 return "Standard";
+        }
+    }
+
+    const char* GetDebugUpgradeName(UpgradeType type)
+    {
+        switch (type)
+        {
+        case UpgradeType::AttackPower: return "Attack+";
+        case UpgradeType::AttackRange: return "Range+";
+        case UpgradeType::MaxHealth: return "Max HP+";
+        case UpgradeType::MaxMana: return "Max MP+";
+        case UpgradeType::Defense: return "Defense+";
+        case UpgradeType::MoveSpeed: return "Speed+";
+        case UpgradeType::IronConstitution: return "Iron Con";
+        case UpgradeType::SwiftFeet: return "Swift Feet";
+        case UpgradeType::Ferocity: return "Ferocity";
+        case UpgradeType::ArcaneMind: return "Arcane Mind";
+        case UpgradeType::IronSkin: return "Iron Skin";
+        case UpgradeType::BladeEdge: return "Blade Edge";
+        case UpgradeType::WarGod: return "War God";
+        case UpgradeType::Resilience: return "Resilience";
+        case UpgradeType::BladeStorm: return "Blade Storm";
+        case UpgradeType::Juggernaut: return "Juggernaut";
+        case UpgradeType::ArcaneColossus: return "Arc Colossus";
+        case UpgradeType::LearnFireSpread: return "Learn F Spread";
+        case UpgradeType::LearnIceSpread: return "Learn I Spread";
+        case UpgradeType::LearnElectricSpread: return "Learn E Spread";
+        case UpgradeType::LearnFireBolt: return "Learn F Bolt";
+        case UpgradeType::LearnIceBolt: return "Learn I Bolt";
+        case UpgradeType::LearnElectricBolt: return "Learn E Bolt";
+        case UpgradeType::LearnFireUltimate: return "Learn F Ult";
+        case UpgradeType::LearnIceUltimate: return "Learn I Ult";
+        case UpgradeType::LearnElectricUltimate: return "Learn E Ult";
+        case UpgradeType::UpgradeFireSpread: return "Up F Spread";
+        case UpgradeType::UpgradeIceSpread: return "Up I Spread";
+        case UpgradeType::UpgradeElectricSpread: return "Up E Spread";
+        case UpgradeType::UpgradeFireBolt: return "Up F Bolt";
+        case UpgradeType::UpgradeIceBolt: return "Up I Bolt";
+        case UpgradeType::UpgradeElectricBolt: return "Up E Bolt";
+        case UpgradeType::UpgradeFireUltimate: return "Up F Ult";
+        case UpgradeType::UpgradeIceUltimate: return "Up I Ult";
+        case UpgradeType::UpgradeElectricUltimate: return "Up E Ult";
+        default: return "Upgrade";
+        }
+    }
+
+    const char* GetDebugEliteMechanicName(int mechanic)
+    {
+        switch (mechanic)
+        {
+        case 0: return "Cage";
+        case 1: return "Links";
+        case 2: return "Enrage";
+        case 3: return "Leap";
+        case 4: return "Hazards";
+        default: return "Random";
+        }
+    }
+
+    enum class DebugActionKind
+    {
+        ToggleGod,
+        GrantInvuln,
+        ClearEnemiesContinue,
+        RestartRoom,
+        SetEliteMechanic,
+        SpawnGrunt,
+        SpawnCyclops,
+        SpawnOgre,
+        SpawnBoss,
+        Heal,
+        RestoreMana,
+        AddGold,
+        AddExp,
+        TreasureCards,
+        EliteReward,
+        AbilityReward,
+        ApplyUpgrade
+    };
+
+    struct DebugButtonSpec
+    {
+        std::string label;
+        Rectangle rect{};
+        Color fill{};
+        DebugActionKind action = DebugActionKind::ToggleGod;
+        int value = 0;
+    };
+
+    void AppendDebugButtons(std::vector<DebugButtonSpec>& out, float padX, float contentW,
+                            float& cursorY, int cols, Color fill,
+                            const std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>>& items)
+    {
+        const float gap = 8.f;
+        const float cellH = 30.f;
+        const float cellW = (contentW - gap * (cols - 1)) / cols;
+
+        for (int i = 0; i < (int)items.size(); ++i)
+        {
+            int col = i % cols;
+            int row = i / cols;
+            out.push_back(DebugButtonSpec{
+                items[i].first,
+                Rectangle{ padX + col * (cellW + gap), cursorY + row * (cellH + gap), cellW, cellH },
+                fill,
+                items[i].second.first,
+                items[i].second.second
+            });
+        }
+
+        cursorY += ((int)items.size() + cols - 1) / cols * (cellH + gap) + 8.f;
     }
 
     bool IsNavigationCellBlockedForGrid(const std::vector<bool>& blocked, int cols, int rows, int col, int row)
@@ -221,6 +345,7 @@ Engine::~Engine()
     // [SHELVED] FireBallPickup/SwordBeamPickup/FreezePickup unload calls removed
     HealPickup::UnloadSharedResources();
     ManaGemPickup::UnloadSharedResources();
+    GoldPickup::UnloadSharedResources();
     SpreadProjectile::UnloadSharedResources();
     LavaBallProjectile::UnloadSharedResources();
     UnloadSound(_pickupSound);
@@ -321,7 +446,7 @@ void Engine::Init()
     _mapIconShop     = LoadTexture(AssetPath("TileSet/MapIcons/ShopRoom.png").c_str());
     _mapIconTreasure = LoadTexture(AssetPath("TileSet/MapIcons/TreasureRoom.png").c_str());
     _mapIconBoss     = LoadTexture(AssetPath("TileSet/MapIcons/BossRoom.png").c_str());
-    _mapIconRest     = LoadTexture(AssetPath("PowerUps/FoodPickup.png").c_str());
+    _mapIconRest     = LoadTexture(AssetPath("TileSet/MapIcons/RestRoom.png").c_str());
 
     _upgradeAttackPowerTex = LoadTexture(AssetPath("UI/Upgrades/AttackPower.png").c_str());
     _upgradeAttackRangeTex = LoadTexture(AssetPath("UI/Upgrades/AttackRange.png").c_str());
@@ -380,6 +505,113 @@ void Engine::StartNextRoom(RoomType type)
     }
 }
 
+void Engine::DebugStartRun()
+{
+    ResetRunState();
+    _debugModeActive = true;
+    _debugPanelOpen = true;
+    _debugGodMode = false;
+    _debugScrollY = 0.f;
+    _debugForcedEliteMechanic = -1;
+    _awaitingStartingAbility = false;
+    _levelUpReturnState = GameState::Play;
+    _message = "Debug Arena";
+    DebugRestartRoomAs(RoomType::Standard);
+}
+
+void Engine::DebugSetEliteMechanic(int mechanic)
+{
+    _debugForcedEliteMechanic = mechanic;
+    DebugRestartRoomAs(RoomType::Elite);
+}
+
+void Engine::DebugRestartRoomAs(RoomType type)
+{
+    for (auto& enemy : _enemies)
+    {
+        enemy->SetActive(false);
+        enemy->Teleport(Vector2{ -5000.f, -5000.f });
+    }
+
+    _pickups.clear();
+    _spreadProjectiles.clear();
+    _ultimateBlasts.clear();
+    _effects.clear();
+    _floatingTexts.clear();
+    _cyclopsLasers.clear();
+    _lavaBalls.clear();
+    ClearBossSupportAdds();
+    _bossCyclopsSupport.enemy = nullptr;
+    _bossCyclopsSupport.respawnTimer = 0.f;
+    _bossOgreSupport.enemy = nullptr;
+    _bossOgreSupport.respawnTimer = 0.f;
+
+    _roomClearPending = false;
+    _pendingExp = 0.f;
+    _expTallyAccum = 0.f;
+    _expTallyDone = false;
+    _tallyChoiceChaining = false;
+    _eliteRewardGranted = false;
+    _eliteMechanic = -1;
+    _eliteMinibossPtr = nullptr;
+    _eliteCageRadius = 0.f;
+    _eliteEnrageWarningTimer = 0.f;
+    _eliteHazards.clear();
+    _eliteHazardSpawnTimer = 0.f;
+    _eliteIsLeaping = false;
+    _eliteLeapCooldown = 0.f;
+    _eliteLeapTimer = 0.f;
+
+    _currentRoomType = type;
+    _currentRoom = (_currentRoom % 5) + 1;
+    if (type == RoomType::Boss)
+        _currentRoom = 6;
+    _wave = std::max(1, _wave + 1);
+
+    Biome nextBiome = GetBiomeForAct(_currentAct);
+    _currentBiome = nextBiome;
+    _pendingBiome = nextBiome;
+    _biomeTransitionActive = false;
+    _biomeTransitionSwapped = false;
+    _biomeTransitionTimer = 0.f;
+    ApplyBiome(nextBiome);
+    PopulatePropsForBiome(nextBiome);
+    BuildNavigationGrid();
+    _navRefreshTimer = 0.f;
+
+    _waveStarting = false;
+    _waveIntroTimer = 0.f;
+    _fadeInTimer = 0.6f;
+    _fadeInDuration = 0.6f;
+    _pickupSpawnTimer = kDefaultTimedPickupInterval;
+    _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
+
+    _message = std::string("Debug - ") + GetDebugRoomTypeName(type) + " Area";
+
+    if (type == RoomType::Treasure)
+    {
+        _roomClearPending = true;
+        const float mapW = _map.width * _mapScale;
+        const float mapH = _map.height * _mapScale;
+        const Vector2 centre{ mapW * 0.5f, mapH * 0.5f };
+        auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
+        {
+            auto g = std::make_unique<GoldPickup>();
+            g->Init(Vector2{ centre.x + ox, centre.y + oy }, denom);
+            _pickups.push_back(std::move(g));
+        };
+        spawnGold(GoldDenomination::Ten, 0.f, 0.f);
+        spawnGold(GoldDenomination::Five, -60.f, 24.f);
+        spawnGold(GoldDenomination::Five, 60.f, 24.f);
+    }
+    else
+    {
+        SpawnEnemies();
+    }
+
+    _gameState = GameState::Play;
+}
+
 // (ShowRoomChoiceScreen / GenerateRoomChoices removed — replaced by map system)
 
 Biome Engine::GetBiomeForAct(int act) const
@@ -389,120 +621,93 @@ Biome Engine::GetBiomeForAct(int act) const
     return isDungeon ? Biome::Dungeon : Biome::Forest;
 }
 
-// ── PickRoomTypeForRow ────────────────────────────────────────────────────────
-// Weighted random room type based on depth within the act (row 1 = early, 4 = pre-boss).
-RoomType Engine::PickRoomTypeForRow(int row)
-{
-    switch (row)
-    {
-    case 1:
-    {
-        int r = GetRandomValue(0, 9);
-        if (r <= 4) return RoomType::Standard;
-        if (r <= 6) return RoomType::Rest;
-        if (r <= 8) return RoomType::Elite;
-        return RoomType::Treasure;
-    }
-    case 2:
-    {
-        int r = GetRandomValue(0, 9);
-        if (r <= 2) return RoomType::Standard;
-        if (r <= 4) return RoomType::Elite;
-        if (r <= 6) return RoomType::Rest;
-        if (r <= 7) return RoomType::Treasure;
-        return RoomType::Store;
-    }
-    case 3:
-    {
-        int r = GetRandomValue(0, 9);
-        if (r <= 2) return RoomType::Standard;
-        if (r <= 4) return RoomType::Elite;
-        if (r <= 6) return RoomType::Treasure;
-        if (r <= 7) return RoomType::Rest;
-        return RoomType::Store;
-    }
-    case 4:
-        // Pre-boss: Standard or Elite only
-        return (GetRandomValue(0, 1) == 0) ? RoomType::Standard : RoomType::Elite;
-    default:
-        return RoomType::Standard;
-    }
-}
 
 // ── GenerateActMap ────────────────────────────────────────────────────────────
-// Builds the full 6-row directed-acyclic node graph for the current act.
-// Row 0 = entry (Standard), rows 1-4 = branching options, row 5 = Boss.
-// All rows and connections are visible immediately (Slay the Spire style).
+// Builds a 6-row branching DAG for the current act.
+// Row 0 = entry (Standard), rows 1-4 = branching, row 5 = Boss.
 //
-// Rest and Treasure rules:
-//   • 2-row gap — never in rows 1 or 2 (player must fight first).
-//   • Same-row — both live in one chosen "special row" (3 or 4) as separate
-//     nodes, forcing the player to pick a path: heal OR loot, never both.
+// Special room guarantee:
+//   All four specials appear exactly once per act across two special rows:
+//     Row 2 (early)  → Elite + Treasure  (combat/reward, available from the start)
+//     Row 3 (late)   → Shop  + Rest      (utility/recovery, only after 3 rows of combat)
+//   Each row has 4 nodes: 2 specials + 2 Standard fillers.
+//   The 2 special positions are chosen independently per row (out of 4 slots)
+//   so the rewarded lanes shift each run and force different routing decisions.
+//
+//   A path visits exactly one node per row → at most 2 specials per run.
+//   Rows 1 and 4 are all Standard (2–4 nodes) for additional branching variety.
 void Engine::GenerateActMap()
 {
     _actMap.clear();
     _currentMapNodeIdx = -1;
     _mapOpenTimer = 0.f;
 
-    // ── 1. Decide per-row node counts ──────────────────────────────────────
+    // ── 1. Assign specials to rows by type ───────────────────────────────
+    // Row 2 (early) always gets Elite + Treasure — combat/reward specials.
+    // Row 3 (late, after 3 rows of combat) always gets Shop + Rest —
+    //   utility/recovery specials that only make sense once the player has
+    //   earned gold and taken some damage.
+    // Each pair is randomly swapped so which side of the row each appears on
+    // is still unpredictable.
+    RoomType row2Pair[2] = { RoomType::Elite,    RoomType::Treasure };
+    RoomType row3Pair[2] = { RoomType::Store,     RoomType::Rest     };
+    if (GetRandomValue(0, 1)) std::swap(row2Pair[0], row2Pair[1]);
+    if (GetRandomValue(0, 1)) std::swap(row3Pair[0], row3Pair[1]);
+
+    // ── 2. Pick special positions in each 4-node special row ─────────────
+    // Each special row has 4 nodes: 2 specials + 2 Standard fillers.
+    // Pick 2 distinct positions (0-3) for the specials; the other 2 are Standard.
+    // Chosen independently per row so the "empty lanes" shift each run.
+    auto pickTwoDistinct = [](int& a, int& b, int max) {
+        a = GetRandomValue(0, max);
+        do { b = GetRandomValue(0, max); } while (b == a);
+    };
+
+    int sp2a, sp2b;   // special positions in row 2
+    int sp3a, sp3b;   // special positions in row 3
+    pickTwoDistinct(sp2a, sp2b, 3);
+    pickTwoDistinct(sp3a, sp3b, 3);
+
+    // Build the 4-element type arrays for rows 2 and 3
+    RoomType row2Types[4], row3Types[4];
+    {
+        int si = 0;
+        for (int i = 0; i < 4; i++)
+            row2Types[i] = (i == sp2a || i == sp2b) ? row2Pair[si++] : RoomType::Standard;
+        si = 0;
+        for (int i = 0; i < 4; i++)
+            row3Types[i] = (i == sp3a || i == sp3b) ? row3Pair[si++] : RoomType::Standard;
+    }
+
+    // ── 3. Decide per-row node counts ─────────────────────────────────────
+    // Rows 2 and 3 are fixed at 4 (needed for special placement).
+    // Rows 1 and 4 vary (2-4) for additional graph shape variety.
     int rowCounts[6];
     rowCounts[0] = 1;
+    rowCounts[1] = GetRandomValue(2, 4);
+    rowCounts[2] = 4;
+    rowCounts[3] = 4;
+    rowCounts[4] = GetRandomValue(2, 4);
     rowCounts[5] = 1;
-    for (int r = 1; r <= 4; r++)
-        rowCounts[r] = GetRandomValue(1, 3);
 
-    // ── Pre-plan Rest / Treasure placement ────────────────────────────────
-    // Both types land in one "special row" (3 or 4) as separate nodes so the
-    // player must choose a path — they cannot reach both in the same run.
-    bool hasRest     = (GetRandomValue(0, 9) < 7);  // 70% chance per act
-    bool hasTreasure = (GetRandomValue(0, 9) < 6);  // 60% chance per act
-    int  specialRow  = GetRandomValue(3, 4);         // only rows 3 or 4
-
-    int specialCount = (hasRest ? 1 : 0) + (hasTreasure ? 1 : 0);
-    // Make sure the special row has enough nodes for both (max 3 total).
-    if (specialCount > rowCounts[specialRow])
-        rowCounts[specialRow] = std::min(3, specialCount);
-
-    // Build a shuffled type list for the special row:
-    // fill special types first, pad remaining slots with Standard/Elite.
-    std::vector<RoomType> specialTypes;
-    if (hasRest)     specialTypes.push_back(RoomType::Rest);
-    if (hasTreasure) specialTypes.push_back(RoomType::Treasure);
-    while ((int)specialTypes.size() < rowCounts[specialRow])
-        specialTypes.push_back((GetRandomValue(0, 1) == 0) ? RoomType::Standard : RoomType::Elite);
-    // Fisher-Yates shuffle using Raylib RNG
-    for (int i = (int)specialTypes.size() - 1; i > 0; i--)
-        std::swap(specialTypes[i], specialTypes[GetRandomValue(0, i)]);
-
-    // ── 2. Create nodes ───────────────────────────────────────────────────
+    // ── 4. Create nodes ───────────────────────────────────────────────────
     int rowStart[6];
-    int specialSlot = 0;   // index into specialTypes for the special row
     for (int r = 0; r < 6; r++)
     {
         rowStart[r] = (int)_actMap.size();
-        if (r == specialRow) specialSlot = 0;
-
         for (int i = 0; i < rowCounts[r]; i++)
         {
             MapNode n;
-            n.row = r;
+            n.row   = r;
+            // normX: single-node rows centre at 0.5; multi-node rows spread 0.2–0.8
             n.normX = (rowCounts[r] == 1) ? 0.5f
-                      : 0.2f + (float)i / (rowCounts[r] - 1) * 0.6f;
+                    : 0.2f + (float)i / (rowCounts[r] - 1) * 0.6f;
 
-            if (r == 0)             { n.type = RoomType::Standard; }
-            else if (r == 5)        { n.type = RoomType::Boss; }
-            else if (r == specialRow)
-            {
-                n.type = specialTypes[specialSlot++];
-            }
-            else
-            {
-                // All other rows: Standard / Elite / Store only — no Rest or Treasure.
-                RoomType t = PickRoomTypeForRow(r);
-                if (t == RoomType::Rest || t == RoomType::Treasure)
-                    t = (GetRandomValue(0, 1) == 0) ? RoomType::Standard : RoomType::Elite;
-                n.type = t;
-            }
+            if      (r == 0) n.type = RoomType::Standard;
+            else if (r == 5) n.type = RoomType::Boss;
+            else if (r == 2) n.type = row2Types[i];
+            else if (r == 3) n.type = row3Types[i];
+            else             n.type = RoomType::Standard;   // rows 1 and 4
 
             n.available = (r == 0);
             n.completed = false;
@@ -510,7 +715,7 @@ void Engine::GenerateActMap()
         }
     }
 
-    // ── 3. Build connections ──────────────────────────────────────────────
+    // ── 5. Build connections ──────────────────────────────────────────────
     for (int r = 0; r < 5; r++)
     {
         int sR  = rowStart[r],     cR  = rowCounts[r];
@@ -569,14 +774,14 @@ void Engine::GenerateActMap()
         }
     }
 
-    // ── 4. Compute draw positions ─────────────────────────────────────────
+    // ── 6. Compute draw positions ─────────────────────────────────────────
     // Boss (row 5) sits at the top; entry (row 0) at the bottom.
-    // Map is shifted right to leave room for the stats/legend panel on the left.
+    // Graph sits between the left stats panel and the right journey panel.
     const float mapTop  = 130.f;
     const float mapBot  = (float)_windowHeight - 110.f;
     const float rowH    = (mapBot - mapTop) / 5.f;
     const float mapLeft = (float)_windowWidth  * 0.30f;
-    const float mapRight= (float)_windowWidth  * 0.97f;
+    const float mapRight= (float)_windowWidth  * 0.76f;  // right side reserved for journey panel
 
     for (auto& node : _actMap)
     {
@@ -640,6 +845,27 @@ void Engine::EnterMapRoom(int idx)
         if (_currentRoomType == RoomType::Treasure)
         {
             _roomClearPending = true;
+
+            // Spawn a pile of gold coins at the centre of the map.
+            const float mapW = _map.width  * _mapScale;
+            const float mapH = _map.height * _mapScale;
+            const Vector2 centre{ mapW * 0.5f, mapH * 0.5f };
+            const float spread = 60.f;
+
+            auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
+            {
+                auto g = std::make_unique<GoldPickup>();
+                g->Init(Vector2{ centre.x + ox, centre.y + oy }, denom);
+                _pickups.push_back(std::move(g));
+            };
+
+            // 1 ten-gold in the middle, 2 five-golds, and 3 singles scattered around
+            spawnGold(GoldDenomination::Ten,    0.f,     0.f);
+            spawnGold(GoldDenomination::Five,  -spread,  spread * 0.5f);
+            spawnGold(GoldDenomination::Five,   spread,  spread * 0.5f);
+            spawnGold(GoldDenomination::Single, 0.f,    -spread);
+            spawnGold(GoldDenomination::Single,-spread * 0.6f, -spread * 0.6f);
+            spawnGold(GoldDenomination::Single, spread * 0.6f, -spread * 0.6f);
         }
         else
         {
@@ -651,7 +877,15 @@ void Engine::EnterMapRoom(int idx)
     // Fade in from black each time a room is entered.
     _fadeInTimer    = 1.2f;
     _fadeInDuration = 1.2f;
-    _eliteRewardGranted = false;
+    _eliteRewardGranted      = false;
+    // Clear all elite-room systems when entering any new room
+    _eliteMechanic           = -1;
+    _eliteMinibossPtr        = nullptr;
+    _eliteCageRadius         = 0.f;
+    _eliteIsLeaping          = false;
+    _eliteEnrageWarningTimer = 0.f;
+    _eliteHazards.clear();
+    _eliteHazardSpawnTimer   = 0.f;
 
     _gameState = GameState::Play;
 }
@@ -745,22 +979,70 @@ void Engine::SpawnEnemies()
     if (_currentRoomType == RoomType::Elite)
     {
         const int fodderCount = std::min(7, 3 + _currentAct + std::max(0, _currentRoom - 2));
-        const bool useOgreMiniboss = (_currentAct >= 2 && _currentRoom >= 3)
-            ? (GetRandomValue(0, 1) == 0)
-            : (_currentRoom >= 4);
+        const int eliteTypeRoll = GetRandomValue(0, 2);
+        Enemy* eliteMiniboss = nullptr;
+        switch (eliteTypeRoll)
+        {
+        case 0: eliteMiniboss = SpawnBasicEnemy(spawnPos()); break;
+        case 1: eliteMiniboss = SpawnCyclops(spawnPos()); break;
+        case 2: eliteMiniboss = SpawnOgre(spawnPos()); break;
+        }
 
-        Enemy* eliteMiniboss = useOgreMiniboss ? SpawnOgre(spawnPos()) : SpawnCyclops(spawnPos());
         if (eliteMiniboss != nullptr)
             eliteMiniboss->SetIsEliteMiniboss(true);
 
+        // ── Elite-room systems setup ──────────────────────────────────────
+        {
+            _eliteMechanic    = (_debugForcedEliteMechanic >= 0) ? _debugForcedEliteMechanic : GetRandomValue(0, 4);
+            _eliteMinibossPtr = eliteMiniboss;
+
+            const float mapW = _map.width  * _mapScale;
+            const float mapH = _map.height * _mapScale;
+
+            // Reset everything; only activate the chosen mechanic
+            _eliteCageRadius         = 0.f;
+            _eliteCageDamageTimer    = 0.f;
+            _eliteEnrageWarningTimer = 0.f;
+            _eliteIsLeaping          = false;
+            _eliteLeapCooldown       = 0.f;
+            _eliteLeapTimer          = 0.f;
+            _eliteHazards.clear();
+            _eliteHazardSpawnTimer   = 0.f;
+
+            switch (_eliteMechanic)
+            {
+            case 0: // Arena Constriction
+                _eliteCageCenter      = { mapW * 0.5f, mapH * 0.5f };
+                _eliteCageRadius      = kEliteCageRadius;
+                _eliteCageDamageTimer = kEliteCageDamageInterval;
+                break;
+
+            case 1: // Invulnerability Links
+                if (_eliteMinibossPtr)
+                    _eliteMinibossPtr->SetInvulnerable(true);
+                break;
+
+            case 2: // Permanent Enrage
+                if (_eliteMinibossPtr)
+                    _eliteMinibossPtr->ApplyEnrage();
+                _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
+                break;
+
+            case 3: // Gap-Closer Leap
+                _eliteLeapCooldown = kLeapInterval;
+                break;
+
+            case 4: // Room Hazards
+                _eliteHazardSpawnTimer = (float)GetRandomValue(
+                    (int)(kHazardVolleyMinInterval * 100.f),
+                    (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
+                break;
+            }
+        }
+
         for (int i = 0; i < fodderCount; i++)
         {
-            Vector2 p = spawnPos();
-            if (TryGetPooledEnemySpawn(p)) continue;
-            auto enemy = std::make_unique<Enemy>(p);
-            enemy->Init();
-            ConfigureSpawnedEnemy(*enemy);
-            _enemies.push_back(std::move(enemy));
+            SpawnBasicEnemy(spawnPos());
         }
         return;
     }
@@ -794,14 +1076,7 @@ void Engine::SpawnEnemies()
     }
 
     for (int i = 0; i < regularCount; i++)
-    {
-        Vector2 p = spawnPos();
-        if (TryGetPooledEnemySpawn(p)) continue;
-        auto enemy = std::make_unique<Enemy>(p);
-        enemy->Init();
-        ConfigureSpawnedEnemy(*enemy);
-        _enemies.push_back(std::move(enemy));
-    }
+        SpawnBasicEnemy(spawnPos());
 
     for (int i = 0; i < cyclopsCount; i++)
         SpawnCyclops(spawnPos());
@@ -839,6 +1114,9 @@ void Engine::Update(float dt)
         if (_menu.StartPressed())
         {
             _touchModeActive = _menu.IsTouchMode();
+            _debugModeActive = false;
+            _debugPanelOpen  = false;
+            _debugGodMode    = false;
             ResetRunState();
             _fadeInTimer = 2.0f; _fadeInDuration = 2.0f;
             GenerateStartingAbilityOptions();
@@ -846,6 +1124,11 @@ void Engine::Update(float dt)
             _levelUpReturnState = GameState::Map;  // after picking, show the act map
             _levelUpOpenTimer = 0.8f;
             _gameState = GameState::LevelUpChoice;
+        }
+        if (_menu.DebugPressed())
+        {
+            _touchModeActive = _menu.IsTouchMode();
+            DebugStartRun();
         }
         if (_menu.QuitPressed())
             _shouldClose = true;
@@ -952,6 +1235,16 @@ void Engine::Update(float dt)
 
 void Engine::UpdateGamePlay(float dt)
 {
+    if (_debugModeActive && IsKeyPressed(KEY_F1))
+        _debugPanelOpen = !_debugPanelOpen;
+
+    if (_debugModeActive)
+    {
+        if (_debugGodMode)
+            _player.GrantInvulnerability(0.2f);
+        UpdateDebugPanel();
+    }
+
     if (IsKeyPressed(KEY_ESCAPE))
     {
         _gameState = GameState::Pause;
@@ -977,7 +1270,8 @@ void Engine::UpdateGamePlay(float dt)
     // can't accidentally trigger the attack animation while browsing.
     bool inNonCombatRoom = (_currentRoomType == RoomType::Rest  ||
                             _currentRoomType == RoomType::Store ||
-                            _currentRoomType == RoomType::Treasure);
+                            _currentRoomType == RoomType::Treasure ||
+                            _debugPanelOpen);
     _player.SetCombatLocked(_waveStarting || _ultimatePhase != UltimatePhase::None || inNonCombatRoom);
 
     // Touch controls — must be set on player before Update() consumes them
@@ -1099,6 +1393,144 @@ void Engine::UpdateGamePlay(float dt)
             }
         }
 
+        // ── Elite-room systems tick ───────────────────────────────────────
+        if (_currentRoomType == RoomType::Elite)
+        {
+            // 0. Arena cage — tick damage when player is outside the ring
+            if (_eliteMechanic == 0 && _eliteCageRadius > 0.f)
+            {
+                float dist = Vector2Distance(_player.GetWorldPos(), _eliteCageCenter);
+                if (dist > _eliteCageRadius)
+                {
+                    _eliteCageDamageTimer -= dt;
+                    if (_eliteCageDamageTimer <= 0.f)
+                    {
+                        _player.TakeDamage(1, _eliteCageCenter);
+                        _eliteCageDamageTimer = kEliteCageDamageInterval;
+                    }
+                }
+                else
+                {
+                    _eliteCageDamageTimer = kEliteCageDamageInterval;
+                }
+            }
+
+            // 1. Bodyguard shield — remove invulnerability once all grunts are gone
+            if (_eliteMechanic == 1
+                && _eliteMinibossPtr && _eliteMinibossPtr->IsInvulnerable()
+                && _eliteMinibossPtr->IsActive() && !_eliteMinibossPtr->IsDying())
+            {
+                bool anyGruntAlive = false;
+                for (const auto& e : _enemies)
+                {
+                    if (e.get() == _eliteMinibossPtr) continue;
+                    if (e->IsActive() && e->IsAlive() && !e->IsDying())
+                    { anyGruntAlive = true; break; }
+                }
+                if (!anyGruntAlive)
+                    _eliteMinibossPtr->SetInvulnerable(false);
+            }
+
+            // 2. Enrage warning banner timer
+            if (_eliteMechanic == 2 && _eliteEnrageWarningTimer > 0.f)
+                _eliteEnrageWarningTimer -= dt;
+
+            // 3. Gap-closer leap
+            if (_eliteMechanic == 3
+                && _eliteMinibossPtr && _eliteMinibossPtr->IsActive()
+                && _eliteMinibossPtr->IsAlive() && !_eliteMinibossPtr->IsDying())
+            {
+                if (!_eliteIsLeaping)
+                {
+                    _eliteLeapCooldown -= dt;
+                    if (_eliteLeapCooldown <= 0.f)
+                    {
+                        _eliteLeapStartPos = _eliteMinibossPtr->GetWorldPos();
+                        _eliteLeapTarget   = _player.GetFeetWorldPos();
+                        _eliteIsLeaping    = true;
+                        _eliteLeapTimer    = kLeapDuration;
+                        _eliteMinibossPtr->SetLeapFrozen(true);
+                    }
+                }
+                else
+                {
+                    // Freeze the boss in place during the wind-up
+                    _eliteMinibossPtr->Teleport(_eliteLeapStartPos);
+                    _eliteLeapTimer -= dt;
+
+                    if (_eliteLeapTimer <= 0.f)
+                    {
+                        _eliteMinibossPtr->Teleport(_eliteLeapTarget);
+                        _eliteMinibossPtr->SetLeapFrozen(false);
+                        _eliteIsLeaping    = false;
+                        _eliteLeapCooldown = kLeapInterval;
+
+                        float dist = Vector2Distance(_player.GetWorldPos(), _eliteLeapTarget);
+                        if (dist <= kLeapAoERadius)
+                            _player.TakeDamage(kLeapAoEDamage, _eliteLeapTarget);
+
+                        TriggerScreenShake(8.f, 0.25f);
+                    }
+                }
+            }
+
+            // 4. Room hazards — random lightning strikes near the player
+            if (_eliteMechanic == 4)
+            {
+                _eliteHazardSpawnTimer -= dt;
+                if (_eliteHazardSpawnTimer <= 0.f)
+                {
+                    const float mapW = _map.width * _mapScale;
+                    const float mapH = _map.height * _mapScale;
+                    const float marginLeft = 120.f;
+                    const float marginRight = 120.f;
+                    const float marginTop = 90.f;
+                    const float marginBottom = 220.f;
+                    const Vector2 playerPos = _player.GetWorldPos();
+                    const int volleyCount = GetRandomValue(kHazardVolleyMinCount, kHazardVolleyMaxCount);
+
+                    for (int i = 0; i < volleyCount; ++i)
+                    {
+                        Vector2 spawnPos{};
+                        bool foundSpawn = false;
+
+                        for (int attempt = 0; attempt < 24; ++attempt)
+                        {
+                            spawnPos = {
+                                (float)GetRandomValue((int)marginLeft, (int)(mapW - marginRight)),
+                                (float)GetRandomValue((int)marginTop,  (int)(mapH - marginBottom))
+                            };
+
+                            if (Vector2Distance(spawnPos, playerPos) < 240.f)
+                                continue;
+                            if (!IsSpawnPositionValid(spawnPos))
+                                continue;
+
+                            foundSpawn = true;
+                            break;
+                        }
+
+                        if (!foundSpawn)
+                            continue;
+
+                        Vector2 toPlayer = Vector2Subtract(playerPos, spawnPos);
+                        float baseAngle = atan2f(toPlayer.y, toPlayer.x);
+                        float spread = ((float)GetRandomValue(-28, 28)) * DEG2RAD;
+                        float angle = baseAngle + spread;
+
+                        LavaBallProjectile projectile;
+                        projectile.Init(spawnPos, Vector2{ cosf(angle), sinf(angle) });
+                        _lavaBalls.push_back(projectile);
+                    }
+
+                    _eliteHazardSpawnTimer = (float)GetRandomValue(
+                        (int)(kHazardVolleyMinInterval * 100.f),
+                        (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
+                    TriggerScreenShake(2.f, 0.06f);
+                }
+            }
+        }
+
         // Non-combat rooms still use the same Continue button flow as combat
         // rooms; they just complete immediately once their intro ends.
         if (_currentRoomType == RoomType::Rest || _currentRoomType == RoomType::Store)
@@ -1107,6 +1539,22 @@ void Engine::UpdateGamePlay(float dt)
         }
         else if (!_roomClearPending && GetActiveEnemyCount() == 0)
         {
+            // Elite clear bonus: scatter some gold near the player's position.
+            if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
+            {
+                _eliteRewardGranted = true;
+                const Vector2 dropAnchor = _player.GetWorldPos();
+                auto dropGold = [&](GoldDenomination denom, float ox, float oy)
+                {
+                    auto g = std::make_unique<GoldPickup>();
+                    g->Init(Vector2{ dropAnchor.x + ox, dropAnchor.y + oy }, denom);
+                    _pickups.push_back(std::move(g));
+                };
+                dropGold(GoldDenomination::Ten,    0.f,   -50.f);
+                dropGold(GoldDenomination::Five,  -55.f,   20.f);
+                dropGold(GoldDenomination::Five,   55.f,   20.f);
+            }
+
             // Transition to post-battle EXP tally.
             // Boss AbilityChoice is triggered from UpdateExpTally once the tally finishes.
             _expTallyDone           = false;
@@ -1166,7 +1614,10 @@ void Engine::UpdateGamePlay(float dt)
                 if (cyclops->WantsToFire())
                 {
                     CyclopsLaserProjectile laser;
-                    laser.Init(cyclops->GetWorldPos(), cyclops->GetFireDirection(), cyclops->GetAttackPower());
+                    if (cyclops->GetFireMode() == Cyclops::FireMode::Scatter)
+                        laser.InitScatter(cyclops->GetWorldPos(), cyclops->GetFireDirection(), cyclops->GetAttackPower());
+                    else
+                        laser.InitSweep(cyclops->GetWorldPos(), cyclops->GetFireDirection(), cyclops->GetAttackPower());
                     _cyclopsLasers.push_back(laser);
                     cyclops->OnFired();
                     cyclops->PlayAttackSound();
@@ -1285,6 +1736,8 @@ void Engine::Draw()
         DrawWorld();
         DrawUltimateSequence();
         DrawHUD();
+        if (_debugModeActive)
+            DrawDebugPanel();
 
         // ── "Continue" button — shown after all enemies are defeated ─────────
         if (_roomClearPending)
@@ -1363,8 +1816,7 @@ void Engine::Draw()
         for (const auto& projectile : _lavaBalls)
             projectile.Draw(worldOffset);
 
-        for (const auto& laser : _cyclopsLasers)
-            laser.Draw(worldOffset);
+        DrawCyclopsLasers(worldOffset);
 
         DrawEffects(worldOffset);
 
@@ -1736,8 +2188,7 @@ void Engine::DrawWorld()
     for (const auto& projectile : _lavaBalls)
         projectile.Draw(worldOffset);
 
-    for (const auto& laser : _cyclopsLasers)
-        laser.Draw(worldOffset);
+    DrawCyclopsLasers(worldOffset);
 
     DrawEffects(worldOffset);
 
@@ -1763,6 +2214,73 @@ void Engine::DrawWorld()
     for (auto& prop : _props)
         if (prop.GetSortY() >= playerFeetY)
             prop.Render(cameraRef);
+
+    // ── Elite-room visuals ────────────────────────────────────────────────
+    if (_currentRoomType == RoomType::Elite)
+    {
+        const float sw2 = GetScreenWidth()  / 2.f;
+        const float sh2 = GetScreenHeight() / 2.f;
+
+        // 0. Cage ring
+        if (_eliteMechanic == 0 && _eliteCageRadius > 0.f)
+        {
+            float cx = _eliteCageCenter.x + worldOffset.x + sw2;
+            float cy = _eliteCageCenter.y + worldOffset.y + sh2;
+            float pulse = 0.45f + 0.20f * sinf((float)GetTime() * 2.5f);
+            DrawCircleLines((int)cx, (int)cy, _eliteCageRadius,
+                Fade(Color{220, 40, 200, 255}, pulse));
+            DrawCircleLines((int)cx, (int)cy, _eliteCageRadius - 5.f,
+                Fade(Color{140, 0, 255, 255}, pulse * 0.5f));
+        }
+
+        // 1. Bodyguard tethers + shield aura
+        if (_eliteMechanic == 1
+            && _eliteMinibossPtr && _eliteMinibossPtr->IsActive()
+            && _eliteMinibossPtr->IsInvulnerable())
+        {
+            Vector2 bossScreen = {
+                _eliteMinibossPtr->GetWorldPos().x + worldOffset.x + sw2,
+                _eliteMinibossPtr->GetWorldPos().y + worldOffset.y + sh2
+            };
+            float auraPulse = 0.25f + 0.15f * sinf((float)GetTime() * 5.f);
+            DrawCircleV(bossScreen, 90.f, Fade(Color{180, 100, 255, 255}, auraPulse));
+
+            for (const auto& e : _enemies)
+            {
+                if (e.get() == _eliteMinibossPtr) continue;
+                if (!e->IsActive() || !e->IsAlive() || e->IsDying()) continue;
+                Vector2 gs = {
+                    e->GetWorldPos().x + worldOffset.x + sw2,
+                    e->GetWorldPos().y + worldOffset.y + sh2
+                };
+                float ta = 0.35f + 0.20f * sinf((float)GetTime() * 4.f);
+                DrawLineEx(gs, bossScreen, 2.f, Fade(Color{200, 140, 255, 255}, ta));
+                DrawCircleV(gs, 7.f, Fade(Color{220, 160, 255, 255}, ta * 0.7f));
+            }
+        }
+
+        // 3. Leap shadow — pulsing ellipse at the targeted landing spot
+        if (_eliteMechanic == 3 && _eliteIsLeaping)
+        {
+            Vector2 ss = {
+                _eliteLeapTarget.x + worldOffset.x + sw2,
+                _eliteLeapTarget.y + worldOffset.y + sh2
+            };
+            float lp = 0.5f + 0.30f * sinf((float)GetTime() * 8.f);
+            DrawEllipse((int)ss.x, (int)ss.y, 68, 32,
+                Fade(Color{60, 0, 160, 255}, lp * 0.7f));
+            DrawEllipseLines((int)ss.x, (int)ss.y, 68, 32,
+                Fade(Color{220, 140, 255, 255}, lp));
+            const char* wt = "INCOMING!";
+            int wSz = 22;
+            DrawText(wt, (int)(ss.x - MeasureText(wt, wSz) / 2.f),
+                (int)(ss.y - 52.f), wSz,
+                Fade(Color{255, 60, 60, 255}, lp + 0.1f));
+        }
+
+        // 4. Room hazards now use live lavaball chaos, so there is no extra
+        // floor-marker overlay here. The projectile draw path carries the read.
+    }
 
     // Floating damage numbers — cull expired then draw remaining
     {
@@ -1814,7 +2332,7 @@ void Engine::DrawHUD()
         DrawText(text, (int)x, (int)y, fontSize, textColor);
     };
 
-    drawLabelBox(("Enemies Defeated: " + std::to_string(_enemiesKilled)).c_str(), 20.f, 16.f, 28, RAYWHITE);
+    drawLabelBox(("Gold: " + std::to_string(_player.GetGold())).c_str(), 20.f, 16.f, 28, GOLD);
     drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20.f, 58.f, 28, RAYWHITE);
 
     {
@@ -1865,6 +2383,66 @@ void Engine::DrawHUD()
             (int)(barX + kNewBarW / 2.f - manaLabelW / 2.f),
             (int)(manaBarY + kNewBarH / 2.f - 9.f),
             18, RAYWHITE);
+    }
+
+    // Elite mechanic label (persistent, top-right under room label)
+    if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
+    {
+        static constexpr const char* kMechanicNames[] = {
+            "ARENA CONSTRICTION",
+            "INVULNERABILITY LINKS",
+            "PERMANENT ENRAGE",
+            "GAP-CLOSER LEAP",
+            "ROOM HAZARDS"
+        };
+        static constexpr Color kMechanicColors[] = {
+            Color{220, 40, 200, 255},   // 0 cage — magenta
+            Color{180, 100, 255, 255},  // 1 bodyguard — purple
+            Color{255, 60,  60, 255},   // 2 enrage — red
+            Color{255,180,  60, 255},   // 3 leap — orange
+            Color{255,220,  80, 255},   // 4 hazards — yellow
+        };
+        const char* mechLabel = kMechanicNames[_eliteMechanic];
+        Color mechColor = kMechanicColors[_eliteMechanic];
+        int mw = MeasureText(mechLabel, 20);
+        drawLabelBox(mechLabel,
+            (float)(GetScreenWidth() - mw - 130), 58.f, 20, mechColor);
+    }
+
+    // Elite enrage warning banner
+    if (_currentRoomType == RoomType::Elite && _eliteEnrageWarningTimer > 0.f)
+    {
+        const float sw = (float)GetScreenWidth();
+        const float sh = (float)GetScreenHeight();
+
+        // Fade in over first 0.5s, hold, fade out over last 0.5s
+        float alpha = 1.f;
+        if (_eliteEnrageWarningTimer > kEliteEnrageWarningDuration - 0.5f)
+            alpha = (kEliteEnrageWarningDuration - _eliteEnrageWarningTimer) / 0.5f;
+        else if (_eliteEnrageWarningTimer < 0.5f)
+            alpha = _eliteEnrageWarningTimer / 0.5f;
+        alpha = std::max(0.f, std::min(1.f, alpha));
+
+        const char* line1 = "ELITE ENCOUNTER";
+        const char* line2 = "CONDITION: ENRAGED  |  FAST & LETHAL";
+
+        const int sz1 = 48;
+        const int sz2 = 28;
+        const float bannerH = 120.f;
+        const float bannerY = sh * 0.38f;
+
+        // Dark semi-transparent background
+        DrawRectangle(0, (int)bannerY, (int)sw, (int)bannerH, Fade(Color{20,0,0,220}, alpha));
+        DrawRectangle(0, (int)bannerY, (int)sw, 3, Fade(Color{200,0,0,255}, alpha));
+        DrawRectangle(0, (int)(bannerY + bannerH - 3), (int)sw, 3, Fade(Color{200,0,0,255}, alpha));
+
+        int w1 = MeasureText(line1, sz1);
+        int w2 = MeasureText(line2, sz2);
+
+        DrawText(line1, (int)(sw / 2.f - w1 / 2.f), (int)(bannerY + 14.f), sz1,
+                 Fade(Color{255, 60, 60, 255}, alpha));
+        DrawText(line2, (int)(sw / 2.f - w2 / 2.f), (int)(bannerY + 14.f + sz1 + 8.f), sz2,
+                 Fade(Color{255, 180, 60, 255}, alpha));
     }
 
     if (_touchModeActive)
@@ -1919,7 +2497,7 @@ void Engine::DrawHUD()
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight() / 8, Fade(BLACK, 0.6f));
 
     DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + GetScreenWidth() / 2 - 150, 60, 30, RAYWHITE);
-    DrawText(("Enemies Defeated: " + std::to_string(_enemiesKilled)).c_str(), 20, 10, 30, RAYWHITE);
+    DrawText(("Gold: " + std::to_string(_player.GetGold())).c_str(), 20, 10, 30, GOLD);
     DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
 
     // ── Wave display — top right ──────────────────────────────────────────────
@@ -2013,6 +2591,237 @@ void Engine::DrawHUD()
             warningSize,
             ORANGE);
     }
+}
+
+void Engine::UpdateDebugPanel()
+{
+    if (!_debugPanelOpen)
+        return;
+
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+    const Rectangle panel{ sw * 0.67f, 86.f, sw * 0.30f, sh - 126.f };
+    const Rectangle contentClip{ panel.x + 12.f, panel.y + 56.f, panel.width - 24.f, panel.height - 68.f };
+
+    Vector2 mouse = GetMousePosition();
+    if (CheckCollisionPointRec(mouse, panel))
+        _debugScrollY = std::clamp(_debugScrollY - GetMouseWheelMove() * 36.f, 0.f, 2400.f);
+
+    Rectangle closeBtn{ panel.x + panel.width - 42.f, panel.y + 12.f, 28.f, 28.f };
+    if (CheckCollisionPointRec(mouse, closeBtn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        _debugPanelOpen = false;
+        return;
+    }
+
+    float cursorY = panel.y + 62.f - _debugScrollY;
+    const float padX = panel.x + 18.f;
+    const float contentW = panel.width - 36.f;
+    std::vector<DebugButtonSpec> buttons;
+
+    auto section = [&](const char*)
+    {
+        cursorY += 28.f;
+        cursorY += 10.f;
+    };
+
+    section("Run");
+    buttons.push_back({ _debugGodMode ? "God Mode: ON" : "God Mode: OFF", { padX, cursorY, contentW, 32.f }, Color{ 128, 60, 40, 210 }, DebugActionKind::ToggleGod, 0 }); cursorY += 40.f;
+    buttons.push_back({ "Grant 5s Invulnerability", { padX, cursorY, contentW, 32.f }, Color{ 80, 110, 180, 210 }, DebugActionKind::GrantInvuln, 0 }); cursorY += 40.f;
+    buttons.push_back({ "Clear Enemies + Continue", { padX, cursorY, contentW, 32.f }, Color{ 60, 150, 90, 210 }, DebugActionKind::ClearEnemiesContinue, 0 }); cursorY += 40.f;
+
+    section("Areas");
+    {
+        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items;
+        for (RoomType type : { RoomType::Standard, RoomType::Elite, RoomType::Rest, RoomType::Treasure, RoomType::Store, RoomType::Boss })
+            items.push_back({ GetDebugRoomTypeName(type), { DebugActionKind::RestartRoom, (int)type } });
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 88, 78, 122, 220 }, items);
+    }
+
+    section("Elite Mechanics");
+    {
+        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items{
+            { "Random", { DebugActionKind::SetEliteMechanic, -1 } }
+        };
+        for (int i = 0; i < 5; ++i)
+            items.push_back({ GetDebugEliteMechanicName(i), { DebugActionKind::SetEliteMechanic, i } });
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 74, 130, 220 }, items);
+    }
+
+    section("Spawns");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 110, 74, 52, 220 }, {
+        { "Add Grunt", { DebugActionKind::SpawnGrunt, 0 } },
+        { "Add Cyclops", { DebugActionKind::SpawnCyclops, 0 } },
+        { "Add Ogre", { DebugActionKind::SpawnOgre, 0 } },
+        { "Add Boss", { DebugActionKind::SpawnBoss, 0 } },
+    });
+
+    section("Resources");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {
+        { "HP +10", { DebugActionKind::Heal, 10 } },
+        { "MP +40", { DebugActionKind::RestoreMana, 40 } },
+        { "Gold +25", { DebugActionKind::AddGold, 25 } },
+        { "XP +25", { DebugActionKind::AddExp, 25 } },
+        { "Treasure Cards", { DebugActionKind::TreasureCards, 0 } },
+        { "Elite Reward", { DebugActionKind::EliteReward, 0 } },
+        { "Ability Reward", { DebugActionKind::AbilityReward, 0 } },
+    });
+
+    section("Upgrades");
+    {
+        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items;
+        for (int i = 0; i < (int)UpgradeType::Count; ++i)
+            items.push_back({ GetDebugUpgradeName((UpgradeType)i), { DebugActionKind::ApplyUpgrade, i } });
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 3, Color{ 90, 82, 46, 220 }, items);
+    }
+
+    if (!IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        return;
+
+    Vector2 spawnBase = _player.GetWorldPos();
+    for (const auto& btn : buttons)
+    {
+        bool visible = (btn.rect.y + btn.rect.height >= contentClip.y && btn.rect.y <= contentClip.y + contentClip.height);
+        if (!visible || !CheckCollisionPointRec(mouse, btn.rect))
+            continue;
+
+        switch (btn.action)
+        {
+        case DebugActionKind::ToggleGod: _debugGodMode = !_debugGodMode; break;
+        case DebugActionKind::GrantInvuln: _player.GrantInvulnerability(5.f); break;
+        case DebugActionKind::ClearEnemiesContinue:
+            for (auto& e : _enemies) { e->SetActive(false); e->Teleport(Vector2{ -5000.f, -5000.f }); }
+            _roomClearPending = true;
+            break;
+        case DebugActionKind::RestartRoom: DebugRestartRoomAs((RoomType)btn.value); break;
+        case DebugActionKind::SetEliteMechanic:
+            _debugForcedEliteMechanic = btn.value;
+            DebugRestartRoomAs(RoomType::Elite);
+            break;
+        case DebugActionKind::SpawnGrunt:
+        {
+            Vector2 p = Vector2Add(spawnBase, Vector2{ 220.f, 40.f });
+            SpawnBasicEnemy(p);
+            break;
+        }
+        case DebugActionKind::SpawnCyclops: SpawnCyclops(Vector2Add(spawnBase, Vector2{ 260.f, -60.f })); break;
+        case DebugActionKind::SpawnOgre: SpawnOgre(Vector2Add(spawnBase, Vector2{ -240.f, 50.f })); break;
+        case DebugActionKind::SpawnBoss: SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f })); break;
+        case DebugActionKind::Heal: _player.Heal(btn.value); break;
+        case DebugActionKind::RestoreMana: _player.RestoreMana(btn.value); break;
+        case DebugActionKind::AddGold: _player.AddGold(btn.value); break;
+        case DebugActionKind::AddExp: _player.AddExp(btn.value); break;
+        case DebugActionKind::TreasureCards:
+            GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic); _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f; _gameState = GameState::LevelUpChoice; break;
+        case DebugActionKind::EliteReward:
+            GenerateLevelUpOptions(LevelUpOfferContext::EliteReward); _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f; _gameState = GameState::LevelUpChoice; break;
+        case DebugActionKind::AbilityReward:
+            GenerateAbilityChoiceOptions(); _abilityChoiceOpenTimer = 0.1f; _pendingRoomChoice = false; _gameState = GameState::AbilityChoice; break;
+        case DebugActionKind::ApplyUpgrade: _player.ApplyUpgrade((UpgradeType)btn.value); break;
+        }
+        break;
+    }
+}
+
+void Engine::DrawDebugPanel()
+{
+    if (!_debugPanelOpen)
+        return;
+
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+    const Rectangle panel{ sw * 0.67f, 86.f, sw * 0.30f, sh - 126.f };
+    const Rectangle contentClip{ panel.x + 12.f, panel.y + 56.f, panel.width - 24.f, panel.height - 68.f };
+    const float padX = panel.x + 18.f;
+    const float contentW = panel.width - 36.f;
+
+    DrawRectangleRounded(panel, 0.03f, 8, Fade(Color{ 24, 20, 16, 255 }, 0.96f));
+    DrawRectangleRoundedLines(panel, 0.03f, 8, Fade(Color{ 255, 190, 110, 255 }, 0.38f));
+    DrawText("DEBUG PANEL", (int)(panel.x + 18.f), (int)(panel.y + 14.f), 28, Color{ 255, 210, 150, 255 });
+    DrawText("F1 to toggle", (int)(panel.x + 18.f), (int)(panel.y + 40.f), 16, Color{ 190, 175, 150, 220 });
+
+    Rectangle closeBtn{ panel.x + panel.width - 42.f, panel.y + 12.f, 28.f, 28.f };
+    DrawRectangleRounded(closeBtn, 0.28f, 6, Fade(Color{ 110, 40, 35, 255 }, 0.95f));
+    DrawText("X", (int)(closeBtn.x + 8.f), (int)(closeBtn.y + 3.f), 22, RAYWHITE);
+
+    BeginScissorMode((int)contentClip.x, (int)contentClip.y, (int)contentClip.width, (int)contentClip.height);
+
+    float cursorY = panel.y + 62.f - _debugScrollY;
+    std::vector<DebugButtonSpec> buttons;
+    auto section = [&](const char* title)
+    {
+        DrawText(title, (int)padX, (int)cursorY, 22, Color{ 255, 196, 96, 255 });
+        cursorY += 28.f;
+        DrawLineEx({ padX, cursorY }, { padX + contentW, cursorY }, 1.5f, Fade(Color{ 255, 196, 96, 255 }, 0.35f));
+        cursorY += 10.f;
+    };
+
+    section("Run");
+    buttons.push_back({ _debugGodMode ? "God Mode: ON" : "God Mode: OFF", { padX, cursorY, contentW, 32.f }, Color{ 128, 60, 40, 210 }, DebugActionKind::ToggleGod, 0 }); cursorY += 40.f;
+    buttons.push_back({ "Grant 5s Invulnerability", { padX, cursorY, contentW, 32.f }, Color{ 80, 110, 180, 210 }, DebugActionKind::GrantInvuln, 0 }); cursorY += 40.f;
+    buttons.push_back({ "Clear Enemies + Continue", { padX, cursorY, contentW, 32.f }, Color{ 60, 150, 90, 210 }, DebugActionKind::ClearEnemiesContinue, 0 }); cursorY += 40.f;
+
+    section("Areas");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 88, 78, 122, 220 }, {
+        { "Standard", { DebugActionKind::RestartRoom, (int)RoomType::Standard } },
+        { "Elite", { DebugActionKind::RestartRoom, (int)RoomType::Elite } },
+        { "Rest", { DebugActionKind::RestartRoom, (int)RoomType::Rest } },
+        { "Treasure", { DebugActionKind::RestartRoom, (int)RoomType::Treasure } },
+        { "Shop", { DebugActionKind::RestartRoom, (int)RoomType::Store } },
+        { "Boss", { DebugActionKind::RestartRoom, (int)RoomType::Boss } },
+    });
+
+    section("Elite Mechanics");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 74, 130, 220 }, {
+        { "Random", { DebugActionKind::SetEliteMechanic, -1 } },
+        { "Cage", { DebugActionKind::SetEliteMechanic, 0 } },
+        { "Links", { DebugActionKind::SetEliteMechanic, 1 } },
+        { "Enrage", { DebugActionKind::SetEliteMechanic, 2 } },
+        { "Leap", { DebugActionKind::SetEliteMechanic, 3 } },
+        { "Hazards", { DebugActionKind::SetEliteMechanic, 4 } },
+    });
+
+    section("Spawns");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 110, 74, 52, 220 }, {
+        { "Add Grunt", { DebugActionKind::SpawnGrunt, 0 } },
+        { "Add Cyclops", { DebugActionKind::SpawnCyclops, 0 } },
+        { "Add Ogre", { DebugActionKind::SpawnOgre, 0 } },
+        { "Add Boss", { DebugActionKind::SpawnBoss, 0 } },
+    });
+
+    section("Resources");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {
+        { "HP +10", { DebugActionKind::Heal, 10 } },
+        { "MP +40", { DebugActionKind::RestoreMana, 40 } },
+        { "Gold +25", { DebugActionKind::AddGold, 25 } },
+        { "XP +25", { DebugActionKind::AddExp, 25 } },
+        { "Treasure Cards", { DebugActionKind::TreasureCards, 0 } },
+        { "Elite Reward", { DebugActionKind::EliteReward, 0 } },
+        { "Ability Reward", { DebugActionKind::AbilityReward, 0 } },
+    });
+
+    section("Upgrades");
+    {
+        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items;
+        for (int i = 0; i < (int)UpgradeType::Count; ++i)
+            items.push_back({ GetDebugUpgradeName((UpgradeType)i), { DebugActionKind::ApplyUpgrade, i } });
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 3, Color{ 90, 82, 46, 220 }, items);
+    }
+
+    for (const auto& btn : buttons)
+    {
+        DrawRectangleRounded(btn.rect, 0.20f, 6, btn.fill);
+        DrawRectangleRoundedLines(btn.rect, 0.20f, 6, Fade(WHITE, 0.16f));
+        int fs = (btn.rect.height > 31.f && btn.rect.width > contentW - 1.f) ? 18 : 15;
+        int tw = MeasureText(btn.label.c_str(), fs);
+        float textX = (fs == 18) ? (btn.rect.x + 10.f) : (btn.rect.x + btn.rect.width * 0.5f - tw * 0.5f);
+        DrawText(btn.label.c_str(), (int)textX, (int)(btn.rect.y + (fs == 18 ? 6.f : 7.f)), fs, RAYWHITE);
+    }
+
+    EndScissorMode();
+
+    const char* footer = TextFormat("Act %d  Room %d  |  %s Area", _currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
+    DrawText(footer, (int)(panel.x + 18.f), (int)(panel.y + panel.height - 26.f), 16, Color{ 170, 165, 150, 220 });
 }
 
 void Engine::DrawAbilityBar()
@@ -2880,9 +3689,9 @@ void Engine::DrawMap()
     }
     DrawScrollingCheckerboard(sw, sh, bgDark, bgLight, 18.f, 10.f);
 
-    // ── Header — centred over the map area (right of the panel) ──────────
-    // Map area centre X mirrors GenerateActMap: mapLeft=30%, mapRight=97%.
-    const float mapCentreX = sw * 0.635f;
+    // ── Header — centred over the node graph area ─────────────────────────
+    // Graph spans 30–76% of the screen; journey panel occupies 78–97%.
+    const float mapCentreX = sw * 0.53f;
     std::string header = "Act " + std::to_string(_currentAct)
                        + "  -  " + GetBiomeName(actBiome);
     int hSz = 42;
@@ -3058,6 +3867,70 @@ void Engine::DrawMap()
         legendRow(&_mapIconTreasure, {220,190, 30,255 }, "TREASURE AREA", "Free upgrade card");
         legendRow(&_mapIconShop,     { 80,190,230,255 }, "SHOP AREA",     "Placeholder shop area");
         legendRow(&_mapIconBoss,     {220, 40, 40,255 }, "BOSS AREA",     "Act finale");
+    }
+
+    // ── Right panel: journey history ──────────────────────────────────────
+    {
+        const float jX  = sw * 0.785f;
+        const float jY  = 98.f;
+        const float jW  = sw - jX - 48.f;
+        const float jH  = sh - jY - 98.f;
+        const float pad = 22.f;
+
+        DrawRectangleRounded({ jX, jY, jW, jH }, 0.05f, 8,
+            Fade(Color{12, 71, 84, 255}, 0.92f));
+        DrawRectangleRoundedLines({ jX, jY, jW, jH }, 0.05f, 8,
+            Fade(Color{130, 235, 255, 255}, 0.30f));
+
+        float cy = jY + pad;
+        DrawText("JOURNEY", (int)(jX + pad), (int)cy, 26, Color{255, 214, 102, 255});
+        cy += 26.f + 6.f;
+        DrawLineEx({ jX + pad, cy }, { jX + jW - pad, cy }, 1.f,
+            Fade(Color{130, 235, 255, 255}, 0.55f));
+        cy += 14.f;
+
+        // Visited-room squares — one per completed node, coloured by room type
+        const float sqSz  = 28.f;
+        const float sqGap = 8.f;
+        const float sqRowW = jW - pad * 2.f;
+        (void)sqRowW;
+        float sx = jX + pad;
+
+        int drawn = 0;
+        for (const auto& node : _actMap)
+        {
+            if (!node.completed) continue;
+
+            Color col = nodeColor(node.type);
+            DrawRectangleRounded({ sx, cy, sqSz, sqSz }, 0.25f, 4, Fade(col, 0.85f));
+            DrawRectangleRoundedLines({ sx, cy, sqSz, sqSz }, 0.25f, 4, col);
+
+            sx += sqSz + sqGap;
+            drawn++;
+            if (sx + sqSz > jX + jW - pad)
+            {
+                sx = jX + pad;
+                cy += sqSz + sqGap;
+            }
+        }
+
+        if (drawn == 0)
+        {
+            DrawText("No rooms cleared yet",
+                (int)(jX + pad), (int)cy, 16, Fade(RAYWHITE, 0.45f));
+            cy += 20.f;
+        }
+        else
+        {
+            cy += sqSz + sqGap + 6.f;
+        }
+
+        cy += 16.f;
+        DrawText(TextFormat("Rooms: %d", drawn),
+            (int)(jX + pad), (int)cy, 20, Color{188, 228, 238, 200});
+        cy += 28.f;
+        DrawText(TextFormat("Gold:  %d", _player.GetGold()),
+            (int)(jX + pad), (int)cy, 20, Color{255, 214, 102, 220});
     }
 
     // ── Connection lines ──────────────────────────────────────────────────
@@ -4606,14 +5479,24 @@ void Engine::DrawMiniMap()
 
     // Cyclops dots — orange
 
-    // Pickup dots — green for all active pickups
+    // Prop dots — blue
+    for (const auto& prop : _props)
+    {
+        Vector2 dot = toMini(prop.GetWorldPos());
+        DrawCircleV(dot, 3.f, Fade(SKYBLUE, 0.55f));
+    }
+
+    // Pickup dots — gold for gold pickups, green for everything else
     for (const auto& pickup : _pickups)
     {
         if (!pickup->IsActive())
             continue;
 
         Vector2 dot = toMini(pickup->GetWorldPos());
-        DrawCircleV(dot, 4.f, Fade(GREEN, 0.9f));
+        if (pickup->GetType() == PickupType::Gold)
+            DrawCircleV(dot, 4.f, Fade(GOLD, 0.95f));
+        else
+            DrawCircleV(dot, 4.f, Fade(GREEN, 0.9f));
     }
 
     // Player dot — yellow
@@ -5270,6 +6153,11 @@ void Engine::ResetRunState()
     _abilityChoiceOptionCount = 0;
     _levelUpOfferContext      = LevelUpOfferContext::NormalLevel;
     _eliteRewardGranted       = false;
+    _debugModeActive          = false;
+    _debugPanelOpen           = false;
+    _debugGodMode             = false;
+    _debugScrollY             = 0.f;
+    _debugForcedEliteMechanic = -1;
 
     // ── Room / act progression reset ──────────────────────────────────────
     _currentAct        = 1;
@@ -5445,6 +6333,11 @@ void Engine::UpdateBossSupportRespawns(float dt)
 
 bool Engine::TryGetPooledEnemySpawn(Vector2 pos)
 {
+    return SpawnBasicEnemy(pos) != nullptr;
+}
+
+Enemy* Engine::SpawnBasicEnemy(Vector2 pos)
+{
     for (auto& enemy : _enemies)
     {
         if (enemy->IsActive())
@@ -5458,10 +6351,15 @@ bool Engine::TryGetPooledEnemySpawn(Vector2 pos)
 
         enemy->ResetForSpawn(pos);
         ConfigureSpawnedEnemy(*enemy);
-        return true;
+        return enemy.get();
     }
 
-    return false;
+    auto enemy = std::make_unique<Enemy>(pos);
+    enemy->Init();
+    ConfigureSpawnedEnemy(*enemy);
+    Enemy* enemyPtr = enemy.get();
+    _enemies.push_back(std::move(enemy));
+    return enemyPtr;
 }
 
 bool Engine::TryGetPooledCyclopsSpawn(Vector2 pos)
@@ -5626,40 +6524,124 @@ void Engine::SpawnMolarbeast(Vector2 pos)
 }
 
 // =============================================================================
+std::vector<Vector2> Engine::GetCyclopsLaserEndpoints(const CyclopsLaserProjectile& laser) const
+{
+    std::vector<Vector2> endpoints;
+    endpoints.reserve(laser.GetBeamCount());
+
+    const Vector2 start = laser.GetWorldPos();
+    const float maxLength = laser.GetCurrentBeamLength();
+
+    for (int i = 0; i < laser.GetBeamCount(); ++i)
+    {
+        Vector2 dir = laser.GetBeamDirection(i);
+        if (Vector2LengthSqr(dir) < 0.0001f)
+            continue;
+
+        Vector2 farEnd = Vector2Add(start, Vector2Scale(dir, maxLength));
+        Vector2 bestEnd = farEnd;
+        float bestDist = maxLength;
+
+        for (const auto& prop : _props)
+        {
+            Rectangle rect = prop.GetCollisionRec();
+            const Vector2 corners[4] = {
+                { rect.x, rect.y },
+                { rect.x + rect.width, rect.y },
+                { rect.x + rect.width, rect.y + rect.height },
+                { rect.x, rect.y + rect.height }
+            };
+
+            for (int edge = 0; edge < 4; ++edge)
+            {
+                Vector2 hit{};
+                Vector2 edgeStart = corners[edge];
+                Vector2 edgeEnd = corners[(edge + 1) % 4];
+                if (!CheckCollisionLines(start, farEnd, edgeStart, edgeEnd, &hit))
+                    continue;
+
+                float hitDist = Vector2Distance(start, hit);
+                if (hitDist < bestDist)
+                {
+                    bestDist = hitDist;
+                    bestEnd = hit;
+                }
+            }
+        }
+
+        endpoints.push_back(bestEnd);
+    }
+
+    return endpoints;
+}
+
+bool Engine::SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const
+{
+    Rectangle expanded{
+        rect.x - thickness * 0.5f,
+        rect.y - thickness * 0.5f,
+        rect.width + thickness,
+        rect.height + thickness
+    };
+
+    if (CheckCollisionPointRec(start, expanded) || CheckCollisionPointRec(end, expanded))
+        return true;
+
+    const Vector2 corners[4] = {
+        { expanded.x, expanded.y },
+        { expanded.x + expanded.width, expanded.y },
+        { expanded.x + expanded.width, expanded.y + expanded.height },
+        { expanded.x, expanded.y + expanded.height }
+    };
+
+    for (int edge = 0; edge < 4; ++edge)
+    {
+        Vector2 hit{};
+        if (CheckCollisionLines(start, end, corners[edge], corners[(edge + 1) % 4], &hit))
+            return true;
+    }
+
+    return false;
+}
+
+void Engine::DrawCyclopsLasers(Vector2 worldOffset)
+{
+    for (const auto& laser : _cyclopsLasers)
+    {
+        if (!laser.IsActive())
+            continue;
+
+        std::vector<Vector2> endpoints = GetCyclopsLaserEndpoints(laser);
+        laser.Draw(worldOffset, endpoints.data(), (int)endpoints.size());
+    }
+}
+
 void Engine::UpdateCyclopsLasers(float dt)
 {
     for (auto& laser : _cyclopsLasers)
     {
-        if (!laser.IsActive()) continue;
+        if (!laser.IsActive())
+            continue;
 
         laser.Update(dt);
-        if (!laser.IsActive()) continue;
+        if (!laser.IsActive())
+            continue;
 
-        // Destroyed by props
-        for (auto& prop : _props)
+        if (_player.IsAlive() && laser.CanHitPlayer())
         {
-            if (CheckCollisionRecs(laser.GetCollisionRec(), prop.GetCollisionRec()))
+            std::vector<Vector2> endpoints = GetCyclopsLaserEndpoints(laser);
+            for (const Vector2& end : endpoints)
             {
-                laser.Destroy();
+                if (!SegmentHitsRect(laser.GetWorldPos(), end, laser.GetBeamWidth(), _player.GetCollisionRec()))
+                    continue;
+
+                int laserDmg = laser.GetDamage();
+                _player.TakeDamage(laserDmg, laser.GetWorldPos());
+                SpawnFloatingText(_player.GetWorldPos(), -laserDmg, RED);
+                laser.OnHitPlayer();
+                TriggerScreenShake(2.5f, 0.07f);
                 break;
             }
-        }
-
-        if (!laser.IsActive()) continue;
-
-        // Damages player on hit
-        if (_player.IsAlive() &&
-            CheckCollisionRecs(laser.GetCollisionRec(), _player.GetCollisionRec()))
-        {
-            int laserDmg = laser.GetDamage();
-            _player.TakeDamage(laserDmg, laser.GetWorldPos());
-            SpawnFloatingText(_player.GetWorldPos(), -laserDmg, RED);
-            laser.Destroy();
-
-            // Cyclops laser already has a strong visual read from the charge
-            // glow and beam draw, so keep the hit shake lighter than melee and
-            // explosive ability impacts to avoid overdriving the camera.
-            TriggerScreenShake(2.5f, 0.07f);
         }
     }
 

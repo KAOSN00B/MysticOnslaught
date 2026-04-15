@@ -117,6 +117,8 @@ public:
 
     void AddExp(int amount);
     void Heal(int amount);
+    void AddGold(int amount) { _gold += amount; }
+    int  GetGold()     const { return _gold; }
     int  GetLevel()    const { return _level; }
     int  GetMaxLevel() const { return _maxLevel; }
     int  GetExp()      const { return _exp; }
@@ -227,7 +229,8 @@ private:
     CastType _queuedCast = CastType::None;
     int _pendingHealEffects = 0;
 
-    int _exp = 0;
+    int _exp  = 0;
+    int _gold = 0;
     int _level = 1;
     int _expToNextLevel = 10;
     static constexpr int _maxLevel = 20;

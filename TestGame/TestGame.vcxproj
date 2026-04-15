@@ -133,6 +133,7 @@
     <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="Engine.cpp" />
     <ClCompile Include="Game.cpp" />
+    <ClCompile Include="GoldPickup.cpp" />
     <ClCompile Include="HealPickup.cpp" />
     <ClCompile Include="LavaBallProjectile.cpp" />
     <ClCompile Include="Leaderboard.cpp" />
@@ -160,6 +161,7 @@
     <ClInclude Include="Engine.h" />
     <ClInclude Include="Game.h" />
     <ClInclude Include="GameBalance.h" />
+    <ClInclude Include="GoldPickup.h" />
     <ClInclude Include="HealPickup.h" />
     <ClInclude Include="KeyBindings.h" />
     <ClInclude Include="LavaBallProjectile.h" />
