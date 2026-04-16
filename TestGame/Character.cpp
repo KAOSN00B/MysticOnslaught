@@ -144,9 +144,8 @@ void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;
 
-    // Passive mana regen — flat rate scaled only by the current regen
-    // multiplier. It should not slow down just because the bar is filling.
-    if (_mana < _maxMana)
+    // Passive mana regen — paused during ultimate sequences.
+    if (!_manaRegenPaused && _mana < _maxMana)
     {
         _manaRegenAccum += kManaRegenBase * _manaRegenMultiplier * dt;
         if (_manaRegenAccum >= 1.f)

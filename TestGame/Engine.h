@@ -31,7 +31,7 @@
 #include <future>
 #include <chrono>
 
-enum class Biome { Dungeon, Forest };
+enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
 
 // ── Room type — drives encounter, reward, and biome logic ─────────────────────
 enum class RoomType
@@ -65,6 +65,7 @@ enum class GameState
     AbilityChoice,
     ExpTally,       // post-battle EXP tally screen — bar fills, level-ups interrupt
     Map,            // Slay-the-Spire–style act map — player clicks a node to enter the next room
+    Shop,           // Zeph's shop — full-screen UI entered from a Store room
 };
 
 class Engine
@@ -163,6 +164,18 @@ private:
     void DrawAbilityChoice();
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
+
+    // ── Shop (Zeph's Wares) ───────────────────────────────────────────────────
+    struct ShopItem {
+        bool        isAbility   = false;
+        UpgradeType upgradeType = UpgradeType::AttackPower;
+        AbilityType abilityType = AbilityType::None;
+        int         price       = 0;
+        bool        purchased   = false;
+    };
+    void GenerateShopInventory();
+    void UpdateShop();
+    void DrawShop();
 
     // ── EXP Tally screen ─────────────────────────────────────────────────────
     void UpdateExpTally(float dt);
@@ -319,7 +332,9 @@ private:
     int   _currentMapNodeIdx  = -1;         // index of the node currently in / last completed
     int   _mapKeySelectedIdx  = -1;         // keyboard-highlighted node on the map screen (-1 = none)
     float _mapOpenTimer       = 0.f;        // brief block after the map opens to prevent accidental clicks
-    bool  _startBiomeDungeon  = true;       // randomised each run; true = act 1 is Dungeon
+    bool  _startBiomeDungeon  = true;       // fallback only; sequence takes precedence
+    static constexpr int kTotalActs = 5;
+    std::vector<Biome> _biomeSequence;      // 5 randomly chosen biomes per run
 
     // Level-up choice state
     UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };
@@ -461,6 +476,13 @@ private:
     BossSupportState _bossOgreSupport;
 
     std::string _message = "Objective: Survive";
+
+    // ── Shop state ────────────────────────────────────────────────────────────
+    Vector2                  _shopNpcPos     = {};
+    bool                     _shopNearNpc    = false;
+    int                      _shopTab        = 0;        // 0 = wares, 1 = abilities
+    std::string              _shopDialogue;
+    std::vector<ShopItem>    _shopInventory;
     Biome _currentBiome = Biome::Dungeon;
     Biome _pendingBiome = Biome::Dungeon;
     bool  _biomeTransitionActive = false;

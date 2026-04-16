@@ -72,7 +72,8 @@ public:
     bool IsBeingForcedPushed() const { return _forcedPushActive; }
     bool IsForceLocked() const { return _forcedPushActive || _forcedPushStunTimer > 0.f; }
     bool IsDashing() const { return _isDashing; }
-    void SetCombatLocked(bool locked) { _combatLocked = locked; }
+    void SetCombatLocked(bool locked)    { _combatLocked = locked; }
+    void SetManaRegenPaused(bool paused) { _manaRegenPaused = paused; }
 
     // ── Touch input (set by Engine each frame before Update) ─────────────────
     // joystickDir is a [-1,1] normalised vector from the virtual joystick.
@@ -145,7 +146,7 @@ public:
     // Passive mana regen — flat rate scaled only by the regen multiplier.
     // Higher regen should always feel faster, regardless of current mana.
     // _manaRegenMultiplier scales via upgrades and (eventually) the store.
-    static constexpr float kManaRegenBase = 2.0f;
+    static constexpr float kManaRegenBase = 0.2f;  // 1 mana per 5 seconds
 
     // Defense & upgrade
     float GetDefense() const { return _defense; }
@@ -192,7 +193,8 @@ private:
 
     bool _attacking = false;
     bool _damageApplied = false;
-    bool _combatLocked = false;
+    bool _combatLocked      = false;
+    bool _manaRegenPaused   = false;
     bool _castingAbility = false;
     bool _isDashing = false;
     bool _dashAnimPlaying = false;
