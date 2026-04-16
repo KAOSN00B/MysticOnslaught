@@ -2,6 +2,7 @@
 
 #include "AnimationUtils.h"
 #include "AssetPaths.h"
+#include "NineSlice.h"
 #include "raymath.h"
 
 #include <algorithm>
@@ -382,6 +383,7 @@ Engine::~Engine()
     UnloadTexture(_upgradeMagicTex);
     UnloadTexture(_upgradeDefenseTex);
     UnloadTexture(_upgradeMoveSpeedTex);
+    if (_shopBorderTex.id != 0) UnloadTexture(_shopBorderTex);
     _pauseUI.Unload();
     CloseWindow();
 }
@@ -440,6 +442,7 @@ void Engine::Init()
     _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
     _abilityIconIceTex      = LoadTexture(AssetPath("PowerUps/IceSpellPickup.png").c_str());
     _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
+    _shopBorderTex          = LoadTexture(AssetPath("UI/PauseBoarder.png").c_str());
 
     _mapIconNormal   = LoadTexture(AssetPath("TileSet/MapIcons/NormalRoom.png").c_str());
     _mapIconElite    = LoadTexture(AssetPath("TileSet/MapIcons/EliteRoom.png").c_str());
@@ -493,10 +496,11 @@ void Engine::StartNextRoom(RoomType type)
     {
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shopNpcPos   = { mapW * 0.5f, mapH * 0.5f };
-        _shopNearNpc  = false;
-        _shopTab      = 0;
-        _shopDialogue = "Welcome to Zeph's Wares! What do you need?";
+        _shopNpcPos    = { mapW * 0.5f, mapH * 0.5f };
+        _shopNearNpc   = false;
+        _shopTab       = 0;
+        _shopRerollCost = 100;
+        _shopDialogue  = "Welcome to Zeph's Wares! What do you need?";
         GenerateShopInventory();
     }
 
@@ -621,10 +625,11 @@ void Engine::DebugRestartRoomAs(RoomType type)
         _roomClearPending = true;
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shopNpcPos   = { mapW * 0.5f, mapH * 0.5f };
-        _shopNearNpc  = false;
-        _shopTab      = 0;
-        _shopDialogue = "Welcome to Zeph's Wares! What do you need?";
+        _shopNpcPos    = { mapW * 0.5f, mapH * 0.5f };
+        _shopNearNpc   = false;
+        _shopTab       = 0;
+        _shopRerollCost = 100;
+        _shopDialogue  = "Welcome to Zeph's Wares! What do you need?";
         GenerateShopInventory();
     }
     else if (type == RoomType::Rest)
@@ -7319,8 +7324,6 @@ void Engine::GenerateShopInventory()
 {
     _shopInventory.clear();
 
-    std::vector<ShopItem> pool;
-
     static constexpr UpgradeType kStatUpgrades[] = {
         UpgradeType::AttackPower, UpgradeType::AttackRange,
         UpgradeType::MaxHealth,   UpgradeType::MaxMana,
@@ -7332,42 +7335,54 @@ void Engine::GenerateShopInventory()
         UpgradeType::BladeStorm,  UpgradeType::Juggernaut,
         UpgradeType::ArcaneColossus
     };
-    for (auto u : kStatUpgrades)
-    {
-        ShopItem item;
-        item.isAbility   = false;
-        item.upgradeType = u;
-        item.price       = ShopUpgradePrice(u);
-        pool.push_back(item);
-    }
-
     static constexpr AbilityType kShopAbilities[] = {
         AbilityType::FireSpread,     AbilityType::IceSpread,     AbilityType::ElectricSpread,
         AbilityType::FireBolt,       AbilityType::IceBolt,       AbilityType::ElectricBolt
     };
+
+    // Build unowned ability pool
+    std::vector<ShopItem> abilityPool;
     for (auto a : kShopAbilities)
     {
         bool owned = false;
         for (int i = 0; i < _player.GetLearnedCount(); i++)
             if (_player.GetLearnedAbility(i) == a) { owned = true; break; }
         if (owned) continue;
-
         ShopItem item;
         item.isAbility   = true;
         item.abilityType = a;
         item.price       = ShopAbilityPrice(a);
-        pool.push_back(item);
+        abilityPool.push_back(item);
     }
 
-    // Fisher-Yates shuffle then take up to 6
-    for (int i = (int)pool.size() - 1; i > 0; i--)
+    // Shuffle ability pool, pick exactly 2 (or however many are available)
+    for (int i = (int)abilityPool.size() - 1; i > 0; i--)
+        std::swap(abilityPool[i], abilityPool[GetRandomValue(0, i)]);
+    int abilitySlots = std::min((int)abilityPool.size(), 2);
+    for (int i = 0; i < abilitySlots; i++)
+        _shopInventory.push_back(abilityPool[i]);
+
+    // Build stat upgrade pool and shuffle it
+    std::vector<ShopItem> statPool;
+    for (auto u : kStatUpgrades)
     {
-        int j = GetRandomValue(0, i);
-        std::swap(pool[i], pool[j]);
+        ShopItem item;
+        item.isAbility   = false;
+        item.upgradeType = u;
+        item.price       = ShopUpgradePrice(u);
+        statPool.push_back(item);
     }
-    int count = std::min((int)pool.size(), 6);
-    for (int i = 0; i < count; i++)
-        _shopInventory.push_back(pool[i]);
+    for (int i = (int)statPool.size() - 1; i > 0; i--)
+        std::swap(statPool[i], statPool[GetRandomValue(0, i)]);
+
+    // Fill remaining 4 slots with stat upgrades
+    int statSlots = std::min((int)statPool.size(), 6 - abilitySlots);
+    for (int i = 0; i < statSlots; i++)
+        _shopInventory.push_back(statPool[i]);
+
+    // Shuffle the combined inventory so abilities don't always appear first
+    for (int i = (int)_shopInventory.size() - 1; i > 0; i--)
+        std::swap(_shopInventory[i], _shopInventory[GetRandomValue(0, i)]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -7384,25 +7399,45 @@ void Engine::UpdateShop()
     bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
 
     // ── Layout (must match DrawShop exactly) ─────────────────────────────
-    const float leftW  = sw * 0.26f;
-    const float leaveH = 44.f;
+    static constexpr float kBorderDst_u = 32.f;
+    const float leftW  = sw * 0.30f;
+    const float leaveH = 48.f;
     const float leaveY = sh - pad - leaveH;
-    const float dialH  = sh * 0.10f;
+    const float dialH  = std::max(sh * 0.12f, kBorderDst_u * 2.f + 30.f);
     const float dialY  = leaveY - pad * 0.5f - dialH;
     const float shopX  = pad + leftW + pad;
     const float shopY  = pad;
     const float shopW  = sw - shopX - pad;
     const float shopH  = dialY - pad * 0.5f - shopY;
-    const float iPad   = 14.f;
+    const float iPad   = kBorderDst_u;
 
     // ── Leave button ─────────────────────────────────────────────────────
-    const float leaveW = 180.f;
-    const float leaveX = shopX + shopW * 0.5f - leaveW * 0.5f;
-    Rectangle leaveBtn = { leaveX, leaveY, leaveW, leaveH };
+    const float leaveW  = 180.f;
+    const float rerollW = 200.f;
+    const float leaveX  = shopX + shopW * 0.5f + 8.f;
+    const float rerollX = shopX + shopW * 0.5f - rerollW - 8.f;
+    Rectangle leaveBtn  = { leaveX,  leaveY, leaveW,  leaveH };
+    Rectangle rerollBtn = { rerollX, leaveY, rerollW, leaveH };
+
     if (clicked && CheckCollisionPointRec(mouse, leaveBtn))
     {
         _shopDialogue = "Safe travels, adventurer.";
         _gameState    = GameState::Play;
+        return;
+    }
+    if (clicked && CheckCollisionPointRec(mouse, rerollBtn))
+    {
+        if (_player.GetGold() >= _shopRerollCost)
+        {
+            _player.AddGold(-_shopRerollCost);
+            _shopRerollCost += 50;
+            GenerateShopInventory();
+            _shopDialogue = "Fresh stock, just for you!";
+        }
+        else
+        {
+            _shopDialogue = "You don't have enough gold for a reroll!";
+        }
         return;
     }
 
@@ -7551,59 +7586,78 @@ void Engine::DrawShop()
     }
 
     // ── Layout ───────────────────────────────────────────────────────────
-    const float leftW  = sw * 0.26f;
-    const float leaveH = 44.f;
+    static constexpr float kBorderDst_layout = 32.f;  // matches kBorderDst in DrawShop
+    const float leftW  = sw * 0.30f;
+    const float leaveH = 48.f;
     const float leaveY = sh - pad - leaveH;
-    const float dialH  = sh * 0.10f;
+    // Dialogue must be tall enough to hold text inside 32px top+bottom borders
+    const float dialH  = std::max(sh * 0.12f, kBorderDst_layout * 2.f + 30.f);
     const float dialY  = leaveY - pad * 0.5f - dialH;
     const float shopX  = pad + leftW + pad;
     const float shopY  = pad;
     const float shopW  = sw - shopX - pad;
     const float shopH  = dialY - pad * 0.5f - shopY;
-    const float iPad   = 14.f;
 
-    const Color kPanelBg     = Color{ 14, 18, 30, 235 };
-    const Color kPanelBorder = Color{ 80,100,140, 180 };
-    const Color kGold        = Color{255,214,102, 255 };
+    // 9-slice constants matching PauseAndGameOver
+    static constexpr float kBorderSrc = 16.f;
+    static constexpr float kBorderDst = 32.f;
+    // Content padding must be at least the border corner so nothing draws over the frame
+    const float iPad = kBorderDst;
+
+    const Color kGold        = BLACK;
     const Color kDim         = Color{160,170,190, 200 };
+    const Color kSlotBg      = Color{ 20, 20, 30, 160 };
+    const Color kSlotBgFull  = Color{ 30, 40, 60, 200 };
 
-    // helper: draw a rounded box
-    auto box = [&](Rectangle r, Color bg, Color border)
+    // helper: draw a main panel using the border texture (falls back to rounded rect)
+    auto box = [&](Rectangle r, Color tint)
     {
-        DrawRectangleRounded(r, 0.06f, 8, bg);
-        DrawRectangleRoundedLines(r, 0.06f, 8, border);
+        if (_shopBorderTex.id != 0)
+            DrawNineSlice(_shopBorderTex, kBorderSrc, kBorderDst, r, tint);
+        else
+        {
+            DrawRectangleRounded(r, 0.06f, 8, Color{14,18,30,235});
+            DrawRectangleRoundedLines(r, 0.06f, 8, Color{80,100,140,180});
+        }
+    };
+    // helper: draw small inner UI elements (tabs, cards, buttons)
+    auto smallBox = [](Rectangle r, Color bg, Color border)
+    {
+        DrawRectangleRounded(r, 0.12f, 6, bg);
+        DrawRectangleRoundedLines(r, 0.12f, 6, border);
     };
 
     // ── LEFT PANEL ───────────────────────────────────────────────────────
     const float lx = pad, ly = pad;
     const float lh = sh - pad * 2.f;
-    box({ lx, ly, leftW, lh }, kPanelBg, kPanelBorder);
+    box({ lx, ly, leftW, lh }, WHITE);
 
-    BeginScissorMode((int)lx, (int)ly, (int)leftW, (int)lh);
+    BeginScissorMode((int)(lx + kBorderDst), (int)(ly + kBorderDst),
+                     (int)(leftW - kBorderDst * 2.f), (int)(lh - kBorderDst * 2.f));
     {
         const float cp  = iPad;
         float       cy  = ly + cp;
         const float cw  = leftW - cp * 2.f;
 
         // ─ Title
-        DrawText("PLAYER", (int)(lx + cp), (int)cy, 22, kGold);
-        cy += 26.f;
+        DrawText("PLAYER", (int)(lx + cp), (int)cy, 28, kGold);
+        cy += 34.f;
         DrawLineEx({ lx + cp, cy }, { lx + leftW - cp, cy }, 1.f,
             Fade(kGold, 0.35f));
-        cy += 10.f;
+        cy += 12.f;
 
         // ─ HP bar
         float maxHp = _player.GetMaxHealthValue();
         float curHp = _player.GetHealthValue();
         float hpPct = (maxHp > 0.f) ? curHp / maxHp : 0.f;
-        const float barH = std::min(18.f, cw * 0.10f);
+        const float barH = std::min(26.f, cw * 0.13f);
         Color hpCol = (hpPct > 0.5f) ? GREEN : (hpPct > 0.25f) ? YELLOW : RED;
         DrawRectangleRounded({ lx + cp, cy, cw * hpPct, barH }, 0.4f, 4, hpCol);
         DrawRectangleRoundedLines({ lx + cp, cy, cw, barH }, 0.4f, 4, Fade(WHITE, 0.2f));
         const char* hpLbl = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
-        int hpFs = (int)std::min(14.f, barH * 0.85f);
+        int hpFs = (int)std::min(18.f, barH * 0.85f);
         DrawText(hpLbl, (int)(lx + cp + 4.f), (int)(cy + barH * 0.5f - hpFs * 0.5f), hpFs, RAYWHITE);
-        cy += barH + 6.f;
+        cy += barH + 8.f;
 
         // ─ MP bar
         float manaPct = (_player.GetMaxMana() > 0) ? (float)_player.GetMana() / _player.GetMaxMana() : 0.f;
@@ -7611,7 +7665,7 @@ void Engine::DrawShop()
         DrawRectangleRoundedLines({ lx + cp, cy, cw, barH }, 0.4f, 4, Fade(WHITE, 0.2f));
         const char* mpLbl = TextFormat("MP  %d / %d", _player.GetMana(), _player.GetMaxMana());
         DrawText(mpLbl, (int)(lx + cp + 4.f), (int)(cy + barH * 0.5f - hpFs * 0.5f), hpFs, RAYWHITE);
-        cy += barH + 10.f;
+        cy += barH + 14.f;
 
         // ─ Stats grid (2-column)
         struct StatRow { const char* label; std::string value; };
@@ -7621,8 +7675,8 @@ void Engine::DrawShop()
             { "DEF",  TextFormat("%.0f%%", _player.GetDefense() * 100.f)},
             { "GOLD", std::to_string(_player.GetGold())                 },
         };
-        float statFs = std::min(15.f, cw * 0.075f);
-        float statRowH = statFs + 6.f;
+        float statFs = std::min(20.f, cw * 0.09f);
+        float statRowH = statFs + 9.f;
         for (auto& s : stats)
         {
             DrawText(s.label, (int)(lx + cp), (int)cy, (int)statFs, kDim);
@@ -7630,18 +7684,18 @@ void Engine::DrawShop()
             DrawText(s.value.c_str(), (int)(lx + leftW - cp - vw), (int)cy, (int)statFs, RAYWHITE);
             cy += statRowH;
         }
-        cy += 8.f;
+        cy += 10.f;
 
         // ─ Abilities section
         DrawLineEx({ lx + cp, cy }, { lx + leftW - cp, cy }, 1.f,
             Fade(kGold, 0.35f));
-        cy += 8.f;
-        DrawText("ABILITIES", (int)(lx + cp), (int)cy, 18, kGold);
-        cy += 22.f;
+        cy += 10.f;
+        DrawText("ABILITIES", (int)(lx + cp), (int)cy, 22, kGold);
+        cy += 28.f;
 
         int slotCount = _player.GetMaxAbilitySlots();
-        float slotH   = std::min(38.f, (lh - (cy - ly) - cp) / (float)slotCount);
-        float slotFs  = std::min(14.f, slotH * 0.40f);
+        float slotH   = std::min(50.f, (lh - (cy - ly) - cp) / (float)slotCount);
+        float slotFs  = std::min(18.f, slotH * 0.40f);
 
         for (int i = 0; i < slotCount; i++)
         {
@@ -7651,14 +7705,14 @@ void Engine::DrawShop()
                 ? Color{20,20,30,160} : Color{30,40,60,200};
             Color sbo = (ab == AbilityType::None)
                 ? Color{50,50,60,120} : Color{80,110,160,200};
-            box(sr, sbg, sbo);
+            smallBox(sr, sbg, sbo);
 
             if (ab != AbilityType::None)
             {
                 DrawText(ShopAbilityName(ab),
                     (int)(sr.x + 8.f),
-                    (int)(sr.y + slotH * 0.5f - 14.f * 0.5f - 2.f),
-                    (int)std::min(14.f, slotFs + 2.f), RAYWHITE);
+                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f - 2.f),
+                    (int)std::min(18.f, slotFs + 2.f), RAYWHITE);
                 int lv = _player.GetAbilityLevel(ab);
                 const char* lvLbl = TextFormat("Lv%d", lv);
                 int lvW = MeasureText(lvLbl, (int)slotFs);
@@ -7678,15 +7732,16 @@ void Engine::DrawShop()
     EndScissorMode();
 
     // ── RIGHT PANEL (SHOP) ────────────────────────────────────────────────
-    box({ shopX, shopY, shopW, shopH }, kPanelBg, kPanelBorder);
+    box({ shopX, shopY, shopW, shopH }, WHITE);
 
-    BeginScissorMode((int)shopX, (int)shopY, (int)shopW, (int)shopH);
+    BeginScissorMode((int)(shopX + kBorderDst), (int)(shopY + kBorderDst),
+                     (int)(shopW - kBorderDst * 2.f), (int)(shopH - kBorderDst * 2.f));
     {
-        const float titleH = 46.f;
+        const float titleH = kBorderDst + 34.f;   // border inset + 28px font + gap
         const float tabH   = 38.f;
 
         // Title
-        DrawText("ZEPH'S WARES", (int)(shopX + iPad), (int)(shopY + 12.f), 28, kGold);
+        DrawText("ZEPH'S WARES", (int)(shopX + iPad), (int)(shopY + iPad), 28, kGold);
         DrawLineEx({ shopX + iPad, shopY + titleH - 4.f },
                    { shopX + shopW - iPad, shopY + titleH - 4.f },
                    1.f, Fade(kGold, 0.30f));
@@ -7700,8 +7755,8 @@ void Engine::DrawShop()
         auto drawTab = [&](Rectangle r, const char* label, bool active)
         {
             Color bg = active ? Color{40,60,110,240} : Color{20,25,40,180};
-            Color bo = active ? Color{100,150,255,255} : kPanelBorder;
-            box(r, bg, bo);
+            Color bo = active ? Color{100,150,255,255} : Color{80,100,140,180};
+            smallBox(r, bg, bo);
             int fs = (int)std::min(16.f, r.height * 0.44f);
             int tw = MeasureText(label, fs);
             DrawText(label,
@@ -7717,15 +7772,53 @@ void Engine::DrawShop()
         const float contentH = shopH - titleH - tabH - iPad * 2.f;
         const float contentW = shopW - iPad * 2.f;
 
+        // ── Icon texture lookup (matches getUpgradeInfo in DrawLevelUp) ────────
+        auto getShopIcon = [&](const ShopItem& si) -> Texture2D*
+        {
+            if (si.isAbility)
+            {
+                switch (si.abilityType)
+                {
+                case AbilityType::FireSpread:    case AbilityType::FireBolt:    case AbilityType::FireUltimate:
+                    return &_abilityIconFireTex;
+                case AbilityType::IceSpread:     case AbilityType::IceBolt:     case AbilityType::IceUltimate:
+                    return &_abilityIconIceTex;
+                case AbilityType::ElectricSpread: case AbilityType::ElectricBolt: case AbilityType::ElectricUltimate:
+                    return &_abilityIconElectricTex;
+                default: return nullptr;
+                }
+            }
+            switch (si.upgradeType)
+            {
+            case UpgradeType::AttackPower: case UpgradeType::Ferocity:
+            case UpgradeType::WarGod:      case UpgradeType::BladeStorm:
+                return &_upgradeAttackPowerTex;
+            case UpgradeType::AttackRange: case UpgradeType::BladeEdge:
+                return &_upgradeAttackRangeTex;
+            case UpgradeType::MaxHealth:   case UpgradeType::IronConstitution:
+            case UpgradeType::Resilience:  case UpgradeType::Juggernaut:
+                return &_upgradeHealthTex;
+            case UpgradeType::MaxMana:     case UpgradeType::ArcaneMind:
+            case UpgradeType::ArcaneColossus:
+                return &_upgradeMagicTex;
+            case UpgradeType::Defense:     case UpgradeType::IronSkin:
+                return &_upgradeDefenseTex;
+            case UpgradeType::MoveSpeed:   case UpgradeType::SwiftFeet:
+                return &_upgradeMoveSpeedTex;
+            default: return nullptr;
+            }
+        };
+
         if (_shopTab == 0)
         {
             // ─ 2 × 3 item grid
             const float cols = 3.f, rows = 2.f, gap = 10.f;
             const float itemW = (contentW - gap * (cols - 1.f)) / cols;
             const float itemH = (contentH - gap * (rows - 1.f)) / rows;
-            const float buyH  = std::min(30.f, itemH * 0.20f);
-            const float nameFs = std::min(18.f, itemH * 0.12f);
-            const float descFs = std::min(14.f, itemH * 0.09f);
+            const float buyH   = std::min(30.f, itemH * 0.20f);
+            const float iconSz = std::min(itemW * 0.40f, itemH * 0.35f);
+            const float nameFs = std::min(32.f, itemH * 0.22f);
+            const float descFsBase = std::min(26.f, itemH * 0.16f);
 
             if (_shopInventory.empty())
             {
@@ -7752,7 +7845,7 @@ void Engine::DrawShop()
                 Vector2 mouse = GetMousePosition();
                 bool    hov   = CheckCollisionPointRec(mouse, { ix, iy, itemW, itemH });
                 if (hov) { cardBg = Color{28,32,52,240}; cardBo = Fade(rarCol, 0.90f); }
-                box({ ix, iy, itemW, itemH }, cardBg, cardBo);
+                smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
 
                 // Rarity strip (left edge)
                 DrawRectangle((int)ix, (int)iy, 5, (int)itemH, Fade(rarCol, 0.80f));
@@ -7760,7 +7853,30 @@ void Engine::DrawShop()
                 // Clip inner card content
                 BeginScissorMode((int)ix + 6, (int)iy, (int)itemW - 6, (int)itemH);
 
-                float cy2 = iy + 8.f;
+                // ── Icon ────────────────────────────────────────────────────
+                const float iconCX = ix + itemW * 0.5f;
+                const float iconCY = iy + 8.f + iconSz * 0.5f;
+                Texture2D* icon = getShopIcon(item);
+                if (icon && icon->id != 0)
+                {
+                    float scale = std::min(iconSz / (float)icon->width,
+                                          iconSz / (float)icon->height);
+                    float iw = icon->width  * scale;
+                    float ih = icon->height * scale;
+                    DrawTexturePro(*icon,
+                        { 0, 0, (float)icon->width, (float)icon->height },
+                        { iconCX - iw * 0.5f, iconCY - ih * 0.5f, iw, ih },
+                        {}, 0.f, WHITE);
+                }
+                else
+                {
+                    // Fallback coloured circle if texture missing
+                    DrawCircleV({ iconCX, iconCY }, iconSz * 0.4f, Fade(rarCol, 0.35f));
+                    DrawCircleLinesV({ iconCX, iconCY }, iconSz * 0.4f, Fade(rarCol, 0.70f));
+                }
+
+                // ── Name & desc below icon ───────────────────────────────────
+                float cy2 = iconCY + iconSz * 0.5f + 100.f;
                 const char* name = item.isAbility
                     ? ShopAbilityName(item.abilityType)
                     : ShopUpgradeName(item.upgradeType);
@@ -7768,12 +7884,19 @@ void Engine::DrawShop()
                     ? ShopAbilityDesc(item.abilityType)
                     : ShopUpgradeDesc(item.upgradeType);
 
-                // Name
-                DrawText(name, (int)(ix + 10.f), (int)cy2, (int)nameFs, RAYWHITE);
-                cy2 += nameFs + 4.f;
+                int nw = MeasureText(name, (int)nameFs);
+                DrawText(name, (int)(ix + itemW * 0.5f - nw * 0.5f + 3.f),
+                    (int)cy2, (int)nameFs, RAYWHITE);
+                cy2 += nameFs + 3.f;
 
-                // Desc
-                DrawText(desc, (int)(ix + 10.f), (int)cy2, (int)descFs, kDim);
+                // Shrink desc font until it fits inside the card width
+                const float maxDescW = itemW - 20.f;
+                float descFs = descFsBase;
+                while (descFs > 8.f && MeasureText(desc, (int)descFs) > (int)maxDescW)
+                    descFs -= 1.f;
+                int dw = MeasureText(desc, (int)descFs);
+                DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
+                    (int)cy2, (int)descFs, kDim);
 
                 EndScissorMode();
 
@@ -7782,7 +7905,7 @@ void Engine::DrawShop()
                 Color buyBg = canAfford ? Color{30,90,30,220} : Color{60,30,30,180};
                 Color buyBo = canAfford ? Color{80,200,80,255} : Color{160,60,60,200};
                 Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
-                box(buyBtn, buyBg, buyBo);
+                smallBox(buyBtn, buyBg, buyBo);
                 int prFs = (int)std::min(14.f, buyH * 0.55f);
                 const char* prLbl = TextFormat("%dg", item.price);
                 int prW = MeasureText(prLbl, prFs);
@@ -7814,7 +7937,7 @@ void Engine::DrawShop()
                     float       ry = contentY + i * rowH;
                     float       btnY2 = ry + rowH * 0.5f - btnH * 0.5f;
 
-                    box({ shopX + iPad, ry + 2.f, contentW, rowH - 4.f },
+                    smallBox({ shopX + iPad, ry + 2.f, contentW, rowH - 4.f },
                         Color{25,30,50,200}, Color{60,80,120,160});
 
                     // Ability name + level
@@ -7835,7 +7958,7 @@ void Engine::DrawShop()
                     float upgX = shopX + iPad + contentW - btnW * 2.f - btnGp;
                     Color upgBg = (canUpg && canAfford) ? Color{30,60,100,220} : Color{30,30,40,140};
                     Color upgBo = (canUpg && canAfford) ? Color{80,140,255,255} : Color{60,60,80,160};
-                    box({ upgX, btnY2, btnW, btnH }, upgBg, upgBo);
+                    smallBox({ upgX, btnY2, btnW, btnH }, upgBg, upgBo);
                     int upFs = (int)std::min(13.f, btnH * 0.55f);
                     DrawText("Upgrade 100g",
                         (int)(upgX + btnW * 0.5f - MeasureText("Upgrade 100g", upFs) * 0.5f),
@@ -7846,7 +7969,7 @@ void Engine::DrawShop()
                     float rmX = shopX + iPad + contentW - btnW;
                     Color rmBg = canAfford ? Color{90,25,25,200} : Color{40,20,20,140};
                     Color rmBo = canAfford ? Color{220,60,60,255} : Color{100,40,40,160};
-                    box({ rmX, btnY2, btnW, btnH }, rmBg, rmBo);
+                    smallBox({ rmX, btnY2, btnW, btnH }, rmBg, rmBo);
                     DrawText("Remove 100g",
                         (int)(rmX + btnW * 0.5f - MeasureText("Remove 100g", upFs) * 0.5f),
                         (int)(btnY2 + btnH * 0.5f - upFs * 0.5f),
@@ -7858,29 +7981,50 @@ void Engine::DrawShop()
     EndScissorMode();
 
     // ── DIALOGUE BOX ─────────────────────────────────────────────────────
-    box({ shopX, dialY, shopW, dialH }, Color{10,14,24,240}, kPanelBorder);
+    box({ shopX, dialY, shopW, dialH }, WHITE);
     {
-        // NPC name tag
+        // Inner area sits inside the 32px border on all sides
+        const float innerTop = dialY + kBorderDst;
+        const float innerH   = dialH - kBorderDst * 2.f;
+        const float innerMid = innerTop + innerH * 0.5f;
+
         const char* nameTag = "Zeph:";
-        int ntFs = (int)std::min(18.f, dialH * 0.25f);
-        DrawText(nameTag, (int)(shopX + iPad), (int)(dialY + dialH * 0.18f), ntFs, kGold);
-        // Dialogue text
+        int ntFs = (int)std::min(20.f, innerH * 0.55f);
+        int dtFs = (int)std::min(18.f, innerH * 0.48f);
+
+        // Centre both lines vertically as a pair
+        float totalH = ntFs + 4.f + dtFs;
+        float startY = innerMid - totalH * 0.5f;
+
+        int ntW = MeasureText(nameTag, ntFs);
+        DrawText(nameTag,
+            (int)(shopX + iPad),
+            (int)startY,
+            ntFs, BLACK);
+
         const char* dText = _shopDialogue.c_str();
-        int dtFs = (int)std::min(16.f, dialH * 0.22f);
-        int ntW  = MeasureText(nameTag, ntFs);
         DrawText(dText,
             (int)(shopX + iPad + ntW + 10.f),
-            (int)(dialY + dialH * 0.5f - dtFs * 0.5f),
-            dtFs, RAYWHITE);
+            (int)(startY + ntFs * 0.5f - dtFs * 0.5f),
+            dtFs, BLACK);
     }
 
-    // ── LEAVE BUTTON ─────────────────────────────────────────────────────
-    const float leaveW = 180.f;
-    const float leaveX = shopX + shopW * 0.5f - leaveW * 0.5f;
-    Rectangle leaveBtn = { leaveX, leaveY, leaveW, leaveH };
-    bool leaveHov = CheckCollisionPointRec(GetMousePosition(), leaveBtn);
-    box(leaveBtn,
-        leaveHov ? Color{60,20,20,240} : Color{40,14,14,220},
+    // ── REROLL + LEAVE BUTTONS ────────────────────────────────────────────
+    const float leaveW  = 180.f;
+    const float rerollW = 200.f;
+    const float leaveX  = shopX + shopW * 0.5f + 8.f;
+    const float rerollX = shopX + shopW * 0.5f - rerollW - 8.f;
+    Rectangle leaveBtn  = { leaveX,  leaveY, leaveW,  leaveH };
+    Rectangle rerollBtn = { rerollX, leaveY, rerollW, leaveH };
+
+    Vector2 mpos = GetMousePosition();
+    bool leaveHov  = CheckCollisionPointRec(mpos, leaveBtn);
+    bool rerollHov = CheckCollisionPointRec(mpos, rerollBtn);
+    bool canReroll = (_player.GetGold() >= _shopRerollCost);
+
+    // Leave
+    smallBox(leaveBtn,
+        leaveHov ? Color{80,20,20,240} : Color{50,14,14,220},
         leaveHov ? Color{220,80,80,255} : Color{140,50,50,200});
     int lvFs = (int)std::min(18.f, leaveH * 0.50f);
     int lvW  = MeasureText("LEAVE SHOP", lvFs);
@@ -7888,5 +8032,22 @@ void Engine::DrawShop()
         (int)(leaveX + leaveW * 0.5f - lvW * 0.5f),
         (int)(leaveY + leaveH * 0.5f - lvFs * 0.5f),
         lvFs, leaveHov ? Color{255,160,160,255} : Color{220,120,120,220});
+
+    // Reroll
+    Color rrBg = canReroll
+        ? (rerollHov ? Color{20,60,20,240} : Color{14,40,14,220})
+        : Color{30,30,30,180};
+    Color rrBo = canReroll
+        ? (rerollHov ? Color{80,220,80,255} : Color{50,140,50,200})
+        : Color{80,80,80,160};
+    smallBox(rerollBtn, rrBg, rrBo);
+    const char* rrLabel = TextFormat("REROLL  %dg", _shopRerollCost);
+    int rrFs = (int)std::min(18.f, leaveH * 0.50f);
+    int rrW  = MeasureText(rrLabel, rrFs);
+    DrawText(rrLabel,
+        (int)(rerollX + rerollW * 0.5f - rrW * 0.5f),
+        (int)(leaveY + leaveH * 0.5f - rrFs * 0.5f),
+        rrFs, canReroll ? (rerollHov ? Color{180,255,180,255} : Color{140,220,140,220})
+                        : Fade(RAYWHITE, 0.35f));
 }
 

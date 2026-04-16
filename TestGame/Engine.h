@@ -483,6 +483,8 @@ private:
     int                      _shopTab        = 0;        // 0 = wares, 1 = abilities
     std::string              _shopDialogue;
     std::vector<ShopItem>    _shopInventory;
+    Texture2D                _shopBorderTex  = {};
+    int                      _shopRerollCost = 100;
     Biome _currentBiome = Biome::Dungeon;
     Biome _pendingBiome = Biome::Dungeon;
     bool  _biomeTransitionActive = false;
