@@ -98,13 +98,13 @@ int PauseAndGameOver::DrawPause()
     const float padV   = sh * 0.045f;
     const float titleH = sh * 0.075f;
     const float panelW = btnW + sw * 0.06f;
-    const float panelH = padV + titleH + 4.f * (btnH + btnGap) + padV;
+    const float panelH = padV + titleH + 5.f * (btnH + btnGap) + padV;
 
     float panelX = sw / 2.f - panelW / 2.f;
     float panelY = sh / 2.f - panelH / 2.f;
 
     // Draw border texture as the panel background (slightly oversized for visual frame)
-    float borderPad = sw * 0.012f;
+    float borderPad = sw * 0.03f;
     if (_borderTex.id != 0)
         DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
             { panelX - borderPad, panelY - borderPad,
@@ -140,6 +140,11 @@ int PauseAndGameOver::DrawPause()
     // Keybindings — blue tint
     if (DrawButton(_btnTex, "Keybindings", { btnX, btnY, btnW, btnH }, Color{ 80, 150, 230, 255 }))
         result = 4;
+    btnY += btnH + btnGap;
+
+    // Main Menu — orange tint
+    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH }, Color{ 230, 160, 50, 255 }))
+        result = 5;
     btnY += btnH + btnGap;
 
     // Quit — red tint

@@ -27,6 +27,7 @@
 #include "NavigationGrid.h"
 #include "VFXManager.h"
 #include "ShopManager.h"
+#include "DebugPanel.h"
 
 #include <vector>
 #include <string>
@@ -100,8 +101,6 @@ private:
     void DrawCyclopsLasers(Vector2 worldOffset);
     void DrawWorld();
     void DrawHUD();
-    void UpdateDebugPanel();
-    void DrawDebugPanel();
     void DebugStartRun();
     void DebugRestartRoomAs(RoomType type);
     void DebugSetEliteMechanic(int mechanic);
@@ -421,10 +420,5 @@ private:
     // Cleared each frame when the touch lifts; prevents repeat casts on hold.
     std::vector<int> _abilityTapSeenIds;
 
-    // Debug mode
-    bool  _debugModeActive = false;
-    bool  _debugPanelOpen  = false;
-    bool  _debugGodMode    = false;
-    float _debugScrollY    = 0.f;
-    int   _debugForcedEliteMechanic = -1; // -1=random, 0-4 specific elite mechanic
+    DebugPanel _debug;
 };

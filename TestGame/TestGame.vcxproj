@@ -130,6 +130,7 @@
     <ClCompile Include="BaseCharacter.cpp" />
     <ClCompile Include="Cyclops.cpp" />
     <ClCompile Include="CyclopsLaserProjectile.cpp" />
+    <ClCompile Include="DebugPanel.cpp" />
     <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="Engine.cpp" />
     <ClCompile Include="NavigationGrid.cpp" />
@@ -160,6 +161,7 @@
     <ClInclude Include="Cyclops.h" />
     <ClInclude Include="CyclopsLaserProjectile.h" />
     <ClInclude Include="CyclopsProjectile.h" />
+    <ClInclude Include="DebugPanel.h" />
     <ClInclude Include="Enemy.h" />
     <ClInclude Include="Engine.h" />
     <ClInclude Include="NavigationGrid.h" />

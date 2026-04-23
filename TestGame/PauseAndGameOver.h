@@ -15,7 +15,7 @@ public:
     void Init();
     void Unload();
 
-    int  DrawPause();      // 0=nothing  1=resume  2=howtoplay  3=quit  4=keybindings
+    int  DrawPause();      // 0=nothing  1=resume  2=howtoplay  3=quit  4=keybindings  5=mainmenu
     // Returns true when Back is pressed. Modifies bindings in place as rebinds happen.
     bool DrawKeybindings(KeyBindings& bindings);
     int  DrawGameOver(int wave, int kills, const std::vector<LeaderboardEntry>& scores);  // 0=nothing  1=play again  2=main menu  3=quit

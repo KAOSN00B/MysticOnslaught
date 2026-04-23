@@ -90,116 +90,6 @@ namespace
         }
     }
 
-    const char* GetDebugUpgradeName(UpgradeType type)
-    {
-        switch (type)
-        {
-        case UpgradeType::AttackPower: return "Attack+";
-        case UpgradeType::AttackRange: return "Range+";
-        case UpgradeType::MaxHealth: return "Max HP+";
-        case UpgradeType::MaxMana: return "Max MP+";
-        case UpgradeType::Defense: return "Defense+";
-        case UpgradeType::MoveSpeed: return "Speed+";
-        case UpgradeType::IronConstitution: return "Iron Con";
-        case UpgradeType::SwiftFeet: return "Swift Feet";
-        case UpgradeType::Ferocity: return "Ferocity";
-        case UpgradeType::ArcaneMind: return "Arcane Mind";
-        case UpgradeType::IronSkin: return "Iron Skin";
-        case UpgradeType::BladeEdge: return "Blade Edge";
-        case UpgradeType::WarGod: return "War God";
-        case UpgradeType::Resilience: return "Resilience";
-        case UpgradeType::BladeStorm: return "Blade Storm";
-        case UpgradeType::Juggernaut: return "Juggernaut";
-        case UpgradeType::ArcaneColossus: return "Arc Colossus";
-        case UpgradeType::LearnFireSpread: return "Learn F Spread";
-        case UpgradeType::LearnIceSpread: return "Learn I Spread";
-        case UpgradeType::LearnElectricSpread: return "Learn E Spread";
-        case UpgradeType::LearnFireBolt: return "Learn F Bolt";
-        case UpgradeType::LearnIceBolt: return "Learn I Bolt";
-        case UpgradeType::LearnElectricBolt: return "Learn E Bolt";
-        case UpgradeType::LearnFireUltimate: return "Learn F Ult";
-        case UpgradeType::LearnIceUltimate: return "Learn I Ult";
-        case UpgradeType::LearnElectricUltimate: return "Learn E Ult";
-        case UpgradeType::UpgradeFireSpread: return "Up F Spread";
-        case UpgradeType::UpgradeIceSpread: return "Up I Spread";
-        case UpgradeType::UpgradeElectricSpread: return "Up E Spread";
-        case UpgradeType::UpgradeFireBolt: return "Up F Bolt";
-        case UpgradeType::UpgradeIceBolt: return "Up I Bolt";
-        case UpgradeType::UpgradeElectricBolt: return "Up E Bolt";
-        case UpgradeType::UpgradeFireUltimate: return "Up F Ult";
-        case UpgradeType::UpgradeIceUltimate: return "Up I Ult";
-        case UpgradeType::UpgradeElectricUltimate: return "Up E Ult";
-        default: return "Upgrade";
-        }
-    }
-
-    const char* GetDebugEliteMechanicName(int mechanic)
-    {
-        switch (mechanic)
-        {
-        case 0: return "Cage";
-        case 1: return "Links";
-        case 2: return "Enrage";
-        case 3: return "Leap";
-        case 4: return "Hazards";
-        default: return "Random";
-        }
-    }
-
-    enum class DebugActionKind
-    {
-        ToggleGod,
-        GrantInvuln,
-        ClearEnemiesContinue,
-        RestartRoom,
-        SetEliteMechanic,
-        SpawnGrunt,
-        SpawnCyclops,
-        SpawnOgre,
-        SpawnBoss,
-        Heal,
-        RestoreMana,
-        AddGold,
-        AddExp,
-        TreasureCards,
-        EliteReward,
-        AbilityReward,
-        ApplyUpgrade
-    };
-
-    struct DebugButtonSpec
-    {
-        std::string label;
-        Rectangle rect{};
-        Color fill{};
-        DebugActionKind action = DebugActionKind::ToggleGod;
-        int value = 0;
-    };
-
-    void AppendDebugButtons(std::vector<DebugButtonSpec>& out, float padX, float contentW,
-                            float& cursorY, int cols, Color fill,
-                            const std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>>& items)
-    {
-        const float gap = 8.f;
-        const float cellH = 30.f;
-        const float cellW = (contentW - gap * (cols - 1)) / cols;
-
-        for (int i = 0; i < (int)items.size(); ++i)
-        {
-            int col = i % cols;
-            int row = i / cols;
-            out.push_back(DebugButtonSpec{
-                items[i].first,
-                Rectangle{ padX + col * (cellW + gap), cursorY + row * (cellH + gap), cellW, cellH },
-                fill,
-                items[i].second.first,
-                items[i].second.second
-            });
-        }
-
-        cursorY += ((int)items.size() + cols - 1) / cols * (cellH + gap) + 8.f;
-    }
-
 }
 
 Engine::Engine()
@@ -405,11 +295,7 @@ void Engine::StartNextRoom(RoomType type)
 void Engine::DebugStartRun()
 {
     ResetRunState();
-    _debugModeActive = true;
-    _debugPanelOpen = true;
-    _debugGodMode = false;
-    _debugScrollY = 0.f;
-    _debugForcedEliteMechanic = -1;
+    _debug.Activate();
     _awaitingStartingAbility = false;
     _levelUpReturnState = GameState::Play;
     _message = "Debug Arena";
@@ -418,7 +304,7 @@ void Engine::DebugStartRun()
 
 void Engine::DebugSetEliteMechanic(int mechanic)
 {
-    _debugForcedEliteMechanic = mechanic;
+    _debug.SetForcedEliteMechanic(mechanic);
     DebugRestartRoomAs(RoomType::Elite);
 }
 
@@ -913,7 +799,7 @@ void Engine::SpawnEnemies()
 
         // ── Elite-room systems setup ──────────────────────────────────────
         {
-            _eliteMechanic    = (_debugForcedEliteMechanic >= 0) ? _debugForcedEliteMechanic : GetRandomValue(0, 4);
+            _eliteMechanic    = (_debug.GetForcedEliteMechanic() >= 0) ? _debug.GetForcedEliteMechanic() : GetRandomValue(0, 4);
             _eliteMinibossPtr = eliteMiniboss;
 
             const float mapW = _map.width  * _mapScale;
@@ -1034,9 +920,7 @@ void Engine::Update(float dt)
         if (_menu.StartPressed())
         {
             _touchModeActive = _menu.IsTouchMode();
-            _debugModeActive = false;
-            _debugPanelOpen  = false;
-            _debugGodMode    = false;
+            _debug.Deactivate();
             ResetRunState();
             _fadeInTimer = 2.0f; _fadeInDuration = 2.0f;
             GenerateStartingAbilityOptions();
@@ -1159,14 +1043,59 @@ void Engine::Update(float dt)
 
 void Engine::UpdateGamePlay(float dt)
 {
-    if (_debugModeActive && IsKeyPressed(KEY_F1))
-        _debugPanelOpen = !_debugPanelOpen;
-
-    if (_debugModeActive)
+    if (_debug.IsActive())
     {
-        if (_debugGodMode)
+        if (_debug.IsGodMode())
             _player.GrantInvulnerability(0.2f);
-        UpdateDebugPanel();
+
+        DebugCommand cmd = _debug.Update();
+        if (cmd.issued)
+        {
+            Vector2 spawnBase = _player.GetWorldPos();
+            switch (cmd.action)
+            {
+            case DebugActionKind::GrantInvuln:
+                _player.GrantInvulnerability(5.f); break;
+            case DebugActionKind::ClearEnemiesContinue:
+                for (auto& e : _enemies) { e->SetActive(false); e->Teleport(Vector2{ -5000.f, -5000.f }); }
+                _roomClearPending = true; break;
+            case DebugActionKind::RestartRoom:
+                DebugRestartRoomAs((RoomType)cmd.value); break;
+            case DebugActionKind::SetEliteMechanic:
+                _debug.SetForcedEliteMechanic(cmd.value);
+                DebugRestartRoomAs(RoomType::Elite); break;
+            case DebugActionKind::SpawnGrunt:
+                SpawnBasicEnemy(Vector2Add(spawnBase, Vector2{ 220.f, 40.f })); break;
+            case DebugActionKind::SpawnCyclops:
+                SpawnCyclops(Vector2Add(spawnBase, Vector2{ 260.f, -60.f })); break;
+            case DebugActionKind::SpawnOgre:
+                SpawnOgre(Vector2Add(spawnBase, Vector2{ -240.f, 50.f })); break;
+            case DebugActionKind::SpawnBoss:
+                SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f })); break;
+            case DebugActionKind::Heal:
+                _player.Heal(cmd.value); break;
+            case DebugActionKind::RestoreMana:
+                _player.RestoreMana(cmd.value); break;
+            case DebugActionKind::AddGold:
+                _player.AddGold(cmd.value); break;
+            case DebugActionKind::AddExp:
+                _player.AddExp(cmd.value); break;
+            case DebugActionKind::TreasureCards:
+                GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
+                _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f;
+                _gameState = GameState::LevelUpChoice; break;
+            case DebugActionKind::EliteReward:
+                GenerateLevelUpOptions(LevelUpOfferContext::EliteReward);
+                _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f;
+                _gameState = GameState::LevelUpChoice; break;
+            case DebugActionKind::AbilityReward:
+                GenerateAbilityChoiceOptions(); _abilityChoiceOpenTimer = 0.1f;
+                _pendingRoomChoice = false; _gameState = GameState::AbilityChoice; break;
+            case DebugActionKind::ApplyUpgrade:
+                _player.ApplyUpgrade((UpgradeType)cmd.value); break;
+            default: break;
+            }
+        }
     }
 
     if (IsKeyPressed(KEY_ESCAPE))
@@ -1195,7 +1124,7 @@ void Engine::UpdateGamePlay(float dt)
     bool inNonCombatRoom = (_currentRoomType == RoomType::Rest  ||
                             _currentRoomType == RoomType::Store ||
                             _currentRoomType == RoomType::Treasure ||
-                            _debugPanelOpen);
+                            _debug.IsOpen());
     const bool ultActive = (_ultimatePhase != UltimatePhase::None);
     _player.SetCombatLocked(_waveStarting || ultActive || inNonCombatRoom);
     _player.SetManaRegenPaused(ultActive);
@@ -1660,8 +1589,8 @@ void Engine::Draw()
         DrawWorld();
         DrawUltimateSequence();
         DrawHUD();
-        if (_debugModeActive)
-            DrawDebugPanel();
+        if (_debug.IsActive())
+            _debug.Draw(_currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
 
         // ── "Continue" button — shown after all enemies are defeated ─────────
         if (_roomClearPending)
@@ -1768,6 +1697,12 @@ void Engine::Draw()
         {
             _keybindingsEdit = _player.GetBindings();
             _gameState = GameState::Keybindings;
+        }
+        else if (pauseResult == 5)
+        {
+            ResetRunState();
+            _menu.Init();
+            _gameState = GameState::Menu;
         }
 
         break;
@@ -2503,237 +2438,6 @@ void Engine::DrawHUD()
             warningSize,
             ORANGE);
     }
-}
-
-void Engine::UpdateDebugPanel()
-{
-    if (!_debugPanelOpen)
-        return;
-
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
-    const Rectangle panel{ sw * 0.67f, 86.f, sw * 0.30f, sh - 126.f };
-    const Rectangle contentClip{ panel.x + 12.f, panel.y + 56.f, panel.width - 24.f, panel.height - 68.f };
-
-    Vector2 mouse = GetMousePosition();
-    if (CheckCollisionPointRec(mouse, panel))
-        _debugScrollY = std::clamp(_debugScrollY - GetMouseWheelMove() * 36.f, 0.f, 2400.f);
-
-    Rectangle closeBtn{ panel.x + panel.width - 42.f, panel.y + 12.f, 28.f, 28.f };
-    if (CheckCollisionPointRec(mouse, closeBtn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-    {
-        _debugPanelOpen = false;
-        return;
-    }
-
-    float cursorY = panel.y + 62.f - _debugScrollY;
-    const float padX = panel.x + 18.f;
-    const float contentW = panel.width - 36.f;
-    std::vector<DebugButtonSpec> buttons;
-
-    auto section = [&](const char*)
-    {
-        cursorY += 28.f;
-        cursorY += 10.f;
-    };
-
-    section("Run");
-    buttons.push_back({ _debugGodMode ? "God Mode: ON" : "God Mode: OFF", { padX, cursorY, contentW, 32.f }, Color{ 128, 60, 40, 210 }, DebugActionKind::ToggleGod, 0 }); cursorY += 40.f;
-    buttons.push_back({ "Grant 5s Invulnerability", { padX, cursorY, contentW, 32.f }, Color{ 80, 110, 180, 210 }, DebugActionKind::GrantInvuln, 0 }); cursorY += 40.f;
-    buttons.push_back({ "Clear Enemies + Continue", { padX, cursorY, contentW, 32.f }, Color{ 60, 150, 90, 210 }, DebugActionKind::ClearEnemiesContinue, 0 }); cursorY += 40.f;
-
-    section("Areas");
-    {
-        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items;
-        for (RoomType type : { RoomType::Standard, RoomType::Elite, RoomType::Rest, RoomType::Treasure, RoomType::Store, RoomType::Boss })
-            items.push_back({ GetDebugRoomTypeName(type), { DebugActionKind::RestartRoom, (int)type } });
-        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 88, 78, 122, 220 }, items);
-    }
-
-    section("Elite Mechanics");
-    {
-        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items{
-            { "Random", { DebugActionKind::SetEliteMechanic, -1 } }
-        };
-        for (int i = 0; i < 5; ++i)
-            items.push_back({ GetDebugEliteMechanicName(i), { DebugActionKind::SetEliteMechanic, i } });
-        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 74, 130, 220 }, items);
-    }
-
-    section("Spawns");
-    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 110, 74, 52, 220 }, {
-        { "Add Grunt", { DebugActionKind::SpawnGrunt, 0 } },
-        { "Add Cyclops", { DebugActionKind::SpawnCyclops, 0 } },
-        { "Add Ogre", { DebugActionKind::SpawnOgre, 0 } },
-        { "Add Boss", { DebugActionKind::SpawnBoss, 0 } },
-    });
-
-    section("Resources");
-    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {
-        { "HP +10", { DebugActionKind::Heal, 10 } },
-        { "MP +40", { DebugActionKind::RestoreMana, 40 } },
-        { "Gold +25", { DebugActionKind::AddGold, 25 } },
-        { "XP +25", { DebugActionKind::AddExp, 25 } },
-        { "Treasure Cards", { DebugActionKind::TreasureCards, 0 } },
-        { "Elite Reward", { DebugActionKind::EliteReward, 0 } },
-        { "Ability Reward", { DebugActionKind::AbilityReward, 0 } },
-    });
-
-    section("Upgrades");
-    {
-        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items;
-        for (int i = 0; i < (int)UpgradeType::Count; ++i)
-            items.push_back({ GetDebugUpgradeName((UpgradeType)i), { DebugActionKind::ApplyUpgrade, i } });
-        AppendDebugButtons(buttons, padX, contentW, cursorY, 3, Color{ 90, 82, 46, 220 }, items);
-    }
-
-    if (!IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-        return;
-
-    Vector2 spawnBase = _player.GetWorldPos();
-    for (const auto& btn : buttons)
-    {
-        bool visible = (btn.rect.y + btn.rect.height >= contentClip.y && btn.rect.y <= contentClip.y + contentClip.height);
-        if (!visible || !CheckCollisionPointRec(mouse, btn.rect))
-            continue;
-
-        switch (btn.action)
-        {
-        case DebugActionKind::ToggleGod: _debugGodMode = !_debugGodMode; break;
-        case DebugActionKind::GrantInvuln: _player.GrantInvulnerability(5.f); break;
-        case DebugActionKind::ClearEnemiesContinue:
-            for (auto& e : _enemies) { e->SetActive(false); e->Teleport(Vector2{ -5000.f, -5000.f }); }
-            _roomClearPending = true;
-            break;
-        case DebugActionKind::RestartRoom: DebugRestartRoomAs((RoomType)btn.value); break;
-        case DebugActionKind::SetEliteMechanic:
-            _debugForcedEliteMechanic = btn.value;
-            DebugRestartRoomAs(RoomType::Elite);
-            break;
-        case DebugActionKind::SpawnGrunt:
-        {
-            Vector2 p = Vector2Add(spawnBase, Vector2{ 220.f, 40.f });
-            SpawnBasicEnemy(p);
-            break;
-        }
-        case DebugActionKind::SpawnCyclops: SpawnCyclops(Vector2Add(spawnBase, Vector2{ 260.f, -60.f })); break;
-        case DebugActionKind::SpawnOgre: SpawnOgre(Vector2Add(spawnBase, Vector2{ -240.f, 50.f })); break;
-        case DebugActionKind::SpawnBoss: SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f })); break;
-        case DebugActionKind::Heal: _player.Heal(btn.value); break;
-        case DebugActionKind::RestoreMana: _player.RestoreMana(btn.value); break;
-        case DebugActionKind::AddGold: _player.AddGold(btn.value); break;
-        case DebugActionKind::AddExp: _player.AddExp(btn.value); break;
-        case DebugActionKind::TreasureCards:
-            GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic); _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f; _gameState = GameState::LevelUpChoice; break;
-        case DebugActionKind::EliteReward:
-            GenerateLevelUpOptions(LevelUpOfferContext::EliteReward); _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f; _gameState = GameState::LevelUpChoice; break;
-        case DebugActionKind::AbilityReward:
-            GenerateAbilityChoiceOptions(); _abilityChoiceOpenTimer = 0.1f; _pendingRoomChoice = false; _gameState = GameState::AbilityChoice; break;
-        case DebugActionKind::ApplyUpgrade: _player.ApplyUpgrade((UpgradeType)btn.value); break;
-        }
-        break;
-    }
-}
-
-void Engine::DrawDebugPanel()
-{
-    if (!_debugPanelOpen)
-        return;
-
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
-    const Rectangle panel{ sw * 0.67f, 86.f, sw * 0.30f, sh - 126.f };
-    const Rectangle contentClip{ panel.x + 12.f, panel.y + 56.f, panel.width - 24.f, panel.height - 68.f };
-    const float padX = panel.x + 18.f;
-    const float contentW = panel.width - 36.f;
-
-    DrawRectangleRounded(panel, 0.03f, 8, Fade(Color{ 24, 20, 16, 255 }, 0.96f));
-    DrawRectangleRoundedLines(panel, 0.03f, 8, Fade(Color{ 255, 190, 110, 255 }, 0.38f));
-    DrawText("DEBUG PANEL", (int)(panel.x + 18.f), (int)(panel.y + 14.f), 28, Color{ 255, 210, 150, 255 });
-    DrawText("F1 to toggle", (int)(panel.x + 18.f), (int)(panel.y + 40.f), 16, Color{ 190, 175, 150, 220 });
-
-    Rectangle closeBtn{ panel.x + panel.width - 42.f, panel.y + 12.f, 28.f, 28.f };
-    DrawRectangleRounded(closeBtn, 0.28f, 6, Fade(Color{ 110, 40, 35, 255 }, 0.95f));
-    DrawText("X", (int)(closeBtn.x + 8.f), (int)(closeBtn.y + 3.f), 22, RAYWHITE);
-
-    BeginScissorMode((int)contentClip.x, (int)contentClip.y, (int)contentClip.width, (int)contentClip.height);
-
-    float cursorY = panel.y + 62.f - _debugScrollY;
-    std::vector<DebugButtonSpec> buttons;
-    auto section = [&](const char* title)
-    {
-        DrawText(title, (int)padX, (int)cursorY, 22, Color{ 255, 196, 96, 255 });
-        cursorY += 28.f;
-        DrawLineEx({ padX, cursorY }, { padX + contentW, cursorY }, 1.5f, Fade(Color{ 255, 196, 96, 255 }, 0.35f));
-        cursorY += 10.f;
-    };
-
-    section("Run");
-    buttons.push_back({ _debugGodMode ? "God Mode: ON" : "God Mode: OFF", { padX, cursorY, contentW, 32.f }, Color{ 128, 60, 40, 210 }, DebugActionKind::ToggleGod, 0 }); cursorY += 40.f;
-    buttons.push_back({ "Grant 5s Invulnerability", { padX, cursorY, contentW, 32.f }, Color{ 80, 110, 180, 210 }, DebugActionKind::GrantInvuln, 0 }); cursorY += 40.f;
-    buttons.push_back({ "Clear Enemies + Continue", { padX, cursorY, contentW, 32.f }, Color{ 60, 150, 90, 210 }, DebugActionKind::ClearEnemiesContinue, 0 }); cursorY += 40.f;
-
-    section("Areas");
-    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 88, 78, 122, 220 }, {
-        { "Standard", { DebugActionKind::RestartRoom, (int)RoomType::Standard } },
-        { "Elite", { DebugActionKind::RestartRoom, (int)RoomType::Elite } },
-        { "Rest", { DebugActionKind::RestartRoom, (int)RoomType::Rest } },
-        { "Treasure", { DebugActionKind::RestartRoom, (int)RoomType::Treasure } },
-        { "Shop", { DebugActionKind::RestartRoom, (int)RoomType::Store } },
-        { "Boss", { DebugActionKind::RestartRoom, (int)RoomType::Boss } },
-    });
-
-    section("Elite Mechanics");
-    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 74, 130, 220 }, {
-        { "Random", { DebugActionKind::SetEliteMechanic, -1 } },
-        { "Cage", { DebugActionKind::SetEliteMechanic, 0 } },
-        { "Links", { DebugActionKind::SetEliteMechanic, 1 } },
-        { "Enrage", { DebugActionKind::SetEliteMechanic, 2 } },
-        { "Leap", { DebugActionKind::SetEliteMechanic, 3 } },
-        { "Hazards", { DebugActionKind::SetEliteMechanic, 4 } },
-    });
-
-    section("Spawns");
-    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 110, 74, 52, 220 }, {
-        { "Add Grunt", { DebugActionKind::SpawnGrunt, 0 } },
-        { "Add Cyclops", { DebugActionKind::SpawnCyclops, 0 } },
-        { "Add Ogre", { DebugActionKind::SpawnOgre, 0 } },
-        { "Add Boss", { DebugActionKind::SpawnBoss, 0 } },
-    });
-
-    section("Resources");
-    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {
-        { "HP +10", { DebugActionKind::Heal, 10 } },
-        { "MP +40", { DebugActionKind::RestoreMana, 40 } },
-        { "Gold +25", { DebugActionKind::AddGold, 25 } },
-        { "XP +25", { DebugActionKind::AddExp, 25 } },
-        { "Treasure Cards", { DebugActionKind::TreasureCards, 0 } },
-        { "Elite Reward", { DebugActionKind::EliteReward, 0 } },
-        { "Ability Reward", { DebugActionKind::AbilityReward, 0 } },
-    });
-
-    section("Upgrades");
-    {
-        std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>> items;
-        for (int i = 0; i < (int)UpgradeType::Count; ++i)
-            items.push_back({ GetDebugUpgradeName((UpgradeType)i), { DebugActionKind::ApplyUpgrade, i } });
-        AppendDebugButtons(buttons, padX, contentW, cursorY, 3, Color{ 90, 82, 46, 220 }, items);
-    }
-
-    for (const auto& btn : buttons)
-    {
-        DrawRectangleRounded(btn.rect, 0.20f, 6, btn.fill);
-        DrawRectangleRoundedLines(btn.rect, 0.20f, 6, Fade(WHITE, 0.16f));
-        int fs = (btn.rect.height > 31.f && btn.rect.width > contentW - 1.f) ? 18 : 15;
-        int tw = MeasureText(btn.label.c_str(), fs);
-        float textX = (fs == 18) ? (btn.rect.x + 10.f) : (btn.rect.x + btn.rect.width * 0.5f - tw * 0.5f);
-        DrawText(btn.label.c_str(), (int)textX, (int)(btn.rect.y + (fs == 18 ? 6.f : 7.f)), fs, RAYWHITE);
-    }
-
-    EndScissorMode();
-
-    const char* footer = TextFormat("Act %d  Room %d  |  %s Area", _currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
-    DrawText(footer, (int)(panel.x + 18.f), (int)(panel.y + panel.height - 26.f), 16, Color{ 170, 165, 150, 220 });
 }
 
 void Engine::DrawAbilityBar()
@@ -5639,11 +5343,7 @@ void Engine::ResetRunState()
     _abilityChoiceOptionCount = 0;
     _levelUpOfferContext      = LevelUpOfferContext::NormalLevel;
     _eliteRewardGranted       = false;
-    _debugModeActive          = false;
-    _debugPanelOpen           = false;
-    _debugGodMode             = false;
-    _debugScrollY             = 0.f;
-    _debugForcedEliteMechanic = -1;
+    _debug.Deactivate();
 
     // ── Room / act progression reset ──────────────────────────────────────
     _currentAct        = 1;
