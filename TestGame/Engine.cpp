@@ -77,11 +77,6 @@ namespace
         return value;
     }
 
-    int GetNavigationIndexForGrid(int col, int row, int cols)
-    {
-        return row * cols + col;
-    }
-
     const char* GetDebugRoomTypeName(RoomType type)
     {
         switch (type)
@@ -205,128 +200,6 @@ namespace
         cursorY += ((int)items.size() + cols - 1) / cols * (cellH + gap) + 8.f;
     }
 
-    bool IsNavigationCellBlockedForGrid(const std::vector<bool>& blocked, int cols, int rows, int col, int row)
-    {
-        if (col < 0 || col >= cols || row < 0 || row >= rows)
-            return true;
-
-        return blocked[GetNavigationIndexForGrid(col, row, cols)];
-    }
-
-    bool FindNearestOpenCellForGrid(const std::vector<bool>& blocked, int cols, int rows, int& col, int& row)
-    {
-        if (!IsNavigationCellBlockedForGrid(blocked, cols, rows, col, row))
-            return true;
-
-        for (int radius = 1; radius < std::max(cols, rows); ++radius)
-        {
-            for (int dc = -radius; dc <= radius; ++dc)
-            {
-                for (int dr = -radius; dr <= radius; ++dr)
-                {
-                    if (std::abs(dc) != radius && std::abs(dr) != radius)
-                        continue;
-
-                    int nextCol = col + dc;
-                    int nextRow = row + dr;
-                    if (!IsNavigationCellBlockedForGrid(blocked, cols, rows, nextCol, nextRow))
-                    {
-                        col = nextCol;
-                        row = nextRow;
-                        return true;
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
-
-    int GetClosestOpenNavigationIndexForGrid(const std::vector<bool>& blocked, int cols, int rows, int col, int row)
-    {
-        int nextCol = ClampInt(col, 0, std::max(0, cols - 1));
-        int nextRow = ClampInt(row, 0, std::max(0, rows - 1));
-
-        if (!FindNearestOpenCellForGrid(blocked, cols, rows, nextCol, nextRow))
-            return -1;
-
-        return GetNavigationIndexForGrid(nextCol, nextRow, cols);
-    }
-
-    Engine::NavigationRefreshResult BuildNavigationRefreshResult(
-        const std::vector<bool>& blocked,
-        int cols,
-        int rows,
-        float cellSize,
-        Vector2 playerFeet)
-    {
-        Engine::NavigationRefreshResult result{};
-
-        if (cols <= 0 || rows <= 0)
-            return result;
-
-        result.distanceField.assign(cols * rows, std::numeric_limits<int>::max());
-
-        int playerCol = ClampInt((int)(playerFeet.x / cellSize), 0, cols - 1);
-        int playerRow = ClampInt((int)(playerFeet.y / cellSize), 0, rows - 1);
-        result.playerNavIndex = GetClosestOpenNavigationIndexForGrid(blocked, cols, rows, playerCol, playerRow);
-
-        if (result.playerNavIndex < 0)
-            return result;
-
-        using QueueItem = std::pair<int, int>;
-        std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<QueueItem>> frontier;
-        result.distanceField[result.playerNavIndex] = 0;
-        frontier.push({ 0, result.playerNavIndex });
-
-        struct SearchOffset { int col, row, cost; };
-        static const std::array<SearchOffset, 8> navOffsets{{
-            {1,0,10},{-1,0,10},{0,1,10},{0,-1,10},
-            {1,1,14},{1,-1,14},{-1,1,14},{-1,-1,14}
-        }};
-
-        while (!frontier.empty())
-        {
-            int cost = frontier.top().first;
-            int currentIndex = frontier.top().second;
-            frontier.pop();
-
-            if (cost > result.distanceField[currentIndex])
-                continue;
-
-            int currentCol = currentIndex % cols;
-            int currentRow = currentIndex / cols;
-
-            for (const SearchOffset& off : navOffsets)
-            {
-                int nextCol = currentCol + off.col;
-                int nextRow = currentRow + off.row;
-
-                if (IsNavigationCellBlockedForGrid(blocked, cols, rows, nextCol, nextRow))
-                    continue;
-
-                if (off.col != 0 && off.row != 0)
-                {
-                    if (IsNavigationCellBlockedForGrid(blocked, cols, rows, currentCol + off.col, currentRow) ||
-                        IsNavigationCellBlockedForGrid(blocked, cols, rows, currentCol, currentRow + off.row))
-                    {
-                        continue;
-                    }
-                }
-
-                int nextIndex = GetNavigationIndexForGrid(nextCol, nextRow, cols);
-                int nextCost = cost + off.cost;
-
-                if (nextCost >= result.distanceField[nextIndex])
-                    continue;
-
-                result.distanceField[nextIndex] = nextCost;
-                frontier.push({ nextCost, nextIndex });
-            }
-        }
-
-        return result;
-    }
 }
 
 Engine::Engine()
@@ -336,8 +209,7 @@ Engine::Engine()
 
 Engine::~Engine()
 {
-    if (_navRefreshJob.valid())
-        _navRefreshJob.wait();
+    _nav.CancelAndReset();
 
     Enemy::UnloadSharedResources();
     Cyclops::UnloadSharedResources();
@@ -383,7 +255,7 @@ Engine::~Engine()
     UnloadTexture(_upgradeMagicTex);
     UnloadTexture(_upgradeDefenseTex);
     UnloadTexture(_upgradeMoveSpeedTex);
-    if (_shopBorderTex.id != 0) UnloadTexture(_shopBorderTex);
+    UnloadTexture(_shopBorderTex);
     _pauseUI.Unload();
     CloseWindow();
 }
@@ -439,10 +311,24 @@ void Engine::Init()
     _iceHitTex       = LoadTexture(AssetPath("PowerUps/Ice_Shard_Hit.png").c_str());
     _lightningCastTex = LoadTexture(AssetPath("PowerUps/LightningCast.png").c_str());
     _healEffectTex = LoadTexture(AssetPath("PowerUps/Health_Up.png").c_str());
+    _vfx.Init(&_fireballCastTex, &_fireballHitTex, &_genericHitTex,
+              &_iceHitTex, &_lightningCastTex, &_healEffectTex);
     _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
     _abilityIconIceTex      = LoadTexture(AssetPath("PowerUps/IceSpellPickup.png").c_str());
     _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
     _shopBorderTex          = LoadTexture(AssetPath("UI/PauseBoarder.png").c_str());
+    _shop.Init(ShopTextures{
+        &_shopBorderTex,
+        &_upgradeAttackPowerTex,
+        &_upgradeAttackRangeTex,
+        &_upgradeHealthTex,
+        &_upgradeMagicTex,
+        &_upgradeDefenseTex,
+        &_upgradeMoveSpeedTex,
+        &_abilityIconFireTex,
+        &_abilityIconIceTex,
+        &_abilityIconElectricTex
+    });
 
     _mapIconNormal   = LoadTexture(AssetPath("TileSet/MapIcons/NormalRoom.png").c_str());
     _mapIconElite    = LoadTexture(AssetPath("TileSet/MapIcons/EliteRoom.png").c_str());
@@ -463,7 +349,7 @@ void Engine::Init()
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
     _lavaBalls.clear();
-    _effects.clear();
+    _vfx.Clear();
     _enemies.clear();
 
     _pickupSpawnTimer = kDefaultTimedPickupInterval;
@@ -496,12 +382,7 @@ void Engine::StartNextRoom(RoomType type)
     {
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shopNpcPos    = { mapW * 0.5f, mapH * 0.5f };
-        _shopNearNpc   = false;
-        _shopTab       = 0;
-        _shopRerollCost = 100;
-        _shopDialogue  = "Welcome to Zeph's Wares! What do you need?";
-        GenerateShopInventory();
+        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player);
     }
 
     std::string actName = GetBiomeName(GetBiomeForAct(_currentAct));
@@ -552,8 +433,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _pickups.clear();
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
-    _effects.clear();
-    _floatingTexts.clear();
+    _vfx.Clear();
     _cyclopsLasers.clear();
     _lavaBalls.clear();
     ClearBossSupportAdds();
@@ -592,8 +472,13 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _biomeTransitionTimer = 0.f;
     ApplyBiome(nextBiome);
     PopulatePropsForBiome(nextBiome);
-    BuildNavigationGrid();
-    _navRefreshTimer = 0.f;
+    {
+        std::vector<Rectangle> propRects;
+        propRects.reserve(_props.size());
+        for (auto& prop : _props)
+            propRects.push_back(prop.GetCollisionRec());
+        _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
+    }
 
     _waveStarting = false;
     _waveIntroTimer = 0.f;
@@ -625,12 +510,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
         _roomClearPending = true;
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shopNpcPos    = { mapW * 0.5f, mapH * 0.5f };
-        _shopNearNpc   = false;
-        _shopTab       = 0;
-        _shopRerollCost = 100;
-        _shopDialogue  = "Welcome to Zeph's Wares! What do you need?";
-        GenerateShopInventory();
+        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player);
     }
     else if (type == RoomType::Rest)
     {
@@ -870,8 +750,13 @@ void Engine::EnterMapRoom(int idx)
     {
         // Same biome — re-randomise prop layout so every room feels distinct.
         PopulatePropsForBiome(_currentBiome);
-        BuildNavigationGrid();
-        _navRefreshTimer = 0.f;   // force distance-field recompute next frame
+        {
+            std::vector<Rectangle> propRects;
+            propRects.reserve(_props.size());
+            for (auto& prop : _props)
+                propRects.push_back(prop.GetCollisionRec());
+            _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
+        }
 
         // Most room-to-room transitions should feel immediate. For same-biome
         // rooms we start the encounter right away instead of pausing behind
@@ -1225,7 +1110,7 @@ void Engine::Update(float dt)
         break;
 
     case GameState::Shop:
-        UpdateShop();
+        if (_shop.Update(_player)) _gameState = GameState::Play;
         break;
 
     case GameState::Map:
@@ -1342,7 +1227,7 @@ void Engine::UpdateGamePlay(float dt)
             (castType == Character::CastType::FireSpread)     ? AbilityType::FireSpread :
             (castType == Character::CastType::IceSpread)      ? AbilityType::IceSpread  :
                                                                  AbilityType::ElectricSpread;
-        SpawnCastEffect(castType);
+        _vfx.SpawnCastEffect(castType, _player.GetCastOrigin(), _player.GetFacingDirection());
         StopSound(_fireballCastSound);
         PlaySound(_fireballCastSound);
         SpawnSpreadBurst(element);
@@ -1370,7 +1255,7 @@ void Engine::UpdateGamePlay(float dt)
             (element == AbilityType::FireBolt)     ? Character::CastType::FireSpread :
             (element == AbilityType::IceBolt)      ? Character::CastType::IceSpread  :
                                                      Character::CastType::ElectricSpread;
-        SpawnCastEffect(effectType);
+        _vfx.SpawnCastEffect(effectType, _player.GetCastOrigin(), _player.GetFacingDirection());
         StopSound(_fireballCastSound);
         PlaySound(_fireballCastSound);
         SpawnBolt(element);
@@ -1419,7 +1304,7 @@ void Engine::UpdateGamePlay(float dt)
     else
     {
         _gameTimer += dt;
-        ApplyCompletedNavigationRefresh();
+        _nav.ApplyPendingRefresh();
 
         // Timed heal drops — boss fights and non-combat rooms suppress this.
         if (_currentRoomType != RoomType::Rest  &&
@@ -1582,40 +1467,7 @@ void Engine::UpdateGamePlay(float dt)
         // ── Store room — Zeph NPC logic ───────────────────────────────────
         if (_currentRoomType == RoomType::Store)
         {
-            // Collision push (MTV against a 40×60 world-unit box)
-            const float nHalfW = 20.f, nHalfH = 30.f;
-            Rectangle npcRect = { _shopNpcPos.x - nHalfW, _shopNpcPos.y - nHalfH,
-                                   nHalfW * 2.f, nHalfH * 2.f };
-            Rectangle playerRect = _player.GetCollisionRec();
-            if (CheckCollisionRecs(npcRect, playerRect))
-            {
-                float overlapX = std::min(playerRect.x + playerRect.width,  npcRect.x + npcRect.width)
-                               - std::max(playerRect.x, npcRect.x);
-                float overlapY = std::min(playerRect.y + playerRect.height, npcRect.y + npcRect.height)
-                               - std::max(playerRect.y, npcRect.y);
-                Vector2 pp = _player.GetWorldPos();
-                if (overlapX < overlapY)
-                {
-                    float dir = (playerRect.x + playerRect.width * 0.5f < npcRect.x + npcRect.width * 0.5f) ? -1.f : 1.f;
-                    _player.SetWorldPos({ pp.x + dir * overlapX, pp.y });
-                }
-                else
-                {
-                    float dir = (playerRect.y + playerRect.height * 0.5f < npcRect.y + npcRect.height * 0.5f) ? -1.f : 1.f;
-                    _player.SetWorldPos({ pp.x, pp.y + dir * overlapY });
-                }
-            }
-
-            // Proximity check
-            float dist = Vector2Distance(_player.GetWorldPos(), _shopNpcPos);
-            _shopNearNpc = (dist < 130.f);
-
-            if (_shopNearNpc && IsKeyPressed(KEY_E))
-            {
-                _shopDialogue = "Welcome to Zeph's Wares! What do you need?";
-                _shopTab      = 0;
-                _gameState    = GameState::Shop;
-            }
+            if (_shop.UpdateNpc(_player)) _gameState = GameState::Shop;
         }
         else if (!_roomClearPending && GetActiveEnemyCount() == 0)
         {
@@ -1645,16 +1497,8 @@ void Engine::UpdateGamePlay(float dt)
             _gameState              = GameState::ExpTally;
         }
 
-        _navRefreshTimer -= dt;
         Vector2 playerFeet = _player.GetFeetWorldPos();
-        int playerCol = ClampInt((int)(playerFeet.x / _navCellSize), 0, std::max(0, _navCols - 1));
-        int playerRow = ClampInt((int)(playerFeet.y / _navCellSize), 0, std::max(0, _navRows - 1));
-        int playerNavIndex = (_navCols > 0 && _navRows > 0) ? GetClosestOpenNavigationIndex(playerCol, playerRow) : -1;
-        if (!_navRefreshInFlight && (_navRefreshTimer <= 0.f || playerNavIndex != _lastPlayerNavIndex))
-        {
-            RefreshNavigationField();
-            _navRefreshTimer = _navRefreshInterval;
-        }
+        _nav.TickRefresh(dt, playerFeet);
 
         std::vector<Vector2> propCenters;
         propCenters.reserve(_props.size());
@@ -1674,13 +1518,13 @@ void Engine::UpdateGamePlay(float dt)
                 // Boss pathing always comes from the A* helper so large enemies
                 // can route around pillars consistently instead of only
                 // pathing when line of sight is already broken.
-                navigationTarget = GetAStarTarget(enemy->GetWorldPos(), playerFeet);
+                navigationTarget = _nav.GetAStarTarget(enemy->GetWorldPos(), playerFeet);
                 hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
             }
             else if (!enemy->UsesDirectPursuit() &&
-                !HasLineOfSight(enemy->GetWorldPos(), playerFeet))
+                !_nav.HasLineOfSight(enemy->GetWorldPos(), playerFeet))
             {
-                navigationTarget = GetNavigationTarget(enemy->GetWorldPos(), playerFeet);
+                navigationTarget = _nav.GetTarget(enemy->GetWorldPos(), playerFeet);
                 hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
             }
 
@@ -1735,7 +1579,7 @@ void Engine::UpdateGamePlay(float dt)
         HandlePlayerMeleeDamage();
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
-        UpdateEffects(dt);
+        _vfx.Update(dt);
         UpdateEnemyCount(dt);
         UpdateBossSupportRespawns(dt);
         UpdateCyclopsLasers(dt);
@@ -1761,7 +1605,7 @@ void Engine::UpdateGamePlay(float dt)
 
     int healEffectsToSpawn = _player.ConsumeHealEffectRequests();
     for (int i = 0; i < healEffectsToSpawn; ++i)
-        SpawnHealEffect();
+        _vfx.SpawnHealEffect();
 
     HandleCollisions();
 
@@ -1898,7 +1742,7 @@ void Engine::Draw()
 
         DrawCyclopsLasers(worldOffset);
 
-        DrawEffects(worldOffset);
+        _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
 
         for (auto& enemy : _enemies)
         {
@@ -2011,7 +1855,7 @@ void Engine::Draw()
 
     case GameState::Shop:
     {
-        DrawShop();
+        _shop.Draw(_player);
         break;
     }
 
@@ -2276,7 +2120,7 @@ void Engine::DrawWorld()
 
     DrawCyclopsLasers(worldOffset);
 
-    DrawEffects(worldOffset);
+    _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
 
     // Depth sort: props whose midpoint is above the player's feet are drawn
     // after the player (player walks behind their top half / canopy).
@@ -2370,59 +2214,9 @@ void Engine::DrawWorld()
 
     // ── Shop NPC (Zeph) ──────────────────────────────────────────────────────
     if (_currentRoomType == RoomType::Store)
-    {
-        const float sw2 = GetScreenWidth()  * 0.5f;
-        const float sh2 = GetScreenHeight() * 0.5f;
-        float sx = _shopNpcPos.x + worldOffset.x + sw2;
-        float sy = _shopNpcPos.y + worldOffset.y + sh2;
-        const float nW = 40.f, nH = 60.f;
+        _shop.DrawNpc(worldOffset);
 
-        DrawRectangle((int)(sx - nW * 0.5f), (int)(sy - nH * 0.5f),
-                      (int)nW, (int)nH, ORANGE);
-        DrawRectangleLines((int)(sx - nW * 0.5f), (int)(sy - nH * 0.5f),
-                           (int)nW, (int)nH, Color{200, 120, 0, 255});
-
-        const char* nameplate = "Zeph";
-        int npFs = 16, npW = MeasureText(nameplate, npFs);
-        DrawRectangle((int)(sx - npW * 0.5f - 5), (int)(sy - nH * 0.5f - 24),
-                      npW + 10, 20, Fade(BLACK, 0.6f));
-        DrawText(nameplate, (int)(sx - npW * 0.5f),
-                 (int)(sy - nH * 0.5f - 22), npFs, GOLD);
-
-        if (_shopNearNpc)
-        {
-            const char* prompt = "[E] Talk";
-            int prFs = 18, prW = MeasureText(prompt, prFs);
-            DrawRectangle((int)(sx - prW * 0.5f - 6), (int)(sy - nH * 0.5f - 52),
-                          prW + 12, 24, Fade(BLACK, 0.70f));
-            DrawText(prompt, (int)(sx - prW * 0.5f),
-                     (int)(sy - nH * 0.5f - 50), prFs, RAYWHITE);
-        }
-    }
-
-    // Floating damage numbers — cull expired then draw remaining
-    {
-        float now = (float)GetTime();
-        _floatingTexts.erase(
-            std::remove_if(_floatingTexts.begin(), _floatingTexts.end(),
-                [now](const FloatingText& ft)
-                { return now - ft.spawnTime >= FloatingText::kLifetime; }),
-            _floatingTexts.end());
-
-        const float sw2 = GetScreenWidth()  / 2.f;
-        const float sh2 = GetScreenHeight() / 2.f;
-        for (const auto& ft : _floatingTexts)
-        {
-            float t     = (now - ft.spawnTime) / FloatingText::kLifetime;
-            float yOff  = -55.f * t;
-            float screenX = ft.worldPos.x + worldOffset.x + sw2;
-            float screenY = ft.worldPos.y + worldOffset.y + sh2 + yOff;
-            const char* txt = TextFormat("%d", ft.value);
-            int   tw    = MeasureText(txt, 22);
-            float alpha = 1.f - t;
-            DrawText(txt, (int)(screenX - tw / 2.f), (int)screenY, 22, Fade(ft.color, alpha));
-        }
-    }
+    _vfx.DrawFloatingTexts(worldOffset);
 }
 
 void Engine::DrawHUD()
@@ -4817,8 +4611,8 @@ void Engine::HandlePlayerMeleeDamage()
         {
             int dmg = _player.GetMeleeDamage();
             enemy->TakeDamage(dmg, _player.GetWorldPos());
-            SpawnFloatingText(enemy->GetWorldPos(), dmg, YELLOW);
-            SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
+            _vfx.SpawnFloatingText(enemy->GetWorldPos(), dmg, YELLOW);
+            _vfx.SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
             hitAny = true;
         }
     }
@@ -5130,159 +4924,6 @@ void Engine::DrawUltimateBlasts(Vector2 worldOffset)
     }
 }
 
-void Engine::UpdateEffects(float dt)
-{
-    for (auto& effect : _effects)
-    {
-        if (!effect.active)
-            continue;
-
-        effect.runningTime += dt;
-        if (effect.runningTime >= effect.frameTime)
-        {
-            effect.runningTime = 0.f;
-            effect.frame++;
-
-            if (effect.frame >= effect.frameCount)
-                effect.active = false;
-        }
-    }
-
-    _effects.erase(
-        std::remove_if(_effects.begin(), _effects.end(),
-            [](const AnimatedEffect& effect) { return !effect.active; }),
-        _effects.end());
-}
-
-void Engine::DrawEffects(Vector2 worldOffset)
-{
-    for (const auto& effect : _effects)
-    {
-        if (!effect.active || effect.texture == nullptr || effect.texture->id == 0)
-            continue;
-
-        Vector2 worldPos = effect.followPlayer
-            ? (effect.followPlayerCenter
-                ? Vector2Add(_player.GetWorldPos(), Vector2{ effect.offset.x, effect.offset.y })
-                : Vector2Add(_player.GetCastOrigin(), Vector2{ effect.offset.x, effect.offset.y }))
-            : effect.worldPos;
-
-        Vector2 screenPos = Vector2Add(worldPos, worldOffset);
-        screenPos.x += GetScreenWidth() / 2.f;
-        screenPos.y += GetScreenHeight() / 2.f;
-
-        float rotation = atan2f(effect.direction.y, effect.direction.x) * RAD2DEG;
-        Rectangle source = GetAnimationFrameRect(*effect.texture, effect.frameWidth, effect.frameHeight, effect.frame);
-        Rectangle dest{
-            screenPos.x,
-            screenPos.y,
-            effect.frameWidth * effect.scale,
-            effect.frameHeight * effect.scale
-        };
-
-        DrawTexturePro(*effect.texture, source, dest,
-            Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, effect.tint);
-    }
-}
-
-void Engine::SpawnCastEffect(Character::CastType castType)
-{
-    AnimatedEffect effect{};
-    effect.followPlayer = true;
-    effect.worldPos = _player.GetCastOrigin();
-    effect.direction = _player.GetFacingDirection();
-    effect.active = true;
-
-    switch (castType)
-    {
-    case Character::CastType::FireSpread:
-        effect.texture = &_fireballCastTex;
-        effect.frameCount = 8;
-        effect.scale = 4.f;
-        break;
-    case Character::CastType::IceSpread:
-        effect.texture = &_iceHitTex;
-        effect.frameCount = 8;
-        effect.scale = 4.f;
-        effect.tint = Color{ 100, 200, 255, 255 };
-        break;
-    case Character::CastType::ElectricSpread:
-        effect.texture = &_lightningCastTex;
-        effect.frameCount = 8;
-        effect.scale = 4.f;
-        break;
-    default:
-        effect.active = false;
-        break;
-    }
-
-    if (effect.active)
-        _effects.push_back(effect);
-}
-
-void Engine::SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vector2 direction)
-{
-    AnimatedEffect effect{};
-    effect.followPlayer = false;
-    effect.worldPos = worldPos;
-    effect.direction = direction;
-    effect.active = true;
-    effect.frameTime = 1.f / 20.f;
-
-    switch (castType)
-    {
-    case Character::CastType::None:
-        effect.texture = &_genericHitTex;
-        effect.frameCount = 5;
-        effect.scale = 3.5f;
-        effect.tint = Color{ 255, 150, 150, 255 };
-        break;
-
-    case Character::CastType::FireSpread:
-        effect.texture = &_fireballHitTex;
-        effect.frameCount = 6;
-        effect.scale = 4.f;
-        effect.tint = WHITE;
-        break;
-    case Character::CastType::IceSpread:
-        effect.texture = &_iceHitTex;
-        effect.frameCount = 5;
-        effect.scale = 4.f;
-        effect.tint = Color{ 100, 200, 255, 255 };
-        break;
-    case Character::CastType::ElectricSpread:
-        effect.texture = &_genericHitTex;   // Hit03.png — lightning impact sprite
-        effect.frameCount = 5;
-        effect.scale = 4.f;
-        effect.tint = WHITE;
-        break;
-
-    default:
-        effect.active = false;
-        break;
-    }
-
-    if (effect.active)
-        _effects.push_back(effect);
-}
-
-void Engine::SpawnHealEffect()
-{
-    AnimatedEffect effect{};
-    effect.texture = &_healEffectTex;
-    effect.followPlayer = true;
-    effect.followPlayerCenter = true;
-    effect.offset = Vector2{ 0.f, -20.f };
-    effect.direction = Vector2{ 1.f, 0.f };
-    effect.tint = WHITE;
-    effect.frameCount = 13;
-    effect.frameTime = 1.f / 16.f;
-    effect.scale = 4.5f;
-    effect.active = (_healEffectTex.id != 0);
-
-    if (effect.active)
-        _effects.push_back(effect);
-}
 
 void Engine::UpdateSpreadProjectiles(float dt)
 {
@@ -5312,8 +4953,8 @@ void Engine::UpdateSpreadProjectiles(float dt)
             if (p.x < 76.f || p.x > mapW - 96.f ||
                 p.y < 42.f || p.y > mapH - 320.f)
             {
-                SpawnHitEffect(elementToCastType(projectile.GetElement()),
-                               projectile.GetWorldPos(), projectile.GetDirection());
+                _vfx.SpawnHitEffect(elementToCastType(projectile.GetElement()),
+                                    projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 continue;
             }
@@ -5323,8 +4964,8 @@ void Engine::UpdateSpreadProjectiles(float dt)
         {
             if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
             {
-                SpawnHitEffect(elementToCastType(projectile.GetElement()),
-                               projectile.GetWorldPos(), projectile.GetDirection());
+                _vfx.SpawnHitEffect(elementToCastType(projectile.GetElement()),
+                                    projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 break;
             }
@@ -5357,7 +4998,7 @@ void Engine::UpdateSpreadProjectiles(float dt)
             {
                 Color dmgColor = (element == AbilityType::IceSpread   || element == AbilityType::IceBolt)      ? SKYBLUE  :
                                  (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt) ? YELLOW   : ORANGE;
-                SpawnFloatingText(enemy->GetWorldPos(), hitDamage, dmgColor);
+                _vfx.SpawnFloatingText(enemy->GetWorldPos(), hitDamage, dmgColor);
             }
 
             // Per-element on-hit effect — same for both spread and bolt of the same element
@@ -5379,7 +5020,7 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 hitEffectType = Character::CastType::ElectricSpread;
             }
 
-            SpawnHitEffect(hitEffectType, projectile.GetWorldPos(), projectile.GetDirection());
+            _vfx.SpawnHitEffect(hitEffectType, projectile.GetWorldPos(), projectile.GetDirection());
             projectile.Destroy();
             TriggerScreenShake(4.f, 0.05f);
             StopSound(_explosionSound);
@@ -5392,16 +5033,6 @@ void Engine::UpdateSpreadProjectiles(float dt)
         std::remove_if(_spreadProjectiles.begin(), _spreadProjectiles.end(),
             [](const SpreadProjectile& p) { return !p.IsActive(); }),
         _spreadProjectiles.end());
-}
-
-void Engine::SpawnFloatingText(Vector2 worldPos, int value, Color color)
-{
-    FloatingText ft;
-    ft.worldPos  = worldPos;
-    ft.value     = value;
-    ft.color     = color;
-    ft.spawnTime = (float)GetTime();
-    _floatingTexts.push_back(ft);
 }
 
 void Engine::SpawnEnemyDrop(Vector2 worldPos)
@@ -5828,10 +5459,7 @@ void Engine::ApplyBiome(Biome biome)
     // The active map swaps between dungeon and forest. ForestMap is authored at
     // half the pixel dimensions of the dungeon map, so it uses 2x the scale to
     // preserve the same playable world size and camera feel.
-    if (_navRefreshJob.valid())
-        _navRefreshJob.wait();
-    _navRefreshInFlight = false;
-    _lastPlayerNavIndex = -1;
+    _nav.CancelAndReset();
 
     if (_map.id != 0)
         UnloadTexture(_map);
@@ -5852,12 +5480,17 @@ void Engine::ApplyBiome(Biome biome)
 
     _currentBiome = biome;
     PopulatePropsForBiome(biome);
-    BuildNavigationGrid();
+    {
+        std::vector<Rectangle> propRects;
+        propRects.reserve(_props.size());
+        for (auto& prop : _props)
+            propRects.push_back(prop.GetCollisionRec());
+        _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
+    }
 
     // Biome swaps happen between waves, so recentering the player gives them
     // a clean neutral start in the new arena before enemies spawn in.
     _player.SetWorldPos(Vector2{ _map.width * _mapScale * 0.5f, _map.height * _mapScale * 0.5f });
-    _navRefreshTimer = 0.f;
 }
 
 void Engine::UpdateBiomeTransition(float dt)
@@ -5875,10 +5508,7 @@ void Engine::UpdateBiomeTransition(float dt)
         currentElapsed >= kBiomeFadeOutDuration)
     {
         ApplyBiome(_pendingBiome);
-        RefreshNavigationField();
-        if (_navRefreshJob.valid())
-            _navRefreshJob.wait();
-        ApplyCompletedNavigationRefresh();
+        _nav.RefreshSync(_player.GetFeetWorldPos());
         _biomeTransitionSwapped = true;
     }
 
@@ -5901,347 +5531,6 @@ float Engine::GetBiomeTransitionAlpha() const
 
     float fadeInElapsed = elapsed - kBiomeFadeOutDuration;
     return 1.f - std::min(1.f, fadeInElapsed / kBiomeFadeInDuration);
-}
-
-void Engine::BuildNavigationGrid()
-{
-    float mapW = _map.width * _mapScale;
-    float mapH = _map.height * _mapScale;
-
-    _navCols = std::max(1, (int)std::ceil(mapW / _navCellSize));
-    _navRows = std::max(1, (int)std::ceil(mapH / _navCellSize));
-    _navBlocked.assign(_navCols * _navRows, false);
-    _navDistance.assign(_navCols * _navRows, std::numeric_limits<int>::max());
-
-    for (int row = 0; row < _navRows; ++row)
-    {
-        for (int col = 0; col < _navCols; ++col)
-        {
-            Rectangle cellRect{
-                col * _navCellSize,
-                row * _navCellSize,
-                _navCellSize,
-                _navCellSize
-            };
-
-            for (auto& prop : _props)
-            {
-                // Inflate the prop's collision rect by half a nav cell on every
-                // side. This ensures enemies route around props with a clearance
-                // margin rather than hugging the edge of the hitbox and wedging.
-                Rectangle rec = prop.GetCollisionRec();
-                const float pad = _navCellSize * 0.5f;
-                Rectangle inflated{ rec.x - pad, rec.y - pad,
-                                    rec.width + pad * 2.f, rec.height + pad * 2.f };
-                if (CheckCollisionRecs(cellRect, inflated))
-                {
-                    _navBlocked[GetNavigationIndex(col, row)] = true;
-                    break;
-                }
-            }
-        }
-    }
-}
-
-bool Engine::IsNavigationCellBlocked(int col, int row) const
-{
-    if (col < 0 || col >= _navCols || row < 0 || row >= _navRows)
-        return true;
-    return _navBlocked[GetNavigationIndex(col, row)];
-}
-
-int Engine::GetNavigationIndex(int col, int row) const
-{
-    return row * _navCols + col;
-}
-
-bool Engine::FindNearestOpenCell(int& col, int& row) const
-{
-    if (!IsNavigationCellBlocked(col, row))
-        return true;
-
-    for (int radius = 1; radius < std::max(_navCols, _navRows); ++radius)
-    {
-        for (int dc = -radius; dc <= radius; ++dc)
-        {
-            for (int dr = -radius; dr <= radius; ++dr)
-            {
-                if (std::abs(dc) != radius && std::abs(dr) != radius)
-                    continue;
-
-                int nc = col + dc;
-                int nr = row + dr;
-
-                if (!IsNavigationCellBlocked(nc, nr))
-                {
-                    col = nc;
-                    row = nr;
-                    return true;
-                }
-            }
-        }
-    }
-
-    return false;
-}
-
-int Engine::GetClosestOpenNavigationIndex(int col, int row) const
-{
-    int nextCol = ClampInt(col, 0, std::max(0, _navCols - 1));
-    int nextRow = ClampInt(row, 0, std::max(0, _navRows - 1));
-
-    if (!FindNearestOpenCell(nextCol, nextRow))
-        return -1;
-
-    return GetNavigationIndex(nextCol, nextRow);
-}
-
-bool Engine::HasLineOfSight(Vector2 start, Vector2 end) const
-{
-    Vector2 dir = Vector2Subtract(end, start);
-    float dist = Vector2Length(dir);
-
-    if (dist < 0.01f)
-        return true;
-
-    dir = Vector2Normalize(dir);
-
-    // Perpendicular offset for tube sampling — wide enough to catch an enemy
-    // approaching at an angle whose body overlaps a blocked cell that the
-    // center line just misses.
-    Vector2 perp{ -dir.y, dir.x };
-    const float tubeHalfWidth = _navCellSize * 0.4f;
-    float step = _navCellSize * 0.5f;
-
-    for (float t = 0.f; t < dist; t += step)
-    {
-        Vector2 center = Vector2Add(start, Vector2Scale(dir, t));
-
-        // Check center plus left and right offsets
-        for (float side : { 0.f, tubeHalfWidth, -tubeHalfWidth })
-        {
-            Vector2 point = Vector2Add(center, Vector2Scale(perp, side));
-            int col = (int)(point.x / _navCellSize);
-            int row = (int)(point.y / _navCellSize);
-            if (IsNavigationCellBlocked(col, row))
-                return false;
-        }
-    }
-
-    return true;
-}
-
-Vector2 Engine::GetNavigationTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const
-{
-    if (_navCols <= 0 || _navRows <= 0)
-        return targetWorldPos;
-
-    int startCol = ClampInt((int)(startWorldPos.x / _navCellSize), 0, _navCols - 1);
-    int startRow = ClampInt((int)(startWorldPos.y / _navCellSize), 0, _navRows - 1);
-
-    if (!FindNearestOpenCell(startCol, startRow))
-        return targetWorldPos;
-
-    static const std::array<std::pair<int,int>, 8> offsets{{
-        {1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}
-    }};
-
-    int startIndex = GetNavigationIndex(startCol, startRow);
-    int bestIndex  = startIndex;
-    int bestCost   = _navDistance[startIndex];
-
-    for (int i = 0; i < (int)offsets.size(); ++i)
-    {
-        int dc = offsets[i].first;
-        int dr = offsets[i].second;
-        int nc = startCol + dc;
-        int nr = startRow + dr;
-
-        if (IsNavigationCellBlocked(nc, nr))
-            continue;
-
-        if (dc != 0 && dr != 0)
-        {
-            if (IsNavigationCellBlocked(startCol + dc, startRow) ||
-                IsNavigationCellBlocked(startCol, startRow + dr))
-                continue;
-        }
-
-        int nextIndex = GetNavigationIndex(nc, nr);
-        int nextCost  = _navDistance[nextIndex];
-
-        if (nextCost < bestCost)
-        {
-            bestCost  = nextCost;
-            bestIndex = nextIndex;
-        }
-    }
-
-    if (bestIndex == startIndex || bestCost == std::numeric_limits<int>::max())
-        return targetWorldPos;
-
-    int nextCol = bestIndex % _navCols;
-    int nextRow = bestIndex / _navCols;
-
-    return Vector2{
-        nextCol * _navCellSize + _navCellSize * 0.5f,
-        nextRow * _navCellSize + _navCellSize * 0.5f
-    };
-}
-
-Vector2 Engine::GetAStarTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const
-{
-    if (_navCols <= 0 || _navRows <= 0)
-        return targetWorldPos;
-
-    int startCol = ClampInt((int)(startWorldPos.x / _navCellSize), 0, _navCols - 1);
-    int startRow = ClampInt((int)(startWorldPos.y / _navCellSize), 0, _navRows - 1);
-    int goalCol  = ClampInt((int)(targetWorldPos.x / _navCellSize), 0, _navCols - 1);
-    int goalRow  = ClampInt((int)(targetWorldPos.y / _navCellSize), 0, _navRows - 1);
-
-    // Snap start and goal to the nearest open cells in case they sit inside a blocked tile.
-    if (!FindNearestOpenCell(startCol, startRow))
-        return targetWorldPos;
-    FindNearestOpenCell(goalCol, goalRow);
-
-    int startIdx = GetNavigationIndex(startCol, startRow);
-    int goalIdx  = GetNavigationIndex(goalCol,  goalRow);
-
-    if (startIdx == goalIdx)
-        return targetWorldPos;
-
-    const int total = _navCols * _navRows;
-
-    struct Node
-    {
-        int f, g, idx;
-        bool operator>(const Node& o) const { return f > o.f; }
-    };
-
-    std::vector<int>  gScore(total, INT_MAX);
-    std::vector<int>  parent(total, -1);
-    std::vector<bool> closed(total, false);
-    std::priority_queue<Node, std::vector<Node>, std::greater<Node>> open;
-
-    // Octile heuristic (integer scaled x10) — admissible for 8-directional movement.
-    auto heuristic = [&](int col, int row) -> int
-    {
-        int dc = std::abs(col - goalCol);
-        int dr = std::abs(row - goalRow);
-        return 10 * (dc + dr) + (14 - 20) * std::min(dc, dr);  // = 10*(dc+dr) - 6*min
-    };
-
-    gScore[startIdx] = 0;
-    open.push({ heuristic(startCol, startRow), 0, startIdx });
-
-    static constexpr int dc[] = { 1, -1,  0,  0,  1,  1, -1, -1 };
-    static constexpr int dr[] = { 0,  0,  1, -1,  1, -1,  1, -1 };
-    static constexpr int cost[]= {10, 10, 10, 10, 14, 14, 14, 14 };
-
-    bool found = false;
-    while (!open.empty())
-    {
-        Node cur = open.top();
-        open.pop();
-
-        if (cur.idx == goalIdx) { found = true; break; }
-        if (closed[cur.idx]) continue;
-        closed[cur.idx] = true;
-
-        int col = cur.idx % _navCols;
-        int row = cur.idx / _navCols;
-
-        for (int i = 0; i < 8; ++i)
-        {
-            int nc = col + dc[i];
-            int nr = row + dr[i];
-            if (nc < 0 || nc >= _navCols || nr < 0 || nr >= _navRows) continue;
-
-            int nIdx = GetNavigationIndex(nc, nr);
-            if (_navBlocked[nIdx] || closed[nIdx]) continue;
-
-            // For diagonals, require both shared cardinal neighbours to be open
-            // so the path doesn't clip through prop corners.
-            if (i >= 4 && (IsNavigationCellBlocked(col + dc[i], row) ||
-                           IsNavigationCellBlocked(col, row + dr[i])))
-                continue;
-
-            int tentG = gScore[cur.idx] + cost[i];
-            if (tentG < gScore[nIdx])
-            {
-                parent[nIdx] = cur.idx;
-                gScore[nIdx] = tentG;
-                open.push({ tentG + heuristic(nc, nr), tentG, nIdx });
-            }
-        }
-    }
-
-    if (!found)
-        return targetWorldPos;
-
-    // Walk the parent chain back to find the first step after the start cell.
-    int step = goalIdx;
-    while (parent[step] != -1 && parent[step] != startIdx)
-        step = parent[step];
-
-    if (parent[step] == -1)
-        return targetWorldPos;
-
-    int stepCol = step % _navCols;
-    int stepRow = step / _navCols;
-
-    return Vector2{
-        stepCol * _navCellSize + _navCellSize * 0.5f,
-        stepRow * _navCellSize + _navCellSize * 0.5f
-    };
-}
-
-void Engine::RefreshNavigationField()
-{
-    if (_navCols <= 0 || _navRows <= 0 || _navRefreshInFlight)
-        return;
-
-    Vector2 playerFeet = _player.GetFeetWorldPos();
-    std::vector<bool> blockedCopy = _navBlocked;
-    int cols = _navCols;
-    int rows = _navRows;
-    float cellSize = _navCellSize;
-
-#ifdef __EMSCRIPTEN__
-    // The first web build keeps navigation single-threaded so it does not rely
-    // on browser pthread support. The desktop build still uses the async job.
-    NavigationRefreshResult result = BuildNavigationRefreshResult(blockedCopy, cols, rows, cellSize, playerFeet);
-    _navDistance = std::move(result.distanceField);
-    _lastPlayerNavIndex = result.playerNavIndex;
-#else
-    // Build the shared flow field off-thread using copies of the immutable
-    // grid data for this refresh. Enemy movement still consumes the finished
-    // field on the main thread, so gameplay mutation stays single-threaded.
-    _navRefreshJob = std::async(std::launch::async,
-        [blocked = std::move(blockedCopy), cols, rows, cellSize, playerFeet]() mutable
-        {
-            return BuildNavigationRefreshResult(blocked, cols, rows, cellSize, playerFeet);
-        });
-    _navRefreshInFlight = true;
-#endif
-}
-
-void Engine::ApplyCompletedNavigationRefresh()
-{
-#ifdef __EMSCRIPTEN__
-    return;
-#else
-    if (!_navRefreshInFlight || !_navRefreshJob.valid())
-        return;
-
-    if (_navRefreshJob.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
-        return;
-
-    NavigationRefreshResult result = _navRefreshJob.get();
-    _navDistance = std::move(result.distanceField);
-    _lastPlayerNavIndex = result.playerNavIndex;
-    _navRefreshInFlight = false;
-#endif
 }
 
 void Engine::RespawnOutOfBoundsEnemies()
@@ -6295,11 +5584,11 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
     const float playerSafeDistance = 260.f;
 
     // Reject if the spawn cell or any neighbour is blocked by a prop on the nav grid
-    int col = (int)(pos.x / _navCellSize);
-    int row = (int)(pos.y / _navCellSize);
+    int col = (int)(pos.x / _nav.GetCellSize());
+    int row = (int)(pos.y / _nav.GetCellSize());
     for (int dc = -1; dc <= 1; dc++)
         for (int dr = -1; dr <= 1; dr++)
-            if (IsNavigationCellBlocked(col + dc, row + dr))
+            if (_nav.IsCellBlocked(col + dc, row + dr))
                 return false;
 
     for (auto& prop : _props)
@@ -6326,14 +5615,9 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
 
 void Engine::ResetRunState()
 {
-    if (_navRefreshJob.valid())
-        _navRefreshJob.wait();
-
-    _navRefreshInFlight = false;
+    _nav.CancelAndReset();
     _wave          = 0;
     _enemiesKilled = 0;
-    _navRefreshTimer = 0.f;
-    _lastPlayerNavIndex = -1;
     _gameTimer = 0.f;
     _playerDying = false;
     _awaitingNameEntry = false;
@@ -6405,7 +5689,7 @@ void Engine::ResetRunState()
     _lavaBalls.clear();
     _cyclopsLasers.clear();
     _pickups.clear();
-    _effects.clear();
+    _vfx.Clear();
     _player.Init();
     _currentBiome = GetBiomeForAct(1);   // no initial biome transition
     _pendingBiome = _currentBiome;
@@ -6421,10 +5705,7 @@ void Engine::ResetRunState()
 
     _pickupSpawnTimer = kDefaultTimedPickupInterval;
 
-    RefreshNavigationField();
-    if (_navRefreshJob.valid())
-        _navRefreshJob.wait();
-    ApplyCompletedNavigationRefresh();
+    _nav.RefreshSync(_player.GetFeetWorldPos());
     GenerateActMap();  // builds the full act 1 node map; player clicks to start
 }
 
@@ -6857,7 +6138,7 @@ void Engine::UpdateCyclopsLasers(float dt)
 
                 int laserDmg = laser.GetDamage();
                 _player.TakeDamage(laserDmg, laser.GetWorldPos());
-                SpawnFloatingText(_player.GetWorldPos(), -laserDmg, RED);
+                _vfx.SpawnFloatingText(_player.GetWorldPos(), -laserDmg, RED);
                 laser.OnHitPlayer();
                 TriggerScreenShake(2.5f, 0.07f);
                 break;
@@ -6933,7 +6214,7 @@ void Engine::UpdateLavaBallProjectiles(float dt)
         {
             static constexpr int kLavaBallDamage = 2;
             _player.TakeDamage(kLavaBallDamage, projectile.GetWorldPos());
-            SpawnFloatingText(_player.GetWorldPos(), -kLavaBallDamage, RED);
+            _vfx.SpawnFloatingText(_player.GetWorldPos(), -kLavaBallDamage, RED);
             projectile.OnPlayerHit();
             if (projectile.IsFlying())
             {
@@ -7194,860 +6475,5 @@ void Engine::DrawTouchAbilityArc()
                 12, badgeColor);
         }
     }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ── Shop helpers (file-scope, not exposed in header) ─────────────────────
-// ═══════════════════════════════════════════════════════════════════════════
-
-static const char* ShopUpgradeName(UpgradeType t)
-{
-    switch (t)
-    {
-    case UpgradeType::AttackPower:      return "Attack Power";
-    case UpgradeType::AttackRange:      return "Attack Range";
-    case UpgradeType::MaxHealth:        return "Max Health";
-    case UpgradeType::MaxMana:          return "Max Mana";
-    case UpgradeType::Defense:          return "Defense";
-    case UpgradeType::MoveSpeed:        return "Move Speed";
-    case UpgradeType::IronConstitution: return "Iron Constitution";
-    case UpgradeType::SwiftFeet:        return "Swift Feet";
-    case UpgradeType::Ferocity:         return "Ferocity";
-    case UpgradeType::ArcaneMind:       return "Arcane Mind";
-    case UpgradeType::IronSkin:         return "Iron Skin";
-    case UpgradeType::BladeEdge:        return "Blade Edge";
-    case UpgradeType::WarGod:           return "War God";
-    case UpgradeType::Resilience:       return "Resilience";
-    case UpgradeType::BladeStorm:       return "Blade Storm";
-    case UpgradeType::Juggernaut:       return "Juggernaut";
-    case UpgradeType::ArcaneColossus:   return "Arcane Colossus";
-    default:                            return "Unknown";
-    }
-}
-
-static const char* ShopUpgradeDesc(UpgradeType t)
-{
-    switch (t)
-    {
-    case UpgradeType::AttackPower:      return "+10% attack";
-    case UpgradeType::AttackRange:      return "+10% range";
-    case UpgradeType::MaxHealth:        return "+10 max HP";
-    case UpgradeType::MaxMana:          return "+10 max MP";
-    case UpgradeType::Defense:          return "+5% defense";
-    case UpgradeType::MoveSpeed:        return "+5% speed";
-    case UpgradeType::IronConstitution: return "+25% max HP";
-    case UpgradeType::SwiftFeet:        return "+15% speed";
-    case UpgradeType::Ferocity:         return "+15% attack";
-    case UpgradeType::ArcaneMind:       return "+40 max mana";
-    case UpgradeType::IronSkin:         return "+8% defense";
-    case UpgradeType::BladeEdge:        return "+15% range";
-    case UpgradeType::WarGod:           return "+20% atk  +10% range";
-    case UpgradeType::Resilience:       return "+30% HP  heal 3";
-    case UpgradeType::BladeStorm:       return "+18% atk  +18% spd";
-    case UpgradeType::Juggernaut:       return "+20% HP  +8% def";
-    case UpgradeType::ArcaneColossus:   return "+50 mana  +15% atk";
-    default:                            return "";
-    }
-}
-
-static UpgradeRarity ShopUpgradeRarity(UpgradeType t)
-{
-    if (t <= UpgradeType::MoveSpeed)  return UpgradeRarity::Common;
-    if (t <= UpgradeType::BladeEdge)  return UpgradeRarity::Rare;
-    return UpgradeRarity::Epic;
-}
-
-static int ShopUpgradePrice(UpgradeType t)
-{
-    switch (ShopUpgradeRarity(t))
-    {
-    case UpgradeRarity::Common: return 30;
-    case UpgradeRarity::Rare:   return 60;
-    default:                    return 100;
-    }
-}
-
-static const char* ShopAbilityName(AbilityType t)
-{
-    switch (t)
-    {
-    case AbilityType::FireSpread:      return "Fire Spread";
-    case AbilityType::IceSpread:       return "Ice Spread";
-    case AbilityType::ElectricSpread:  return "Electric Spread";
-    case AbilityType::FireBolt:        return "Fire Bolt";
-    case AbilityType::IceBolt:         return "Ice Bolt";
-    case AbilityType::ElectricBolt:    return "Electric Bolt";
-    default:                           return "Ability";
-    }
-}
-
-static const char* ShopAbilityDesc(AbilityType t)
-{
-    switch (t)
-    {
-    case AbilityType::FireSpread:      return "8-way fire burst  2 MP";
-    case AbilityType::IceSpread:       return "8-way ice burst  2 MP";
-    case AbilityType::ElectricSpread:  return "8-way shock burst  2 MP";
-    case AbilityType::FireBolt:        return "Aimed fire bolt  4 MP";
-    case AbilityType::IceBolt:         return "Aimed ice bolt  4 MP";
-    case AbilityType::ElectricBolt:    return "Aimed shock bolt  4 MP";
-    default:                           return "";
-    }
-}
-
-static int ShopAbilityPrice(AbilityType t)
-{
-    switch (t)
-    {
-    case AbilityType::FireBolt:
-    case AbilityType::IceBolt:
-    case AbilityType::ElectricBolt:    return 75;
-    default:                           return 50;
-    }
-}
-
-static Color ShopRarityColor(UpgradeRarity r)
-{
-    switch (r)
-    {
-    case UpgradeRarity::Common: return Color{ 80, 80,  80, 255};
-    case UpgradeRarity::Rare:   return Color{ 55,100, 200, 255};
-    default:                    return Color{130, 45, 200, 255};
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ── GenerateShopInventory ─────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════
-
-void Engine::GenerateShopInventory()
-{
-    _shopInventory.clear();
-
-    static constexpr UpgradeType kStatUpgrades[] = {
-        UpgradeType::AttackPower, UpgradeType::AttackRange,
-        UpgradeType::MaxHealth,   UpgradeType::MaxMana,
-        UpgradeType::Defense,     UpgradeType::MoveSpeed,
-        UpgradeType::IronConstitution, UpgradeType::SwiftFeet,
-        UpgradeType::Ferocity,    UpgradeType::ArcaneMind,
-        UpgradeType::IronSkin,    UpgradeType::BladeEdge,
-        UpgradeType::WarGod,      UpgradeType::Resilience,
-        UpgradeType::BladeStorm,  UpgradeType::Juggernaut,
-        UpgradeType::ArcaneColossus
-    };
-    static constexpr AbilityType kShopAbilities[] = {
-        AbilityType::FireSpread,     AbilityType::IceSpread,     AbilityType::ElectricSpread,
-        AbilityType::FireBolt,       AbilityType::IceBolt,       AbilityType::ElectricBolt
-    };
-
-    // Build unowned ability pool
-    std::vector<ShopItem> abilityPool;
-    for (auto a : kShopAbilities)
-    {
-        bool owned = false;
-        for (int i = 0; i < _player.GetLearnedCount(); i++)
-            if (_player.GetLearnedAbility(i) == a) { owned = true; break; }
-        if (owned) continue;
-        ShopItem item;
-        item.isAbility   = true;
-        item.abilityType = a;
-        item.price       = ShopAbilityPrice(a);
-        abilityPool.push_back(item);
-    }
-
-    // Shuffle ability pool, pick exactly 2 (or however many are available)
-    for (int i = (int)abilityPool.size() - 1; i > 0; i--)
-        std::swap(abilityPool[i], abilityPool[GetRandomValue(0, i)]);
-    int abilitySlots = std::min((int)abilityPool.size(), 2);
-    for (int i = 0; i < abilitySlots; i++)
-        _shopInventory.push_back(abilityPool[i]);
-
-    // Build stat upgrade pool and shuffle it
-    std::vector<ShopItem> statPool;
-    for (auto u : kStatUpgrades)
-    {
-        ShopItem item;
-        item.isAbility   = false;
-        item.upgradeType = u;
-        item.price       = ShopUpgradePrice(u);
-        statPool.push_back(item);
-    }
-    for (int i = (int)statPool.size() - 1; i > 0; i--)
-        std::swap(statPool[i], statPool[GetRandomValue(0, i)]);
-
-    // Fill remaining 4 slots with stat upgrades
-    int statSlots = std::min((int)statPool.size(), 6 - abilitySlots);
-    for (int i = 0; i < statSlots; i++)
-        _shopInventory.push_back(statPool[i]);
-
-    // Shuffle the combined inventory so abilities don't always appear first
-    for (int i = (int)_shopInventory.size() - 1; i > 0; i--)
-        std::swap(_shopInventory[i], _shopInventory[GetRandomValue(0, i)]);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ── UpdateShop ────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════
-
-void Engine::UpdateShop()
-{
-    const float sw  = (float)GetScreenWidth();
-    const float sh  = (float)GetScreenHeight();
-    const float pad = 16.f;
-
-    Vector2 mouse   = GetMousePosition();
-    bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
-
-    // ── Layout (must match DrawShop exactly) ─────────────────────────────
-    static constexpr float kBorderDst_u = 32.f;
-    const float leftW  = sw * 0.30f;
-    const float leaveH = 48.f;
-    const float leaveY = sh - pad - leaveH;
-    const float dialH  = std::max(sh * 0.12f, kBorderDst_u * 2.f + 30.f);
-    const float dialY  = leaveY - pad * 0.5f - dialH;
-    const float shopX  = pad + leftW + pad;
-    const float shopY  = pad;
-    const float shopW  = sw - shopX - pad;
-    const float shopH  = dialY - pad * 0.5f - shopY;
-    const float iPad   = kBorderDst_u;
-
-    // ── Leave button ─────────────────────────────────────────────────────
-    const float leaveW  = 180.f;
-    const float rerollW = 200.f;
-    const float leaveX  = shopX + shopW * 0.5f + 8.f;
-    const float rerollX = shopX + shopW * 0.5f - rerollW - 8.f;
-    Rectangle leaveBtn  = { leaveX,  leaveY, leaveW,  leaveH };
-    Rectangle rerollBtn = { rerollX, leaveY, rerollW, leaveH };
-
-    if (clicked && CheckCollisionPointRec(mouse, leaveBtn))
-    {
-        _shopDialogue = "Safe travels, adventurer.";
-        _gameState    = GameState::Play;
-        return;
-    }
-    if (clicked && CheckCollisionPointRec(mouse, rerollBtn))
-    {
-        if (_player.GetGold() >= _shopRerollCost)
-        {
-            _player.AddGold(-_shopRerollCost);
-            _shopRerollCost += 50;
-            GenerateShopInventory();
-            _shopDialogue = "Fresh stock, just for you!";
-        }
-        else
-        {
-            _shopDialogue = "You don't have enough gold for a reroll!";
-        }
-        return;
-    }
-
-    // ── Tab buttons ───────────────────────────────────────────────────────
-    const float titleH = 46.f;
-    const float tabH   = 38.f;
-    const float tabW   = (shopW - iPad * 2.f) * 0.5f - 4.f;
-    const float tabY   = shopY + titleH;
-    Rectangle tabWares = { shopX + iPad,           tabY, tabW, tabH };
-    Rectangle tabAb    = { shopX + iPad + tabW + 8.f, tabY, tabW, tabH };
-
-    if (clicked && CheckCollisionPointRec(mouse, tabWares)) _shopTab = 0;
-    if (clicked && CheckCollisionPointRec(mouse, tabAb))    _shopTab = 1;
-
-    // ── Content area ──────────────────────────────────────────────────────
-    const float contentY = tabY + tabH + iPad;
-    const float contentH = shopH - titleH - tabH - iPad * 2.f;
-    const float contentW = shopW - iPad * 2.f;
-
-    if (_shopTab == 0)
-    {
-        // 2 rows × 3 cols of items
-        const float cols   = 3.f, rows = 2.f, gap = 10.f;
-        const float itemW  = (contentW - gap * (cols - 1.f)) / cols;
-        const float itemH  = (contentH - gap * (rows - 1.f)) / rows;
-        const float buyH   = std::min(30.f, itemH * 0.20f);
-
-        for (int idx = 0; idx < (int)_shopInventory.size(); idx++)
-        {
-            ShopItem& item = _shopInventory[idx];
-            if (item.purchased) continue;
-
-            int   col  = idx % 3;
-            int   row  = idx / 3;
-            float ix   = shopX + iPad + col * (itemW + gap);
-            float iy   = contentY + row * (itemH + gap);
-
-            Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
-            if (clicked && CheckCollisionPointRec(mouse, buyBtn))
-            {
-                if (_player.GetGold() >= item.price)
-                {
-                    _player.AddGold(-item.price);
-                    if (item.isAbility)
-                        _player.LearnAbility(item.abilityType);
-                    else
-                        _player.ApplyUpgrade(item.upgradeType);
-                    item.purchased   = true;
-                    _shopDialogue    = "Pleasure doing business with you!";
-                }
-                else
-                {
-                    _shopDialogue = "I'm sorry, it seems you're a bit short on gold...";
-                }
-            }
-        }
-    }
-    else
-    {
-        // Abilities tab — upgrade / remove rows
-        const float rowH   = std::min(70.f, contentH / (float)std::max(1, _player.GetLearnedCount()));
-        const float btnW   = std::min(100.f, contentW * 0.28f);
-        const float btnH   = std::min(28.f, rowH * 0.44f);
-        const float btnGap = 8.f;
-
-        for (int i = 0; i < _player.GetLearnedCount(); i++)
-        {
-            AbilityType ab   = _player.GetLearnedAbility(i);
-            float       ry   = contentY + i * rowH;
-            float       btnY2 = ry + rowH * 0.5f - btnH * 0.5f;
-
-            // Upgrade button
-            Rectangle upBtn = { shopX + iPad + contentW - btnW * 2.f - btnGap, btnY2, btnW, btnH };
-            if (clicked && CheckCollisionPointRec(mouse, upBtn))
-            {
-                if (_player.GetGold() >= 100)
-                {
-                    if (_player.CanUpgradeAbility(ab))
-                    {
-                        UpgradeType ut = UpgradeType::Count;
-                        switch (ab)
-                        {
-                        case AbilityType::FireSpread:     ut = UpgradeType::UpgradeFireSpread;     break;
-                        case AbilityType::IceSpread:      ut = UpgradeType::UpgradeIceSpread;      break;
-                        case AbilityType::ElectricSpread: ut = UpgradeType::UpgradeElectricSpread; break;
-                        case AbilityType::FireBolt:       ut = UpgradeType::UpgradeFireBolt;       break;
-                        case AbilityType::IceBolt:        ut = UpgradeType::UpgradeIceBolt;        break;
-                        case AbilityType::ElectricBolt:   ut = UpgradeType::UpgradeElectricBolt;   break;
-                        default: break;
-                        }
-                        if (ut != UpgradeType::Count)
-                        {
-                            _player.AddGold(-100);
-                            _player.ApplyUpgrade(ut);
-                            _shopDialogue = "Power well spent!";
-                        }
-                    }
-                    else { _shopDialogue = "That ability is already at its peak."; }
-                }
-                else { _shopDialogue = "I'm sorry, it seems you're a bit short on gold..."; }
-            }
-
-            // Remove button
-            Rectangle rmBtn = { shopX + iPad + contentW - btnW, btnY2, btnW, btnH };
-            if (clicked && CheckCollisionPointRec(mouse, rmBtn))
-            {
-                if (_player.GetGold() >= 100)
-                {
-                    _player.AddGold(-100);
-                    _player.RemoveAbilityAtSlot(i);
-                    _shopDialogue = "Consider it done.";
-                }
-                else { _shopDialogue = "I'm sorry, it seems you're a bit short on gold..."; }
-            }
-        }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ── DrawShop ──────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════
-
-void Engine::DrawShop()
-{
-    const float sw  = (float)GetScreenWidth();
-    const float sh  = (float)GetScreenHeight();
-    const float pad = 16.f;
-
-    // ── Scrolling checkerboard background ────────────────────────────────
-    {
-        const int   cell   = 80;
-        const Color dark   = Color{ 22, 16, 10, 255 };
-        const Color light  = Color{ 34, 24, 14, 255 };
-        const int   period = cell * 2;
-        float t    = (float)GetTime();
-        int   offX = (int)fmodf(t * 22.f, (float)period);
-        int   offY = (int)fmodf(t * 12.f, (float)period);
-        int   phX  = offX / cell, phY = offY / cell;
-        int   pxX  = offX % cell, pxY = offY % cell;
-        for (int gy = -1; gy <= (int)(sh / cell) + 1; gy++)
-            for (int gx = -1; gx <= (int)(sw / cell) + 1; gx++)
-            {
-                bool isDark = (((gx + phX) + (gy + phY)) % 2 + 2) % 2 == 0;
-                DrawRectangle(gx * cell - pxX, gy * cell - pxY, cell, cell, isDark ? dark : light);
-            }
-    }
-
-    // ── Layout ───────────────────────────────────────────────────────────
-    static constexpr float kBorderDst_layout = 32.f;  // matches kBorderDst in DrawShop
-    const float leftW  = sw * 0.30f;
-    const float leaveH = 48.f;
-    const float leaveY = sh - pad - leaveH;
-    // Dialogue must be tall enough to hold text inside 32px top+bottom borders
-    const float dialH  = std::max(sh * 0.12f, kBorderDst_layout * 2.f + 30.f);
-    const float dialY  = leaveY - pad * 0.5f - dialH;
-    const float shopX  = pad + leftW + pad;
-    const float shopY  = pad;
-    const float shopW  = sw - shopX - pad;
-    const float shopH  = dialY - pad * 0.5f - shopY;
-
-    // 9-slice constants matching PauseAndGameOver
-    static constexpr float kBorderSrc = 16.f;
-    static constexpr float kBorderDst = 32.f;
-    // Content padding must be at least the border corner so nothing draws over the frame
-    const float iPad = kBorderDst;
-
-    const Color kGold        = BLACK;
-    const Color kDim         = Color{160,170,190, 200 };
-    const Color kSlotBg      = Color{ 20, 20, 30, 160 };
-    const Color kSlotBgFull  = Color{ 30, 40, 60, 200 };
-
-    // helper: draw a main panel using the border texture (falls back to rounded rect)
-    auto box = [&](Rectangle r, Color tint)
-    {
-        if (_shopBorderTex.id != 0)
-            DrawNineSlice(_shopBorderTex, kBorderSrc, kBorderDst, r, tint);
-        else
-        {
-            DrawRectangleRounded(r, 0.06f, 8, Color{14,18,30,235});
-            DrawRectangleRoundedLines(r, 0.06f, 8, Color{80,100,140,180});
-        }
-    };
-    // helper: draw small inner UI elements (tabs, cards, buttons)
-    auto smallBox = [](Rectangle r, Color bg, Color border)
-    {
-        DrawRectangleRounded(r, 0.12f, 6, bg);
-        DrawRectangleRoundedLines(r, 0.12f, 6, border);
-    };
-
-    // ── LEFT PANEL ───────────────────────────────────────────────────────
-    const float lx = pad, ly = pad;
-    const float lh = sh - pad * 2.f;
-    box({ lx, ly, leftW, lh }, WHITE);
-
-    BeginScissorMode((int)(lx + kBorderDst), (int)(ly + kBorderDst),
-                     (int)(leftW - kBorderDst * 2.f), (int)(lh - kBorderDst * 2.f));
-    {
-        const float cp  = iPad;
-        float       cy  = ly + cp;
-        const float cw  = leftW - cp * 2.f;
-
-        // ─ Title
-        DrawText("PLAYER", (int)(lx + cp), (int)cy, 28, kGold);
-        cy += 34.f;
-        DrawLineEx({ lx + cp, cy }, { lx + leftW - cp, cy }, 1.f,
-            Fade(kGold, 0.35f));
-        cy += 12.f;
-
-        // ─ HP bar
-        float maxHp = _player.GetMaxHealthValue();
-        float curHp = _player.GetHealthValue();
-        float hpPct = (maxHp > 0.f) ? curHp / maxHp : 0.f;
-        const float barH = std::min(26.f, cw * 0.13f);
-        Color hpCol = (hpPct > 0.5f) ? GREEN : (hpPct > 0.25f) ? YELLOW : RED;
-        DrawRectangleRounded({ lx + cp, cy, cw * hpPct, barH }, 0.4f, 4, hpCol);
-        DrawRectangleRoundedLines({ lx + cp, cy, cw, barH }, 0.4f, 4, Fade(WHITE, 0.2f));
-        const char* hpLbl = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
-        int hpFs = (int)std::min(18.f, barH * 0.85f);
-        DrawText(hpLbl, (int)(lx + cp + 4.f), (int)(cy + barH * 0.5f - hpFs * 0.5f), hpFs, RAYWHITE);
-        cy += barH + 8.f;
-
-        // ─ MP bar
-        float manaPct = (_player.GetMaxMana() > 0) ? (float)_player.GetMana() / _player.GetMaxMana() : 0.f;
-        DrawRectangleRounded({ lx + cp, cy, cw * manaPct, barH }, 0.4f, 4, Color{60,120,255,230});
-        DrawRectangleRoundedLines({ lx + cp, cy, cw, barH }, 0.4f, 4, Fade(WHITE, 0.2f));
-        const char* mpLbl = TextFormat("MP  %d / %d", _player.GetMana(), _player.GetMaxMana());
-        DrawText(mpLbl, (int)(lx + cp + 4.f), (int)(cy + barH * 0.5f - hpFs * 0.5f), hpFs, RAYWHITE);
-        cy += barH + 14.f;
-
-        // ─ Stats grid (2-column)
-        struct StatRow { const char* label; std::string value; };
-        StatRow stats[] = {
-            { "ATK",  TextFormat("%.1f", _player.GetAttackPowerValue()) },
-            { "SPD",  TextFormat("%.0f", _player.GetMoveSpeedValue())   },
-            { "DEF",  TextFormat("%.0f%%", _player.GetDefense() * 100.f)},
-            { "GOLD", std::to_string(_player.GetGold())                 },
-        };
-        float statFs = std::min(20.f, cw * 0.09f);
-        float statRowH = statFs + 9.f;
-        for (auto& s : stats)
-        {
-            DrawText(s.label, (int)(lx + cp), (int)cy, (int)statFs, kDim);
-            int vw = MeasureText(s.value.c_str(), (int)statFs);
-            DrawText(s.value.c_str(), (int)(lx + leftW - cp - vw), (int)cy, (int)statFs, RAYWHITE);
-            cy += statRowH;
-        }
-        cy += 10.f;
-
-        // ─ Abilities section
-        DrawLineEx({ lx + cp, cy }, { lx + leftW - cp, cy }, 1.f,
-            Fade(kGold, 0.35f));
-        cy += 10.f;
-        DrawText("ABILITIES", (int)(lx + cp), (int)cy, 22, kGold);
-        cy += 28.f;
-
-        int slotCount = _player.GetMaxAbilitySlots();
-        float slotH   = std::min(50.f, (lh - (cy - ly) - cp) / (float)slotCount);
-        float slotFs  = std::min(18.f, slotH * 0.40f);
-
-        for (int i = 0; i < slotCount; i++)
-        {
-            AbilityType ab = _player.GetLearnedAbility(i);
-            Rectangle sr   = { lx + cp, cy, cw, slotH - 4.f };
-            Color sbg = (ab == AbilityType::None)
-                ? Color{20,20,30,160} : Color{30,40,60,200};
-            Color sbo = (ab == AbilityType::None)
-                ? Color{50,50,60,120} : Color{80,110,160,200};
-            smallBox(sr, sbg, sbo);
-
-            if (ab != AbilityType::None)
-            {
-                DrawText(ShopAbilityName(ab),
-                    (int)(sr.x + 8.f),
-                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f - 2.f),
-                    (int)std::min(18.f, slotFs + 2.f), RAYWHITE);
-                int lv = _player.GetAbilityLevel(ab);
-                const char* lvLbl = TextFormat("Lv%d", lv);
-                int lvW = MeasureText(lvLbl, (int)slotFs);
-                DrawText(lvLbl, (int)(sr.x + sr.width - lvW - 6.f),
-                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f),
-                    (int)slotFs, lv >= 3 ? GOLD : SKYBLUE);
-            }
-            else
-            {
-                DrawText("-- empty --", (int)(sr.x + 8.f),
-                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f),
-                    (int)slotFs, Fade(RAYWHITE, 0.30f));
-            }
-            cy += slotH;
-        }
-    }
-    EndScissorMode();
-
-    // ── RIGHT PANEL (SHOP) ────────────────────────────────────────────────
-    box({ shopX, shopY, shopW, shopH }, WHITE);
-
-    BeginScissorMode((int)(shopX + kBorderDst), (int)(shopY + kBorderDst),
-                     (int)(shopW - kBorderDst * 2.f), (int)(shopH - kBorderDst * 2.f));
-    {
-        const float titleH = kBorderDst + 34.f;   // border inset + 28px font + gap
-        const float tabH   = 38.f;
-
-        // Title
-        DrawText("ZEPH'S WARES", (int)(shopX + iPad), (int)(shopY + iPad), 28, kGold);
-        DrawLineEx({ shopX + iPad, shopY + titleH - 4.f },
-                   { shopX + shopW - iPad, shopY + titleH - 4.f },
-                   1.f, Fade(kGold, 0.30f));
-
-        // Tabs
-        const float tabW   = (shopW - iPad * 2.f) * 0.5f - 4.f;
-        const float tabY   = shopY + titleH;
-        Rectangle tabWares = { shopX + iPad,               tabY, tabW, tabH };
-        Rectangle tabAb    = { shopX + iPad + tabW + 8.f,  tabY, tabW, tabH };
-
-        auto drawTab = [&](Rectangle r, const char* label, bool active)
-        {
-            Color bg = active ? Color{40,60,110,240} : Color{20,25,40,180};
-            Color bo = active ? Color{100,150,255,255} : Color{80,100,140,180};
-            smallBox(r, bg, bo);
-            int fs = (int)std::min(16.f, r.height * 0.44f);
-            int tw = MeasureText(label, fs);
-            DrawText(label,
-                (int)(r.x + r.width  * 0.5f - tw * 0.5f),
-                (int)(r.y + r.height * 0.5f - fs * 0.5f),
-                fs, active ? RAYWHITE : kDim);
-        };
-        drawTab(tabWares, "WARES",     _shopTab == 0);
-        drawTab(tabAb,    "ABILITIES", _shopTab == 1);
-
-        // Content area
-        const float contentY = tabY + tabH + iPad;
-        const float contentH = shopH - titleH - tabH - iPad * 2.f;
-        const float contentW = shopW - iPad * 2.f;
-
-        // ── Icon texture lookup (matches getUpgradeInfo in DrawLevelUp) ────────
-        auto getShopIcon = [&](const ShopItem& si) -> Texture2D*
-        {
-            if (si.isAbility)
-            {
-                switch (si.abilityType)
-                {
-                case AbilityType::FireSpread:    case AbilityType::FireBolt:    case AbilityType::FireUltimate:
-                    return &_abilityIconFireTex;
-                case AbilityType::IceSpread:     case AbilityType::IceBolt:     case AbilityType::IceUltimate:
-                    return &_abilityIconIceTex;
-                case AbilityType::ElectricSpread: case AbilityType::ElectricBolt: case AbilityType::ElectricUltimate:
-                    return &_abilityIconElectricTex;
-                default: return nullptr;
-                }
-            }
-            switch (si.upgradeType)
-            {
-            case UpgradeType::AttackPower: case UpgradeType::Ferocity:
-            case UpgradeType::WarGod:      case UpgradeType::BladeStorm:
-                return &_upgradeAttackPowerTex;
-            case UpgradeType::AttackRange: case UpgradeType::BladeEdge:
-                return &_upgradeAttackRangeTex;
-            case UpgradeType::MaxHealth:   case UpgradeType::IronConstitution:
-            case UpgradeType::Resilience:  case UpgradeType::Juggernaut:
-                return &_upgradeHealthTex;
-            case UpgradeType::MaxMana:     case UpgradeType::ArcaneMind:
-            case UpgradeType::ArcaneColossus:
-                return &_upgradeMagicTex;
-            case UpgradeType::Defense:     case UpgradeType::IronSkin:
-                return &_upgradeDefenseTex;
-            case UpgradeType::MoveSpeed:   case UpgradeType::SwiftFeet:
-                return &_upgradeMoveSpeedTex;
-            default: return nullptr;
-            }
-        };
-
-        if (_shopTab == 0)
-        {
-            // ─ 2 × 3 item grid
-            const float cols = 3.f, rows = 2.f, gap = 10.f;
-            const float itemW = (contentW - gap * (cols - 1.f)) / cols;
-            const float itemH = (contentH - gap * (rows - 1.f)) / rows;
-            const float buyH   = std::min(30.f, itemH * 0.20f);
-            const float iconSz = std::min(itemW * 0.40f, itemH * 0.35f);
-            const float nameFs = std::min(32.f, itemH * 0.22f);
-            const float descFsBase = std::min(26.f, itemH * 0.16f);
-
-            if (_shopInventory.empty())
-            {
-                DrawText("Nothing left in stock.", (int)(shopX + iPad + 8.f),
-                    (int)(contentY + 20.f), 18, kDim);
-            }
-
-            for (int idx = 0; idx < (int)_shopInventory.size(); idx++)
-            {
-                const ShopItem& item = _shopInventory[idx];
-                if (item.purchased) continue;
-
-                int   col = idx % 3, row = idx / 3;
-                float ix  = shopX + iPad + col * (itemW + gap);
-                float iy  = contentY + row * (itemH + gap);
-
-                // Card background — rarity tint
-                UpgradeRarity rar = item.isAbility
-                    ? UpgradeRarity::Rare
-                    : ShopUpgradeRarity(item.upgradeType);
-                Color rarCol  = ShopRarityColor(rar);
-                Color cardBg  = Color{18, 20, 32, 220};
-                Color cardBo  = Fade(rarCol, 0.55f);
-                Vector2 mouse = GetMousePosition();
-                bool    hov   = CheckCollisionPointRec(mouse, { ix, iy, itemW, itemH });
-                if (hov) { cardBg = Color{28,32,52,240}; cardBo = Fade(rarCol, 0.90f); }
-                smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
-
-                // Rarity strip (left edge)
-                DrawRectangle((int)ix, (int)iy, 5, (int)itemH, Fade(rarCol, 0.80f));
-
-                // Clip inner card content
-                BeginScissorMode((int)ix + 6, (int)iy, (int)itemW - 6, (int)itemH);
-
-                // ── Icon ────────────────────────────────────────────────────
-                const float iconCX = ix + itemW * 0.5f;
-                const float iconCY = iy + 8.f + iconSz * 0.5f;
-                Texture2D* icon = getShopIcon(item);
-                if (icon && icon->id != 0)
-                {
-                    float scale = std::min(iconSz / (float)icon->width,
-                                          iconSz / (float)icon->height);
-                    float iw = icon->width  * scale;
-                    float ih = icon->height * scale;
-                    DrawTexturePro(*icon,
-                        { 0, 0, (float)icon->width, (float)icon->height },
-                        { iconCX - iw * 0.5f, iconCY - ih * 0.5f, iw, ih },
-                        {}, 0.f, WHITE);
-                }
-                else
-                {
-                    // Fallback coloured circle if texture missing
-                    DrawCircleV({ iconCX, iconCY }, iconSz * 0.4f, Fade(rarCol, 0.35f));
-                    DrawCircleLinesV({ iconCX, iconCY }, iconSz * 0.4f, Fade(rarCol, 0.70f));
-                }
-
-                // ── Name & desc below icon ───────────────────────────────────
-                float cy2 = iconCY + iconSz * 0.5f + 100.f;
-                const char* name = item.isAbility
-                    ? ShopAbilityName(item.abilityType)
-                    : ShopUpgradeName(item.upgradeType);
-                const char* desc = item.isAbility
-                    ? ShopAbilityDesc(item.abilityType)
-                    : ShopUpgradeDesc(item.upgradeType);
-
-                int nw = MeasureText(name, (int)nameFs);
-                DrawText(name, (int)(ix + itemW * 0.5f - nw * 0.5f + 3.f),
-                    (int)cy2, (int)nameFs, RAYWHITE);
-                cy2 += nameFs + 3.f;
-
-                // Shrink desc font until it fits inside the card width
-                const float maxDescW = itemW - 20.f;
-                float descFs = descFsBase;
-                while (descFs > 8.f && MeasureText(desc, (int)descFs) > (int)maxDescW)
-                    descFs -= 1.f;
-                int dw = MeasureText(desc, (int)descFs);
-                DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
-                    (int)cy2, (int)descFs, kDim);
-
-                EndScissorMode();
-
-                // Buy button (always drawn, outside inner scissor)
-                bool canAfford = (_player.GetGold() >= item.price);
-                Color buyBg = canAfford ? Color{30,90,30,220} : Color{60,30,30,180};
-                Color buyBo = canAfford ? Color{80,200,80,255} : Color{160,60,60,200};
-                Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
-                smallBox(buyBtn, buyBg, buyBo);
-                int prFs = (int)std::min(14.f, buyH * 0.55f);
-                const char* prLbl = TextFormat("%dg", item.price);
-                int prW = MeasureText(prLbl, prFs);
-                DrawText(prLbl,
-                    (int)(buyBtn.x + buyBtn.width * 0.5f - prW * 0.5f),
-                    (int)(buyBtn.y + buyBtn.height * 0.5f - prFs * 0.5f),
-                    prFs, canAfford ? Color{180,255,180,255} : Color{255,140,140,220});
-            }
-        }
-        else
-        {
-            // ─ Abilities tab
-            if (_player.GetLearnedCount() == 0)
-            {
-                DrawText("You haven't learned any abilities yet.",
-                    (int)(shopX + iPad + 8.f), (int)(contentY + 20.f), 16, kDim);
-            }
-            else
-            {
-                const float rowH  = std::min(68.f, contentH / (float)_player.GetLearnedCount());
-                const float btnW  = std::min(100.f, contentW * 0.26f);
-                const float btnH  = std::min(28.f, rowH * 0.45f);
-                const float btnGp = 8.f;
-                const float rowFs = std::min(16.f, rowH * 0.28f);
-
-                for (int i = 0; i < _player.GetLearnedCount(); i++)
-                {
-                    AbilityType ab = _player.GetLearnedAbility(i);
-                    float       ry = contentY + i * rowH;
-                    float       btnY2 = ry + rowH * 0.5f - btnH * 0.5f;
-
-                    smallBox({ shopX + iPad, ry + 2.f, contentW, rowH - 4.f },
-                        Color{25,30,50,200}, Color{60,80,120,160});
-
-                    // Ability name + level
-                    DrawText(ShopAbilityName(ab),
-                        (int)(shopX + iPad + 10.f),
-                        (int)(ry + rowH * 0.5f - rowFs * 0.5f),
-                        (int)rowFs, RAYWHITE);
-                    int lv = _player.GetAbilityLevel(ab);
-                    DrawText(TextFormat("Lv %d", lv),
-                        (int)(shopX + iPad + 10.f + MeasureText(ShopAbilityName(ab), (int)rowFs) + 10.f),
-                        (int)(ry + rowH * 0.5f - rowFs * 0.5f),
-                        (int)rowFs, lv >= 3 ? GOLD : SKYBLUE);
-
-                    bool canUpg    = _player.CanUpgradeAbility(ab);
-                    bool canAfford = (_player.GetGold() >= 100);
-
-                    // Upgrade button
-                    float upgX = shopX + iPad + contentW - btnW * 2.f - btnGp;
-                    Color upgBg = (canUpg && canAfford) ? Color{30,60,100,220} : Color{30,30,40,140};
-                    Color upgBo = (canUpg && canAfford) ? Color{80,140,255,255} : Color{60,60,80,160};
-                    smallBox({ upgX, btnY2, btnW, btnH }, upgBg, upgBo);
-                    int upFs = (int)std::min(13.f, btnH * 0.55f);
-                    DrawText("Upgrade 100g",
-                        (int)(upgX + btnW * 0.5f - MeasureText("Upgrade 100g", upFs) * 0.5f),
-                        (int)(btnY2 + btnH * 0.5f - upFs * 0.5f),
-                        upFs, (canUpg && canAfford) ? RAYWHITE : Fade(RAYWHITE, 0.35f));
-
-                    // Remove button
-                    float rmX = shopX + iPad + contentW - btnW;
-                    Color rmBg = canAfford ? Color{90,25,25,200} : Color{40,20,20,140};
-                    Color rmBo = canAfford ? Color{220,60,60,255} : Color{100,40,40,160};
-                    smallBox({ rmX, btnY2, btnW, btnH }, rmBg, rmBo);
-                    DrawText("Remove 100g",
-                        (int)(rmX + btnW * 0.5f - MeasureText("Remove 100g", upFs) * 0.5f),
-                        (int)(btnY2 + btnH * 0.5f - upFs * 0.5f),
-                        upFs, canAfford ? Color{255,140,140,255} : Fade(RAYWHITE, 0.35f));
-                }
-            }
-        }
-    }
-    EndScissorMode();
-
-    // ── DIALOGUE BOX ─────────────────────────────────────────────────────
-    box({ shopX, dialY, shopW, dialH }, WHITE);
-    {
-        // Inner area sits inside the 32px border on all sides
-        const float innerTop = dialY + kBorderDst;
-        const float innerH   = dialH - kBorderDst * 2.f;
-        const float innerMid = innerTop + innerH * 0.5f;
-
-        const char* nameTag = "Zeph:";
-        int ntFs = (int)std::min(20.f, innerH * 0.55f);
-        int dtFs = (int)std::min(18.f, innerH * 0.48f);
-
-        // Centre both lines vertically as a pair
-        float totalH = ntFs + 4.f + dtFs;
-        float startY = innerMid - totalH * 0.5f;
-
-        int ntW = MeasureText(nameTag, ntFs);
-        DrawText(nameTag,
-            (int)(shopX + iPad),
-            (int)startY,
-            ntFs, BLACK);
-
-        const char* dText = _shopDialogue.c_str();
-        DrawText(dText,
-            (int)(shopX + iPad + ntW + 10.f),
-            (int)(startY + ntFs * 0.5f - dtFs * 0.5f),
-            dtFs, BLACK);
-    }
-
-    // ── REROLL + LEAVE BUTTONS ────────────────────────────────────────────
-    const float leaveW  = 180.f;
-    const float rerollW = 200.f;
-    const float leaveX  = shopX + shopW * 0.5f + 8.f;
-    const float rerollX = shopX + shopW * 0.5f - rerollW - 8.f;
-    Rectangle leaveBtn  = { leaveX,  leaveY, leaveW,  leaveH };
-    Rectangle rerollBtn = { rerollX, leaveY, rerollW, leaveH };
-
-    Vector2 mpos = GetMousePosition();
-    bool leaveHov  = CheckCollisionPointRec(mpos, leaveBtn);
-    bool rerollHov = CheckCollisionPointRec(mpos, rerollBtn);
-    bool canReroll = (_player.GetGold() >= _shopRerollCost);
-
-    // Leave
-    smallBox(leaveBtn,
-        leaveHov ? Color{80,20,20,240} : Color{50,14,14,220},
-        leaveHov ? Color{220,80,80,255} : Color{140,50,50,200});
-    int lvFs = (int)std::min(18.f, leaveH * 0.50f);
-    int lvW  = MeasureText("LEAVE SHOP", lvFs);
-    DrawText("LEAVE SHOP",
-        (int)(leaveX + leaveW * 0.5f - lvW * 0.5f),
-        (int)(leaveY + leaveH * 0.5f - lvFs * 0.5f),
-        lvFs, leaveHov ? Color{255,160,160,255} : Color{220,120,120,220});
-
-    // Reroll
-    Color rrBg = canReroll
-        ? (rerollHov ? Color{20,60,20,240} : Color{14,40,14,220})
-        : Color{30,30,30,180};
-    Color rrBo = canReroll
-        ? (rerollHov ? Color{80,220,80,255} : Color{50,140,50,200})
-        : Color{80,80,80,160};
-    smallBox(rerollBtn, rrBg, rrBo);
-    const char* rrLabel = TextFormat("REROLL  %dg", _shopRerollCost);
-    int rrFs = (int)std::min(18.f, leaveH * 0.50f);
-    int rrW  = MeasureText(rrLabel, rrFs);
-    DrawText(rrLabel,
-        (int)(rerollX + rerollW * 0.5f - rrW * 0.5f),
-        (int)(leaveY + leaveH * 0.5f - rrFs * 0.5f),
-        rrFs, canReroll ? (rerollHov ? Color{180,255,180,255} : Color{140,220,140,220})
-                        : Fade(RAYWHITE, 0.35f));
 }
 

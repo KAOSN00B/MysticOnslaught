@@ -24,12 +24,13 @@
 #include "LavaBallProjectile.h"
 #include "Leaderboard.h"
 #include "TouchControls.h"
+#include "NavigationGrid.h"
+#include "VFXManager.h"
+#include "ShopManager.h"
 
 #include <vector>
 #include <string>
 #include <memory>
-#include <future>
-#include <chrono>
 
 enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
 
@@ -71,16 +72,6 @@ enum class GameState
 class Engine
 {
 public:
-    struct NavigationRefreshResult
-    {
-        // Fully computed distance field for the current player nav cell.
-        std::vector<int> distanceField;
-
-        // Open-cell index the worker used as the player's navigation target.
-        // The main thread applies this so it knows whether the player's cell changed.
-        int playerNavIndex = -1;
-    };
-
     Engine();
     ~Engine();
 
@@ -131,22 +122,6 @@ private:
     void ApplyUltimateImpact();
     void GenerateStartingAbilityOptions();
     void UpdateSpreadProjectiles(float dt);
-    void UpdateEffects(float dt);
-    void DrawEffects(Vector2 worldOffset);
-    void SpawnCastEffect(Character::CastType castType);
-    void SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vector2 direction);
-    void SpawnHealEffect();
-    void BuildNavigationGrid();
-    bool IsNavigationCellBlocked(int col, int row) const;
-    int GetNavigationIndex(int col, int row) const;
-    Vector2 GetNavigationTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const;
-    Vector2 GetAStarTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const;
-    bool FindNearestOpenCell(int& col, int& row) const;
-    bool HasLineOfSight(Vector2 start, Vector2 end) const;
-    void RefreshNavigationField();
-    void ApplyCompletedNavigationRefresh();
-    int GetClosestOpenNavigationIndex(int col, int row) const;
-    void SpawnFloatingText(Vector2 worldPos, int value, Color color);
     void SpawnEnemyDrop(Vector2 worldPos);
     void SpawnTimedPickup();
     void SpawnBossSupportAdds();
@@ -165,17 +140,6 @@ private:
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
 
-    // ── Shop (Zeph's Wares) ───────────────────────────────────────────────────
-    struct ShopItem {
-        bool        isAbility   = false;
-        UpgradeType upgradeType = UpgradeType::AttackPower;
-        AbilityType abilityType = AbilityType::None;
-        int         price       = 0;
-        bool        purchased   = false;
-    };
-    void GenerateShopInventory();
-    void UpdateShop();
-    void DrawShop();
 
     // ── EXP Tally screen ─────────────────────────────────────────────────────
     void UpdateExpTally(float dt);
@@ -234,34 +198,6 @@ private:
         float respawnTimer = 0.f;
     };
 
-    struct AnimatedEffect
-    {
-        Texture2D* texture = nullptr;
-        Vector2 worldPos{};
-        Vector2 offset{};
-        Vector2 direction{ 1.f, 0.f };
-        Color tint = WHITE;
-        float scale = 4.f;
-        float frameTime = 1.f / 18.f;
-        float runningTime = 0.f;
-        int frameWidth = 32;
-        int frameHeight = 32;
-        int frameCount = 1;
-        int frame = 0;
-        bool followPlayer = false;
-        bool followPlayerCenter = false;
-        bool active = false;
-    };
-
-    struct FloatingText
-    {
-        Vector2 worldPos{};
-        int     value     = 0;
-        Color   color     = WHITE;
-        float   spawnTime = 0.f;
-        static constexpr float kLifetime = 0.75f;
-    };
-
     // ── Elite-room hazard ─────────────────────────────────────────────────
     struct EliteHazard
     {
@@ -298,8 +234,6 @@ private:
 
     float _waveIntroTimer = 0.f;
     float _waveIntroDuration = 2.5f;
-    float _navRefreshTimer = 0.f;
-    float _navRefreshInterval = 0.2f;
 
     float _gameOverTimer  = 0.f;
     float _gameOverDelay  = 2.f;
@@ -404,12 +338,7 @@ private:
     Texture2D _bigRockTex{};
     Vector2 _mapPos{};
     float _mapScale = 3.f;
-    float _navCellSize = 72.f;
-    int _navCols = 0;
-    int _navRows = 0;
     int _maxActiveEnemies = 16;
-    int _lastPlayerNavIndex = -1;
-    bool _navRefreshInFlight = false;
 
     Texture2D _pillarTex{};
     Texture2D _torchTex{};       // Torch.png — 256x29, 8 frames of 32x29
@@ -425,6 +354,8 @@ private:
     Texture2D _abilityIconFireTex{};
     Texture2D _abilityIconIceTex{};
     Texture2D _abilityIconElectricTex{};
+
+    Texture2D _shopBorderTex{};
 
     // Map node icons (TileSet/MapIcons/)
     Texture2D _mapIconNormal{};
@@ -464,11 +395,9 @@ private:
 
     std::vector<UltimateBlast>       _ultimateBlasts;
     std::vector<SpreadProjectile>    _spreadProjectiles;
-    std::vector<AnimatedEffect> _effects;
-    std::vector<FloatingText>   _floatingTexts;
-    std::vector<bool> _navBlocked;
-    std::vector<int>  _navDistance;
-    std::future<NavigationRefreshResult> _navRefreshJob;
+    VFXManager     _vfx;
+    NavigationGrid _nav;
+    ShopManager    _shop;
     std::vector<std::unique_ptr<Enemy>>   _enemies;
     std::vector<CyclopsLaserProjectile>   _cyclopsLasers;
     std::vector<LavaBallProjectile>       _lavaBalls;
@@ -477,14 +406,6 @@ private:
 
     std::string _message = "Objective: Survive";
 
-    // ── Shop state ────────────────────────────────────────────────────────────
-    Vector2                  _shopNpcPos     = {};
-    bool                     _shopNearNpc    = false;
-    int                      _shopTab        = 0;        // 0 = wares, 1 = abilities
-    std::string              _shopDialogue;
-    std::vector<ShopItem>    _shopInventory;
-    Texture2D                _shopBorderTex  = {};
-    int                      _shopRerollCost = 100;
     Biome _currentBiome = Biome::Dungeon;
     Biome _pendingBiome = Biome::Dungeon;
     bool  _biomeTransitionActive = false;
