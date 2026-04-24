@@ -413,10 +413,10 @@ void Molarbeast::EnsureSharedResourcesLoaded()
 
     // The demo boss currently reuses the ogre sound family so its actions read
     // clearly without requiring a full bespoke audio pass yet.
-    _sharedAttackSound = LoadSound(AssetPath("Sounds/OgreChargeHit.wav").c_str());
-    _sharedHurtSound = LoadSound(AssetPath("Sounds/PlayerHurt.wav").c_str());
-    _sharedDeathSound = LoadSound(AssetPath("Sounds/MonsterDeath.wav").c_str());
-    _sharedWallHitSound = LoadSound(AssetPath("Sounds/OgreHitWall.wav").c_str());
+    _sharedAttackSound = LoadSound(AssetPath("Sounds/OgreChargeHit.ogg").c_str());
+    _sharedHurtSound = LoadSound(AssetPath("Sounds/PlayerHurt.ogg").c_str());
+    _sharedDeathSound = LoadSound(AssetPath("Sounds/MonsterDeath.ogg").c_str());
+    _sharedWallHitSound = LoadSound(AssetPath("Sounds/OgreHitWall.ogg").c_str());
     _sharedResourcesLoaded = true;
 }
 

@@ -746,9 +746,9 @@ void Cyclops::EnsureSharedResourcesLoaded()
     _sharedTakeDamageAnim = LoadTexture(AssetPath("Enemy/CyclopsDamage.png").c_str());
     _sharedDeathAnim      = LoadTexture(AssetPath("Enemy/CyclopsDeath.png").c_str());
 
-    _sharedAttackSound = LoadSound(AssetPath("Sounds/CyclopsAttack.wav").c_str());
-    _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage2.wav").c_str());
-    _sharedDeathSound  = LoadSound(AssetPath("Sounds/MonsterDeath.wav").c_str());
+    _sharedAttackSound = LoadSound(AssetPath("Sounds/CyclopsAttack.ogg").c_str());
+    _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage2.ogg").c_str());
+    _sharedDeathSound  = LoadSound(AssetPath("Sounds/MonsterDeath.ogg").c_str());
 
     _sharedResourcesLoaded = true;
 }

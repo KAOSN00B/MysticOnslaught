@@ -705,10 +705,10 @@ void Ogre::EnsureSharedResourcesLoaded()
     _sharedAttackAnim     = LoadTexture(AssetPath("Enemy/ChargeOrcAttack.png").c_str());
     _sharedTakeDamageAnim = LoadTexture(AssetPath("Enemy/ChargeOrcHurt.png").c_str());
     _sharedDeathAnim      = LoadTexture(AssetPath("Enemy/ChargeOrcDeath.png").c_str());
-    _sharedRushHitSound   = LoadSound(AssetPath("Sounds/OgreChargeHit.wav").c_str());
-    _sharedWallHitSound   = LoadSound(AssetPath("Sounds/OgreHitWall.wav").c_str());
-    _sharedOgreHurtSound  = LoadSound(AssetPath("Sounds/PlayerHurt.wav").c_str());
-    _sharedOgreDeathSound = LoadSound(AssetPath("Sounds/MonsterDeath.wav").c_str());
+    _sharedRushHitSound   = LoadSound(AssetPath("Sounds/OgreChargeHit.ogg").c_str());
+    _sharedWallHitSound   = LoadSound(AssetPath("Sounds/OgreHitWall.ogg").c_str());
+    _sharedOgreHurtSound  = LoadSound(AssetPath("Sounds/PlayerHurt.ogg").c_str());
+    _sharedOgreDeathSound = LoadSound(AssetPath("Sounds/MonsterDeath.ogg").c_str());
 
     _sharedResourcesLoaded = true;
 }

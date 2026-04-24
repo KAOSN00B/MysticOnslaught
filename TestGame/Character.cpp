@@ -78,10 +78,10 @@ void Character::Init()
     _deathAnim = LoadTexture(AssetPath("Hero/Hero_Death.png").c_str());
     _takeDamageAnim = LoadTexture(AssetPath("Hero/Hero_TakeDamage.png").c_str());
 
-    _footStepSound = LoadSound(AssetPath("Sounds/FootSteps.wav").c_str());
-    _attackSound = LoadSound(AssetPath("Sounds/SwordSwipe.wav").c_str());
-    _hurtSound = LoadSound(AssetPath("Sounds/PlayerHurt.wav").c_str());
-    _deathSound = LoadSound(AssetPath("Sounds/PlayerDeath.wav").c_str());
+    _footStepSound = LoadSound(AssetPath("Sounds/FootSteps.ogg").c_str());
+    _attackSound = LoadSound(AssetPath("Sounds/SwordSwipe.ogg").c_str());
+    _hurtSound = LoadSound(AssetPath("Sounds/PlayerHurt.ogg").c_str());
+    _deathSound = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
 
     _texture = _idleAnim;
 

@@ -839,9 +839,9 @@ void Enemy::EnsureSharedResourcesLoaded()
     _sharedAttackAnim = LoadTexture(AssetPath("Enemy/EnemyAttack.png").c_str());
     _sharedTakeDamageAnim = LoadTexture(AssetPath("Enemy/EnemyDamage.png").c_str());
     _sharedDeathAnim = LoadTexture(AssetPath("Enemy/EnemyDeath.png").c_str());
-    _sharedAttackSound = LoadSound(AssetPath("Sounds/SwordSwipe2.wav").c_str());
-    _sharedHurtSound = LoadSound(AssetPath("Sounds/SmallMonsterDamage.wav").c_str());
-    _sharedDeathSound = LoadSound(AssetPath("Sounds/PlayerDeath.wav").c_str());
+    _sharedAttackSound = LoadSound(AssetPath("Sounds/SwordSwipe2.ogg").c_str());
+    _sharedHurtSound = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
+    _sharedDeathSound = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
     _sharedResourcesLoaded = true;
 }
 

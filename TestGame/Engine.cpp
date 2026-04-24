@@ -158,21 +158,21 @@ void Engine::Init()
 
     SetExitKey(KEY_NULL);
 
-    _pickupSound      = LoadSound(AssetPath("Sounds/PickupSound.mp3").c_str());
-    _fireballCastSound= LoadSound(AssetPath("Sounds/GS1_Spell_Fire.mp3").c_str());
-    _explosionSound   = LoadSound(AssetPath("Sounds/GS1_Spell_Explode.mp3").c_str());
+    _pickupSound      = LoadSound(AssetPath("Sounds/PickupSound.ogg").c_str());
+    _fireballCastSound= LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
+    _explosionSound   = LoadSound(AssetPath("Sounds/GS1_Spell_Explode.ogg").c_str());
     {
         // Lavaball impact should only play for the first second of the clip.
         // Cropping the wave at load time keeps playback simple and lets each
         // collision just trigger a normal PlaySound call.
-        Wave lavaImpactWave = LoadWave(AssetPath("Sounds/Explosion.wav").c_str());
+        Wave lavaImpactWave = LoadWave(AssetPath("Sounds/Explosion.ogg").c_str());
         int oneSecondFrame = lavaImpactWave.sampleRate;
         if (oneSecondFrame > 0 && (int)lavaImpactWave.frameCount > oneSecondFrame)
             WaveCrop(&lavaImpactWave, 0, oneSecondFrame);
         _lavaBallImpactSound = LoadSoundFromWave(lavaImpactWave);
         UnloadWave(lavaImpactWave);
     }
-    _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.mp3").c_str());
+    _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.ogg").c_str());
 
     SetSoundPitch (_buttonPressSound, 1.25f);
     SetSoundVolume(_buttonPressSound, 0.35f);
@@ -358,9 +358,16 @@ void Engine::DebugRestartRoomAs(RoomType type)
     PopulatePropsForBiome(nextBiome);
     {
         std::vector<Rectangle> propRects;
-        propRects.reserve(_props.size());
+        propRects.reserve(_props.size() + 1);
         for (auto& prop : _props)
             propRects.push_back(prop.GetCollisionRec());
+        // Block the bottom boundary zone so A* never routes waypoints into it.
+        {
+            const float navMapW = _map.width  * _mapScale;
+            const float navMapH = _map.height * _mapScale;
+            const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp) ? 160.f : 220.f;
+            propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
+        }
         _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
     }
 
@@ -636,9 +643,16 @@ void Engine::EnterMapRoom(int idx)
         PopulatePropsForBiome(_currentBiome);
         {
             std::vector<Rectangle> propRects;
-            propRects.reserve(_props.size());
+            propRects.reserve(_props.size() + 1);
             for (auto& prop : _props)
                 propRects.push_back(prop.GetCollisionRec());
+            // Block the bottom boundary zone so A* never routes waypoints into it.
+            {
+                const float navMapW = _map.width  * _mapScale;
+                const float navMapH = _map.height * _mapScale;
+                const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp) ? 160.f : 220.f;
+                propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
+            }
             _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
         }
 
@@ -1785,7 +1799,7 @@ void Engine::HandleCollisions()
     const float marginLeft   = 76.f;
     const float marginRight  = 96.f;
     const float marginTop    = 42.f;   // let the player go a little higher
-    const float marginBottom = ((_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp)) ? 220.f : 320.f;
+    const float marginBottom = ((_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp)) ? 160.f : 220.f;
 
     Vector2 pos = _player.GetWorldPos();
     if (pos.x < marginLeft  || pos.x > mapW - marginRight
@@ -5242,9 +5256,16 @@ void Engine::ApplyBiome(Biome biome)
     PopulatePropsForBiome(biome);
     {
         std::vector<Rectangle> propRects;
-        propRects.reserve(_props.size());
+        propRects.reserve(_props.size() + 1);
         for (auto& prop : _props)
             propRects.push_back(prop.GetCollisionRec());
+        // Block the bottom boundary zone so A* never routes waypoints into it.
+        {
+            const float navMapW = _map.width  * _mapScale;
+            const float navMapH = _map.height * _mapScale;
+            const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp) ? 160.f : 220.f;
+            propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
+        }
         _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
     }
 
