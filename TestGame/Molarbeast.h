@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Enemy.h"
+#include "BehaviourTree.h"
 
 #include <vector>
 #include <memory>
@@ -24,6 +25,7 @@ public:
     void SetWaveScale(int wave) override;
     void DrawEnemy(Vector2 cameraRef) override;
     void TakeDamage(int damage, Vector2 attackerPos) override;
+    void PlayHurtSound() override;
     void ApplyBurn(float delay, int damage, Vector2 sourcePos) override;
     void ApplyFreeze(float duration) override;
     Rectangle GetCollisionRec() const override;
@@ -56,6 +58,7 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+    void BuildBehaviourTree();
 
     void SetIdleAnimation(bool resetFrame);
     void SetWalkAnimation(bool resetFrame);
@@ -88,6 +91,13 @@ private:
     float GetSpecialCooldownMin() const;
     float GetSpecialCooldownMax() const;
     float GetChargeDuration() const;
+
+    // ── Behaviour Tree ────────────────────────────────────────────────────────
+    std::unique_ptr<BTNode> _behaviorTreeRoot;
+    // Frame-scoped cache — set at the top of Update so BT leaf lambdas can
+    // reach enemies/propCenters without changing handler signatures.
+    const std::vector<std::unique_ptr<Enemy>>* _cachedEnemies     = nullptr;
+    const std::vector<Vector2>*                _cachedPropCenters = nullptr;
 
     State _state = State::Chasing;
     float _orbitAngle = 0.f;   // current angle (radians) around the player for circling

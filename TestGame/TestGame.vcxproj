@@ -151,6 +151,7 @@
     <ClCompile Include="ShopManager.cpp" />
     <ClCompile Include="SpreadProjectile.cpp" />
     <ClCompile Include="TouchControls.cpp" />
+    <ClCompile Include="WorldConfig.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AbilityType.h" />
@@ -184,6 +185,7 @@
     <ClInclude Include="ShopManager.h" />
     <ClInclude Include="SpreadProjectile.h" />
     <ClInclude Include="TouchControls.h" />
+    <ClInclude Include="WorldConfig.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="keybindings.cfg" />

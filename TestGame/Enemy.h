@@ -122,18 +122,18 @@ protected:
     // Stuck detection — if barely moved for _stuckThreshold seconds, apply a kick
     float   _stuckTimer     = 0.f;
     Vector2 _stuckCheckPos  = {};
-    static constexpr float _stuckThreshold  = 0.8f;
+    static constexpr float _stuckThreshold  = 0.4f;
     static constexpr float _stuckMinMove    = 8.f;   // pixels needed to not be considered stuck
 
     bool    _forcedPushActive    = false;
     Vector2 _forcedPushDirection = {};
     float   _forcedPushSpeed     = 0.f;
 
-    float _attackRange = 85.f;
+    float _attackRange = 110.f;
     float _attackUpdateTime = 1.f / 8.f;
 
     float _attackCooldown = 0.f;
-    float _attackDelay = 0.6f;
+    float _attackDelay = 1.0f;
     float _launchVisualTimer = 0.f;
     bool _launchHoldingHurtPose = false;
     static constexpr float _launchVisualDuration = 0.22f;
@@ -156,7 +156,7 @@ protected:
     // so enemies shift positions and never permanently crowd one side.
     Vector2 _approachOffset = {};
     float   _approachOffsetTimer = 0.f;
-    static constexpr float _approachOffsetRadius   = 70.f;
+    static constexpr float _approachOffsetRadius   = 120.f;
     static constexpr float _approachOffsetDuration = 3.5f;
 
     Vector2 _homePos;

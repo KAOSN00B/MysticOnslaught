@@ -326,250 +326,63 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
 }
 
 // ── Game Over ─────────────────────────────────────────────────────────────────
-// Returns: 0=nothing  1=play again  2=main menu  3=quit
-int PauseAndGameOver::DrawGameOver(int wave, int kills, const std::vector<LeaderboardEntry>& scores)
+// Returns: 0=nothing  1=retry  2=main menu  3=quit
+int PauseAndGameOver::DrawGameOver()
 {
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
 
-    ClearBackground(BLACK);
+    DrawScrollingCheckerboard(sw, sh,
+        Color{ 60, 10, 10, 255 },
+        Color{ 90, 20, 20, 255 },
+        18.f, 12.f);
 
-    // ── Left column: leaderboard ──────────────────────────────────────────────
-    // Column X anchors (all relative to left panel region 0..sw*0.5)
-    float lbLeft   = sw * 0.02f;   // left edge of the leaderboard block
-    int lbHeaderSz = (int)(sh * 0.030f);
-    int lbEntrySz  = (int)(sh * 0.024f);
-    int lbY        = (int)(sh * 0.14f);
+    // Panel dimensions — same proportions as pause
+    const float btnW   = sw * 0.22f;
+    const float btnH   = sh * 0.074f;
+    const float btnGap = sh * 0.018f;
+    const float padV   = sh * 0.045f;
+    const float titleH = sh * 0.090f;
+    const float panelW = btnW + sw * 0.06f;
+    const float panelH = padV + titleH + 3.f * (btnH + btnGap) + padV;
 
-    // Column positions (x-start of each field)
-    float colName  = lbLeft;
-    float colWave  = lbLeft + sw * 0.14f;
-    float colKills = lbLeft + sw * 0.22f;
+    float panelX = sw / 2.f - panelW / 2.f;
+    float panelY = sh / 2.f - panelH / 2.f;
 
-    // Header
-    const char* hTitle = "-- TOP SCORES --";
-    DrawText(hTitle, (int)colName, lbY, lbHeaderSz, WHITE);
-    lbY += lbHeaderSz + 8;
-
-    // Column header row
-    DrawText("Name",  (int)colName,  lbY, lbHeaderSz, WHITE);
-    DrawText("Rooms", (int)colWave,  lbY, lbHeaderSz, WHITE);
-    DrawText("Kills", (int)colKills, lbY, lbHeaderSz, WHITE);
-    lbY += lbHeaderSz + 2;
-
-    // Underline
-    DrawRectangle((int)colName, lbY, (int)(colKills + sw * 0.07f - colName), 2, GRAY);
-    lbY += 8;
-
-    if (scores.empty())
-    {
-        DrawText("No scores yet", (int)colName, lbY, lbEntrySz, GRAY);
-    }
+    float borderPad = sw * 0.03f;
+    if (_borderTex.id != 0)
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
+            { panelX - borderPad, panelY - borderPad,
+              panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
     else
     {
-        for (int i = 0; i < (int)scores.size(); i++)
-        {
-            Color entryColor = (i == 0) ? GOLD : LIGHTGRAY;
-            const std::string& n = scores[i].name.empty() ? "???" : scores[i].name;
-            DrawText(n.c_str(),                                         (int)colName,  lbY, lbEntrySz, entryColor);
-            DrawText(TextFormat("%d",   scores[i].wave),                (int)colWave,  lbY, lbEntrySz, entryColor);
-            DrawText(TextFormat("%d",   scores[i].kills),               (int)colKills, lbY, lbEntrySz, entryColor);
-            lbY += lbEntrySz + 6;
-        }
+        DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(BLACK, 0.92f));
+        DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(WHITE, 0.35f));
     }
-
-    // ── Right column: title, stats, buttons ───────────────────────────────────
-    float rightCX = sw * 0.72f;
 
     // Title
     const char* title = "GAME OVER";
-    int titleSz = (int)(sw * 0.065f);
-    DrawText(title, (int)(rightCX - MeasureText(title, titleSz) / 2.f), (int)(sh * 0.12f), titleSz, RED);
+    int titleSz = (int)(sh * 0.060f);
+    DrawText(title,
+        (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
+        (int)(panelY + padV), titleSz, RED);
 
-    // Current run stats
-    int statSz = (int)(sh * 0.034f);
-    const char* waveTxt  = TextFormat("Rooms Cleared: %d", wave);
-    const char* killsTxt = TextFormat("Kills: %d", kills);
-    int statY = (int)(sh * 0.32f);
-    DrawText(waveTxt,  (int)(rightCX - MeasureText(waveTxt,  statSz) / 2.f), statY,                    statSz, YELLOW);
-    DrawText(killsTxt, (int)(rightCX - MeasureText(killsTxt, statSz) / 2.f), statY + statSz + 10, statSz, YELLOW);
-
-    // Buttons
-    const float btnW   = sw * 0.20f;
-    const float btnH   = sh * 0.074f;
-    const float btnGap = sh * 0.022f;
-    float       btnX   = rightCX - btnW / 2.f;
-    float       btnY   = sh * 0.55f;
-
-    struct { const char* label; Texture2D* tex; Color tint; } btns[3] = {
-        { "Play Again", &_btnTex,    Color{ 100, 210, 120, 255 } },
-        { "Main Menu",  &_htpBtnTex, WHITE                       },
-        { "Quit Game",  &_btnTex,    Color{ 230, 80,  80,  255 } },
-    };
+    // Buttons — all centred
+    float btnX = sw / 2.f - btnW / 2.f;
+    float btnY = panelY + padV + titleH;
 
     int result = 0;
-    for (int i = 0; i < 3; i++)
-    {
-        if (DrawButton(*btns[i].tex, btns[i].label, { btnX, btnY, btnW, btnH }, btns[i].tint))
-            result = i + 1;
-        btnY += btnH + btnGap;
-    }
+
+    if (DrawButton(_btnTex,    "Retry",     { btnX, btnY, btnW, btnH }, Color{ 100, 210, 120, 255 }))
+        result = 1;
+    btnY += btnH + btnGap;
+
+    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH }, Color{ 230, 160,  50, 255 }))
+        result = 2;
+    btnY += btnH + btnGap;
+
+    if (DrawButton(_btnTex,    "Quit Game", { btnX, btnY, btnW, btnH }, Color{ 230,  80,  80, 255 }))
+        result = 3;
 
     return result;
-}
-
-// ── Name Entry ────────────────────────────────────────────────────────────────
-// Returns "" while typing, returns the confirmed name when Enter is pressed.
-std::string PauseAndGameOver::DrawNameEntry(int wave, int kills)
-{
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
-
-    ClearBackground(BLACK);
-
-    // Title
-    const char* title = "GAME OVER";
-    int titleSz = (int)(sw * 0.065f);
-    DrawText(title,
-        (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
-        (int)(sh * 0.10f), titleSz, RED);
-
-    // Stats
-    int statSz = (int)(sh * 0.034f);
-    const char* waveTxt  = TextFormat("Rooms Cleared: %d", wave);
-    const char* killsTxt = TextFormat("Kills: %d",   kills);
-    int statY = (int)(sh * 0.28f);
-    DrawText(waveTxt,  (int)(sw / 2.f - MeasureText(waveTxt,  statSz) / 2.f), statY,                     statSz, YELLOW);
-    DrawText(killsTxt, (int)(sw / 2.f - MeasureText(killsTxt, statSz) / 2.f), statY + statSz + 10, statSz, YELLOW);
-
-    // Prompt
-    int promptSz = (int)(sh * 0.038f);
-    const char* prompt = "Enter your name:";
-    DrawText(prompt,
-        (int)(sw / 2.f - MeasureText(prompt, promptSz) / 2.f),
-        (int)(sh * 0.50f), promptSz, WHITE);
-
-    // Collect keyboard input
-    static constexpr int MAX_NAME_LEN = 20;
-    int ch = GetCharPressed();
-    while (ch > 0)
-    {
-        if ((int)_nameBuffer.size() < MAX_NAME_LEN && ch >= 32 && ch < 127)
-            _nameBuffer += (char)ch;
-        ch = GetCharPressed();
-    }
-    if (IsKeyPressed(KEY_BACKSPACE) && !_nameBuffer.empty())
-        _nameBuffer.pop_back();
-
-    // Blinking cursor
-    _cursorBlink += GetFrameTime();
-    bool showCursor = (int)(_cursorBlink * 2.f) % 2 == 0;
-
-    // Text box
-    float boxW = sw * 0.32f;
-    float boxH = sh * 0.072f;
-    float boxX = sw / 2.f - boxW / 2.f;
-    float boxY = sh * 0.57f;
-    DrawRectangleRounded({ boxX, boxY, boxW, boxH }, 0.15f, 6, Color{ 30, 30, 30, 255 });
-    DrawRectangleRoundedLines({ boxX, boxY, boxW, boxH }, 0.15f, 6, GRAY);
-
-    int inputSz = (int)(sh * 0.038f);
-    std::string display = _nameBuffer + (showCursor ? "|" : " ");
-    int textW = MeasureText(display.c_str(), inputSz);
-    DrawText(display.c_str(),
-        (int)(boxX + boxW / 2.f - textW / 2.f),
-        (int)(boxY + boxH / 2.f - inputSz / 2.f),
-        inputSz, WHITE);
-
-    // Hint
-    int hintSz = (int)(sh * 0.025f);
-    const char* hint = "Press ENTER to confirm";
-    DrawText(hint,
-        (int)(sw / 2.f - MeasureText(hint, hintSz) / 2.f),
-        (int)(boxY + boxH + 14.f), hintSz, GRAY);
-
-    // Confirm
-    if (IsKeyPressed(KEY_ENTER) && !_nameBuffer.empty())
-    {
-        std::string confirmed = _nameBuffer;
-        return confirmed;
-    }
-
-    return "";
-}
-
-void PauseAndGameOver::ResetNameEntry()
-{
-    _nameBuffer.clear();
-    _cursorBlink = 0.f;
-}
-
-// ── Leaderboard Screen ────────────────────────────────────────────────────────
-// Returns true when the Back button is clicked.
-bool PauseAndGameOver::DrawLeaderboardScreen(const std::vector<LeaderboardEntry>& scores)
-{
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
-
-    ClearBackground(Color{ 10, 8, 20, 255 });
-
-    // Title
-    const char* title = "LEADERBOARD";
-    int titleSz = (int)(sw * 0.055f);
-    DrawText(title,
-        (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
-        (int)(sh * 0.07f), titleSz, GOLD);
-
-    // Column layout (centred block)
-    float blockW  = sw * 0.70f;
-    float blockX  = sw / 2.f - blockW / 2.f;
-    float colName  = blockX;
-    float colWave  = blockX + blockW * 0.36f;
-    float colKills = blockX + blockW * 0.58f;
-
-    int headerSz = (int)(sh * 0.032f);
-    int entrySz  = (int)(sh * 0.027f);
-    int lbY      = (int)(sh * 0.20f);
-
-    // Column headers
-    DrawText("#",     (int)(blockX - sw * 0.03f), lbY, headerSz, WHITE);
-    DrawText("Name",  (int)colName,  lbY, headerSz, WHITE);
-    DrawText("Rooms", (int)colWave,  lbY, headerSz, WHITE);
-    DrawText("Kills", (int)colKills, lbY, headerSz, WHITE);
-    lbY += headerSz + 4;
-
-    // Underline
-    DrawRectangle((int)(blockX - sw * 0.03f), lbY, (int)(blockW + sw * 0.03f), 2, GRAY);
-    lbY += 10;
-
-    if (scores.empty())
-    {
-        const char* none = "No scores recorded yet. Play a game!";
-        DrawText(none,
-            (int)(sw / 2.f - MeasureText(none, entrySz) / 2.f),
-            lbY, entrySz, GRAY);
-    }
-    else
-    {
-        for (int i = 0; i < (int)scores.size(); i++)
-        {
-            Color col = (i == 0) ? GOLD : (i == 1) ? LIGHTGRAY : Color{ 180, 130, 80, 255 };
-            if (i > 2) col = LIGHTGRAY;
-
-            const std::string& n = scores[i].name.empty() ? "???" : scores[i].name;
-            DrawText(TextFormat("%d", i + 1),               (int)(blockX - sw * 0.03f), lbY, entrySz, col);
-            DrawText(n.c_str(),                             (int)colName,               lbY, entrySz, col);
-            DrawText(TextFormat("%d",   scores[i].wave),    (int)colWave,               lbY, entrySz, col);
-            DrawText(TextFormat("%d",   scores[i].kills),   (int)colKills,              lbY, entrySz, col);
-            lbY += entrySz + 8;
-        }
-    }
-
-    // Back button (bottom centre)
-    float btnW = sw * 0.16f;
-    float btnH = sh * 0.065f;
-    float btnX = sw / 2.f - btnW / 2.f;
-    float btnY = sh * 0.88f;
-
-    return DrawButton(_btnTex, "Back", { btnX, btnY, btnW, btnH }, Color{ 130, 110, 220, 255 });
 }

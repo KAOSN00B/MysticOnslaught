@@ -117,8 +117,8 @@ Rectangle Enemy::GetCollisionRec() const
     // Taller and higher than the base so the box covers the enemy body,
     // not just the feet. This makes melee hits and attack collisions register
     // against the visible sprite rather than the ground beneath it.
-    float w = _width * _scale * 0.35f;
-    float h = _height * _scale * 0.50f;
+    float w = _width * _scale * 0.175f;
+    float h = _height * _scale * 0.25f;
     return Rectangle{
         _worldPos.x - w * 0.5f,
         _worldPos.y - h * 0.5f + (_height * _scale * 0.12f),
@@ -200,10 +200,6 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     if (_target == nullptr || _dying)
         return;
 
-    // When pathing freely, steer toward the enemy's personal approach slot
-    // around the player rather than the raw feet position. This spreads enemies
-    // across all 8 directions and prevents the whole wave from converging on
-    // one point. Navigation target overrides the offset so A* routing still works.
     Vector2 playerCenter = _target->GetFeetWorldPos();
     Vector2 targetPos = hasNavigationTarget ? navigationTarget : Vector2Add(playerCenter, _approachOffset);
     Vector2 toPlayer = Vector2Subtract(targetPos, _worldPos);
@@ -212,6 +208,17 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
     if (Vector2Length(toPlayer) > 0.01f)
         moveDir = Vector2Normalize(toPlayer);
+
+    // Even when the nav grid is routing around an obstacle, blend a gentle pull
+    // toward this enemy's personal approach slot so enemies fan out along the
+    // path rather than single-filing to the same waypoint.
+    if (hasNavigationTarget)
+    {
+        Vector2 slotTarget = Vector2Add(playerCenter, _approachOffset);
+        Vector2 toSlot = Vector2Subtract(slotTarget, _worldPos);
+        if (Vector2Length(toSlot) > 0.01f)
+            moveDir = Vector2Add(moveDir, Vector2Scale(Vector2Normalize(toSlot), 0.3f));
+    }
 
     // Once a regular enemy gets into the player's local space, it blends part
     // of its movement into a personal side lane. That creates a loose flanking
@@ -249,13 +256,13 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
         float dist = Vector2Distance(_worldPos, enemy->_worldPos);
 
-        if (dist < 90.f && dist > 0.f)
+        if (dist < 130.f && dist > 0.f)
         {
             Vector2 away = Vector2Subtract(_worldPos, enemy->_worldPos);
 
             if (Vector2Length(away) > 0.01f)
             {
-                float strength = (90.f - dist) / 90.f;
+                float strength = (130.f - dist) / 130.f;
                 separation = Vector2Add(separation, Vector2Scale(Vector2Normalize(away), strength));
             }
         }
@@ -287,7 +294,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         }
     }
 
-    separation = Vector2Scale(separation, 0.55f);
+    separation = Vector2Scale(separation, 0.80f);
     propSlide = Vector2Scale(propSlide, _propSlideStrength);
     moveDir = Vector2Add(moveDir, separation);
     moveDir = Vector2Add(moveDir, propSlide);
@@ -297,11 +304,43 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
     Vector2 oldPos = _worldPos;
 
-    if (!_attacking && !_takingDamage && !IsFrozen())
-        _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
+    // Stop chasing once inside attack range — let the attack system take over.
+    // The enemy waits here (idle animation) until the player leaves the sensor
+    // or the cooldown expires and another swing fires.
+    float distToPlayer = Vector2Length(Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
+    bool inAttackRange = distToPlayer <= _attackRange;
 
-    // Stuck detection — if not moving enough over time, kick sideways to break deadlock
-    if (!_attacking && !_takingDamage && !IsFrozen())
+    bool intentionalMove = false;
+    if (!_attacking && !_takingDamage && !IsFrozen() && !inAttackRange)
+    {
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
+        intentionalMove = true;
+    }
+
+    // Position-level push: resolve physical overlap with other enemies so they
+    // never pass through each other. Each enemy moves only itself; the other
+    // enemy does the same in its own Update, so overlaps resolve symmetrically.
+    // The 0.35f factor keeps the push gentle so enemies slide apart smoothly
+    // rather than snapping or jittering.
+    {
+        const float minSep = 60.f;
+        for (const auto& other : enemies)
+        {
+            if (other.get() == this) continue;
+            if (!other->IsActive() || other->IsDying()) continue;
+
+            float dist = Vector2Distance(_worldPos, other->_worldPos);
+            if (dist < minSep && dist > 0.01f)
+            {
+                Vector2 push = Vector2Normalize(Vector2Subtract(_worldPos, other->_worldPos));
+                _worldPos = Vector2Add(_worldPos, Vector2Scale(push, (minSep - dist) * 0.35f));
+            }
+        }
+    }
+
+    // Stuck detection — only runs when the enemy is actively trying to chase.
+    // Skipped inside attack range since standing still there is intentional.
+    if (!_attacking && !_takingDamage && !IsFrozen() && !inAttackRange)
     {
         _stuckTimer += dt;
 
@@ -311,11 +350,25 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
             if (moved < _stuckMinMove)
             {
-                // Apply a random perpendicular impulse
-                Vector2 perp = { -moveDir.y, moveDir.x };
-                float sign = (GetRandomValue(0, 1) == 0) ? 1.f : -1.f;
-                _velocity = Vector2Add(_velocity,
-                    Vector2Scale(perp, sign * _speed * 1.2f));
+                // Sample 8 directions and pick the one that points most toward
+                // the player while avoiding the direction we're already stuck in.
+                // This routes the enemy around the wall rather than bouncing off it.
+                Vector2 toPlayer = Vector2Normalize(
+                    Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
+                float bestDot  = -2.f;
+                Vector2 bestDir = { -moveDir.y, moveDir.x };   // perp fallback
+
+                for (int d = 0; d < 8; d++)
+                {
+                    float angle = d * (PI / 4.f);
+                    Vector2 candidate = { cosf(angle), sinf(angle) };
+                    // Skip directions too close to the stuck heading
+                    if (Vector2DotProduct(candidate, moveDir) > 0.7f) continue;
+                    float dot = Vector2DotProduct(candidate, toPlayer);
+                    if (dot > bestDot) { bestDot = dot; bestDir = candidate; }
+                }
+
+                _velocity = Vector2Add(_velocity, Vector2Scale(bestDir, _speed * 2.0f));
             }
 
             _stuckTimer    = 0.f;
@@ -329,12 +382,12 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         _stuckCheckPos = _worldPos;
     }
 
-    Vector2 movement = Vector2Subtract(_worldPos, oldPos);
-
-    // Only update texture when not in a locked animation state
+    // Only switch to walk when the enemy is intentionally chasing and actually
+    // moving — push-induced drift while stopped in attack range should not
+    // trigger the walk animation.
     if (!_attacking && !_takingDamage)
     {
-        if (Vector2Length(movement) > 0.01f)
+        if (intentionalMove && Vector2Length(Vector2Subtract(_worldPos, oldPos)) > 0.01f)
         {
             _texture = _walkAnim;
 
@@ -353,17 +406,12 @@ void Enemy::HandleAttack()
     if (_dying || _target == nullptr || IsFrozen() || _takingDamage)
         return;
 
-    Vector2 toTarget = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
-    float distance = Vector2Length(toTarget);
+    float distance = Vector2Length(Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
 
-    Vector2 toTargetDir{ 0.f, 0.f };
-    if (distance > 0.01f)
-        toTargetDir = Vector2Normalize(toTarget);
-
-    Vector2 facingDir{ (float)_rightLeft, 0.f };
-    float dot = Vector2DotProduct(facingDir, toTargetDir);
-
-    if (distance <= _attackRange && dot > -0.5f && !_attacking && _attackCooldown <= 0.f)
+    // Sensor circle: swing whenever the player enters attack range regardless
+    // of which direction the enemy is facing. The hurtbox placement at frame 2
+    // reads the actual player position and picks the correct direction then.
+    if (distance <= _attackRange && !_attacking && _attackCooldown <= 0.f)
     {
         _attacking = true;
         _damageApplied = false;
@@ -382,14 +430,41 @@ void Enemy::HandleAttack()
 
     if (_attacking && !_damageApplied && _frame == 2)
     {
-        Rectangle attackRec = GetCollisionRec();
-        attackRec.x += _rightLeft * 28.f;
-        // Shrink height and vertically center so enemies can't hit too high or too low
-        float trim = attackRec.height * 0.30f;
-        attackRec.y      += trim;
-        attackRec.height -= trim * 2.f;
+        Rectangle bodyRec = GetCollisionRec();
 
-        if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+        // Choose hurtbox direction based on where the player actually is:
+        //   horizontal — player is more to the side than above/below
+        //   up         — player is above
+        //   down       — player is below
+        Vector2 toTarget = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+        float absX = fabsf(toTarget.x);
+        float absY = fabsf(toTarget.y);
+
+        Rectangle attackHurtbox{};
+
+        if (absY > absX)
+        {
+            // Vertical hurtbox — half-sprite-width wide, half-range tall, centred on enemy X
+            float hurtW = _width * _scale * 0.5f;
+            float hurtH = _attackRange * 0.75f;
+            float hurtX = _worldPos.x - hurtW * 0.5f;
+            float hurtY = (toTarget.y < 0)
+                ? _worldPos.y - hurtH   // player above: box extends upward
+                : _worldPos.y;          // player below: box extends downward
+            attackHurtbox = { hurtX, hurtY, hurtW, hurtH };
+        }
+        else
+        {
+            // Horizontal hurtbox — half-range wide, half sprite height, centred on enemy Y
+            float hurtW = _attackRange * 0.75f;
+            float hurtH = _height * _scale * 0.5f;
+            float hurtX = (_rightLeft > 0)
+                ? bodyRec.x + bodyRec.width   // right-facing
+                : bodyRec.x - hurtW;          // left-facing
+            attackHurtbox = { hurtX, _worldPos.y - hurtH * 0.5f, hurtW, hurtH };
+        }
+
+        if (CheckCollisionRecs(attackHurtbox, _target->GetCollisionRec()))
         {
             _target->TakeDamage((int)_attackPower, _worldPos);
             _damageApplied = true;
@@ -681,7 +756,7 @@ void Enemy::SetWaveScale(int /*wave*/)
     _maxHealth   = 4.f;
     _attackPower = 1.f;
     _speed       = 185.f;
-    _attackDelay = 0.6f;
+    _attackDelay = 1.5f;
 }
 
 void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)

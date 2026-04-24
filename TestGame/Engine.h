@@ -22,12 +22,12 @@
 #include "SpreadProjectile.h"
 #include "CyclopsLaserProjectile.h"
 #include "LavaBallProjectile.h"
-#include "Leaderboard.h"
 #include "TouchControls.h"
 #include "NavigationGrid.h"
 #include "VFXManager.h"
 #include "ShopManager.h"
 #include "DebugPanel.h"
+#include "WorldConfig.h"
 
 #include <vector>
 #include <string>
@@ -61,7 +61,6 @@ enum class GameState
     GameOver,
     Pause,
     HowToPlay,
-    Leaderboard,
     Keybindings,
     LevelUpChoice,
     AbilityChoice,
@@ -121,7 +120,7 @@ private:
     void ApplyUltimateImpact();
     void GenerateStartingAbilityOptions();
     void UpdateSpreadProjectiles(float dt);
-    void SpawnEnemyDrop(Vector2 worldPos);
+    void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);
     void SpawnTimedPickup();
     void SpawnBossSupportAdds();
     void UpdateBossSupportRespawns(float dt);
@@ -214,11 +213,11 @@ private:
     bool _wave1LevelUpDone = false; // ensures forced level-up after wave 1 only fires once
     bool _playerDying = false;
     bool _shouldClose = false;
-    bool _awaitingNameEntry = false;
     bool _awaitingStartingAbility = false;
 
     int _wave        = 0;
-    int _enemiesKilled = 0;
+    int _enemiesKilled      = 0;
+    int _goldDroughtCounter = 0;  // kills since last Five-or-better drop; resets at 5
 
     float _shakeTimer = 0.f;
     float _shakeStrength = 0.f;
@@ -336,7 +335,10 @@ private:
     Texture2D _rockTex{};
     Texture2D _bigRockTex{};
     Vector2 _mapPos{};
-    float _mapScale = 3.f;
+    // Map scale is now computed by _worldConfig — do not set this by hand.
+    // Read/write it through _worldConfig.Recalculate() and GetScale().
+    float      _mapScale    = 3.f;
+    WorldConfig _worldConfig;          // owns all map-scale and camera logic
     int _maxActiveEnemies = 16;
 
     Texture2D _pillarTex{};
@@ -410,8 +412,6 @@ private:
     bool  _biomeTransitionActive = false;
     bool  _biomeTransitionSwapped = false;
     float _biomeTransitionTimer = 0.f;
-
-    Leaderboard _leaderboard;
 
     // ── Touch mode ───────────────────────────────────────────────────────────
     bool          _touchModeActive = false;

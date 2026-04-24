@@ -157,7 +157,7 @@ namespace
 void DebugPanel::Activate()
 {
     _active              = true;
-    _open                = true;
+    _open                = false;
     _godMode             = false;
     _scrollY             = 0.f;
     _forcedEliteMechanic = -1;

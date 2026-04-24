@@ -71,7 +71,7 @@ static int ShopUpgradePrice(UpgradeType t)
     {
     case UpgradeRarity::Common: return 30;
     case UpgradeRarity::Rare:   return 60;
-    default:                    return 100;
+    default:                    return 120;
     }
 }
 
@@ -131,13 +131,14 @@ void ShopManager::Init(const ShopTextures& tex)
     _tex = tex;
 }
 
-void ShopManager::Enter(Vector2 npcWorldPos, Character& player)
+void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
 {
-    _npcPos     = npcWorldPos;
-    _nearNpc    = false;
-    _tab        = 0;
-    _rerollCost = 100;
-    _dialogue   = "Welcome to Zeph's Wares! What do you need?";
+    _npcPos         = npcWorldPos;
+    _nearNpc        = false;
+    _tab            = 0;
+    _rerollCost     = 20;
+    _act            = std::max(1, act);
+    _dialogue       = "Welcome to Zeph's Wares! What do you need?";
     GenerateInventory(player);
 }
 
@@ -225,17 +226,20 @@ bool ShopManager::Update(Character& player)
     bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
 
     // ── Layout (must match Draw exactly) ─────────────────────────────────
-    static constexpr float kBorderDst_u = 32.f;
-    const float leftW  = sw * 0.30f;
-    const float leaveH = 48.f;
-    const float leaveY = sh - pad - leaveH;
-    const float dialH  = std::max(sh * 0.12f, kBorderDst_u * 2.f + 30.f);
-    const float dialY  = leaveY - pad * 0.5f - dialH;
-    const float shopX  = pad + leftW + pad;
-    const float shopY  = pad;
-    const float shopW  = sw - shopX - pad;
-    const float shopH  = dialY - pad * 0.5f - shopY;
-    const float iPad   = kBorderDst_u;
+    static constexpr float kBorderDst_u  = 32.f;
+    static constexpr float kPotionPrice  = 25;
+    static constexpr float kPotionStripH = 52.f;
+    const float leftW   = sw * 0.30f;
+    const float leaveH  = 48.f;
+    const float leaveY  = sh - pad - leaveH;
+    const float potionY = leaveY - pad * 0.5f - kPotionStripH;
+    const float dialH   = std::max(sh * 0.12f, kBorderDst_u * 2.f + 30.f);
+    const float dialY   = potionY - pad * 0.5f - dialH;
+    const float shopX   = pad + leftW + pad;
+    const float shopY   = pad;
+    const float shopW   = sw - shopX - pad;
+    const float shopH   = dialY - pad * 0.5f - shopY;
+    const float iPad    = kBorderDst_u;
 
     // ── Leave button ─────────────────────────────────────────────────────
     const float leaveW  = 180.f;
@@ -255,7 +259,7 @@ bool ShopManager::Update(Character& player)
         if (player.GetGold() >= _rerollCost)
         {
             player.AddGold(-_rerollCost);
-            _rerollCost += 50;
+            _rerollCost += 20;
             GenerateInventory(player);
             _dialogue = "Fresh stock, just for you!";
         }
@@ -263,6 +267,34 @@ bool ShopManager::Update(Character& player)
         {
             _dialogue = "You don't have enough gold for a reroll!";
         }
+        return false;
+    }
+
+    // ── Potion buttons (fixed — not affected by rerolls) ──────────────────
+    const float potBtnW  = (shopW - 8.f) * 0.5f;
+    Rectangle hpotBtn = { shopX,                   potionY, potBtnW, kPotionStripH };
+    Rectangle mpotBtn = { shopX + potBtnW + 8.f,   potionY, potBtnW, kPotionStripH };
+
+    if (clicked && CheckCollisionPointRec(mouse, hpotBtn))
+    {
+        if (player.GetGold() >= (int)kPotionPrice)
+        {
+            player.AddGold(-(int)kPotionPrice);
+            player.Heal((int)(player.GetMaxHealthValue() * 0.25f));
+            _dialogue = "Drink up! That's 25% HP back.";
+        }
+        else { _dialogue = "You can't afford that right now."; }
+        return false;
+    }
+    if (clicked && CheckCollisionPointRec(mouse, mpotBtn))
+    {
+        if (player.GetGold() >= (int)kPotionPrice)
+        {
+            player.AddGold(-(int)kPotionPrice);
+            player.RestoreMana(player.GetMaxMana() / 2);
+            _dialogue = "Your mana flows freely again.";
+        }
+        else { _dialogue = "You can't afford that right now."; }
         return false;
     }
 
@@ -410,15 +442,18 @@ void ShopManager::Draw(const Character& player) const
 
     // ── Layout ───────────────────────────────────────────────────────────
     static constexpr float kBorderDst_layout = 32.f;
-    const float leftW  = sw * 0.30f;
-    const float leaveH = 48.f;
-    const float leaveY = sh - pad - leaveH;
-    const float dialH  = std::max(sh * 0.12f, kBorderDst_layout * 2.f + 30.f);
-    const float dialY  = leaveY - pad * 0.5f - dialH;
-    const float shopX  = pad + leftW + pad;
-    const float shopY  = pad;
-    const float shopW  = sw - shopX - pad;
-    const float shopH  = dialY - pad * 0.5f - shopY;
+    static constexpr int   kPotionPriceDraw  = 25;
+    static constexpr float kPotionStripHDraw = 52.f;
+    const float leftW   = sw * 0.30f;
+    const float leaveH  = 48.f;
+    const float leaveY  = sh - pad - leaveH;
+    const float potionY = leaveY - pad * 0.5f - kPotionStripHDraw;
+    const float dialH   = std::max(sh * 0.12f, kBorderDst_layout * 2.f + 30.f);
+    const float dialY   = potionY - pad * 0.5f - dialH;
+    const float shopX   = pad + leftW + pad;
+    const float shopY   = pad;
+    const float shopW   = sw - shopX - pad;
+    const float shopH   = dialY - pad * 0.5f - shopY;
 
     static constexpr float kBorderSrc = 16.f;
     static constexpr float kBorderDst = 32.f;
@@ -702,6 +737,17 @@ void ShopManager::Draw(const Character& player) const
                 DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
                     (int)cy2, (int)descFs, kDim);
 
+                // Daily deal badge
+                if (idx == _dailyDealIndex)
+                {
+                    const char* dealLbl = "DEAL!";
+                    int dlFs = 13, dlW = MeasureText(dealLbl, dlFs);
+                    DrawRectangle((int)(ix + itemW - dlW - 10.f), (int)iy, dlW + 10, 20,
+                        Color{255, 200, 0, 230});
+                    DrawText(dealLbl, (int)(ix + itemW - dlW - 5.f), (int)(iy + 3.f),
+                        dlFs, BLACK);
+                }
+
                 EndScissorMode();
 
                 bool canAfford = (player.GetGold() >= item.price);
@@ -710,7 +756,9 @@ void ShopManager::Draw(const Character& player) const
                 Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
                 smallBox(buyBtn, buyBg, buyBo);
                 int prFs = (int)std::min(14.f, buyH * 0.55f);
-                const char* prLbl = TextFormat("%dg", item.price);
+                const char* prLbl = (idx == _dailyDealIndex)
+                    ? TextFormat("%dg  DEAL", item.price)
+                    : TextFormat("%dg", item.price);
                 int prW = MeasureText(prLbl, prFs);
                 DrawText(prLbl,
                     (int)(buyBtn.x + buyBtn.width * 0.5f - prW * 0.5f),
@@ -803,6 +851,35 @@ void ShopManager::Draw(const Character& player) const
             dtFs, BLACK);
     }
 
+    // ── POTION STRIP ─────────────────────────────────────────────────────
+    {
+        const float potBtnW  = (shopW - 8.f) * 0.5f;
+        bool canAffordPot    = (player.GetGold() >= kPotionPriceDraw);
+        Vector2 mpos2        = GetMousePosition();
+
+        auto drawPotBtn = [&](Rectangle r, const char* label, Color baseBg, Color hovBg, Color border)
+        {
+            bool hov = CheckCollisionPointRec(mpos2, r);
+            Color bg = canAffordPot ? (hov ? hovBg : baseBg) : Color{25,25,30,180};
+            Color bo = canAffordPot ? border : Color{70,70,80,140};
+            smallBox(r, bg, bo);
+            int fs = (int)std::min(14.f, kPotionStripHDraw * 0.30f);
+            int lw = MeasureText(label, fs);
+            DrawText(label,
+                (int)(r.x + r.width * 0.5f - lw * 0.5f),
+                (int)(r.y + r.height * 0.5f - fs * 0.5f),
+                fs, canAffordPot ? RAYWHITE : Fade(RAYWHITE, 0.35f));
+        };
+
+        drawPotBtn({ shopX,                   potionY, potBtnW, kPotionStripHDraw },
+            TextFormat("Health Potion  %dg   (Heals 25%% HP)", kPotionPriceDraw),
+            Color{55,18,18,220}, Color{80,25,25,240}, Color{220,70,70,220});
+
+        drawPotBtn({ shopX + potBtnW + 8.f,   potionY, potBtnW, kPotionStripHDraw },
+            TextFormat("Mana Potion  %dg   (Restores 50%% MP)", kPotionPriceDraw),
+            Color{18,25,65,220}, Color{25,38,95,240}, Color{80,120,255,220});
+    }
+
     // ── REROLL + LEAVE BUTTONS ────────────────────────────────────────────
     const float leaveW  = 180.f;
     const float rerollW = 200.f;
@@ -865,6 +942,9 @@ void ShopManager::GenerateInventory(const Character& player)
         AbilityType::FireBolt,       AbilityType::IceBolt,       AbilityType::ElectricBolt
     };
 
+    // Price inflation: 25% per act above Act 1 (Act 1 = 1.0×, Act 2 = 1.25×, ...)
+    const float inflation = 1.0f + 0.25f * (float)(_act - 1);
+
     // Build unowned ability pool
     std::vector<ShopItem> abilityPool;
     for (auto a : kShopAbilities)
@@ -876,7 +956,7 @@ void ShopManager::GenerateInventory(const Character& player)
         ShopItem item;
         item.isAbility   = true;
         item.abilityType = a;
-        item.price       = ShopAbilityPrice(a);
+        item.price       = (int)(ShopAbilityPrice(a) * inflation + 0.5f);
         abilityPool.push_back(item);
     }
 
@@ -894,7 +974,7 @@ void ShopManager::GenerateInventory(const Character& player)
         ShopItem item;
         item.isAbility   = false;
         item.upgradeType = u;
-        item.price       = ShopUpgradePrice(u);
+        item.price       = (int)(ShopUpgradePrice(u) * inflation + 0.5f);
         statPool.push_back(item);
     }
     for (int i = (int)statPool.size() - 1; i > 0; i--)
@@ -907,4 +987,13 @@ void ShopManager::GenerateInventory(const Character& player)
     // Final shuffle so abilities don't always appear first
     for (int i = (int)_inventory.size() - 1; i > 0; i--)
         std::swap(_inventory[i], _inventory[GetRandomValue(0, i)]);
+
+    // Daily deal: one random item gets 25% off
+    _dailyDealIndex = -1;
+    if (!_inventory.empty())
+    {
+        _dailyDealIndex = GetRandomValue(0, (int)_inventory.size() - 1);
+        _inventory[_dailyDealIndex].price =
+            std::max(1, (int)(_inventory[_dailyDealIndex].price * 0.75f));
+    }
 }

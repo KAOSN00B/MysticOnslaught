@@ -156,8 +156,6 @@ void Engine::Init()
     SetTargetFPS(60);
     InitAudioDevice();
 
-    _leaderboard.Load("leaderboard.txt");
-
     SetExitKey(KEY_NULL);
 
     _pickupSound      = LoadSound(AssetPath("Sounds/PickupSound.mp3").c_str());
@@ -272,7 +270,7 @@ void Engine::StartNextRoom(RoomType type)
     {
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player);
+        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player, _currentAct);
     }
 
     std::string actName = GetBiomeName(GetBiomeForAct(_currentAct));
@@ -396,7 +394,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
         _roomClearPending = true;
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player);
+        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player, _currentAct);
     }
     else if (type == RoomType::Rest)
     {
@@ -752,12 +750,14 @@ void Engine::SpawnEnemies()
             int healCount = GetRandomValue(2, 3);
             for (int i = 0; i < healCount; i++)
             {
-                Vector2 pos{};
+                Vector2 pos{ mapW * 0.5f, mapH * 0.5f };
                 for (int a = 0; a < 30; a++)
                 {
-                    pos.x = (float)GetRandomValue(300, (int)mapW - 300);
-                    pos.y = (float)GetRandomValue(300, (int)mapH - 300);
-                    if (IsSpawnPositionValid(pos)) break;
+                    Vector2 candidate{
+                        (float)GetRandomValue(300, (int)mapW - 300),
+                        (float)GetRandomValue(300, (int)mapH - 300)
+                    };
+                    if (IsSpawnPositionValid(candidate)) { pos = candidate; break; }
                 }
                 auto p = std::make_unique<HealPickup>();
                 p->Init(pos);
@@ -771,15 +771,31 @@ void Engine::SpawnEnemies()
     // Act 1 introduces enemy types gradually (rooms 1-5).
     // Act 2+ uses a consistently harder baseline.
     // Elite rooms add bonus enemies on top of the standard count.
+    // Enemies always spawn from the four map corners so the player can never
+    // pre-stack them by standing in one spot. Cycling ensures distribution.
+    int cornerIdx = 0;
     auto spawnPos = [&]() -> Vector2 {
-        Vector2 p{};
-        for (int a = 0; a < 40; a++)
+        const float m = 400.f;
+        const Vector2 corners[4] = {
+            { m,        m        },   // top-left
+            { mapW - m, m        },   // top-right
+            { m,        mapH - m },   // bottom-left
+            { mapW - m, mapH - m },   // bottom-right
+        };
+        Vector2 base = corners[cornerIdx % 4];
+        cornerIdx++;
+
+        // Nudge away from a prop if the corner happens to overlap one
+        if (IsSpawnPositionValid(base)) return base;
+        for (int a = 0; a < 10; a++)
         {
-            p.x = (float)GetRandomValue(300, (int)mapW - 300);
-            p.y = (float)GetRandomValue(300, (int)mapH - 300);
-            if (IsSpawnPositionValid(p)) break;
+            Vector2 p{
+                base.x + (float)GetRandomValue(-120, 120),
+                base.y + (float)GetRandomValue(-120, 120)
+            };
+            if (IsSpawnPositionValid(p)) return p;
         }
-        return p;
+        return base;
     };
 
     if (_currentRoomType == RoomType::Elite)
@@ -941,9 +957,6 @@ void Engine::Update(float dt)
             _howToPlayFrom = GameState::Menu;
             _gameState = GameState::HowToPlay;
         }
-        if (_menu.LeaderboardPressed())
-            _gameState = GameState::Leaderboard;
-
         break;
     }
 
@@ -1202,8 +1215,6 @@ void Engine::UpdateGamePlay(float dt)
 
         if (_gameOverTimer <= 0.f)
         {
-            _awaitingNameEntry = true;
-            _pauseUI.ResetNameEntry();
             _gameState = GameState::GameOver;
         }
 
@@ -1398,7 +1409,7 @@ void Engine::UpdateGamePlay(float dt)
         {
             if (_shop.UpdateNpc(_player)) _gameState = GameState::Shop;
         }
-        else if (!_roomClearPending && GetActiveEnemyCount() == 0)
+        else if (!_roomClearPending && GetActiveEnemyCount() == 0 && !_debug.IsActive())
         {
             // Elite clear bonus: scatter some gold near the player's position.
             if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
@@ -1539,25 +1550,16 @@ void Engine::UpdateGamePlay(float dt)
     HandleCollisions();
 
     {
-        float mapW = _map.width  * _mapScale;
-        float mapH = _map.height * _mapScale;
+        // WorldConfig::ClampCamera handles both the scroll-clamp (world > screen)
+        // and the centring case (world ≤ screen — e.g. FitToScreen on a large monitor).
+        // GetMapScreenPos converts the clamped world-pos to a screen-space top-left
+        // for the map texture draw call. Using the live screen size here means
+        // a window resize mid-session (or a phone rotation) adapts automatically.
+        const int sw = GetScreenWidth();
+        const int sh = GetScreenHeight();
 
-        // _cameraPos = world position shown at screen centre
-        float camMinX = _windowWidth  / 2.f;
-        float camMaxX = mapW - _windowWidth  / 2.f;
-        float camMinY = _windowHeight / 2.f;
-        float camMaxY = mapH - _windowHeight / 2.f;
-
-        _cameraPos.x = _player.GetWorldPos().x;
-        _cameraPos.y = _player.GetWorldPos().y;
-        if (_cameraPos.x < camMinX) _cameraPos.x = camMinX;
-        if (_cameraPos.x > camMaxX) _cameraPos.x = camMaxX;
-        if (_cameraPos.y < camMinY) _cameraPos.y = camMinY;
-        if (_cameraPos.y > camMaxY) _cameraPos.y = camMaxY;
-
-        // _mapPos: top-left of map on screen, aligned with the object rendering convention
-        _mapPos.x = _windowWidth  / 2.f - _cameraPos.x;
-        _mapPos.y = _windowHeight / 2.f - _cameraPos.y;
+        _cameraPos = _worldConfig.ClampCamera(_player.GetWorldPos(), sw, sh);
+        _mapPos    = _worldConfig.GetMapScreenPos(_cameraPos, sw, sh);
     }
 
     if (_shakeTimer > 0.f)
@@ -1710,24 +1712,11 @@ void Engine::Draw()
 
     case GameState::GameOver:
     {
-        if (_awaitingNameEntry)
-        {
-            std::string confirmed = _pauseUI.DrawNameEntry(_wave, _enemiesKilled);  // _wave = rooms entered
-            if (!confirmed.empty())
-            {
-                _leaderboard.AddEntry(_wave, _enemiesKilled, confirmed);
-                _leaderboard.Save("leaderboard.txt");
-                _awaitingNameEntry = false;
-            }
-        }
-        else
-        {
-            int goResult = _pauseUI.DrawGameOver(_wave, _enemiesKilled, _leaderboard.GetEntries());
-            if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-            if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _fadeInDuration = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Map; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
-            else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
-            else if (goResult == 3) _shouldClose = true;
-        }
+        int goResult = _pauseUI.DrawGameOver();
+        if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
+        if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _fadeInDuration = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Map; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
+        else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
+        else if (goResult == 3) _shouldClose = true;
         break;
     }
 
@@ -1744,16 +1733,6 @@ void Engine::Draw()
             _player.SetBindings(_keybindingsEdit);
             SaveKeybindings();
             _gameState = GameState::Pause;
-        }
-        break;
-    }
-
-    case GameState::Leaderboard:
-    {
-        if (_pauseUI.DrawLeaderboardScreen(_leaderboard.GetEntries()))
-        {
-            _menu.Init();
-            _gameState = GameState::Menu;
         }
         break;
     }
@@ -2008,6 +1987,7 @@ void Engine::UpdateEnemyCount(float dt)
             //  Normal enemy → standard per-enemy exp
             // EXP is banked into _pendingExp and drained on the post-battle tally screen.
             bool isBoss = (dynamic_cast<Molarbeast*>(enemy.get()) != nullptr);
+            bool isOgre = (dynamic_cast<Ogre*>(enemy.get()) != nullptr);
 
             if (isBoss)
                 _pendingExp += 10.f * _wave;
@@ -2016,7 +1996,7 @@ void Engine::UpdateEnemyCount(float dt)
             // else: support add during active boss fight — no exp
 
             _enemiesKilled++;
-            SpawnEnemyDrop(dropPos);
+            SpawnEnemyDrop(dropPos, isOgre, isBoss);
             enemy->SetActive(false);
             enemy->Teleport(Vector2{ -5000.f, -5000.f });
         }
@@ -4739,20 +4719,46 @@ void Engine::UpdateSpreadProjectiles(float dt)
         _spreadProjectiles.end());
 }
 
-void Engine::SpawnEnemyDrop(Vector2 worldPos)
+void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
 {
-    // Boss fights suppress all drops — the fight is won on build + passive regen,
-    // not on floor loot. Support add kills also fall through this path.
+    // Boss: scatter a large gold reward at the arena centre.
+    if (isBoss)
+    {
+        const float mapW = _map.width  * _mapScale;
+        const float mapH = _map.height * _mapScale;
+        const Vector2 centre{ mapW * 0.5f, mapH * 0.5f };
+        auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
+        {
+            auto g = std::make_unique<GoldPickup>();
+            g->Init(Vector2{ centre.x + ox, centre.y + oy }, denom);
+            _pickups.push_back(std::move(g));
+        };
+        // 8× Ten + 6× Five + 3× Single = ~113g jackpot
+        spawnGold(GoldDenomination::Ten,      0.f,    0.f);
+        spawnGold(GoldDenomination::Ten,    -55.f,  -60.f);
+        spawnGold(GoldDenomination::Ten,     55.f,  -60.f);
+        spawnGold(GoldDenomination::Ten,   -110.f,    0.f);
+        spawnGold(GoldDenomination::Ten,    110.f,    0.f);
+        spawnGold(GoldDenomination::Ten,    -55.f,   60.f);
+        spawnGold(GoldDenomination::Ten,     55.f,   60.f);
+        spawnGold(GoldDenomination::Ten,      0.f,   90.f);
+        spawnGold(GoldDenomination::Five,  -140.f,  -40.f);
+        spawnGold(GoldDenomination::Five,   140.f,  -40.f);
+        spawnGold(GoldDenomination::Five,  -140.f,   40.f);
+        spawnGold(GoldDenomination::Five,   140.f,   40.f);
+        spawnGold(GoldDenomination::Five,     0.f, -100.f);
+        spawnGold(GoldDenomination::Five,     0.f,  130.f);
+        spawnGold(GoldDenomination::Single, -80.f, -110.f);
+        spawnGold(GoldDenomination::Single,  80.f, -110.f);
+        spawnGold(GoldDenomination::Single,   0.f, -150.f);
+        return;
+    }
+
+    // Support adds during an active boss fight give no drops.
     if (IsBossFightActive())
         return;
 
-    // Rare drop: heals only. Mana gems removed from the drop pool —
-    // passive regen (Character::kManaRegenPerSecond) is now the mana source.
-    // ManaGemPickup class kept on disk as legacy, not spawned here.
-    if (GetRandomValue(1, 100) > kEnemyDropChancePercent)
-        return;
-
-    // Find a valid drop position (avoid spawning inside a prop)
+    // Find a valid drop position (avoid spawning inside a prop).
     Vector2 dropPos = worldPos;
     if (!IsSpawnPositionValid(dropPos))
     {
@@ -4770,9 +4776,49 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos)
         }
     }
 
-    auto p = std::make_unique<HealPickup>();
-    p->Init(dropPos);
-    _pickups.push_back(std::move(p));
+    // Always drop one gold coin. Ogres are weighted toward higher denominations.
+    // Ogre:    20% Single | 50% Five | 30% Ten
+    // Regular: 50% Single | 35% Five | 15% Ten
+    int roll = GetRandomValue(1, 100);
+    GoldDenomination denom;
+    if (isOgre)
+        denom = (roll <= 20) ? GoldDenomination::Single
+              : (roll <= 70) ? GoldDenomination::Five
+              :                GoldDenomination::Ten;
+    else
+        denom = (roll <= 50) ? GoldDenomination::Single
+              : (roll <= 85) ? GoldDenomination::Five
+              :                GoldDenomination::Ten;
+
+    // Pity: force at least Five if the last 5 drops were all Singles.
+    if (denom == GoldDenomination::Single)
+    {
+        if (_goldDroughtCounter >= 5)
+        {
+            denom = GoldDenomination::Five;
+            _goldDroughtCounter = 0;
+        }
+        else
+        {
+            _goldDroughtCounter++;
+        }
+    }
+    else
+    {
+        _goldDroughtCounter = 0;
+    }
+
+    auto g = std::make_unique<GoldPickup>();
+    g->Init(dropPos, denom);
+    _pickups.push_back(std::move(g));
+
+    // Rare bonus heal drop (8% chance, unchanged from before).
+    if (GetRandomValue(1, 100) <= kEnemyDropChancePercent)
+    {
+        auto p = std::make_unique<HealPickup>();
+        p->Init(dropPos);
+        _pickups.push_back(std::move(p));
+    }
 }
 
 void Engine::SpawnTimedPickup()
@@ -5035,10 +5081,16 @@ Vector2 Engine::GetRandomPropPosition()
     float mapH = _map.height * _mapScale;
     Vector2 playerStart{ mapW * 0.5f, mapH * 0.5f };
 
-    float minX = mapW * (_currentBiome == Biome::Forest ? 0.13f : 0.05f);
-    float maxX = mapW * (_currentBiome == Biome::Forest ? 0.87f : 0.95f);
-    float minY = mapH * (_currentBiome == Biome::Forest ? 0.13f : 0.05f);
-    float maxY = mapH * (_currentBiome == Biome::Forest ? 0.80f : 0.85f);
+    // One full player unit of clearance from every map edge.
+    // Player sprite is 32 px wide at draw scale 6 → 192 world-space pixels.
+    // The bottom margin is larger because prop positions are top-left corners,
+    // so tall props (trees) would otherwise hang off the bottom edge.
+    const float margin       = 32.f * 6.f;         // 192 px — sides and top
+    const float bottomMargin = margin * 1.5f;       // 288 px — bottom
+    float minX = margin;
+    float maxX = mapW - margin;
+    float minY = margin;
+    float maxY = mapH - bottomMargin;
 
     float minSpacing = 308.f;
     float playerSafeRadius = 320.f;
@@ -5105,35 +5157,39 @@ void Engine::PopulatePropsForBiome(Biome biome)
 {
     _props.clear();
 
+    // Boss room is an open arena — no props
+    if (_currentRoomType == RoomType::Boss)
+        return;
+
     if (biome == Biome::Forest)
     {
         // Forest props are all solid blockers, so a mixed random rotation is
         // enough to make each pass through the biome read differently without
         // changing the existing prop/pathfinding systems.
-        int propCount = GetRandomValue(9, 13);
+        int propCount = GetRandomValue(4, 6);
         for (int i = 0; i < propCount; ++i)
         {
             Vector2 pos = GetRandomPropPosition();
             int choice = GetRandomValue(0, 3);
             if (choice == 0)
             {
-                _props.push_back(Prop{ pos, _treeTex, 1, 0, 0, 6.f });
+                _props.push_back(Prop{ pos, _treeTex, 1, 0, 0, 4.8f });
                 _props.back().SetCollisionTopFraction(0.25f);
                 _props.back().SetCollisionSideFraction(0.30f);
             }
             else if (choice == 1)
             {
-                _props.push_back(Prop{ pos, _smallTreeTex, 1, 0, 0, 6.f });
+                _props.push_back(Prop{ pos, _smallTreeTex, 1, 0, 0, 4.8f });
                 _props.back().SetCollisionTopFraction(0.25f);
                 _props.back().SetCollisionSideFraction(0.30f);
             }
             else if (choice == 2)
             {
-                _props.push_back(Prop{ pos, _rockTex, 1, 0, 0, 5.f });
+                _props.push_back(Prop{ pos, _rockTex, 1, 0, 0, 4.f });
             }
             else
             {
-                _props.push_back(Prop{ pos, _bigRockTex, 1, 0, 0, 4.f });
+                _props.push_back(Prop{ pos, _bigRockTex, 1, 0, 0, 3.2f });
             }
         }
         return;
@@ -5172,15 +5228,15 @@ void Engine::ApplyBiome(Biome biome)
     // New biome maps can be wired in here when the art is ready.
     bool useForestMap = (biome == Biome::Forest || biome == Biome::Swamp);
     if (useForestMap)
-    {
         _map = LoadTexture(AssetPath("ForestLevel/ForestMap.png").c_str());
-        _mapScale = 6.f;
-    }
     else
-    {
         _map = LoadTexture(AssetPath("TileSet/Map.png").c_str());
-        _mapScale = 3.f;
-    }
+
+    // Compute the map scale for the current screen size.
+    // WorldConfig derives the correct scale from mode + texture dimensions,
+    // so the world always fits properly on 720p, 1080p, 4K, and phones.
+    _worldConfig.Recalculate(_map, GetScreenWidth(), GetScreenHeight());
+    _mapScale = _worldConfig.GetScale();
 
     _currentBiome = biome;
     PopulatePropsForBiome(biome);
@@ -5295,9 +5351,19 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
             if (_nav.IsCellBlocked(col + dc, row + dr))
                 return false;
 
+    // Check against each prop's actual collision rect (inflated by safeDistance)
+    // rather than distance from the top-left corner, so tall props like trees
+    // correctly reject positions near their lower half.
     for (auto& prop : _props)
     {
-        if (Vector2Distance(pos, prop.GetWorldPos()) < safeDistance)
+        Rectangle rec = prop.GetCollisionRec();
+        Rectangle inflated = {
+            rec.x - safeDistance,
+            rec.y - safeDistance,
+            rec.width  + safeDistance * 2.f,
+            rec.height + safeDistance * 2.f
+        };
+        if (CheckCollisionPointRec(pos, inflated))
             return false;
     }
 
@@ -5324,7 +5390,6 @@ void Engine::ResetRunState()
     _enemiesKilled = 0;
     _gameTimer = 0.f;
     _playerDying = false;
-    _awaitingNameEntry = false;
     _awaitingStartingAbility = false;
     _waveStarting        = true;
     _wave1LevelUpDone    = false;
@@ -5366,9 +5431,7 @@ void Engine::ResetRunState()
     // Generate a random sequence of kTotalActs biomes, no two consecutive duplicates.
     {
         static constexpr Biome kAllBiomes[] = {
-            Biome::Dungeon, Biome::Forest, Biome::Swamp,
-            Biome::Volcano, Biome::Tundra, Biome::Crypt,
-            Biome::Desert,  Biome::Ruins
+            Biome::Dungeon, Biome::Forest
         };
         static constexpr int kBiomeCount = (int)(sizeof(kAllBiomes) / sizeof(kAllBiomes[0]));
         _biomeSequence.clear();

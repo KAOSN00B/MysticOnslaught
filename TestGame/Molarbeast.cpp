@@ -48,6 +48,7 @@ void Molarbeast::Init()
     _stableFrameW = _idleAnim.width / (float)_sheetFrameCount;
     _stableFrameH = _idleAnim.height;
 
+    BuildBehaviourTree();
     ResetForSpawn(_worldPos);
 }
 
@@ -108,10 +109,7 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
     const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters)
 {
     (void)heroWorldPos;
-    (void)propCenters;
 
-    // Cache the A* waypoint so HandleChasing can steer around props without
-    // needing the engine grid passed through every call.
     _navTarget    = navigationTarget;
     _hasNavTarget = hasNavigationTarget;
 
@@ -132,37 +130,20 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
     if (_target == nullptr)
         return;
 
-    _specialTimer -= dt;
-    _meleeCooldown -= dt;
+    _specialTimer    -= dt;
+    _meleeCooldown   -= dt;
     _contactCooldown -= dt;
 
-    switch (_state)
-    {
-    case State::Chasing:
-        HandleChasing(dt, propCenters);
-        break;
-    case State::MeleeAttacking:
-        HandleMelee();
-        break;
-    case State::DashCharging:
-        HandleDashCharge(dt);
-        break;
-    case State::Dashing:
-        HandleDash(dt, enemies);
-        break;
-    case State::RangedCharging:
-        HandleRangedCharge(dt);
-        break;
-    case State::RangedVolley:
-        HandleRangedVolley(dt);
-        break;
-    case State::Recovery:
-        HandleRecovery(dt);
-        break;
-    }
+    // Make frame-scoped data available to BT leaf lambdas.
+    _cachedEnemies     = &enemies;
+    _cachedPropCenters = &propCenters;
+
+    _behaviorTreeRoot->Tick(dt);
+
+    _cachedEnemies     = nullptr;
+    _cachedPropCenters = nullptr;
 
     TryDealContactDamage();
-
     HandleAnimation(dt);
 }
 
@@ -330,6 +311,14 @@ void Molarbeast::TakeDamage(int damage, Vector2 attackerPos)
     SetHurtAnimation(true);
 }
 
+void Molarbeast::PlayHurtSound()
+{
+    SetSoundPitch(_sharedHurtSound, 0.28f);
+    SetSoundVolume(_sharedHurtSound, 0.5f);
+    StopSound(_sharedHurtSound);
+    PlaySound(_sharedHurtSound);
+}
+
 void Molarbeast::ApplyBurn(float delay, int damage, Vector2 sourcePos)
 {
     (void)delay;
@@ -477,6 +466,132 @@ void Molarbeast::SetIdleAnimation(bool resetFrame)
     }
 }
 
+void Molarbeast::BuildBehaviourTree()
+{
+    // ── Node A: Melee Branch (Sequence) ──────────────────────────────────────
+    // Fires when the player enters the threat zone with the melee cooldown
+    // ready. Stays RUNNING until the attack animation completes naturally.
+    // Only triggers from Chasing so a dash or ranged charge cannot be
+    // interrupted mid-wind-up.
+    auto meleeSeq = std::make_unique<BTSequence>();
+
+    meleeSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool
+    {
+        if (_target == nullptr) return false;
+        if (_state == State::MeleeAttacking) return true;   // already swinging — hold branch
+        if (_state != State::Chasing)        return false;  // never interrupt a special
+        if (_meleeCooldown > 0.f)            return false;
+        float dist = Vector2Distance(_worldPos, _target->GetFeetWorldPos());
+        return CheckCollisionRecs(GetThreatCollisionRec(), _target->GetCollisionRec())
+            || dist <= _attackRange;
+    }));
+
+    meleeSeq->AddChild(std::make_unique<BTAction>([this](float) -> BTStatus
+    {
+        if (_state != State::MeleeAttacking)
+        {
+            _state         = State::MeleeAttacking;
+            _attacking     = true;
+            _damageApplied = false;
+            _velocity      = Vector2Zero();
+            SetMeleeAnimation(true);
+            ResetMeleeCooldown();
+            SetSoundVolume(_attackSound, 0.35f);
+            StopSound(_attackSound);
+            PlaySound(_attackSound);
+        }
+        HandleMelee();
+        return (_state == State::MeleeAttacking) ? BTStatus::RUNNING : BTStatus::SUCCESS;
+    }));
+
+    // ── Node B: Special Attack Selector (Selector) ───────────────────────────
+    // Covers the full special lifecycle in priority order:
+    //   B1. Continue an active dash  (DashCharging → Dashing)
+    //   B2. Continue an active ranged attack  (RangedCharging → RangedVolley)
+    //   B3. Ride out post-special recovery
+    //   B4. Trigger a brand-new special when the cooldown expires
+    // Returning FAILURE from every branch lets Node C (Chasing) run.
+    auto specialSel = std::make_unique<BTSelector>();
+
+    // B1 — Dash
+    auto dashSeq = std::make_unique<BTSequence>();
+    dashSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
+        return _state == State::DashCharging || _state == State::Dashing;
+    }));
+    dashSeq->AddChild(std::make_unique<BTAction>([this](float dt) -> BTStatus
+    {
+        // Run one phase per frame — matches original switch behaviour where
+        // DashCharging and Dashing were separate cases that never ran together.
+        if (_state == State::DashCharging)
+        {
+            HandleDashCharge(dt);
+            return BTStatus::RUNNING;
+        }
+        HandleDash(dt, *_cachedEnemies);
+        return BTStatus::RUNNING;
+    }));
+
+    // B2 — Ranged
+    auto rangedSeq = std::make_unique<BTSequence>();
+    rangedSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
+        return _state == State::RangedCharging || _state == State::RangedVolley;
+    }));
+    rangedSeq->AddChild(std::make_unique<BTAction>([this](float dt) -> BTStatus
+    {
+        if (_state == State::RangedCharging)
+        {
+            HandleRangedCharge(dt);
+            return BTStatus::RUNNING;
+        }
+        HandleRangedVolley(dt);
+        return BTStatus::RUNNING;
+    }));
+
+    // B3 — Recovery
+    auto recoverySeq = std::make_unique<BTSequence>();
+    recoverySeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
+        return _state == State::Recovery;
+    }));
+    recoverySeq->AddChild(std::make_unique<BTAction>([this](float dt) -> BTStatus
+    {
+        HandleRecovery(dt);
+        return (_state == State::Recovery) ? BTStatus::RUNNING : BTStatus::SUCCESS;
+    }));
+
+    // B4 — Special trigger: returns FAILURE while the timer is still positive
+    // (allowing Node C to run), fires BeginRandomSpecial when it expires.
+    // To swap "Dash" for a new move later: replace the BeginRandomSpecial call
+    // here or add a new branch above B4.
+    auto triggerSpecial = std::make_unique<BTAction>([this](float) -> BTStatus
+    {
+        if (_specialTimer > 0.f) return BTStatus::FAILURE;
+        BeginRandomSpecial();
+        return BTStatus::RUNNING;
+    });
+
+    specialSel->AddChild(std::move(dashSeq));
+    specialSel->AddChild(std::move(rangedSeq));
+    specialSel->AddChild(std::move(recoverySeq));
+    specialSel->AddChild(std::move(triggerSpecial));
+
+    // ── Node C: Orbit / Movement (Action) ────────────────────────────────────
+    // Default fallback — circles the player, handles A* nav and stuck recovery.
+    // Runs only when Nodes A and B both return FAILURE.
+    auto chaseAction = std::make_unique<BTAction>([this](float dt) -> BTStatus
+    {
+        HandleChasing(dt, *_cachedPropCenters);
+        return BTStatus::RUNNING;
+    });
+
+    // ── Root: Selector ────────────────────────────────────────────────────────
+    auto root = std::make_unique<BTSelector>();
+    root->AddChild(std::move(meleeSeq));
+    root->AddChild(std::move(specialSel));
+    root->AddChild(std::move(chaseAction));
+
+    _behaviorTreeRoot = std::move(root);
+}
+
 void Molarbeast::SetWalkAnimation(bool resetFrame)
 {
     // The boss uses the idle sheet while chasing because the current asset set
@@ -492,7 +607,7 @@ void Molarbeast::SetMeleeAnimation(bool resetFrame)
     _height = _attackAnim.height;
     // The boss melee should read slowly enough that the player can react and
     // dash away from the enlarged attack range.
-    _updateTime = 1.f / 6.f;
+    _updateTime = 1.f / 5.f;
     _maxFrames = _sheetFrameCount;
 
     if (resetFrame)
@@ -564,53 +679,24 @@ void Molarbeast::SetDeathAnimation(bool resetFrame)
 
 void Molarbeast::HandleChasing(float dt, const std::vector<Vector2>& propCenters)
 {
+    // Melee trigger and special-timer trigger are now owned by the behaviour
+    // tree (Node A and Node B). This function is pure orbit / navigation.
+
     Vector2 oldPos = _worldPos;
-    Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
-    float distanceToPlayer = Vector2Length(toPlayer);
-    Rectangle targetRec = _target->GetCollisionRec();
-    bool playerInThreatRange = CheckCollisionRecs(GetThreatCollisionRec(), targetRec);
+    Vector2 playerCenter = _target->GetFeetWorldPos();
+    Vector2 toPlayer = Vector2Subtract(playerCenter, _worldPos);
 
     if (toPlayer.x < 0.f) _rightLeft = -1.f;
     if (toPlayer.x > 0.f) _rightLeft = 1.f;
-
-    // Boss melee uses its forward threat box instead of only a center-point
-    // distance test. That makes the attack trigger when the player is visually
-    // in reach of the large creature, while the cooldown keeps the swing
-    // cadence readable at one attack every two seconds.
-    if ((playerInThreatRange || distanceToPlayer <= _attackRange) && _meleeCooldown <= 0.f)
-    {
-        _state = State::MeleeAttacking;
-        _attacking = true;
-        _damageApplied = false;
-        _velocity = Vector2Zero();
-        SetMeleeAnimation(true);
-        ResetMeleeCooldown();
-        SetSoundVolume(_attackSound, 0.35f);
-        StopSound(_attackSound);
-        PlaySound(_attackSound);
-        return;
-    }
-
-    if (_specialTimer <= 0.f)
-    {
-        BeginRandomSpecial();
-        return;
-    }
 
     // Orbit the player at a preferred radius, spinning around them rather than
     // charging straight in. When a prop blocks the path, A* waypoints take
     // priority and are briefly locked so the boss commits to routing around
     // the obstacle instead of re-deciding every frame and pushing into corners.
-    //
-    // The orbit angle advances at a fixed rate; the target point is a position
-    // on a circle of _orbitRadius around the player. If the boss is still far
-    // away it closes in quickly; once inside the orbit radius it settles into
-    // the circling behaviour and waits for a special or melee window.
-    static constexpr float _orbitRadius    = 220.f;  // preferred circling distance
-    static constexpr float _orbitSpeed     = 0.55f;  // radians per second
+    static constexpr float _orbitRadius = 220.f;
+    static constexpr float _orbitSpeed  = 0.55f;
 
-    Vector2 playerCenter = _target->GetFeetWorldPos();
-    float distToPlayer   = Vector2Distance(_worldPos, playerCenter);
+    float distToPlayer = Vector2Distance(_worldPos, playerCenter);
 
     // Advance the orbit angle only when we're close enough to be circling;
     // if still far away we close the gap first and only start the spin once nearby.

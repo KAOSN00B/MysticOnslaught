@@ -41,7 +41,8 @@ public:
     void Init(const ShopTextures& tex);
 
     // Reset shop state and generate fresh inventory for this Store room.
-    void Enter(Vector2 npcWorldPos, Character& player);
+    // act: 1-indexed act number, used to scale prices for inflation.
+    void Enter(Vector2 npcWorldPos, Character& player, int act = 1);
 
     // ── Per-frame (Store room, GameState::Play) ───────────────────────────
     // Handles NPC collision push and proximity. Returns true if the player
@@ -76,11 +77,13 @@ private:
     };
 
     std::vector<ShopItem> _inventory;
-    int         _tab        = 0;       // 0 = wares, 1 = abilities
+    int         _tab            = 0;    // 0 = wares, 1 = abilities
     std::string _dialogue;
-    Vector2     _npcPos     = {};
-    bool        _nearNpc    = false;
-    int         _rerollCost = 100;
+    Vector2     _npcPos         = {};
+    bool        _nearNpc        = false;
+    int         _rerollCost     = 20;
+    int         _act            = 1;    // current act, set on Enter()
+    int         _dailyDealIndex = -1;   // index of discounted item (-1 = none)
 
     ShopTextures _tex;
 };
