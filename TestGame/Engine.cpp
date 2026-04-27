@@ -90,6 +90,12 @@ namespace
         }
     }
 
+    bool IsMusicCueFinished(const Music& music)
+    {
+        return GetMusicTimeLength(music) > 0.f
+            && GetMusicTimePlayed(music) >= GetMusicTimeLength(music) - 0.02f;
+    }
+
 }
 
 Engine::Engine()
@@ -116,6 +122,15 @@ Engine::~Engine()
     UnloadSound(_explosionSound);
     UnloadSound(_lavaBallImpactSound);
     UnloadSound(_buttonPressSound);
+    UnloadMusicStream(_titleThemeMusic);
+    UnloadMusicStream(_pauseThemeMusic);
+    UnloadMusicStream(_dungeonThemeMusic);
+    UnloadMusicStream(_forestThemeMusic);
+    UnloadMusicStream(_bossBattleMusic);
+    UnloadMusicStream(_shopThemeMusic);
+    UnloadMusicStream(_battleVictoryMusic);
+    UnloadMusicStream(_bossVictoryMusic);
+    UnloadMusicStream(_gameOverMusic);
     UnloadTexture(_map);
     UnloadTexture(_pillarTex);
     UnloadTexture(_torchTex);
@@ -147,6 +162,7 @@ Engine::~Engine()
     UnloadTexture(_upgradeMoveSpeedTex);
     UnloadTexture(_shopBorderTex);
     _pauseUI.Unload();
+    CloseAudioDevice();
     CloseWindow();
 }
 
@@ -173,6 +189,35 @@ void Engine::Init()
         UnloadWave(lavaImpactWave);
     }
     _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.ogg").c_str());
+    _titleThemeMusic = LoadMusicStream(AssetPath("Music/TitleTheme.ogg").c_str());
+    _pauseThemeMusic = LoadMusicStream(AssetPath("Music/PauseMenu.ogg").c_str());
+    _dungeonThemeMusic = LoadMusicStream(AssetPath("Music/DungeonTheme.ogg").c_str());
+    _forestThemeMusic = LoadMusicStream(AssetPath("Music/ForestTheme.ogg").c_str());
+    _bossBattleMusic = LoadMusicStream(AssetPath("Music/BossBattle.ogg").c_str());
+    _shopThemeMusic = LoadMusicStream(AssetPath("Music/ZephsShop.ogg").c_str());
+    _battleVictoryMusic = LoadMusicStream(AssetPath("Music/BattleVictory.ogg").c_str());
+    _bossVictoryMusic = LoadMusicStream(AssetPath("Music/BossVictory.ogg").c_str());
+    _gameOverMusic = LoadMusicStream(AssetPath("Music/GameOver.ogg").c_str());
+
+    _titleThemeMusic.looping = true;
+    _pauseThemeMusic.looping = true;
+    _dungeonThemeMusic.looping = true;
+    _forestThemeMusic.looping = true;
+    _bossBattleMusic.looping = true;
+    _shopThemeMusic.looping = true;
+    _battleVictoryMusic.looping = false;
+    _bossVictoryMusic.looping = false;
+    _gameOverMusic.looping = false;
+
+    SetMusicVolume(_titleThemeMusic, 0.35f);
+    SetMusicVolume(_pauseThemeMusic, 0.35f);
+    SetMusicVolume(_dungeonThemeMusic, 0.35f);
+    SetMusicVolume(_forestThemeMusic, 0.35f);
+    SetMusicVolume(_bossBattleMusic, 0.35f);
+    SetMusicVolume(_shopThemeMusic, 0.35f);
+    SetMusicVolume(_battleVictoryMusic, 0.65f);
+    SetMusicVolume(_bossVictoryMusic, 0.65f);
+    SetMusicVolume(_gameOverMusic, 0.55f);
 
     SetSoundPitch (_buttonPressSound, 1.25f);
     SetSoundVolume(_buttonPressSound, 0.35f);
@@ -245,6 +290,363 @@ void Engine::Init()
     ResetRunState();
 }
 
+Music* Engine::GetMusicByCue(MusicCue cue)
+{
+    switch (cue)
+    {
+    case MusicCue::Title:         return &_titleThemeMusic;
+    case MusicCue::Pause:         return &_pauseThemeMusic;
+    case MusicCue::Dungeon:       return &_dungeonThemeMusic;
+    case MusicCue::Forest:        return &_forestThemeMusic;
+    case MusicCue::BossBattle:    return &_bossBattleMusic;
+    case MusicCue::Shop:          return &_shopThemeMusic;
+    case MusicCue::BattleVictory: return &_battleVictoryMusic;
+    case MusicCue::BossVictory:   return &_bossVictoryMusic;
+    case MusicCue::GameOver:      return &_gameOverMusic;
+    default:                      return nullptr;
+    }
+}
+
+bool Engine::IsLoopMusicCue(MusicCue cue) const
+{
+    return cue == MusicCue::Title
+        || cue == MusicCue::Pause
+        || cue == MusicCue::Dungeon
+        || cue == MusicCue::Forest
+        || cue == MusicCue::BossBattle
+        || cue == MusicCue::Shop;
+}
+
+bool Engine::IsVictoryMusicCue(MusicCue cue) const
+{
+    return cue == MusicCue::BattleVictory || cue == MusicCue::BossVictory;
+}
+
+MusicCue Engine::GetBiomeMusicCue(Biome biome) const
+{
+    switch (biome)
+    {
+    case Biome::Forest:
+    case Biome::Swamp:
+    case Biome::Tundra:
+        return MusicCue::Forest;
+    default:
+        return MusicCue::Dungeon;
+    }
+}
+
+bool Engine::ShouldHoldSilenceForVictory() const
+{
+    if (!_silenceAfterVictory)
+        return false;
+
+    return _gameState != GameState::Map
+        && _gameState != GameState::Menu
+        && _gameState != GameState::HowToPlay
+        && _gameState != GameState::Keybindings
+        && _gameState != GameState::Pause
+        && _gameState != GameState::Shop
+        && _gameState != GameState::DemoEnd;
+}
+
+float Engine::GetMusicBaseVolume(MusicCue cue) const
+{
+    switch (cue)
+    {
+    case MusicCue::Title:         return 0.35f;
+    case MusicCue::Pause:         return 0.35f;
+    case MusicCue::Dungeon:       return 0.35f;
+    case MusicCue::Forest:        return 0.35f;
+    case MusicCue::BossBattle:    return 0.35f;
+    case MusicCue::Shop:          return 0.35f;
+    case MusicCue::BattleVictory: return 0.65f;
+    case MusicCue::BossVictory:   return 0.65f;
+    case MusicCue::GameOver:      return 0.55f;
+    default:                      return 0.f;
+    }
+}
+
+MusicCue Engine::GetDesiredLoopMusicCue() const
+{
+    if (ShouldHoldSilenceForVictory())
+        return MusicCue::None;
+
+    switch (_gameState)
+    {
+    case GameState::Menu:
+    case GameState::DemoEnd:
+        return MusicCue::Title;
+
+    case GameState::HowToPlay:
+        return (_howToPlayFrom == GameState::Pause) ? MusicCue::Pause : MusicCue::Title;
+
+    case GameState::Keybindings:
+    case GameState::Pause:
+        return MusicCue::Pause;
+
+    case GameState::Shop:
+        return MusicCue::Shop;
+
+    case GameState::Map:
+        return GetBiomeMusicCue(GetBiomeForAct(_currentAct));
+
+    case GameState::GameOver:
+        return MusicCue::None;
+
+    case GameState::Play:
+        if (_currentRoomType == RoomType::Boss && !_roomClearPending && IsBossFightActive())
+            return MusicCue::BossBattle;
+        return GetBiomeMusicCue(GetBiomeForAct(_currentAct));
+
+    case GameState::LevelUpChoice:
+        if (_awaitingStartingAbility)
+            return GetBiomeMusicCue(GetBiomeForAct(_currentAct));
+        return _silenceAfterVictory ? MusicCue::None : GetBiomeMusicCue(_currentBiome);
+
+    case GameState::AbilityChoice:
+    case GameState::ExpTally:
+        return _silenceAfterVictory ? MusicCue::None : GetBiomeMusicCue(_currentBiome);
+
+    default:
+        return MusicCue::None;
+    }
+}
+
+void Engine::StopMusicCue(MusicCue cue)
+{
+    Music* music = GetMusicByCue(cue);
+    if (!music || music->ctxData == nullptr)
+        return;
+
+    StopMusicStream(*music);
+    if (_currentMusicCue == cue)
+        _currentMusicCue = MusicCue::None;
+}
+
+void Engine::StartMusicCue(MusicCue cue, float startTime)
+{
+    if (cue == MusicCue::None)
+        return;
+
+    if (_currentMusicCue != MusicCue::None && _currentMusicCue != cue)
+        StopMusicCue(_currentMusicCue);
+
+    Music* music = GetMusicByCue(cue);
+    if (!music || music->ctxData == nullptr)
+        return;
+
+    if (IsLoopMusicCue(cue))
+        SetMusicVolume(*music, 0.f);
+    else
+        SetMusicVolume(*music, GetMusicBaseVolume(cue));
+
+    PlayMusicStream(*music);
+    if (startTime > 0.f)
+        SeekMusicStream(*music, startTime);
+    _currentMusicCue = cue;
+    if (IsLoopMusicCue(cue))
+    {
+        _musicFadeInDuration = 2.0f;
+        _musicFadeInTimer = _musicFadeInDuration;
+    }
+    else
+        _musicFadeInTimer = 0.f;
+}
+
+void Engine::SuspendCurrentLoopForCue(MusicCue cue, bool resumeOnMapOnly)
+{
+    if (!IsLoopMusicCue(_currentMusicCue))
+        return;
+
+    Music* current = GetMusicByCue(_currentMusicCue);
+    if (!current || current->ctxData == nullptr)
+        return;
+
+    _suspendedMusicCue = _currentMusicCue;
+    _suspendedMusicTime = GetMusicTimePlayed(*current);
+    _resumeSuspendedMusicOnMapOnly = resumeOnMapOnly;
+    PauseMusicStream(*current);
+    _currentMusicCue = MusicCue::None;
+
+    StartMusicCue(cue);
+}
+
+void Engine::StartVictoryMusic(MusicCue cue)
+{
+    if (!IsVictoryMusicCue(cue))
+        return;
+
+    _activeVictoryCue = cue;
+
+    if (cue == MusicCue::BattleVictory)
+    {
+        _silenceAfterVictory = false;
+        if (IsLoopMusicCue(_currentMusicCue))
+            SuspendCurrentLoopForCue(cue, false);
+        else
+            StartMusicCue(cue);
+        return;
+    }
+
+    _silenceAfterVictory = true;
+    _suspendedMusicCue = MusicCue::None;
+    _suspendedMusicTime = 0.f;
+    _resumeSuspendedMusicOnMapOnly = false;
+    if (_currentMusicCue != MusicCue::None)
+        StopMusicCue(_currentMusicCue);
+    StartMusicCue(cue);
+}
+
+void Engine::ResumePausedLoopMusic()
+{
+    if (_suspendedMusicCue == MusicCue::None)
+        return;
+
+    Music* music = GetMusicByCue(_suspendedMusicCue);
+    if (!music || music->ctxData == nullptr)
+        return;
+
+    ResumeMusicStream(*music);
+    SetMusicVolume(*music, 0.f);
+    _currentMusicCue = _suspendedMusicCue;
+    _suspendedMusicCue = MusicCue::None;
+    _suspendedMusicTime = 0.f;
+    _resumeSuspendedMusicOnMapOnly = false;
+    _musicFadeInDuration = 1.5f;
+    _musicFadeInTimer = _musicFadeInDuration;
+}
+
+void Engine::ResetMusicState()
+{
+    if (_currentMusicCue != MusicCue::None)
+        StopMusicCue(_currentMusicCue);
+
+    _suspendedMusicCue = MusicCue::None;
+    _suspendedMusicTime = 0.f;
+    _activeVictoryCue = MusicCue::None;
+    _musicFadeInTimer = 0.f;
+    _musicFadeInDuration = 2.0f;
+    _resumeSuspendedMusicOnMapOnly = false;
+    _silenceAfterVictory = false;
+    _demoEndTouchHeld = false;
+    _gameOverMusicPlayed = false;
+}
+
+void Engine::UpdateMusicSystem()
+{
+    if (_gameState != GameState::GameOver)
+        _gameOverMusicPlayed = false;
+
+    if (_gameState == GameState::GameOver && _currentMusicCue == MusicCue::None && !_gameOverMusicPlayed)
+    {
+        _gameOverMusicPlayed = true;
+        StartMusicCue(MusicCue::GameOver);
+        return;
+    }
+
+    if (_currentMusicCue != MusicCue::None)
+    {
+        Music* current = GetMusicByCue(_currentMusicCue);
+        if (current && current->ctxData != nullptr)
+        {
+            UpdateMusicStream(*current);
+            if (IsLoopMusicCue(_currentMusicCue))
+            {
+                float baseVolume = GetMusicBaseVolume(_currentMusicCue);
+                if (_musicFadeInTimer > 0.f)
+                {
+                    _musicFadeInTimer = std::max(0.f, _musicFadeInTimer - GetFrameTime());
+                    float t = 1.f - (_musicFadeInTimer / _musicFadeInDuration);
+                    SetMusicVolume(*current, baseVolume * std::max(0.f, std::min(1.f, t)));
+                }
+                else
+                {
+                    SetMusicVolume(*current, baseVolume);
+                }
+            }
+        }
+    }
+
+    if (_currentMusicCue == MusicCue::GameOver)
+    {
+        Music* current = GetMusicByCue(_currentMusicCue);
+        if (current && current->ctxData != nullptr && IsMusicStreamPlaying(*current))
+            return;
+
+        if (current && current->ctxData != nullptr)
+        {
+            StopMusicStream(*current);
+            _currentMusicCue = MusicCue::None;
+        }
+        return;
+    }
+
+    if (IsVictoryMusicCue(_currentMusicCue))
+    {
+        Music* current = GetMusicByCue(_currentMusicCue);
+        if (current && current->ctxData != nullptr && IsMusicStreamPlaying(*current))
+            return;
+
+        if (current && current->ctxData != nullptr)
+        {
+            StopMusicStream(*current);
+            _currentMusicCue = MusicCue::None;
+        }
+
+        if (_activeVictoryCue == MusicCue::BattleVictory)
+        {
+            _activeVictoryCue = MusicCue::None;
+            ResumePausedLoopMusic();
+            return;
+        }
+
+        _activeVictoryCue = MusicCue::None;
+        return;
+    }
+
+    MusicCue desiredCue = GetDesiredLoopMusicCue();
+    if (ShouldHoldSilenceForVictory())
+        desiredCue = MusicCue::None;
+
+    if (_silenceAfterVictory && !ShouldHoldSilenceForVictory())
+        _silenceAfterVictory = false;
+
+    if (desiredCue == MusicCue::None)
+    {
+        if (IsLoopMusicCue(_currentMusicCue))
+            StopMusicCue(_currentMusicCue);
+        return;
+    }
+
+    if (desiredCue == _currentMusicCue)
+        return;
+
+    if (_suspendedMusicCue == desiredCue && !_resumeSuspendedMusicOnMapOnly)
+    {
+        ResumePausedLoopMusic();
+        return;
+    }
+
+    if (_suspendedMusicCue == desiredCue && _resumeSuspendedMusicOnMapOnly && _gameState == GameState::Map)
+    {
+        ResumePausedLoopMusic();
+        return;
+    }
+
+    if ((desiredCue == MusicCue::Pause || desiredCue == MusicCue::Shop)
+        && IsLoopMusicCue(_currentMusicCue)
+        && _currentMusicCue != desiredCue)
+    {
+        SuspendCurrentLoopForCue(desiredCue, false);
+        return;
+    }
+
+    if (IsLoopMusicCue(_currentMusicCue) && _currentMusicCue != desiredCue)
+        StopMusicCue(_currentMusicCue);
+
+    StartMusicCue(desiredCue);
+}
+
 // ── Room progression — replaces the old SpawnWave() system ───────────────────
 // Called whenever the player is about to enter a specific room type.
 // Handles act advancement, biome transitions, and encounter setup.
@@ -264,6 +666,19 @@ void Engine::StartNextRoom(RoomType type)
         _roomClearTimer = 5.0f;
     else
         _roomClearTimer = 0.f;
+
+    _eliteRewardGranted      = false;
+    // Clear all elite-room systems before room setup/spawns so the new room can
+    // repopulate them correctly. Doing this after SpawnEnemies() breaks the
+    // main-game elite flow by wiping the miniboss pointer/mechanic state while
+    // leaving the spawned elite invulnerability intact.
+    _eliteMechanic           = -1;
+    _eliteMinibossPtr        = nullptr;
+    _eliteCageRadius         = 0.f;
+    _eliteIsLeaping          = false;
+    _eliteEnrageWarningTimer = 0.f;
+    _eliteHazards.clear();
+    _eliteHazardSpawnTimer   = 0.f;
 
     // Store room — place Zeph at map centre and stock the shop
     if (type == RoomType::Store)
@@ -695,16 +1110,6 @@ void Engine::EnterMapRoom(int idx)
     // Fade in from black each time a room is entered.
     _fadeInTimer    = 1.2f;
     _fadeInDuration = 1.2f;
-    _eliteRewardGranted      = false;
-    // Clear all elite-room systems when entering any new room
-    _eliteMechanic           = -1;
-    _eliteMinibossPtr        = nullptr;
-    _eliteCageRadius         = 0.f;
-    _eliteIsLeaping          = false;
-    _eliteEnrageWarningTimer = 0.f;
-    _eliteHazards.clear();
-    _eliteHazardSpawnTimer   = 0.f;
-
     _gameState = GameState::Play;
 }
 
@@ -730,6 +1135,24 @@ void Engine::HandleRoomContinueAction()
         _levelUpReturnState = GameState::Map;
         _levelUpOpenTimer   = 0.25f;
         _gameState          = GameState::LevelUpChoice;
+        return;
+    }
+
+    if (_currentRoomType == RoomType::Boss)
+    {
+        CompleteCurrentMapNode();
+
+        if (_bossesDefeated >= 2)
+        {
+            _gameState = GameState::DemoEnd;
+            return;
+        }
+
+        _currentAct++;
+        GenerateActMap();
+        _mapKeySelectedIdx = -1;
+        _mapOpenTimer = 0.4f;
+        _gameState = GameState::Map;
         return;
     }
 
@@ -932,6 +1355,7 @@ void Engine::RunFrame()
     float dt = GetFrameTime();
 
     Update(dt);
+    UpdateMusicSystem();
 
     BeginDrawing();
     ClearBackground(WHITE);
@@ -1014,13 +1438,23 @@ void Engine::Update(float dt)
         break;
 
     case GameState::DemoEnd:
-        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_SPACE))
+    {
+        bool anyKey = (GetKeyPressed() != 0);
+        bool anyMouse = IsMouseButtonPressed(MOUSE_LEFT_BUTTON)
+                     || IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)
+                     || IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON);
+        bool touchDown = (_touchModeActive && GetTouchPointCount() > 0);
+        bool touchTap = touchDown && !_demoEndTouchHeld;
+        _demoEndTouchHeld = touchDown;
+
+        if (anyKey || anyMouse || touchTap)
         {
             ResetRunState();
             _menu.Init();
             _gameState = GameState::Menu;
         }
         break;
+    }
 
     case GameState::LevelUpChoice:
         if (_levelUpOpenTimer > 0.f)
@@ -1457,6 +1891,11 @@ void Engine::UpdateGamePlay(float dt)
                 dropGold(GoldDenomination::Five,   55.f,   20.f);
             }
 
+            if (_currentRoomType == RoomType::Boss)
+                StartVictoryMusic(MusicCue::BossVictory);
+            else if (_currentRoomType == RoomType::Standard || _currentRoomType == RoomType::Elite)
+                StartVictoryMusic(MusicCue::BattleVictory);
+
             // Transition to post-battle EXP tally.
             // Boss AbilityChoice is triggered from UpdateExpTally once the tally finishes.
             _expTallyDone           = false;
@@ -1625,12 +2064,12 @@ void Engine::Draw()
             _debug.Draw(_currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
 
         // ── "Continue" button — shown after all enemies are defeated ─────────
-        if (_roomClearPending)
-        {
-            const float sw = (float)GetScreenWidth();
-            const float sh = (float)GetScreenHeight();
+          if (_roomClearPending)
+          {
+              const float sw = (float)GetScreenWidth();
+              const float sh = (float)GetScreenHeight();
 
-            const char* btnTxt = _touchModeActive ? "Continue" : "Continue  [M]";
+              const char* btnTxt = _touchModeActive ? "Continue" : "Continue  [M]";
             int btnTxtSz = 28;
             const float btnW = 220.f, btnH = 58.f;
             float btnX = sw / 2.f - btnW / 2.f;
@@ -1644,12 +2083,23 @@ void Engine::Draw()
                 hov ? Color{50, 160, 80, 235} : Color{25, 90, 45, 210});
             DrawRectangleRoundedLines(btn, 0.35f, 8,
                 hov ? Color{120, 255, 150, 255} : Color{60, 180, 90, 180});
-            DrawText(btnTxt,
-                (int)(btnX + btnW / 2.f - MeasureText(btnTxt, btnTxtSz) / 2.f),
-                (int)(btnY + btnH / 2.f - btnTxtSz / 2.f),
-                btnTxtSz, hov ? Color{210, 255, 220, 255} : RAYWHITE);
+              DrawText(btnTxt,
+                  (int)(btnX + btnW / 2.f - MeasureText(btnTxt, btnTxtSz) / 2.f),
+                  (int)(btnY + btnH / 2.f - btnTxtSz / 2.f),
+                  btnTxtSz, hov ? Color{210, 255, 220, 255} : RAYWHITE);
 
-            bool pressed = hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+              if (_currentRoomType == RoomType::Boss && _bossesDefeated < 2)
+              {
+                  std::string nextBiomeText = std::string("Next Biome: ") + GetBiomeName(GetBiomeForAct(_currentAct + 1));
+                  int infoSz = 24;
+                  DrawText(nextBiomeText.c_str(),
+                      (int)(sw * 0.5f - MeasureText(nextBiomeText.c_str(), infoSz) * 0.5f),
+                      (int)(btnY - 42.f),
+                      infoSz,
+                      Color{255, 214, 102, 240});
+              }
+
+              bool pressed = hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
             if (!pressed)
             {
                 int tc = GetTouchPointCount();
@@ -2223,7 +2673,21 @@ void Engine::DrawHUD()
         float maxHp = _player.GetMaxHealthValue();
         float curHp = _player.GetHealthValue();
         float hpPct = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
-        Color fillColor = (hpPct > 0.5f) ? GREEN : (hpPct > 0.25f) ? YELLOW : RED;
+        Color fillColor = (hpPct > 0.70f) ? GREEN : (hpPct > 0.30f) ? YELLOW : RED;
+
+        if (hpPct <= 0.30f)
+        {
+            float pulse      = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
+            float exps[]     = { 4.f, 9.f, 15.f };
+            float alphas[]   = { 0.45f, 0.28f, 0.13f };
+            for (int i = 0; i < 3; i++)
+            {
+                float e = exps[i];
+                DrawRectangleRounded(
+                    { barX - e, hpBarY - e, kNewBarW + e * 2.f, kNewBarH + e * 2.f },
+                    0.35f, 6, Fade(RED, alphas[i] * pulse));
+            }
+        }
 
         DrawRectangleRounded({ barX, hpBarY, kNewBarW * hpPct, kNewBarH }, 0.3f, 6, fillColor);
         DrawRectangleRoundedLines({ barX, hpBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
@@ -2233,7 +2697,7 @@ void Engine::DrawHUD()
         DrawText(hpLabel,
             (int)(barX + kNewBarW / 2.f - labelW / 2.f),
             (int)(hpBarY + kNewBarH / 2.f - 9.f),
-            18, RAYWHITE);
+            18, BLACK);
     }
 
     {
@@ -2250,7 +2714,7 @@ void Engine::DrawHUD()
         DrawText(manaLabel,
             (int)(barX + kNewBarW / 2.f - manaLabelW / 2.f),
             (int)(manaBarY + kNewBarH / 2.f - 9.f),
-            18, RAYWHITE);
+            18, BLACK);
     }
 
     // Elite mechanic label (persistent, top-right under room label)
@@ -2313,10 +2777,43 @@ void Engine::DrawHUD()
                  Fade(Color{255, 180, 60, 255}, alpha));
     }
 
+    if (_debug.IsActive() && !_touchModeActive)
+    {
+        const char* debugHint = "Press F1 for Debug Menu";
+        const int hintSz = 16;
+        const int hintW = MeasureText(debugHint, hintSz);
+        const float boxW = (float)hintW + 24.f;
+        const float boxH = 34.f;
+        const float boxX = (float)GetScreenWidth() - boxW - 14.f;
+        const float boxY = 14.f;
+
+        DrawRectangleRounded({ boxX, boxY, boxW, boxH }, 0.22f, 6, Fade(BLACK, 0.58f));
+        DrawRectangleRoundedLines({ boxX, boxY, boxW, boxH }, 0.22f, 6, Fade(Color{ 255, 214, 150, 255 }, 0.45f));
+        DrawText(debugHint,
+            (int)(boxX + 12.f),
+            (int)(boxY + boxH * 0.5f - hintSz * 0.5f),
+            hintSz,
+            Color{ 255, 235, 210, 255 });
+    }
+
     if (_touchModeActive)
     {
         DrawTouchAbilityArc();
         _touch.Draw(_windowWidth, _windowHeight);
+        if (_debug.IsActive())
+        {
+            const Rectangle debugTab{ (float)_windowWidth - 54.f, (float)_windowHeight * 0.43f, 42.f, 132.f };
+            DrawRectangleRounded(debugTab, 0.35f, 6, Fade(Color{ 92, 58, 26, 255 }, 0.78f));
+            DrawRectangleRoundedLines(debugTab, 0.35f, 6, Fade(Color{ 255, 214, 150, 255 }, 0.66f));
+
+            const char* tabLabel = _debug.IsOpen() ? "DBG <" : "DBG >";
+            const int tabSz = 18;
+            const int tabW = MeasureText(tabLabel, tabSz);
+            DrawText(tabLabel,
+                (int)(debugTab.x + debugTab.width * 0.5f - tabW * 0.5f),
+                (int)(debugTab.y + debugTab.height * 0.5f - tabSz * 0.5f),
+                tabSz, RAYWHITE);
+        }
 
         // Pause button — top-right corner, above the wave label
         {
@@ -2385,8 +2882,22 @@ void Engine::DrawHUD()
         float curHp = _player.GetHealthValue();
         float hpPct = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
 
-        Color fillColor = (hpPct > 0.5f) ? GREEN :
-                          (hpPct > 0.25f) ? YELLOW : RED;
+        Color fillColor = (hpPct > 0.70f) ? GREEN :
+                          (hpPct > 0.30f) ? YELLOW : RED;
+
+        if (hpPct <= 0.30f)
+        {
+            float pulse    = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
+            float exps[]   = { 4.f, 9.f, 15.f };
+            float alphas[] = { 0.45f, 0.28f, 0.13f };
+            for (int i = 0; i < 3; i++)
+            {
+                float e = exps[i];
+                DrawRectangleRounded(
+                    { barX - e, hpBarY - e, kBarW + e * 2.f, kBarH + e * 2.f },
+                    0.35f, 6, Fade(RED, alphas[i] * pulse));
+            }
+        }
 
         DrawRectangleRounded({ barX, hpBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
         DrawRectangleRounded({ barX, hpBarY, kBarW * hpPct, kBarH }, 0.3f, 6, fillColor);
@@ -2397,7 +2908,7 @@ void Engine::DrawHUD()
         DrawText(hpLabel,
             (int)(barX + kBarW / 2.f - labelW / 2.f),
             (int)(hpBarY + kBarH / 2.f - 9.f),
-            18, RAYWHITE);
+            18, BLACK);
     }
 
     // ── Mana bar (middle) ─────────────────────────────────────────────────────
@@ -2417,7 +2928,7 @@ void Engine::DrawHUD()
         DrawText(manaLabel,
             (int)(barX + kBarW / 2.f - manaLabelW / 2.f),
             (int)(manaBarY + kBarH / 2.f - 9.f),
-            18, RAYWHITE);
+            18, BLACK);
     }
 
     // ── EXP bar (very bottom) ─────────────────────────────────────────────────
@@ -2944,10 +3455,13 @@ void Engine::DrawAbilityChoice()
                 if (_pendingRoomChoice)
                 {
                     _pendingRoomChoice = false;
-                    _currentAct++;
-                    GenerateActMap();
-                    _mapOpenTimer = 0.4f;
-                    _gameState = GameState::Map;
+                    if (_bossesDefeated >= 2)
+                        _gameState = GameState::DemoEnd;
+                    else
+                    {
+                        _roomClearPending = true;
+                        _gameState = GameState::Play;
+                    }
                 }
                 else
                     _gameState = GameState::Play;
@@ -3068,10 +3582,13 @@ void Engine::DrawAbilityChoice()
                 if (_pendingRoomChoice)
                 {
                     _pendingRoomChoice = false;
-                    _currentAct++;
-                    GenerateActMap();
-                    _mapOpenTimer = 0.4f;
-                    _gameState = (_bossesDefeated >= 2) ? GameState::DemoEnd : GameState::Map;
+                    if (_bossesDefeated >= 2)
+                        _gameState = GameState::DemoEnd;
+                    else
+                    {
+                        _roomClearPending = true;
+                        _gameState = GameState::Play;
+                    }
                 }
                 else
                     _gameState = GameState::Play;
@@ -3101,10 +3618,13 @@ void Engine::DrawAbilityChoice()
         if (_pendingRoomChoice)
         {
             _pendingRoomChoice = false;
-            _currentAct++;
-            GenerateActMap();
-            _mapOpenTimer = 0.4f;
-            _gameState = (_bossesDefeated >= 2) ? GameState::DemoEnd : GameState::Map;
+            if (_bossesDefeated >= 2)
+                _gameState = GameState::DemoEnd;
+            else
+            {
+                _roomClearPending = true;
+                _gameState = GameState::Play;
+            }
         }
         else
             _gameState = GameState::Play;
@@ -3179,12 +3699,21 @@ void Engine::DrawDemoEnd()
     // Debug unlock hint (only shown when unlocked via beating the game)
     if (_demoCompleted)
     {
-        const char* hint = "Debug Mode unlocked  —  press F12 then use the Debug button on the main menu";
+        const char* hint = "Debug Mode unlocked - use the Debug button on the main menu, then press F1 or F10 in-game";
         int hintSz = 16;
         DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, hintSz) * 0.5f),
                  (int)cy, hintSz, Color{160, 120, 255, 180});
         cy += hintSz + 30.f;
     }
+
+    const char* returnHint = _touchModeActive
+        ? "Tap anywhere to return to the main menu"
+        : "Press any key or click anywhere to return to the main menu";
+    int returnHintSz = 18;
+    DrawText(returnHint,
+        (int)(sw * 0.5f - MeasureText(returnHint, returnHintSz) * 0.5f),
+        (int)cy, returnHintSz, Color{210, 200, 235, 190});
+    cy += returnHintSz + 24.f;
 
     // Return to menu button
     Vector2 mouse = GetMousePosition();
@@ -5825,6 +6354,7 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
 void Engine::ResetRunState()
 {
     _nav.CancelAndReset();
+    ResetMusicState();
     _wave          = 0;
     _enemiesKilled = 0;
     _bossesDefeated = 0;
@@ -6502,6 +7032,33 @@ static Rectangle TouchAbilityRect(int slot, int screenW, int screenH)
 // touches on the ability arc.  Called each gameplay frame when touch mode is on.
 void Engine::UpdateTouchControls()
 {
+    if (_debug.IsActive())
+    {
+        const Rectangle debugTab{ (float)_windowWidth - 54.f, (float)_windowHeight * 0.43f, 42.f, 132.f };
+        const int tabTouchCount = GetTouchPointCount();
+
+        if (tabTouchCount == 0)
+        {
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+                CheckCollisionPointRec(GetMousePosition(), debugTab))
+            {
+                _debug.ToggleOpen();
+                return;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < tabTouchCount; ++i)
+            {
+                if (CheckCollisionPointRec(GetTouchPosition(i), debugTab))
+                {
+                    _debug.ToggleOpen();
+                    return;
+                }
+            }
+        }
+    }
+
     _touch.Update(_windowWidth, _windowHeight);
 
     _player.SetTouchDirection(_touch.joystickDir);

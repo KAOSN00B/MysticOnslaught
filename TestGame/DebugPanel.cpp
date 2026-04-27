@@ -157,7 +157,7 @@ namespace
 void DebugPanel::Activate()
 {
     _active              = true;
-    _open                = false;
+    _open                = true;
     _godMode             = false;
     _scrollY             = 0.f;
     _forcedEliteMechanic = -1;
@@ -174,7 +174,7 @@ void DebugPanel::Deactivate()
 
 DebugCommand DebugPanel::Update()
 {
-    if (IsKeyPressed(KEY_F1))
+    if (IsKeyPressed(KEY_F1) || IsKeyPressed(KEY_F10))
         _open = !_open;
 
     if (!_open)

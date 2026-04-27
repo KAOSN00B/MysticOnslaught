@@ -64,6 +64,9 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _attacking = false;
     _damageApplied = false;
     _freezeTimer = 0.f;
+    _hitTimer    = 0.f;
+    _isCharged   = false;
+    _chargeNextStunTime = 0.f;
     _pendingBurns.clear();
     _launchVisualTimer = 0.f;
     _launchHoldingHurtPose = false;
@@ -73,8 +76,8 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _speed = _moveSpeed;
     _expValue = _bossBaseExpValue;
     _rightLeft = 1.f;
-    _health = 18.f;
-    _maxHealth = 18.f;
+    _health = 9.f;
+    _maxHealth = 9.f;
     _attackPower = 1.f;
     _attackRange = _attackRangeBase;
     _state = State::Chasing;
@@ -154,7 +157,7 @@ void Molarbeast::SetWaveScale(int wave)
     // a per-5-wave stat jump on top of the slower every-10-wave scaling.
     // Wave only affects cadence/readability, not raw boss stats.
     _expValue = _bossBaseExpValue;
-    _health      = 44.f;
+    _health      = 22.f;
     _maxHealth   = _health;
     _speed       = _moveSpeed;
     _attackPower = 2.f;
@@ -329,6 +332,11 @@ void Molarbeast::ApplyBurn(float delay, int damage, Vector2 sourcePos)
 void Molarbeast::ApplyFreeze(float duration)
 {
     (void)duration;
+}
+
+void Molarbeast::ApplyElectricCharge()
+{
+    // Boss is immune to electric stun (same as burn and freeze immunity).
 }
 
 Rectangle Molarbeast::GetCollisionRec() const

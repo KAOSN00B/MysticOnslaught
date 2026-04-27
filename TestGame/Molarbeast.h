@@ -28,6 +28,7 @@ public:
     void PlayHurtSound() override;
     void ApplyBurn(float delay, int damage, Vector2 sourcePos) override;
     void ApplyFreeze(float duration) override;
+    void ApplyElectricCharge() override;
     Rectangle GetCollisionRec() const override;
 
     Molarbeast* AsMolarbeast() override { return this; }

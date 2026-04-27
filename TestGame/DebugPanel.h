@@ -41,8 +41,10 @@ public:
     bool IsGodMode()              const { return _godMode;             }
     int  GetForcedEliteMechanic() const { return _forcedEliteMechanic; }
     void SetForcedEliteMechanic(int v)  { _forcedEliteMechanic = v;   }
+    void ToggleOpen()                  { _open = !_open;              }
+    void SetOpen(bool open)            { _open = open;                }
 
-    // Handles F1 toggle, scroll, close button, and internal god-mode toggle.
+    // Handles keyboard toggle, scroll, close button, and internal god-mode toggle.
     // Returns a command when a button requires Engine-side action; otherwise issued=false.
     DebugCommand Update();
     void         Draw(int act, int room, const char* roomTypeName) const;

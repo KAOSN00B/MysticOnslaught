@@ -68,9 +68,10 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
     _hitTimer = 0.f;
     _deathTimer = 0.4f;
-    _freezeTimer        = 0.f;
-    _isCharged          = false;
-    _chargeNextStunTime = 0.f;
+    _freezeTimer              = 0.f;
+    _isCharged                = false;
+    _chargeNextStunTime       = 0.f;
+    _electricChargeTotalTimer = 0.f;
     _attacking = false;
     _damageApplied = false;
     _takingDamage = false;
@@ -632,15 +633,20 @@ void Enemy::ApplyFreeze(float duration)
     if (_dying || !IsAlive())
         return;
 
-    // Extend freeze if already frozen, otherwise start fresh
-    if (duration > _freezeTimer)
-        _freezeTimer = duration;
+    static constexpr float kMaxFreezeDuration = 10.f;
+    float capped = std::min(duration, kMaxFreezeDuration);
+    if (capped > _freezeTimer)
+        _freezeTimer = capped;
 }
 
 void Enemy::ApplyElectricCharge()
 {
     if (_dying || !IsAlive())
         return;
+
+    // Start the 10-second cap window on the very first charge application.
+    if (!_isCharged)
+        _electricChargeTotalTimer = 10.f;
 
     _isCharged    = true;
     _takingDamage = true;
@@ -658,12 +664,17 @@ void Enemy::UpdateElectricCharge(float dt)
     if (!_isCharged || _dying || !IsAlive() || _takingDamage)
         return;
 
+    _electricChargeTotalTimer -= dt;
+    if (_electricChargeTotalTimer <= 0.f)
+    {
+        _isCharged = false;
+        _electricChargeTotalTimer = 0.f;
+        return;
+    }
+
     _chargeNextStunTime -= dt;
     if (_chargeNextStunTime <= 0.f)
-    {
-        ApplyElectricCharge();   // virtual — calls the correct override for each enemy type
-        // ApplyElectricCharge already schedules the next interval via _chargeNextStunTime
-    }
+        ApplyElectricCharge();
 }
 
 void Enemy::StartForcedPush(Vector2 direction, float speed)
@@ -779,6 +790,10 @@ void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)
     if (_dying || !IsAlive())
         return;
 
+    static constexpr float kMaxBurnDelay = 10.f;
+    if (delay > kMaxBurnDelay)
+        return;
+
     _pendingBurns.push_back(PendingBurn{ delay, damage, sourcePos });
 }
 
@@ -824,7 +839,7 @@ void Enemy::PlayHurtSound()
 {
     float pitch = GetRandomValue(140, 180) / 100.f;
     SetSoundPitch(_hurtSound, pitch);
-    SetSoundVolume(_hurtSound, 0.5f);
+    SetSoundVolume(_hurtSound, 0.85f);
     StopSound(_hurtSound);
     PlaySound(_hurtSound);
 }

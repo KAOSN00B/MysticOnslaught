@@ -70,6 +70,20 @@ enum class GameState
     DemoEnd,        // "Thanks for playing" screen shown after 2 boss kills
 };
 
+enum class MusicCue
+{
+    None,
+    Title,
+    Pause,
+    Dungeon,
+    Forest,
+    BossBattle,
+    Shop,
+    BattleVictory,
+    BossVictory,
+    GameOver,
+};
+
 class Engine
 {
 public:
@@ -156,6 +170,21 @@ private:
     void DrawMap();                       // Slay-the-Spire–style act map screen
     std::vector<Vector2> GetCyclopsLaserEndpoints(const CyclopsLaserProjectile& laser) const;
     bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
+
+    void UpdateMusicSystem();
+    void StartMusicCue(MusicCue cue, float startTime = 0.f);
+    void StopMusicCue(MusicCue cue);
+    void SuspendCurrentLoopForCue(MusicCue cue, bool resumeOnMapOnly);
+    void StartVictoryMusic(MusicCue cue);
+    Music* GetMusicByCue(MusicCue cue);
+    MusicCue GetDesiredLoopMusicCue() const;
+    MusicCue GetBiomeMusicCue(Biome biome) const;
+    bool IsLoopMusicCue(MusicCue cue) const;
+    bool IsVictoryMusicCue(MusicCue cue) const;
+    bool ShouldHoldSilenceForVictory() const;
+    void ResetMusicState();
+    float GetMusicBaseVolume(MusicCue cue) const;
+    void ResumePausedLoopMusic();
 
     Biome GetBiomeForAct(int act) const;  // replaces GetBiomeForWave()
 
@@ -336,6 +365,15 @@ private:
     Sound _explosionSound{};
     Sound _lavaBallImpactSound{};
     Sound _buttonPressSound{};
+    Music _titleThemeMusic{};
+    Music _pauseThemeMusic{};
+    Music _dungeonThemeMusic{};
+    Music _forestThemeMusic{};
+    Music _bossBattleMusic{};
+    Music _shopThemeMusic{};
+    Music _battleVictoryMusic{};
+    Music _bossVictoryMusic{};
+    Music _gameOverMusic{};
 
     Texture2D _map{};
     Texture2D _treeTex{};
@@ -420,6 +458,16 @@ private:
     bool  _biomeTransitionActive = false;
     bool  _biomeTransitionSwapped = false;
     float _biomeTransitionTimer = 0.f;
+    MusicCue _currentMusicCue = MusicCue::None;
+    MusicCue _suspendedMusicCue = MusicCue::None;
+    float    _suspendedMusicTime = 0.f;
+    MusicCue _activeVictoryCue = MusicCue::None;
+    float    _musicFadeInTimer = 0.f;
+    float    _musicFadeInDuration = 2.0f;
+    bool     _resumeSuspendedMusicOnMapOnly = false;
+    bool     _silenceAfterVictory = false;
+    bool     _demoEndTouchHeld = false;
+    bool     _gameOverMusicPlayed = false;
 
     // ── Touch mode ───────────────────────────────────────────────────────────
     bool          _touchModeActive = false;

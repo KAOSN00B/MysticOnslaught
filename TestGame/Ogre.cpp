@@ -68,9 +68,13 @@ void Ogre::ResetForSpawn(Vector2 pos)
     _frame       = GetRandomValue(0, _maxFrames - 1);
     _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
 
-    _hitTimer     = 0.f;
-    _deathTimer   = 0.4f;
-    _freezeTimer  = 0.f;
+    _hitTimer                 = 0.f;
+    _deathTimer               = 0.4f;
+    _freezeTimer              = 0.f;
+    _isCharged                = false;
+    _chargeNextStunTime       = 0.f;
+    _electricChargeTotalTimer = 0.f;
+    _pendingBurns.clear();
     _takingDamage = false;
     _attacking    = false;
     _dying        = false;

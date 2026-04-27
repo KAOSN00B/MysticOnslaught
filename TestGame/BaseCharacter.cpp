@@ -144,7 +144,7 @@ void BaseCharacter::PlayAttackSound()
 {
 	float pitch = GetRandomValue(40, 70) / 100.f;
 	SetSoundPitch(_attackSound, pitch);
-	SetSoundVolume(_attackSound, 0.15f);
+	SetSoundVolume(_attackSound, 0.85f);
 	PlaySound(_attackSound);
 }
 

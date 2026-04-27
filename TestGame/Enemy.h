@@ -113,9 +113,10 @@ protected:
 
     float   _freezeTimer        = 0.f;
 
-    // Electric charge — applied by ElectricSpread hits; repeating random stuns all wave
-    bool    _isCharged          = false;
-    float   _chargeNextStunTime = 0.f;   // countdown to next stun trigger
+    // Electric charge — applied by ElectricSpread hits; repeating random stuns, capped at 10 s
+    bool    _isCharged              = false;
+    float   _chargeNextStunTime     = 0.f;   // countdown to next stun trigger
+    float   _electricChargeTotalTimer = 0.f; // overall charge window; zeroes out the effect
 
     int     _expValue       = 1;
 
