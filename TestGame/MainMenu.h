@@ -14,11 +14,11 @@ public:
     void Update();
     void Draw();
 
-    bool StartPressed()       const;
-    bool QuitPressed()        const;
-    bool HowToPressed()       const;
-    bool LeaderboardPressed() const;
-    bool DebugPressed()       const;
+    bool StartPressed()          const;
+    bool QuitPressed()           const;
+    bool HowToPressed()          const;
+    bool DebugPressed()          const;
+    void SetDebugUnlocked(bool unlocked);
     bool IsTouchMode()        const { return _touchModeActive; }
 
 private:
@@ -39,7 +39,7 @@ private:
     bool _startPressed       = false;
     bool _quitPressed        = false;
     bool _howToPressed       = false;
-    bool _leaderboardPressed = false;
     bool _debugPressed       = false;
+    bool _debugUnlocked      = false;
     bool _touchModeActive    = false;
 };

@@ -67,6 +67,7 @@ enum class GameState
     ExpTally,       // post-battle EXP tally screen — bar fills, level-ups interrupt
     Map,            // Slay-the-Spire–style act map — player clicks a node to enter the next room
     Shop,           // Zeph's shop — full-screen UI entered from a Store room
+    DemoEnd,        // "Thanks for playing" screen shown after 2 boss kills
 };
 
 class Engine
@@ -143,6 +144,9 @@ private:
     void UpdateExpTally(float dt);
     void DrawExpTally();
 
+    // ── Demo end screen ───────────────────────────────────────────────────────
+    void DrawDemoEnd();
+
     // ── Room-based run progression ────────────────────────────────────────────
     void StartNextRoom(RoomType type);    // internal setup helper (biome + wave intro)
     void GenerateActMap();                // builds the full act node graph
@@ -208,7 +212,9 @@ private:
     GameState _gameState = GameState::Menu;
 
     bool _shouldExit = false;
-    GameState _howToPlayFrom = GameState::Menu;
+    GameState _howToPlayFrom  = GameState::Menu;
+    int       _htpTab         = 0;
+    float     _htpSlideOffset = 0.f;
     bool _waveStarting = true;
     bool _wave1LevelUpDone = false; // ensures forced level-up after wave 1 only fires once
     bool _playerDying = false;
@@ -216,8 +222,10 @@ private:
     bool _awaitingStartingAbility = false;
 
     int _wave        = 0;
-    int _enemiesKilled      = 0;
-    int _goldDroughtCounter = 0;  // kills since last Five-or-better drop; resets at 5
+    int  _enemiesKilled      = 0;
+    int  _goldDroughtCounter = 0;  // kills since last Five-or-better drop; resets at 5
+    int  _bossesDefeated     = 0;  // how many Molarbeasts have been killed this run
+    bool _demoCompleted      = false; // true after 2 boss kills OR secret code — unlocks debug
 
     float _shakeTimer = 0.f;
     float _shakeStrength = 0.f;
