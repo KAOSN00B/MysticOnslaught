@@ -127,6 +127,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AudioManager.cpp" />
     <ClCompile Include="BaseCharacter.cpp" />
     <ClCompile Include="Cyclops.cpp" />
     <ClCompile Include="CyclopsLaserProjectile.cpp" />
@@ -148,6 +149,7 @@
     <ClCompile Include="MainMenu.cpp" />
     <ClCompile Include="PauseAndGameOver.cpp" />
     <ClCompile Include="Prop.cpp" />
+    <ClCompile Include="RunStateController.cpp" />
     <ClCompile Include="ShopManager.cpp" />
     <ClCompile Include="SpreadProjectile.cpp" />
     <ClCompile Include="TouchControls.cpp" />
@@ -155,6 +157,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AbilityType.h" />
+    <ClInclude Include="AudioManager.h" />
     <ClInclude Include="AnimationUtils.h" />
     <ClInclude Include="AssetPaths.h" />
     <ClInclude Include="BaseCharacter.h" />
@@ -169,6 +172,7 @@
     <ClInclude Include="VFXManager.h" />
     <ClInclude Include="Game.h" />
     <ClInclude Include="GameBalance.h" />
+    <ClInclude Include="GameTypes.h" />
     <ClInclude Include="GoldPickup.h" />
     <ClInclude Include="HealPickup.h" />
     <ClInclude Include="KeyBindings.h" />
@@ -182,6 +186,7 @@
     <ClInclude Include="PauseAndGameOver.h" />
     <ClInclude Include="Pickup.h" />
     <ClInclude Include="Prop.h" />
+    <ClInclude Include="RunStateController.h" />
     <ClInclude Include="ShopManager.h" />
     <ClInclude Include="SpreadProjectile.h" />
     <ClInclude Include="TouchControls.h" />

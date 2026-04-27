@@ -2,6 +2,7 @@
 #pragma once
 
 #include "raylib.h"
+#include "GameTypes.h"
 #include "KeyBindings.h"
 #include "Character.h"
 #include "Prop.h"
@@ -28,11 +29,14 @@
 #include "ShopManager.h"
 #include "DebugPanel.h"
 #include "WorldConfig.h"
+#include "AudioManager.h"
+#include "RunStateController.h"
 
 #include <vector>
 #include <string>
 #include <memory>
 
+#if 0
 enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
 
 // ── Room type — drives encounter, reward, and biome logic ─────────────────────
@@ -83,6 +87,7 @@ enum class MusicCue
     BossVictory,
     GameOver,
 };
+#endif
 
 class Engine
 {
@@ -172,19 +177,8 @@ private:
     bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
 
     void UpdateMusicSystem();
-    void StartMusicCue(MusicCue cue, float startTime = 0.f);
-    void StopMusicCue(MusicCue cue);
-    void SuspendCurrentLoopForCue(MusicCue cue, bool resumeOnMapOnly);
     void StartVictoryMusic(MusicCue cue);
-    Music* GetMusicByCue(MusicCue cue);
-    MusicCue GetDesiredLoopMusicCue() const;
-    MusicCue GetBiomeMusicCue(Biome biome) const;
-    bool IsLoopMusicCue(MusicCue cue) const;
-    bool IsVictoryMusicCue(MusicCue cue) const;
-    bool ShouldHoldSilenceForVictory() const;
     void ResetMusicState();
-    float GetMusicBaseVolume(MusicCue cue) const;
-    void ResumePausedLoopMusic();
 
     Biome GetBiomeForAct(int act) const;  // replaces GetBiomeForWave()
 
@@ -238,12 +232,13 @@ private:
         float   strikeFlashTimer = 0.f;  // brief flash after impact
     };
 
-    GameState _gameState = GameState::Menu;
+    RunStateController _runState;
+    GameState& _gameState;
+    GameState& _howToPlayFrom;
+    int& _htpTab;
+    float& _htpSlideOffset;
 
     bool _shouldExit = false;
-    GameState _howToPlayFrom  = GameState::Menu;
-    int       _htpTab         = 0;
-    float     _htpSlideOffset = 0.f;
     bool _waveStarting = true;
     bool _wave1LevelUpDone = false; // ensures forced level-up after wave 1 only fires once
     bool _playerDying = false;
@@ -365,15 +360,6 @@ private:
     Sound _explosionSound{};
     Sound _lavaBallImpactSound{};
     Sound _buttonPressSound{};
-    Music _titleThemeMusic{};
-    Music _pauseThemeMusic{};
-    Music _dungeonThemeMusic{};
-    Music _forestThemeMusic{};
-    Music _bossBattleMusic{};
-    Music _shopThemeMusic{};
-    Music _battleVictoryMusic{};
-    Music _bossVictoryMusic{};
-    Music _gameOverMusic{};
 
     Texture2D _map{};
     Texture2D _treeTex{};
@@ -458,16 +444,8 @@ private:
     bool  _biomeTransitionActive = false;
     bool  _biomeTransitionSwapped = false;
     float _biomeTransitionTimer = 0.f;
-    MusicCue _currentMusicCue = MusicCue::None;
-    MusicCue _suspendedMusicCue = MusicCue::None;
-    float    _suspendedMusicTime = 0.f;
-    MusicCue _activeVictoryCue = MusicCue::None;
-    float    _musicFadeInTimer = 0.f;
-    float    _musicFadeInDuration = 2.0f;
-    bool     _resumeSuspendedMusicOnMapOnly = false;
-    bool     _silenceAfterVictory = false;
     bool     _demoEndTouchHeld = false;
-    bool     _gameOverMusicPlayed = false;
+    AudioManager _audio;
 
     // ── Touch mode ───────────────────────────────────────────────────────────
     bool          _touchModeActive = false;
