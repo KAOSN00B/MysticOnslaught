@@ -95,7 +95,7 @@ void Character::Init()
     _attackPower = 3.f;
 
     _maxFrames = _texture.width / _width;
-    _updateTime = 1.f / 8.f;
+    _updateTime = 3.0f / (float)_maxFrames;
 
     _hasIFrames = false;
     _dashInvincible = false;
@@ -159,6 +159,9 @@ void Character::Update(float dt)
     {
         _manaRegenAccum = 0.f;
     }
+
+    if (_ultimateManaWarningTimer > 0.f)
+        _ultimateManaWarningTimer = std::max(0.f, _ultimateManaWarningTimer - dt);
 
     ApplyVelocity(dt);
     UpdateHit(dt);
@@ -277,7 +280,12 @@ void Character::HandleMovement(float dt)
         if (_direction.x < 0) _rightLeft = -1;
         if (_direction.x > 0) _rightLeft = 1;
 
-        _texture = _walkAnim;
+        if (_texture.id != _walkAnim.id)
+        {
+            _texture   = _walkAnim;
+            _maxFrames = _texture.width / _width;
+            _updateTime = 1.f / 8.f;
+        }
 
         _stepTimer -= dt;
 
@@ -289,7 +297,12 @@ void Character::HandleMovement(float dt)
     }
     else if (!_attacking && !_castingAbility)
     {
-        _texture = _idleAnim;
+        if (_texture.id != _idleAnim.id)
+        {
+            _texture    = _idleAnim;
+            _maxFrames  = _texture.width / _width;
+            _updateTime = 3.0f / (float)_maxFrames;
+        }
         _stepTimer = 0.f;
     }
 }
@@ -359,9 +372,14 @@ void Character::TriggerAbilityCast(int slot)
     if (ability == AbilityType::None)
         return;
 
-    int cost = GetAbilityManaCost(ability);
-    if (_mana < cost)
+    if (!CanCastAbility(ability))
+    {
+        if (AbilityDrainsAllMana(ability))
+            _ultimateManaWarningTimer = 1.5f;
         return;
+    }
+
+    int cost = GetAbilityManaCost(ability);
 
     // Ultimates drain every point of mana; other abilities deduct their fixed cost.
     if (AbilityDrainsAllMana(ability))
@@ -483,8 +501,8 @@ void Character::HandleAnimation(float dt)
             {
                 _takingDamage = false;
                 _texture = _idleAnim;
-                _updateTime = 1.f / 8.f;
                 _maxFrames = _texture.width / _width;
+                _updateTime = 3.0f / (float)_maxFrames;
                 _frame = 0;
                 return;
             }
@@ -493,16 +511,16 @@ void Character::HandleAnimation(float dt)
             {
                 _attacking = false;
                 _texture = _idleAnim;
-                _updateTime = 1.f / 8.f;
                 _maxFrames = _texture.width / _width;
+                _updateTime = 3.0f / (float)_maxFrames;
             }
 
             if (_castingAbility)
             {
                 _castingAbility = false;
                 _texture = _idleAnim;
-                _updateTime = 1.f / 8.f;
                 _maxFrames = _texture.width / _width;
+                _updateTime = 3.0f / (float)_maxFrames;
             }
 
             _frame = 0;
@@ -545,7 +563,7 @@ bool Character::Dashing(float dt)
         _frame = 0;
         _runningTime = 0.f;
         _maxFrames = _texture.width / _width;
-        _updateTime = 1.f / 8.f;
+        _updateTime = 3.0f / (float)_maxFrames;
     }
 
     return true;
@@ -774,6 +792,22 @@ static bool IsUltimateAbility(AbilityType type)
     return type == AbilityType::FireUltimate ||
            type == AbilityType::IceUltimate  ||
            type == AbilityType::ElectricUltimate;
+}
+
+bool Character::CanCastAbility(AbilityType type) const
+{
+    if (type == AbilityType::None)
+        return false;
+
+    if (AbilityDrainsAllMana(type))
+        return _mana >= GetUltimateManaRequired();
+
+    return _mana >= GetAbilityManaCost(type);
+}
+
+int Character::GetUltimateManaRequired() const
+{
+    return (int)std::ceil((float)_maxMana * 0.70f);
 }
 
 bool Character::LearnAbility(AbilityType type)

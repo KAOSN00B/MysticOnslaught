@@ -127,9 +127,8 @@ static Color ShopRarityColor(UpgradeRarity r)
 namespace
 {
     constexpr float kZephSpriteHeight = 192.f;
-    constexpr float kZephCollisionWidth = 52.f;
-    constexpr float kZephCollisionHeight = 56.f;
-    constexpr float kZephCollisionFeetOffset = 34.f;
+    constexpr float kZephCollisionWidth = 72.f;
+    constexpr float kZephCollisionHeight = 112.f;
 
     Rectangle GetZephPromptRect(float sx, float sy, bool touchMode)
     {
@@ -173,7 +172,7 @@ bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMo
     // Collision push (MTV against a 40×60 world-unit box)
     Rectangle npcRect = {
         _npcPos.x - kZephCollisionWidth * 0.5f,
-        _npcPos.y + kZephCollisionFeetOffset - kZephCollisionHeight * 0.5f,
+        _npcPos.y + kZephSpriteHeight * 0.5f - kZephCollisionHeight,
         kZephCollisionWidth,
         kZephCollisionHeight
     };
@@ -369,6 +368,67 @@ bool ShopManager::Update(Character& player)
         return false;
     }
 
+    // ── Left panel ability slot buttons ──────────────────────────────────
+    {
+        const float lx = pad, ly = pad;
+        const float lh = sh - pad * 2.f;
+        const float cp = iPad;
+        const float cw = leftW - cp * 2.f;
+        // Mirror the cy progression from Draw() to land on the slot positions
+        float cy = ly + cp + 34.f + 12.f;
+        const float barH2    = std::min(26.f, cw * 0.13f);
+        cy += (barH2 + 8.f) + (barH2 + 14.f);
+        const float statFs2   = std::min(20.f, cw * 0.09f);
+        const float statRowH2 = statFs2 + 9.f;
+        cy += 4.f * statRowH2 + 10.f + 10.f + 28.f;
+
+        const int   slotCount = player.GetMaxAbilitySlots();
+        const float slotH2    = std::min(72.f, (lh - (cy - ly) - cp) / (float)slotCount);
+        const float btnH2     = std::min(22.f, slotH2 * 0.32f);
+        const float btnW2     = (cw - 8.f) * 0.5f;
+
+        for (int i = 0; i < slotCount; i++)
+        {
+            AbilityType ab = player.GetLearnedAbility(i);
+            if (ab != AbilityType::None)
+            {
+                float btnTopY = cy + (slotH2 - 4.f) - btnH2 - 5.f;
+                Rectangle upgBtn = { lx + cp,               btnTopY, btnW2, btnH2 };
+                Rectangle remBtn = { lx + cp + btnW2 + 8.f, btnTopY, btnW2, btnH2 };
+
+                int upgCost = player.GetAbilityLevel(ab) * 100;
+
+                if (clicked && CheckCollisionPointRec(mouse, upgBtn))
+                {
+                    if (!player.CanUpgradeAbility(ab))
+                        _dialogue = "That ability is already at its peak.";
+                    else if (player.GetGold() < upgCost)
+                        _dialogue = "Not enough gold to upgrade that.";
+                    else
+                    {
+                        player.AddGold(-upgCost);
+                        player.UpgradeAbility(ab);
+                        _dialogue = "Power flows through you. A worthy investment!";
+                    }
+                    return false;
+                }
+                if (clicked && CheckCollisionPointRec(mouse, remBtn))
+                {
+                    if (player.GetGold() < 100)
+                        _dialogue = "You need 100g to remove an ability.";
+                    else
+                    {
+                        player.AddGold(-100);
+                        player.RemoveAbilityAtSlot(i);
+                        _dialogue = "That power is gone. Choose wisely next time.";
+                    }
+                    return false;
+                }
+            }
+            cy += slotH2;
+        }
+    }
+
     // ── Tab buttons ───────────────────────────────────────────────────────
     const float titleH = 46.f;
     const float tabH   = 38.f;
@@ -407,6 +467,11 @@ bool ShopManager::Update(Character& player)
             Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
             if (clicked && CheckCollisionPointRec(mouse, buyBtn))
             {
+                if (item.isAbility && player.GetLearnedCount() >= 3)
+                {
+                    _dialogue = "You can only hold 3 abilities. Remove one first.";
+                    return false;
+                }
                 if (player.GetGold() >= item.price)
                 {
                     player.AddGold(-item.price);
@@ -427,6 +492,7 @@ bool ShopManager::Update(Character& player)
     }
     else
     {
+        // 2 rows × 3 cols of purchasable ability items
         const float cols   = 3.f, rows = 2.f, gap = 10.f;
         const float itemW  = (contentW - gap * (cols - 1.f)) / cols;
         const float itemH  = (contentH - gap * (rows - 1.f)) / rows;
@@ -446,7 +512,11 @@ bool ShopManager::Update(Character& player)
             Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
             if (clicked && CheckCollisionPointRec(mouse, buyBtn))
             {
-                if (player.GetGold() >= item.price)
+                if (player.GetLearnedCount() >= 3)
+                {
+                    _dialogue = "You can only hold 3 abilities. Remove one first.";
+                }
+                else if (player.GetGold() >= item.price)
                 {
                     player.AddGold(-item.price);
                     player.LearnAbility(item.abilityType);
@@ -596,9 +666,10 @@ void ShopManager::Draw(const Character& player) const
         cy += 28.f;
 
         int   slotCount = player.GetMaxAbilitySlots();
-        float slotH     = std::min(50.f, (lh - (cy - ly) - cp) / (float)slotCount);
-        float slotFs    = std::min(18.f, slotH * 0.40f);
+        float slotH     = std::min(72.f, (lh - (cy - ly) - cp) / (float)slotCount);
+        float slotFs    = std::min(16.f, slotH * 0.28f);
 
+        Vector2 mpLeft = GetMousePosition();
         for (int i = 0; i < slotCount; i++)
         {
             AbilityType ab = player.GetLearnedAbility(i);
@@ -609,16 +680,53 @@ void ShopManager::Draw(const Character& player) const
 
             if (ab != AbilityType::None)
             {
+                int lv = player.GetAbilityLevel(ab);
                 DrawText(ShopAbilityName(ab),
-                    (int)(sr.x + 8.f),
-                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f - 2.f),
-                    (int)std::min(18.f, slotFs + 2.f), RAYWHITE);
-                int lv  = player.GetAbilityLevel(ab);
+                    (int)(sr.x + 8.f), (int)(sr.y + 8.f),
+                    (int)std::min(16.f, slotFs + 2.f), RAYWHITE);
                 const char* lvLbl = TextFormat("Lv%d", lv);
                 int lvW = MeasureText(lvLbl, (int)slotFs);
                 DrawText(lvLbl, (int)(sr.x + sr.width - lvW - 6.f),
-                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f),
+                    (int)(sr.y + 8.f),
                     (int)slotFs, lv >= 3 ? GOLD : SKYBLUE);
+
+                const float btnH2   = std::min(22.f, slotH * 0.32f);
+                const float btnW2   = (cw - 8.f) * 0.5f;
+                const float btnTopY = sr.y + sr.height - btnH2 - 5.f;
+                int  upgCost   = lv * 100;
+                bool canUpg    = player.CanUpgradeAbility(ab);
+                bool canAffUpg = player.GetGold() >= upgCost;
+                bool canAffRem = player.GetGold() >= 100;
+
+                Rectangle upgBtn2 = { sr.x,               btnTopY, btnW2, btnH2 };
+                Rectangle remBtn2 = { sr.x + btnW2 + 8.f, btnTopY, btnW2, btnH2 };
+
+                bool upgHov = CheckCollisionPointRec(mpLeft, upgBtn2);
+                Color upgBg2 = (canUpg && canAffUpg) ? (upgHov ? Color{45,90,45,240} : Color{30,60,30,220})
+                                                      : Color{25,25,30,140};
+                Color upgBo2 = (canUpg && canAffUpg) ? (upgHov ? Color{120,220,120,255} : Color{80,180,80,220})
+                                                      : Color{60,60,70,120};
+                smallBox(upgBtn2, upgBg2, upgBo2);
+                int ubFs = (int)std::min(11.f, btnH2 * 0.55f);
+                const char* upgLbl2 = canUpg ? TextFormat("Upg %dg", upgCost) : "MAX";
+                int ulW2 = MeasureText(upgLbl2, ubFs);
+                DrawText(upgLbl2,
+                    (int)(upgBtn2.x + upgBtn2.width * 0.5f - ulW2 * 0.5f),
+                    (int)(upgBtn2.y + upgBtn2.height * 0.5f - ubFs * 0.5f),
+                    ubFs, (canUpg && canAffUpg) ? Color{180,255,180,255} : Fade(RAYWHITE, 0.35f));
+
+                bool remHov = CheckCollisionPointRec(mpLeft, remBtn2);
+                Color remBg2 = canAffRem ? (remHov ? Color{110,30,30,240} : Color{70,20,20,200})
+                                         : Color{25,25,30,140};
+                Color remBo2 = canAffRem ? (remHov ? Color{255,80,80,255} : Color{200,60,60,200})
+                                         : Color{60,60,70,120};
+                smallBox(remBtn2, remBg2, remBo2);
+                const char* remLbl2 = "Rem 100g";
+                int rlW2 = MeasureText(remLbl2, ubFs);
+                DrawText(remLbl2,
+                    (int)(remBtn2.x + remBtn2.width * 0.5f - rlW2 * 0.5f),
+                    (int)(remBtn2.y + remBtn2.height * 0.5f - ubFs * 0.5f),
+                    ubFs, canAffRem ? Color{255,140,140,255} : Fade(RAYWHITE, 0.35f));
             }
             else
             {
@@ -627,6 +735,41 @@ void ShopManager::Draw(const Character& player) const
                     (int)slotFs, Fade(RAYWHITE, 0.30f));
             }
             cy += slotH;
+        }
+
+        // ── Player sprite portrait ────────────────────────────────────────
+        {
+            const Texture2D& idleTex = player.GetIdleAnim();
+            float frameW = player.GetSpriteWidth();
+            if (idleTex.id > 0 && frameW > 0.f)
+            {
+                int   nFrames = (int)(idleTex.width / frameW);
+                float frameH  = (float)idleTex.height;
+
+                const float kFps = (float)nFrames / 3.0f;
+                int animFrame = (int)(fmod(GetTime() * kFps, (float)nFrames));
+                animFrame = std::max(0, std::min(nFrames - 1, animFrame));
+                Rectangle src = { animFrame * frameW, 0.f, frameW, frameH };
+
+                const float spritePad = 8.f;
+                float areaX = lx + cp;
+                float areaY = cy + spritePad;
+                float areaW = cw;
+                float areaH = (ly + lh - cp) - areaY;
+
+                if (areaH > 40.f)
+                {
+                    float scale = std::min(areaW / frameW, areaH / frameH);
+                    float dstW  = frameW * scale;
+                    float dstH  = frameH * scale;
+                    Rectangle dst = {
+                        areaX + (areaW - dstW) * 0.5f,
+                        areaY + (areaH - dstH) * 0.5f,
+                        dstW, dstH
+                    };
+                    DrawTexturePro(idleTex, src, dst, {}, 0.f, WHITE);
+                }
+            }
         }
     }
     EndScissorMode();
@@ -818,6 +961,7 @@ void ShopManager::Draw(const Character& player) const
         }
         else
         {
+            // 2 rows × 3 cols of purchasable abilities (mirrors wares tab layout)
             const float cols = 3.f, rows = 2.f, gap = 10.f;
             const float itemW = (contentW - gap * (cols - 1.f)) / cols;
             const float itemH = (contentH - gap * (rows - 1.f)) / rows;
@@ -825,6 +969,8 @@ void ShopManager::Draw(const Character& player) const
             const float iconSz = std::min(itemW * 0.40f, itemH * 0.35f);
             const float nameFs = std::min(32.f, itemH * 0.22f);
             const float descFsBase = std::min(26.f, itemH * 0.16f);
+            bool slotsFull = (player.GetLearnedCount() >= 3);
+
             int availableAbilities = 0;
             for (const auto& item : _inventory)
                 if (!item.purchased && item.isAbility)
@@ -832,95 +978,84 @@ void ShopManager::Draw(const Character& player) const
 
             if (availableAbilities == 0)
             {
-                DrawText("You've already learned everything Zeph can teach here.",
-                    (int)(shopX + iPad + 8.f), (int)(contentY + 20.f), 16, kDim);
+                DrawText("No abilities available.", (int)(shopX + iPad + 8.f),
+                    (int)(contentY + 20.f), 18, kDim);
             }
-            else
+
+            int displayIdx = 0;
+            for (int idx = 0; idx < (int)_inventory.size(); idx++)
             {
-                int displayIdx = 0;
-                for (int idx = 0; idx < (int)_inventory.size(); idx++)
+                const ShopItem& item = _inventory[idx];
+                if (item.purchased || !item.isAbility) continue;
+
+                int   col = displayIdx % 3, row = displayIdx / 3;
+                float ix  = shopX + iPad + col * (itemW + gap);
+                float iy  = contentY + row * (itemH + gap);
+
+                Color cardBg = Color{18, 20, 32, 220};
+                Color cardBo = Color{80, 60, 140, 140};
+                Vector2 mpos = GetMousePosition();
+                bool    hov  = CheckCollisionPointRec(mpos, { ix, iy, itemW, itemH });
+                if (hov && !slotsFull) { cardBg = Color{28,24,52,240}; cardBo = Color{120,80,200,220}; }
+                smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
+
+                DrawRectangle((int)ix, (int)iy, 5, (int)itemH, Fade(Color{120,80,220,255}, 0.80f));
+
+                BeginScissorMode((int)ix + 6, (int)iy, (int)itemW - 6, (int)itemH);
+
+                const float iconCX = ix + itemW * 0.5f;
+                const float iconCY = iy + 8.f + iconSz * 0.5f;
+                Texture2D* icon = getShopIcon(item);
+                if (icon && icon->id != 0)
                 {
-                    const ShopItem& item = _inventory[idx];
-                    if (item.purchased || !item.isAbility) continue;
-
-                    int   col = displayIdx % 3, row = displayIdx / 3;
-                    float ix  = shopX + iPad + col * (itemW + gap);
-                    float iy  = contentY + row * (itemH + gap);
-
-                    UpgradeRarity rar = UpgradeRarity::Rare;
-                    Color rarCol = ShopRarityColor(rar);
-                    Color cardBg = Color{18, 20, 32, 220};
-                    Color cardBo = Fade(rarCol, 0.55f);
-                    Vector2 mouse = GetMousePosition();
-                    bool hov = CheckCollisionPointRec(mouse, { ix, iy, itemW, itemH });
-                    if (hov) { cardBg = Color{28,32,52,240}; cardBo = Fade(rarCol, 0.90f); }
-                    smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
-
-                    DrawRectangle((int)ix, (int)iy, 5, (int)itemH, Fade(rarCol, 0.80f));
-
-                    BeginScissorMode((int)ix + 6, (int)iy, (int)itemW - 6, (int)itemH);
-
-                    const float iconCX = ix + itemW * 0.5f;
-                    const float iconCY = iy + 8.f + iconSz * 0.5f;
-                    Texture2D* icon = getShopIcon(item);
-                    if (icon && icon->id != 0)
-                    {
-                        float scale = std::min(iconSz / (float)icon->width,
-                                              iconSz / (float)icon->height);
-                        float iw = icon->width  * scale;
-                        float ih = icon->height * scale;
-                        DrawTexturePro(*icon,
-                            { 0, 0, (float)icon->width, (float)icon->height },
-                            { iconCX - iw * 0.5f, iconCY - ih * 0.5f, iw, ih },
-                            {}, 0.f, WHITE);
-                    }
-
-                    float cy2 = iconCY + iconSz * 0.5f + 100.f;
-                    const char* name = ShopAbilityName(item.abilityType);
-                    const char* desc = ShopAbilityDesc(item.abilityType);
-
-                    int nw = MeasureText(name, (int)nameFs);
-                    DrawText(name, (int)(ix + itemW * 0.5f - nw * 0.5f + 3.f),
-                        (int)cy2, (int)nameFs, RAYWHITE);
-                    cy2 += nameFs + 3.f;
-
-                    const float maxDescW = itemW - 20.f;
-                    float descFs = descFsBase;
-                    while (descFs > 8.f && MeasureText(desc, (int)descFs) > (int)maxDescW)
-                        descFs -= 1.f;
-                    int dw = MeasureText(desc, (int)descFs);
-                    DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
-                        (int)cy2, (int)descFs, kDim);
-
-                    if (idx == _dailyDealIndex)
-                    {
-                        const char* dealLbl = "DEAL!";
-                        int dlFs = 13, dlW = MeasureText(dealLbl, dlFs);
-                        DrawRectangle((int)(ix + itemW - dlW - 10.f), (int)iy, dlW + 10, 20,
-                            Color{255, 200, 0, 230});
-                        DrawText(dealLbl, (int)(ix + itemW - dlW - 5.f), (int)(iy + 3.f),
-                            dlFs, BLACK);
-                    }
-
-                    EndScissorMode();
-
-                    bool canAfford = (player.GetGold() >= item.price);
-                    Color buyBg = canAfford ? Color{30,90,30,220} : Color{60,30,30,180};
-                    Color buyBo = canAfford ? Color{80,200,80,255} : Color{160,60,60,200};
-                    Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
-                    smallBox(buyBtn, buyBg, buyBo);
-                    int prFs = (int)std::min(14.f, buyH * 0.55f);
-                    const char* prLbl = (idx == _dailyDealIndex)
-                        ? TextFormat("%dg  DEAL", item.price)
-                        : TextFormat("%dg", item.price);
-                    int prW = MeasureText(prLbl, prFs);
-                    DrawText(prLbl,
-                        (int)(buyBtn.x + buyBtn.width * 0.5f - prW * 0.5f),
-                        (int)(buyBtn.y + buyBtn.height * 0.5f - prFs * 0.5f),
-                        prFs, canAfford ? Color{180,255,180,255} : Color{255,140,140,220});
-
-                    displayIdx++;
+                    float scale = std::min(iconSz / (float)icon->width,
+                                          iconSz / (float)icon->height);
+                    float iw = icon->width  * scale;
+                    float ih = icon->height * scale;
+                    DrawTexturePro(*icon,
+                        { 0, 0, (float)icon->width, (float)icon->height },
+                        { iconCX - iw * 0.5f, iconCY - ih * 0.5f, iw, ih },
+                        {}, 0.f, WHITE);
                 }
+                else
+                {
+                    DrawCircleV({ iconCX, iconCY }, iconSz * 0.4f, Fade(Color{120,80,220,255}, 0.35f));
+                    DrawCircleLinesV({ iconCX, iconCY }, iconSz * 0.4f, Fade(Color{120,80,220,255}, 0.70f));
+                }
+
+                float cy2 = iconCY + iconSz * 0.5f + 10.f;
+                const char* name = ShopAbilityName(item.abilityType);
+                const char* desc = ShopAbilityDesc(item.abilityType);
+
+                int nw = MeasureText(name, (int)nameFs);
+                DrawText(name, (int)(ix + itemW * 0.5f - nw * 0.5f + 3.f),
+                    (int)cy2, (int)nameFs, RAYWHITE);
+                cy2 += nameFs + 3.f;
+
+                const float maxDescW = itemW - 20.f;
+                float descFs = descFsBase;
+                while (descFs > 8.f && MeasureText(desc, (int)descFs) > (int)maxDescW)
+                    descFs -= 1.f;
+                int dw = MeasureText(desc, (int)descFs);
+                DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
+                    (int)cy2, (int)descFs, kDim);
+
+                EndScissorMode();
+
+                bool canAfford = (player.GetGold() >= item.price);
+                bool canBuy    = canAfford && !slotsFull;
+                Color buyBg = canBuy ? Color{30,90,30,220} : Color{60,30,30,180};
+                Color buyBo = canBuy ? Color{80,200,80,255} : Color{160,60,60,200};
+                Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
+                smallBox(buyBtn, buyBg, buyBo);
+                int prFs = (int)std::min(14.f, buyH * 0.55f);
+                const char* prLbl = slotsFull ? "SLOTS FULL" : TextFormat("%dg", item.price);
+                int prW = MeasureText(prLbl, prFs);
+                DrawText(prLbl,
+                    (int)(buyBtn.x + buyBtn.width * 0.5f - prW * 0.5f),
+                    (int)(buyBtn.y + buyBtn.height * 0.5f - prFs * 0.5f),
+                    prFs, canBuy ? Color{180,255,180,255} : Color{255,140,140,220});
+                displayIdx++;
             }
         }
     }

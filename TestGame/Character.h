@@ -105,6 +105,9 @@ public:
 
     // Called by Engine when an ability icon is clicked or a hotkey fires
     void TriggerAbilityCast(int slot);
+    bool CanCastAbility(AbilityType type) const;
+    int  GetUltimateManaRequired() const;
+    float GetUltimateManaWarningTimer() const { return _ultimateManaWarningTimer; }
 
     CastType ConsumeCastRequest();
     bool CanApplyMeleeDamage() const;
@@ -239,6 +242,7 @@ private:
 
     int   _mana    = 0;
     int   _maxMana = 10;
+    float _ultimateManaWarningTimer = 0.f;
     float _defense = 0.f;           // 0.0 – 1.0 damage reduction fraction
     float _attackRangeMultiplier = 1.f;
 

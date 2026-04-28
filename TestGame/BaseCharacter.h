@@ -28,7 +28,9 @@ public:
     bool UpdateDeath(float dt);
     bool IsAlive() const { return _health > 0; }
 
-    Vector2 GetWorldPos() const { return _worldPos; }
+    Vector2          GetWorldPos()    const { return _worldPos; }
+    const Texture2D& GetIdleAnim()   const { return _idleAnim; }
+    float            GetSpriteWidth() const { return _width; }
 
 protected:
 

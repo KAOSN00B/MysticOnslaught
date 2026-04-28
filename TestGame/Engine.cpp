@@ -324,7 +324,7 @@ void Engine::StartNextRoom(RoomType type)
     {
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player, _currentAct);
+        _shop.Enter({ mapW * 0.5f, mapH * 0.40f }, _player, _currentAct);
     }
 
     std::string actName = GetBiomeName(GetBiomeForAct(_currentAct));
@@ -455,7 +455,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
         _roomClearPending = true;
         float mapW = _map.width  * _mapScale;
         float mapH = _map.height * _mapScale;
-        _shop.Enter({ mapW * 0.5f, mapH * 0.5f }, _player, _currentAct);
+        _shop.Enter({ mapW * 0.5f, mapH * 0.40f }, _player, _currentAct);
     }
     else if (type == RoomType::Rest)
     {
@@ -677,6 +677,14 @@ void Engine::EnterMapRoom(int idx)
         _roomClearTimer = 5.0f;
     else
         _roomClearTimer = 0.f;
+
+    // Store room — place Zeph at map centre and stock the shop
+    if (_currentRoomType == RoomType::Store)
+    {
+        float mapW = _map.width  * _mapScale;
+        float mapH = _map.height * _mapScale;
+        _shop.Enter({ mapW * 0.5f, mapH * 0.40f }, _player, _currentAct);
+    }
 
     _message = "Act " + std::to_string(_currentAct) + " - " + GetBiomeName(GetBiomeForAct(_currentAct));
 
@@ -955,7 +963,12 @@ void Engine::Update(float dt)
         break;
 
     case GameState::Shop:
-        if (_shop.Update(_player)) _gameState = GameState::Play;
+        if (_shop.Update(_player))
+        {
+            _gameState = GameState::Play;
+            if (_currentRoomType == RoomType::Store)
+                _roomClearPending = true;
+        }
         break;
 
     case GameState::Map:
@@ -1234,9 +1247,10 @@ void Engine::UpdateGamePlay(float dt)
         eliteCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
         _combatDirector.UpdateEliteMechanics(eliteCtx, dt);
 
-        // Non-combat rooms still use the same Continue button flow as combat
-        // rooms; they just complete immediately once their intro ends.
-        if (_currentRoomType == RoomType::Rest || _currentRoomType == RoomType::Store)
+        // Rest areas complete immediately once their intro ends. Store areas
+        // wait until the player actually leaves Zeph's shop before showing the
+        // continue prompt.
+        if (_currentRoomType == RoomType::Rest)
         {
             _roomClearPending = true;
         }
@@ -2081,14 +2095,6 @@ void Engine::DrawHUD()
     }
     DrawMiniMap();
 
-    if (_bossWarningTimer > 0.f)
-    {
-        const char* warning = "DON'T GET TOO CLOSE";
-        int warningSize = 34;
-        int warningWidth = MeasureText(warning, warningSize);
-        drawLabelBox(warning, (float)(GetScreenWidth() / 2 - warningWidth / 2), 96.f, warningSize, ORANGE);
-    }
-
     }
     return;
 
@@ -2318,7 +2324,7 @@ void Engine::DrawAbilityBar()
     {
         AbilityType ability = _player.GetLearnedAbility(i);
         bool        isEmpty  = (ability == AbilityType::None);
-        bool        canCast  = !isEmpty && _player.GetMana() >= GetAbilityManaCost(ability);
+        bool        canCast  = !isEmpty && _player.CanCastAbility(ability);
         float       x        = startX + i * (slotSize + slotGap);
         Rectangle   slot     { x, slotY, slotSize, slotSize };
         bool        hovered  = !isEmpty && CheckCollisionPointRec(mouse, slot);
@@ -5168,8 +5174,8 @@ void Engine::PopulatePropsForBiome(Biome biome)
 {
     _props.clear();
 
-    // Boss room is an open arena — no props
-    if (_currentRoomType == RoomType::Boss)
+    // Boss and Store rooms are open arenas — no props
+    if (_currentRoomType == RoomType::Boss || _currentRoomType == RoomType::Store)
         return;
 
     if (biome == Biome::Forest)
@@ -6191,7 +6197,7 @@ void Engine::DrawTouchAbilityArc()
         AbilityType ability = _player.GetLearnedAbility(slot);
         Rectangle   rec     = TouchAbilityRect(slot, _windowWidth, _windowHeight);
         bool isEmpty = (ability == AbilityType::None);
-        bool canCast = !isEmpty && (_player.GetMana() >= GetAbilityManaCost(ability));
+        bool canCast = !isEmpty && _player.CanCastAbility(ability);
 
         Color bgColor     = isEmpty ? Fade(BLACK, 0.30f) : Fade(BLACK, 0.55f);
         Color borderColor = isEmpty ? Fade(WHITE, 0.12f)
