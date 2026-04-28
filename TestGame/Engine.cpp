@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "Engine.h"
 
 #include "AnimationUtils.h"
@@ -5963,8 +5964,7 @@ void Engine::UpdateLavaBallProjectiles(float dt)
 void Engine::SaveKeybindings()
 {
     const KeyBindings& b = _player.GetBindings();
-    FILE* f = nullptr;
-    fopen_s(&f, "keybindings.cfg", "w");
+    FILE* f = fopen("keybindings.cfg", "w");
     if (!f) return;
     std::fprintf(f, "moveUp %d\n",    (int)b.moveUp);
     std::fprintf(f, "moveDown %d\n",  (int)b.moveDown);
@@ -5980,13 +5980,12 @@ void Engine::SaveKeybindings()
 
 void Engine::LoadKeybindings()
 {
-    FILE* f = nullptr;
-    fopen_s(&f, "keybindings.cfg", "r");
+    FILE* f = fopen("keybindings.cfg", "r");
     if (!f) return;
     KeyBindings b;
     char key[32];
     int  value;
-    while (fscanf_s(f, "%31s %d", key, (unsigned)sizeof(key), &value) == 2)
+    while (fscanf(f, "%31s %d", key, &value) == 2)
     {
         if      (std::strcmp(key, "moveUp")    == 0) b.moveUp     = (KeyboardKey)value;
         else if (std::strcmp(key, "moveDown")  == 0) b.moveDown   = (KeyboardKey)value;

@@ -1,0 +1,460 @@
+
+#pragma once
+
+#include "raylib.h"
+#include "GameTypes.h"
+#include "KeyBindings.h"
+#include "Character.h"
+#include "Prop.h"
+#include "Enemy.h"
+#include "Cyclops.h"
+#include "Ogre.h"
+#include "Molarbeast.h"
+#include "MainMenu.h"
+#include "PauseAndGameOver.h"
+#include "Pickup.h"
+// FireBallPickup / SwordBeamPickup / FreezePickup / SwordBeamProjectile /
+// FreezeProjectile / FireballProjectile — removed from vcxproj.
+// These were the old ammo-pickup combat system, replaced by the mana economy.
+// The .cpp/.h source files are still on disk but no longer compiled.
+#include "HealPickup.h"
+#include "ManaGemPickup.h"
+#include "GoldPickup.h"
+#include "SpreadProjectile.h"
+#include "CyclopsLaserProjectile.h"
+#include "LavaBallProjectile.h"
+#include "TouchControls.h"
+#include "NavigationGrid.h"
+#include "VFXManager.h"
+#include "ShopManager.h"
+#include "DebugPanel.h"
+#include "WorldConfig.h"
+#include "AudioManager.h"
+#include "RunStateController.h"
+#include "CombatDirector.h"
+#include "OverlayRenderer.h"
+
+#include <vector>
+#include <string>
+#include <memory>
+
+#if 0
+enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
+
+// ── Room type — drives encounter, reward, and biome logic ─────────────────────
+enum class RoomType
+{
+    Standard,   // mixed enemy wave, EXP reward
+    Elite,      // harder curated wave, better reward
+    Rest,       // no combat — spawns heal pickups, rest timer
+    Treasure,   // no combat — grants a free level-up card pick
+    Store,      // no combat — placeholder for future shop
+    Boss,       // Molarbeast + support adds — ends the act
+};
+
+enum class LevelUpOfferContext
+{
+    NormalLevel,
+    TreasureBasic,
+    EliteReward,
+    StoreStock,
+};
+
+enum class GameState
+{
+    Menu,
+    Play,
+    GameOver,
+    Pause,
+    HowToPlay,
+    Keybindings,
+    LevelUpChoice,
+    AbilityChoice,
+    ExpTally,       // post-battle EXP tally screen — bar fills, level-ups interrupt
+    Map,            // Slay-the-Spire–style act map — player clicks a node to enter the next room
+    Shop,           // Zeph's shop — full-screen UI entered from a Store room
+    DemoEnd,        // "Thanks for playing" screen shown after 2 boss kills
+};
+
+enum class MusicCue
+{
+    None,
+    Title,
+    Pause,
+    Dungeon,
+    Forest,
+    BossBattle,
+    Shop,
+    BattleVictory,
+    BossVictory,
+    GameOver,
+};
+#endif
+
+class Engine
+{
+public:
+    Engine();
+    ~Engine();
+
+    void Run();
+    void RunFrame();
+
+private:
+
+    void Init();
+
+    void Update(float dt);
+    void Draw();
+
+    void UpdateGamePlay(float dt);
+    void SpawnWave();
+    void SpawnEnemies();
+    void HandleCollisions();
+    void UpdateEnemyCount(float dt);
+    Enemy* SpawnBasicEnemy(Vector2 pos);
+    Enemy* SpawnCyclops(Vector2 pos);
+    Enemy* SpawnOgre(Vector2 pos);
+    void SpawnMolarbeast(Vector2 pos);
+    void UpdateCyclopsLasers(float dt);
+    void UpdateLavaBallProjectiles(float dt);
+    void TriggerScreenShake(float strength, float duration);
+    void DrawCyclopsLasers(Vector2 worldOffset);
+    void DrawWorld();
+    void DrawHUD();
+    void DebugStartRun();
+    void DebugRestartRoomAs(RoomType type);
+    void DebugSetEliteMechanic(int mechanic);
+    void DrawHowToPlay();
+    void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
+    void DrawWaveIntro();
+    void HandlePlayerMeleeDamage();
+    void SpawnSpreadBurst(AbilityType element);
+    void SpawnBolt(AbilityType element);
+    void SpawnUltimateBurst(AbilityType element);
+    void UpdateUltimateBlasts(float dt);
+    void DrawUltimateBlasts(Vector2 worldOffset);
+
+    // Cinematic ultimate sequence
+    void TriggerUltimateSequence(AbilityType element);
+    void UpdateUltimateSequence(float dt);
+    void DrawUltimateSequence();
+    void ApplyUltimateImpact();
+    void GenerateStartingAbilityOptions();
+    void UpdateSpreadProjectiles(float dt);
+    void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);
+    void SpawnTimedPickup();
+    void SpawnBossSupportAdds();
+    void UpdateBossSupportRespawns(float dt);
+    void ClearBossSupportAdds();
+    Biome GetBiomeForWave(int wave) const;
+    const char* GetBiomeName(Biome biome) const;
+    void ApplyBiome(Biome biome);
+    void PopulatePropsForBiome(Biome biome);
+    void UpdateBiomeTransition(float dt);
+    float GetBiomeTransitionAlpha() const;
+    void DrawMiniMap();
+    void DrawLevelUpChoice();
+    void GenerateLevelUpOptions(LevelUpOfferContext context = LevelUpOfferContext::NormalLevel);
+    void DrawAbilityChoice();
+    void GenerateAbilityChoiceOptions();
+    void ResetRunState();
+
+
+    // ── EXP Tally screen ─────────────────────────────────────────────────────
+    void UpdateExpTally(float dt);
+    void DrawExpTally();
+
+    // ── Demo end screen ───────────────────────────────────────────────────────
+    void DrawDemoEnd();
+
+    // ── Room-based run progression ────────────────────────────────────────────
+    void StartNextRoom(RoomType type);    // internal setup helper (biome + wave intro)
+    void GenerateActMap();                // builds the full act node graph
+    void EnterMapRoom(int nodeIdx);       // called when the player clicks a map node
+    void CompleteCurrentMapNode();        // marks the current node complete and unlocks next nodes
+    void HandleRoomContinueAction();      // shared continue path for cleared/completed rooms
+    void DrawMap();                       // Slay-the-Spire–style act map screen
+    std::vector<Vector2> GetCyclopsLaserEndpoints(const CyclopsLaserProjectile& laser) const;
+    bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
+
+    void UpdateMusicSystem();
+    void StartVictoryMusic(MusicCue cue);
+    void ResetMusicState();
+
+    Biome GetBiomeForAct(int act) const;  // replaces GetBiomeForWave()
+
+    // Touch-mode helpers
+    void UpdateTouchControls();
+    void DrawTouchAbilityArc();
+    void ScanAbilityArcTaps();
+    Rectangle GetDebugToggleTabRect() const;
+    bool HandleDebugToggleTabInput();
+    void DrawDebugToggleTab();
+    void SaveKeybindings();
+    void LoadKeybindings();
+    int GetActiveEnemyCount() const;
+    bool IsBossFightActive() const;
+    bool TryGetPooledEnemySpawn(Vector2 pos);
+    bool TryGetPooledCyclopsSpawn(Vector2 pos);
+    bool TryGetPooledOgreSpawn(Vector2 pos);
+    bool TryGetPooledMolarbeastSpawn(Vector2 pos);
+    int GetCyclopsSpawnCountForWave(int wave) const;
+    int GetOgreSpawnCountForWave(int wave) const;
+    int GetEnemyPowerLevelForWave(int wave) const;
+    void ConfigureSpawnedEnemy(Enemy& enemy);
+
+    Vector2 GetRandomPropPosition();
+    bool IsSpawnPositionValid(Vector2 pos);
+    void RespawnOutOfBoundsEnemies();
+    bool TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance);
+
+private:
+    // ── Act map node — one room on the Slay-the-Spire–style map ──────────────
+    struct MapNode
+    {
+        int      row       = 0;               // 0 = entry, 5 = boss
+        float    normX     = 0.5f;            // 0–1 horizontal position in row
+        RoomType type      = RoomType::Standard;
+        bool     completed = false;           // player has cleared this room
+        bool     available = false;           // player can click this node now
+        std::vector<int> nextNodes;           // indices into _actMap
+        Vector2  drawPos{};                   // screen-space position (computed in GenerateActMap)
+    };
+
+    // ── Elite-room hazard ─────────────────────────────────────────────────
+    struct EliteHazard
+    {
+        Vector2 worldPos{};
+        float   warningTimer    = 0.f;   // counts down; strike fires when reaches 0
+        bool    struck          = false;
+        float   strikeFlashTimer = 0.f;  // brief flash after impact
+    };
+
+    RunStateController _runState;
+    GameState& _gameState;
+    GameState& _howToPlayFrom;
+    int& _htpTab;
+    float& _htpSlideOffset;
+
+    bool _shouldExit = false;
+    bool _waveStarting = true;
+    bool _wave1LevelUpDone = false; // ensures forced level-up after wave 1 only fires once
+    bool _playerDying = false;
+    bool _shouldClose = false;
+    bool _awaitingStartingAbility = false;
+
+    int _wave        = 0;
+    int  _enemiesKilled      = 0;
+    int  _goldDroughtCounter = 0;  // kills since last Five-or-better drop; resets at 5
+    int  _bossesDefeated     = 0;  // how many Molarbeasts have been killed this run
+    bool _demoCompleted      = false; // true after 2 boss kills OR secret code — unlocks debug
+
+    float _shakeTimer = 0.f;
+    float _shakeStrength = 0.f;
+    float _gameTimer = 0.f;
+    float _pickupSpawnTimer = 0.f;
+
+    Vector2 _shakeOffset = { 0.f, 0.f };
+    Vector2 _cameraPos   = { 0.f, 0.f };
+
+    const int _windowWidth = 1920;
+    const int _windowHeight = 1080;
+
+    float _waveIntroTimer = 0.f;
+    float _waveIntroDuration = 2.5f;
+
+    float _gameOverTimer  = 0.f;
+    float _gameOverDelay  = 2.f;
+    float _fadeInTimer    = 0.f;
+    float _fadeInDuration = 2.f;  // set alongside _fadeInTimer; controls fade speed
+    float _bossWarningTimer = 0.f;
+    float _levelUpOpenTimer = 0.f;  // blocks card clicks briefly after panel opens
+
+    // ── Act / room progression ────────────────────────────────────────────────
+    // _wave keeps its name but now means "total rooms entered this run"
+    // (used for enemy scaling via GetEnemyPowerLevelForWave).
+    // _currentAct / _currentRoom drive display and encounter selection.
+    int      _currentAct      = 1;                  // 1-indexed; advances after each boss clear
+    int      _currentRoom     = 0;                  // 1-5 normal + 6 boss within the act
+    RoomType _currentRoomType = RoomType::Standard; // drives SpawnEnemies and reward logic
+    bool     _pendingRoomChoice  = false; // after AbilityChoice (boss clear), show new-act map
+    bool     _roomClearPending   = false; // combat finished — waiting for player to click Continue
+    float    _roomClearTimer     = 0.f;  // non-combat rooms wait before advancing (Rest/Store)
+
+    // EXP tally state
+    float _pendingExp             = 0.f;   // EXP accumulated during combat, drained during tally
+    float _expTallyAccum          = 0.f;   // fractional drain accumulator
+    bool  _expTallyDone           = false; // bar fully drained — show dismiss hint
+    int   _tallyStartLevel        = 1;     // player level when tally begins, to count level-ups
+    int   _tallyLevelUpsRemaining = 0;     // level-up choices still to show after tally
+    bool  _tallyChoiceChaining    = false; // true once player pressed Continue to start chain
+
+    // Act map state (Slay-the-Spire–style node graph)
+    std::vector<MapNode> _actMap;
+    int   _currentMapNodeIdx  = -1;         // index of the node currently in / last completed
+    int   _mapKeySelectedIdx  = -1;         // keyboard-highlighted node on the map screen (-1 = none)
+    float _mapOpenTimer       = 0.f;        // brief block after the map opens to prevent accidental clicks
+    bool  _startBiomeDungeon  = true;       // fallback only; sequence takes precedence
+    static constexpr int kTotalActs = 5;
+    std::vector<Biome> _biomeSequence;      // 5 randomly chosen biomes per run
+
+    // Level-up choice state
+    UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };
+    UpgradeType _levelUpUltimateOptions[3] = { UpgradeType::LearnFireUltimate, UpgradeType::LearnIceUltimate, UpgradeType::LearnElectricUltimate };
+    GameState   _levelUpReturnState  = GameState::Play;
+    LevelUpOfferContext _levelUpOfferContext = LevelUpOfferContext::NormalLevel;
+    bool        _showUltimateRow     = false;
+    bool        _ultimateRowPicked   = false;
+    bool        _regularRowPicked    = false;
+    bool        _eliteRewardGranted  = false;
+
+    // ── Elite-room state (all reset in StartNextRoom) ─────────────────────
+    // Active mechanic index: 0=Cage, 1=Bodyguard, 2=Enrage, 3=Leap, 4=Hazards; -1=none
+    int     _eliteMechanic            = -1;
+    Enemy*  _eliteMinibossPtr         = nullptr;  // non-owning ptr into _enemies
+    Vector2 _eliteCageCenter          = {};
+    float   _eliteCageRadius          = 0.f;
+    float   _eliteCageDamageTimer     = 0.f;
+    float   _eliteEnrageWarningTimer  = 0.f;
+    bool    _eliteIsLeaping           = false;
+    Vector2 _eliteLeapStartPos        = {};
+    Vector2 _eliteLeapTarget          = {};
+    float   _eliteLeapCooldown        = 0.f;
+    float   _eliteLeapTimer           = 0.f;
+    std::vector<::EliteHazard> _eliteHazards;
+    float   _eliteHazardSpawnTimer    = 0.f;
+
+    // ── Elite constants ───────────────────────────────────────────────────
+    static constexpr float kEliteCageRadius             = 500.f;
+    static constexpr float kEliteCageDamageInterval     = 0.5f;
+    static constexpr float kEliteEnrageWarningDuration  = 4.0f;
+    static constexpr float kLeapInterval                = 8.0f;
+    static constexpr float kLeapDuration                = 1.5f;
+    static constexpr float kLeapAoERadius               = 90.f;
+    static constexpr int   kLeapAoEDamage               = 3;
+    static constexpr float kHazardVolleyMinInterval     = 0.55f;
+    static constexpr float kHazardVolleyMaxInterval     = 0.95f;
+    static constexpr int   kHazardVolleyMinCount        = 3;
+    static constexpr int   kHazardVolleyMaxCount        = 6;
+
+    // Ability choice state (shown after every 5th-wave boss clear)
+    UpgradeType _abilityChoiceOptions[3] = { UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread };
+    int         _abilityChoiceOptionCount = 0;
+    bool        _abilityChoiceSwapPending = false;
+    UpgradeType _abilityChoiceSwapTarget  = UpgradeType::AttackPower;
+    int         _lastAbilityChoiceWave    = -1;
+    float       _abilityChoiceOpenTimer   = 0.f;
+
+    // Upgrade icon textures (loaded once, never reloaded)
+    Texture2D _upgradeAttackPowerTex{};
+    Texture2D _upgradeAttackRangeTex{};
+    Texture2D _upgradeHealthTex{};
+    Texture2D _upgradeMagicTex{};
+    Texture2D _upgradeDefenseTex{};
+    Texture2D _upgradeMoveSpeedTex{};
+
+    Sound _pickupSound{};
+    Sound _fireballCastSound{};
+    Sound _explosionSound{};
+    Sound _lavaBallImpactSound{};
+    Sound _buttonPressSound{};
+
+    Texture2D _map{};
+    Texture2D _treeTex{};
+    Texture2D _smallTreeTex{};
+    Texture2D _rockTex{};
+    Texture2D _bigRockTex{};
+    Vector2 _mapPos{};
+    // Map scale is now computed by _worldConfig — do not set this by hand.
+    // Read/write it through _worldConfig.Recalculate() and GetScale().
+    float      _mapScale    = 3.f;
+    WorldConfig _worldConfig;          // owns all map-scale and camera logic
+    int _maxActiveEnemies = 16;
+
+    Texture2D _pillarTex{};
+    Texture2D _torchTex{};       // Torch.png — 256x29, 8 frames of 32x29
+    Texture2D _pillarTorchTex{}; // PillarTorch.png — 290x52, 8 frames of 32x52 (content offset x=17)
+    Texture2D _fireballCastTex{};
+    Texture2D _fireballHitTex{};
+    Texture2D _genericHitTex{};   // Hit03.png — melee hit splat + electric impact sprite
+    Texture2D _iceHitTex{};       // Ice_Shard_Hit.png — ice ability impact
+    Texture2D _lightningCastTex{};
+    Texture2D _healEffectTex{};
+
+    // Ability card icons for the level-up / starting ability panels
+    Texture2D _abilityIconFireTex{};
+    Texture2D _abilityIconIceTex{};
+    Texture2D _abilityIconElectricTex{};
+
+    Texture2D _shopBorderTex{};
+    Texture2D _shopZephTex{};
+
+    // Map node icons (TileSet/MapIcons/)
+    Texture2D _mapIconNormal{};
+    Texture2D _mapIconElite{};
+    Texture2D _mapIconShop{};
+    Texture2D _mapIconTreasure{};
+    Texture2D _mapIconBoss{};
+    Texture2D _mapIconRest{};
+
+    Character _player;
+    MainMenu _menu;
+    PauseAndGameOver _pauseUI;
+    KeyBindings _keybindingsEdit;
+
+    std::vector<Prop> _props;
+    std::vector<std::unique_ptr<Pickup>> _pickups;
+    enum class UltimatePhase { None, WindUp, Cinematic, Impact, Release };
+
+    struct UltimateBlast
+    {
+        Vector2     worldPos{};
+        AbilityType element  = AbilityType::FireUltimate;
+        float       timer    = 0.f;
+        float       lifetime = 0.f;
+        float       rotation = 0.f;   // initial rotation angle (degrees)
+    };
+
+    static constexpr float _ultWindUpDuration    = 0.75f;
+    static constexpr float _ultCinematicDuration = 1.5f;
+    static constexpr float _ultImpactDuration    = 0.35f;
+    static constexpr float _ultReleaseDuration   = 0.5f;
+
+    UltimatePhase _ultimatePhase       = UltimatePhase::None;
+    float         _ultimatePhaseTimer  = 0.f;
+    float         _ultimateCircleAngle = 0.f;
+    AbilityType   _ultimateElement     = AbilityType::FireUltimate;
+
+    std::vector<UltimateBlast>       _ultimateBlasts;
+    std::vector<SpreadProjectile>    _spreadProjectiles;
+    VFXManager     _vfx;
+    NavigationGrid _nav;
+    ShopManager    _shop;
+    std::vector<std::unique_ptr<Enemy>>   _enemies;
+    std::vector<CyclopsLaserProjectile>   _cyclopsLasers;
+    std::vector<LavaBallProjectile>       _lavaBalls;
+    BossSupportState _bossCyclopsSupport;
+    BossSupportState _bossOgreSupport;
+
+    std::string _message = "Objective: Survive";
+
+    Biome _currentBiome = Biome::Dungeon;
+    Biome _pendingBiome = Biome::Dungeon;
+    bool  _biomeTransitionActive = false;
+    bool  _biomeTransitionSwapped = false;
+    float _biomeTransitionTimer = 0.f;
+    bool     _demoEndTouchHeld = false;
+    AudioManager _audio;
+    CombatDirector _combatDirector;
+    OverlayRenderer _overlayRenderer;
+
+    // ── Touch mode ───────────────────────────────────────────────────────────
+    bool          _touchModeActive = false;
+    TouchControls _touch;
+    // Touch IDs that have already triggered an ability cast this press.
+    // Cleared each frame when the touch lifts; prevents repeat casts on hold.
+    std::vector<int> _abilityTapSeenIds;
+
+    DebugPanel _debug;
+};
