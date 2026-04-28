@@ -25,7 +25,7 @@ if %ERRORLEVEL% NEQ 0 (
 :: ── Check raylib web library exists ──────────────────────────────────────────
 if not exist "%RAYLIB_SRC%\libraylib.a" (
     echo ERROR: %RAYLIB_SRC%\libraylib.a not found.
-    echo Run:  emmake mingw32-make PLATFORM=PLATFORM_WEB  inside %RAYLIB_SRC%
+    echo Run build_raylib_web.bat first to compile raylib for the web.
     pause & exit /b 1
 )
 
@@ -34,7 +34,7 @@ if not exist %OUT% mkdir %OUT%
 
 :: ── Compile ───────────────────────────────────────────────────────────────────
 echo Compiling... this will take a minute.
-emcc -std=c++14 -Os -DPLATFORM_WEB ^
+emcc -std=c++17 -Os -DPLATFORM_WEB ^
   %SRC%\main.cpp ^
   %SRC%\Engine.cpp ^
   %SRC%\BaseCharacter.cpp ^
@@ -52,12 +52,28 @@ emcc -std=c++14 -Os -DPLATFORM_WEB ^
   %SRC%\FreezeProjectile.cpp ^
   %SRC%\CyclopsLaserProjectile.cpp ^
   %SRC%\LavaballProjectile.cpp ^
+  %SRC%\SpreadProjectile.cpp ^
   %SRC%\FireBallPickup.cpp ^
   %SRC%\SwordBeamPickup.cpp ^
   %SRC%\FreezePickup.cpp ^
   %SRC%\HealPickup.cpp ^
+  %SRC%\GoldPickup.cpp ^
+  %SRC%\ManaGemPickup.cpp ^
   %SRC%\Game.cpp ^
-  %SRC%\Player.cpp ^
+  %SRC%\AudioManager.cpp ^
+  %SRC%\CombatDirector.cpp ^
+  %SRC%\DebugPanel.cpp ^
+  %SRC%\HUDRenderer.cpp ^
+  %SRC%\MapDirector.cpp ^
+  %SRC%\NavigationGrid.cpp ^
+  %SRC%\OverlayRenderer.cpp ^
+  %SRC%\ProjectileSystem.cpp ^
+  %SRC%\RoomDirector.cpp ^
+  %SRC%\RunStateController.cpp ^
+  %SRC%\ShopManager.cpp ^
+  %SRC%\TouchControls.cpp ^
+  %SRC%\VFXManager.cpp ^
+  %SRC%\WorldConfig.cpp ^
   -I%SRC% -I%RAYLIB_SRC% -I%RAYLIB_SRC%\external -IC:\CLibraries\raylib-5.5_win64_msvc16\include ^
   %RAYLIB_SRC%\libraylib.a ^
   -s USE_GLFW=3 ^
@@ -69,9 +85,12 @@ emcc -std=c++14 -Os -DPLATFORM_WEB ^
   --preload-file Bosses ^
   --preload-file PowerUps ^
   --preload-file TileSet ^
+  --preload-file ForestLevel ^
   --preload-file UI ^
   --preload-file Sounds ^
+  --preload-file Music ^
   --preload-file Map.png ^
+  --preload-file keybindings.cfg ^
   --shell-file %RAYLIB_SRC%\shell.html ^
   -o %OUT%\index.html
 

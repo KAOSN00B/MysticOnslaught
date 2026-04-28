@@ -90,6 +90,9 @@ void Cyclops::ResetForSpawn(Vector2 pos)
     _isCharged                = false;
     _chargeNextStunTime       = 0.f;
     _electricChargeTotalTimer = 0.f;
+    _isEliteMiniboss          = false;
+    _isInvulnerable           = false;
+    _leapInvulnerable         = false;
     _takingDamage = false;
     _attacking    = false;
     _dying        = false;

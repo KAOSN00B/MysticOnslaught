@@ -151,6 +151,7 @@ Engine::~Engine()
     UnloadTexture(_upgradeDefenseTex);
     UnloadTexture(_upgradeMoveSpeedTex);
     UnloadTexture(_shopBorderTex);
+    UnloadTexture(_shopZephTex);
     _pauseUI.Unload();
     CloseAudioDevice();
     CloseWindow();
@@ -212,8 +213,10 @@ void Engine::Init()
     _abilityIconIceTex      = LoadTexture(AssetPath("PowerUps/IceSpellPickup.png").c_str());
     _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
     _shopBorderTex          = LoadTexture(AssetPath("UI/PauseBoarder.png").c_str());
+    _shopZephTex            = LoadTexture(AssetPath("UI/Zeph.png").c_str());
     _shop.Init(ShopTextures{
         &_shopBorderTex,
+        &_shopZephTex,
         &_upgradeAttackPowerTex,
         &_upgradeAttackRangeTex,
         &_upgradeHealthTex,
@@ -800,184 +803,32 @@ void Engine::HandleRoomContinueAction()
 
 void Engine::SpawnEnemies()
 {
-    float mapW = _map.width * _mapScale;
-    float mapH = _map.height * _mapScale;
-
-    // Boss room — Molarbeast + supports
-    if (_currentRoomType == RoomType::Boss)
-    {
-        Vector2 pos{ mapW * 0.5f, mapH * 0.28f };
-        SpawnMolarbeast(pos);
-        SpawnBossSupportAdds();
-        return;
-    }
-
-    // Non-combat rooms — Rest, Store spawn no enemies here.
-    // Treasure is handled before SpawnEnemies() is called (via UpdateGamePlay).
-    if (_currentRoomType == RoomType::Rest ||
-        _currentRoomType == RoomType::Store)
-    {
-        // Spawn heal pickups for rest rooms
-        if (_currentRoomType == RoomType::Rest)
-        {
-            int healCount = GetRandomValue(2, 3);
-            for (int i = 0; i < healCount; i++)
-            {
-                Vector2 pos{ mapW * 0.5f, mapH * 0.5f };
-                for (int a = 0; a < 30; a++)
-                {
-                    Vector2 candidate{
-                        (float)GetRandomValue(300, (int)mapW - 300),
-                        (float)GetRandomValue(300, (int)mapH - 300)
-                    };
-                    if (IsSpawnPositionValid(candidate)) { pos = candidate; break; }
-                }
-                auto p = std::make_unique<HealPickup>();
-                p->Init(pos);
-                _pickups.push_back(std::move(p));
-            }
-        }
-        return;
-    }
-
-    // ── Combat room composition table ────────────────────────────────────────
-    // Act 1 introduces enemy types gradually (rooms 1-5).
-    // Act 2+ uses a consistently harder baseline.
-    // Elite rooms add bonus enemies on top of the standard count.
-    // Enemies always spawn from the four map corners so the player can never
-    // pre-stack them by standing in one spot. Cycling ensures distribution.
-    int cornerIdx = 0;
-    auto spawnPos = [&]() -> Vector2 {
-        const float m = 400.f;
-        const Vector2 corners[4] = {
-            { m,        m        },   // top-left
-            { mapW - m, m        },   // top-right
-            { m,        mapH - m },   // bottom-left
-            { mapW - m, mapH - m },   // bottom-right
-        };
-        Vector2 base = corners[cornerIdx % 4];
-        cornerIdx++;
-
-        // Nudge away from a prop if the corner happens to overlap one
-        if (IsSpawnPositionValid(base)) return base;
-        for (int a = 0; a < 10; a++)
-        {
-            Vector2 p{
-                base.x + (float)GetRandomValue(-120, 120),
-                base.y + (float)GetRandomValue(-120, 120)
-            };
-            if (IsSpawnPositionValid(p)) return p;
-        }
-        return base;
-    };
-
-    if (_currentRoomType == RoomType::Elite)
-    {
-        const int fodderCount = std::min(7, 3 + _currentAct + std::max(0, _currentRoom - 2));
-        const int eliteTypeRoll = GetRandomValue(0, 2);
-        Enemy* eliteMiniboss = nullptr;
-        switch (eliteTypeRoll)
-        {
-        case 0: eliteMiniboss = SpawnBasicEnemy(spawnPos()); break;
-        case 1: eliteMiniboss = SpawnCyclops(spawnPos()); break;
-        case 2: eliteMiniboss = SpawnOgre(spawnPos()); break;
-        }
-
-        if (eliteMiniboss != nullptr)
-            eliteMiniboss->SetIsEliteMiniboss(true);
-
-        // ── Elite-room systems setup ──────────────────────────────────────
-        {
-            _eliteMechanic    = (_debug.GetForcedEliteMechanic() >= 0) ? _debug.GetForcedEliteMechanic() : GetRandomValue(0, 4);
-            _eliteMinibossPtr = eliteMiniboss;
-
-            const float mapW = _map.width  * _mapScale;
-            const float mapH = _map.height * _mapScale;
-
-            // Reset everything; only activate the chosen mechanic
-            _eliteCageRadius         = 0.f;
-            _eliteCageDamageTimer    = 0.f;
-            _eliteEnrageWarningTimer = 0.f;
-            _eliteIsLeaping          = false;
-            _eliteLeapCooldown       = 0.f;
-            _eliteLeapTimer          = 0.f;
-            _eliteHazards.clear();
-            _eliteHazardSpawnTimer   = 0.f;
-
-            switch (_eliteMechanic)
-            {
-            case 0: // Arena Constriction
-                _eliteCageCenter      = { mapW * 0.5f, mapH * 0.5f };
-                _eliteCageRadius      = kEliteCageRadius;
-                _eliteCageDamageTimer = kEliteCageDamageInterval;
-                break;
-
-            case 1: // Invulnerability Links
-                if (_eliteMinibossPtr)
-                    _eliteMinibossPtr->SetInvulnerable(true);
-                break;
-
-            case 2: // Permanent Enrage
-                if (_eliteMinibossPtr)
-                    _eliteMinibossPtr->ApplyEnrage();
-                _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
-                break;
-
-            case 3: // Gap-Closer Leap
-                _eliteLeapCooldown = kLeapInterval;
-                break;
-
-            case 4: // Room Hazards
-                _eliteHazardSpawnTimer = (float)GetRandomValue(
-                    (int)(kHazardVolleyMinInterval * 100.f),
-                    (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
-                break;
-            }
-        }
-
-        for (int i = 0; i < fodderCount; i++)
-        {
-            SpawnBasicEnemy(spawnPos());
-        }
-        return;
-    }
-
-    int regularCount = 0, cyclopsCount = 0, ogreCount = 0;
-
-    if (_currentAct == 1)
-    {
-        switch (_currentRoom)
-        {
-        case 1: regularCount = 2; cyclopsCount = 0; ogreCount = 0; break;
-        case 2: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
-        case 3: regularCount = 4; cyclopsCount = 1; ogreCount = 0; break;
-        case 4: regularCount = 5; cyclopsCount = 1; ogreCount = 0; break;
-        case 5: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
-        default: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
-        }
-    }
-    else
-    {
-        // Acts 2+: full pressure from room 1
-        switch (_currentRoom)
-        {
-        case 1: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
-        case 2: regularCount = 7; cyclopsCount = 1; ogreCount = 1; break;
-        case 3: regularCount = 7; cyclopsCount = 2; ogreCount = 1; break;
-        case 4: regularCount = 8; cyclopsCount = 2; ogreCount = 2; break;
-        case 5: regularCount = 8; cyclopsCount = 2; ogreCount = 2; break;
-        default: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
-        }
-    }
-
-    for (int i = 0; i < regularCount; i++)
-        SpawnBasicEnemy(spawnPos());
-
-    for (int i = 0; i < cyclopsCount; i++)
-        SpawnCyclops(spawnPos());
-
-    for (int i = 0; i < ogreCount; i++)
-        SpawnOgre(spawnPos());
+    CombatSpawnContext ctx{};
+    ctx.map = &_map;
+    ctx.mapScale = _mapScale;
+    ctx.currentRoomType = _currentRoomType;
+    ctx.currentAct = _currentAct;
+    ctx.currentRoom = _currentRoom;
+    ctx.forcedEliteMechanic = _debug.GetForcedEliteMechanic();
+    ctx.pickups = &_pickups;
+    ctx.eliteMechanic = &_eliteMechanic;
+    ctx.eliteMinibossPtr = &_eliteMinibossPtr;
+    ctx.eliteCageCenter = &_eliteCageCenter;
+    ctx.eliteCageRadius = &_eliteCageRadius;
+    ctx.eliteCageDamageTimer = &_eliteCageDamageTimer;
+    ctx.eliteEnrageWarningTimer = &_eliteEnrageWarningTimer;
+    ctx.eliteIsLeaping = &_eliteIsLeaping;
+    ctx.eliteLeapCooldown = &_eliteLeapCooldown;
+    ctx.eliteLeapTimer = &_eliteLeapTimer;
+    ctx.eliteHazards = &_eliteHazards;
+    ctx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
+    ctx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
+    ctx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
+    ctx.spawnCyclops = [&](Vector2 pos) { return SpawnCyclops(pos); };
+    ctx.spawnOgre = [&](Vector2 pos) { return SpawnOgre(pos); };
+    ctx.spawnMolarbeast = [&](Vector2 pos) { SpawnMolarbeast(pos); };
+    ctx.spawnBossSupportAdds = [&]() { SpawnBossSupportAdds(); };
+    _combatDirector.SpawnEnemies(ctx);
 }
 
 void Engine::Run()
@@ -1155,6 +1006,9 @@ void Engine::UpdateGamePlay(float dt)
 {
     if (_debug.IsActive())
     {
+        if (HandleDebugToggleTabInput())
+            return;
+
         if (_debug.IsGodMode())
             _player.GrantInvulnerability(0.2f);
 
@@ -1356,143 +1210,29 @@ void Engine::UpdateGamePlay(float dt)
             }
         }
 
-        // ── Elite-room systems tick ───────────────────────────────────────
-        if (_currentRoomType == RoomType::Elite)
-        {
-            // 0. Arena cage — tick damage when player is outside the ring
-            if (_eliteMechanic == 0 && _eliteCageRadius > 0.f)
-            {
-                float dist = Vector2Distance(_player.GetWorldPos(), _eliteCageCenter);
-                if (dist > _eliteCageRadius)
-                {
-                    _eliteCageDamageTimer -= dt;
-                    if (_eliteCageDamageTimer <= 0.f)
-                    {
-                        _player.TakeDamage(1, _eliteCageCenter);
-                        _eliteCageDamageTimer = kEliteCageDamageInterval;
-                    }
-                }
-                else
-                {
-                    _eliteCageDamageTimer = kEliteCageDamageInterval;
-                }
-            }
-
-            // 1. Bodyguard shield — remove invulnerability once all grunts are gone
-            if (_eliteMechanic == 1
-                && _eliteMinibossPtr && _eliteMinibossPtr->IsInvulnerable()
-                && _eliteMinibossPtr->IsActive() && !_eliteMinibossPtr->IsDying())
-            {
-                bool anyGruntAlive = false;
-                for (const auto& e : _enemies)
-                {
-                    if (e.get() == _eliteMinibossPtr) continue;
-                    if (e->IsActive() && e->IsAlive() && !e->IsDying())
-                    { anyGruntAlive = true; break; }
-                }
-                if (!anyGruntAlive)
-                    _eliteMinibossPtr->SetInvulnerable(false);
-            }
-
-            // 2. Enrage warning banner timer
-            if (_eliteMechanic == 2 && _eliteEnrageWarningTimer > 0.f)
-                _eliteEnrageWarningTimer -= dt;
-
-            // 3. Gap-closer leap
-            if (_eliteMechanic == 3
-                && _eliteMinibossPtr && _eliteMinibossPtr->IsActive()
-                && _eliteMinibossPtr->IsAlive() && !_eliteMinibossPtr->IsDying())
-            {
-                if (!_eliteIsLeaping)
-                {
-                    _eliteLeapCooldown -= dt;
-                    if (_eliteLeapCooldown <= 0.f)
-                    {
-                        _eliteLeapStartPos = _eliteMinibossPtr->GetWorldPos();
-                        _eliteLeapTarget   = _player.GetFeetWorldPos();
-                        _eliteIsLeaping    = true;
-                        _eliteLeapTimer    = kLeapDuration;
-                        _eliteMinibossPtr->SetLeapFrozen(true);
-                    }
-                }
-                else
-                {
-                    // Freeze the boss in place during the wind-up
-                    _eliteMinibossPtr->Teleport(_eliteLeapStartPos);
-                    _eliteLeapTimer -= dt;
-
-                    if (_eliteLeapTimer <= 0.f)
-                    {
-                        _eliteMinibossPtr->Teleport(_eliteLeapTarget);
-                        _eliteMinibossPtr->SetLeapFrozen(false);
-                        _eliteIsLeaping    = false;
-                        _eliteLeapCooldown = kLeapInterval;
-
-                        float dist = Vector2Distance(_player.GetWorldPos(), _eliteLeapTarget);
-                        if (dist <= kLeapAoERadius)
-                            _player.TakeDamage(kLeapAoEDamage, _eliteLeapTarget);
-
-                        TriggerScreenShake(8.f, 0.25f);
-                    }
-                }
-            }
-
-            // 4. Room hazards — random lightning strikes near the player
-            if (_eliteMechanic == 4)
-            {
-                _eliteHazardSpawnTimer -= dt;
-                if (_eliteHazardSpawnTimer <= 0.f)
-                {
-                    const float mapW = _map.width * _mapScale;
-                    const float mapH = _map.height * _mapScale;
-                    const float marginLeft = 120.f;
-                    const float marginRight = 120.f;
-                    const float marginTop = 90.f;
-                    const float marginBottom = 220.f;
-                    const Vector2 playerPos = _player.GetWorldPos();
-                    const int volleyCount = GetRandomValue(kHazardVolleyMinCount, kHazardVolleyMaxCount);
-
-                    for (int i = 0; i < volleyCount; ++i)
-                    {
-                        Vector2 spawnPos{};
-                        bool foundSpawn = false;
-
-                        for (int attempt = 0; attempt < 24; ++attempt)
-                        {
-                            spawnPos = {
-                                (float)GetRandomValue((int)marginLeft, (int)(mapW - marginRight)),
-                                (float)GetRandomValue((int)marginTop,  (int)(mapH - marginBottom))
-                            };
-
-                            if (Vector2Distance(spawnPos, playerPos) < 240.f)
-                                continue;
-                            if (!IsSpawnPositionValid(spawnPos))
-                                continue;
-
-                            foundSpawn = true;
-                            break;
-                        }
-
-                        if (!foundSpawn)
-                            continue;
-
-                        Vector2 toPlayer = Vector2Subtract(playerPos, spawnPos);
-                        float baseAngle = atan2f(toPlayer.y, toPlayer.x);
-                        float spread = ((float)GetRandomValue(-28, 28)) * DEG2RAD;
-                        float angle = baseAngle + spread;
-
-                        LavaBallProjectile projectile;
-                        projectile.Init(spawnPos, Vector2{ cosf(angle), sinf(angle) });
-                        _lavaBalls.push_back(projectile);
-                    }
-
-                    _eliteHazardSpawnTimer = (float)GetRandomValue(
-                        (int)(kHazardVolleyMinInterval * 100.f),
-                        (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
-                    TriggerScreenShake(2.f, 0.06f);
-                }
-            }
-        }
+        EliteMechanicsContext eliteCtx{};
+        eliteCtx.currentRoomType = _currentRoomType;
+        eliteCtx.map = &_map;
+        eliteCtx.mapScale = _mapScale;
+        eliteCtx.player = &_player;
+        eliteCtx.enemies = &_enemies;
+        eliteCtx.lavaBalls = &_lavaBalls;
+        eliteCtx.eliteMechanic = &_eliteMechanic;
+        eliteCtx.eliteMinibossPtr = &_eliteMinibossPtr;
+        eliteCtx.eliteCageCenter = &_eliteCageCenter;
+        eliteCtx.eliteCageRadius = &_eliteCageRadius;
+        eliteCtx.eliteCageDamageTimer = &_eliteCageDamageTimer;
+        eliteCtx.eliteEnrageWarningTimer = &_eliteEnrageWarningTimer;
+        eliteCtx.eliteIsLeaping = &_eliteIsLeaping;
+        eliteCtx.eliteLeapStartPos = &_eliteLeapStartPos;
+        eliteCtx.eliteLeapTarget = &_eliteLeapTarget;
+        eliteCtx.eliteLeapCooldown = &_eliteLeapCooldown;
+        eliteCtx.eliteLeapTimer = &_eliteLeapTimer;
+        eliteCtx.eliteHazards = &_eliteHazards;
+        eliteCtx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
+        eliteCtx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
+        eliteCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
+        _combatDirector.UpdateEliteMechanics(eliteCtx, dt);
 
         // Non-combat rooms still use the same Continue button flow as combat
         // rooms; they just complete immediately once their intro ends.
@@ -1504,7 +1244,8 @@ void Engine::UpdateGamePlay(float dt)
         // ── Store room — Zeph NPC logic ───────────────────────────────────
         if (_currentRoomType == RoomType::Store)
         {
-            if (_shop.UpdateNpc(_player)) _gameState = GameState::Shop;
+            Vector2 shopWorldOffset = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
+            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive)) _gameState = GameState::Shop;
         }
         else if (!_roomClearPending && GetActiveEnemyCount() == 0 && !_debug.IsActive())
         {
@@ -1542,81 +1283,15 @@ void Engine::UpdateGamePlay(float dt)
         Vector2 playerFeet = _player.GetFeetWorldPos();
         _nav.TickRefresh(dt, playerFeet);
 
-        std::vector<Vector2> propCenters;
-        propCenters.reserve(_props.size());
-        for (auto& prop : _props)
-            propCenters.push_back(prop.GetWorldPos());
-
-        for (auto& enemy : _enemies)
-        {
-            if (!enemy->IsActive())
-                continue;
-
-            Vector2 navigationTarget = playerFeet;
-            bool hasNavigationTarget = false;
-
-            if (enemy->IsBoss())
-            {
-                // Boss pathing always comes from the A* helper so large enemies
-                // can route around pillars consistently instead of only
-                // pathing when line of sight is already broken.
-                navigationTarget = _nav.GetAStarTarget(enemy->GetWorldPos(), playerFeet);
-                hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
-            }
-            else if (!enemy->UsesDirectPursuit() &&
-                !_nav.HasLineOfSight(enemy->GetWorldPos(), playerFeet))
-            {
-                navigationTarget = _nav.GetTarget(enemy->GetWorldPos(), playerFeet);
-                hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
-            }
-
-            enemy->Update(dt, playerFeet, navigationTarget, hasNavigationTarget, _enemies, propCenters);
-
-            // Cyclops shares the enemy pool, but still emits a separate laser
-            // projectile when its charge completes. The engine owns the laser
-            // list so projectile collision stays centralized.
-            if (Cyclops* cyclops = enemy->AsCyclops())
-            {
-                if (cyclops->WantsToFire())
-                {
-                    CyclopsLaserProjectile laser;
-                    if (cyclops->GetFireMode() == Cyclops::FireMode::Scatter)
-                        laser.InitScatter(cyclops->GetWorldPos(), cyclops->GetFireDirection(), cyclops->GetAttackPower());
-                    else
-                        laser.InitSweep(cyclops->GetWorldPos(), cyclops->GetFireDirection(), cyclops->GetAttackPower());
-                    _cyclopsLasers.push_back(laser);
-                    cyclops->OnFired();
-                    cyclops->PlayAttackSound();
-                }
-            }
-
-            // Ogre rushes request impact shake when they end on a player, prop,
-            // wall, or arena boundary. The engine owns the camera system, so
-            // it consumes that one-shot request here after each enemy update.
-            if (Ogre* ogre = enemy->AsOgre())
-            {
-                if (ogre->ConsumeImpactShakeRequest())
-                    TriggerScreenShake(8.f, 0.14f);
-            }
-
-            // Molarbeast uses an engine-owned lavaball list for the same reason
-            // Cyclops uses engine-owned lasers: collision with the player and
-            // arena boundaries stays centralized in one place.
-            if (Molarbeast* molarbeast = enemy->AsMolarbeast())
-            {
-                if (molarbeast->WantsToFireLavaBall())
-                {
-                    LavaBallProjectile projectile;
-                    Vector2 toTarget = Vector2Subtract(molarbeast->GetQueuedLavaBallTarget(), molarbeast->GetLavaBallSpawnPos());
-                    projectile.Init(molarbeast->GetLavaBallSpawnPos(), toTarget);
-                    _lavaBalls.push_back(projectile);
-                    molarbeast->OnLavaBallSpawned();
-                }
-
-                if (molarbeast->ConsumeImpactShakeRequest())
-                    TriggerScreenShake(8.f, 0.14f);
-            }
-        }
+        EnemyRuntimeContext enemyRuntimeCtx{};
+        enemyRuntimeCtx.player = &_player;
+        enemyRuntimeCtx.nav = &_nav;
+        enemyRuntimeCtx.props = &_props;
+        enemyRuntimeCtx.enemies = &_enemies;
+        enemyRuntimeCtx.cyclopsLasers = &_cyclopsLasers;
+        enemyRuntimeCtx.lavaBalls = &_lavaBalls;
+        enemyRuntimeCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
+        _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
 
         HandlePlayerMeleeDamage();
         UpdateSpreadProjectiles(dt);
@@ -2081,47 +1756,17 @@ void Engine::HandleCollisions()
 
 void Engine::UpdateEnemyCount(float dt)
 {
-    for (auto& enemy : _enemies)
-    {
-        if (!enemy->IsActive())
-            continue;
-
-        Vector2 dropPos = enemy->GetWorldPos();
-        if (enemy->UpdateDeath(dt))
-        {
-            // Boss support adds respawn on a timer while the Molarbeast is
-            // alive. Track their death moment before deactivating the pooled
-            // object so the engine can bring back the same pressure slot later.
-            if (enemy.get() == _bossCyclopsSupport.enemy && IsBossFightActive())
-                _bossCyclopsSupport.respawnTimer = kBossSupportRespawnDelay;
-            if (enemy.get() == _bossOgreSupport.enemy && IsBossFightActive())
-                _bossOgreSupport.respawnTimer = kBossSupportRespawnDelay;
-
-            // Exp rules:
-            //  Boss kill    → flat bonus of 10 × rooms-entered (grows each act)
-            //  Support add  → no exp while boss is alive (block easy farming)
-            //  Normal enemy → standard per-enemy exp
-            // EXP is banked into _pendingExp and drained on the post-battle tally screen.
-            bool isBoss = (dynamic_cast<Molarbeast*>(enemy.get()) != nullptr);
-            bool isOgre = (dynamic_cast<Ogre*>(enemy.get()) != nullptr);
-
-            if (isBoss)
-            {
-                _pendingExp += 10.f * _wave;
-                _bossesDefeated++;
-                if (_bossesDefeated >= 2)
-                    _demoCompleted = true;
-            }
-            else if (!IsBossFightActive())
-                _pendingExp += (float)enemy->GetExpValue();
-            // else: support add during active boss fight — no exp
-
-            _enemiesKilled++;
-            SpawnEnemyDrop(dropPos, isOgre, isBoss);
-            enemy->SetActive(false);
-            enemy->Teleport(Vector2{ -5000.f, -5000.f });
-        }
-    }
+    EnemyDeathContext ctx{};
+    ctx.enemies = &_enemies;
+    ctx.bossCyclopsSupport = &_bossCyclopsSupport;
+    ctx.bossOgreSupport = &_bossOgreSupport;
+    ctx.wave = _wave;
+    ctx.enemiesKilled = &_enemiesKilled;
+    ctx.bossesDefeated = &_bossesDefeated;
+    ctx.demoCompleted = &_demoCompleted;
+    ctx.pendingExp = &_pendingExp;
+    ctx.spawnEnemyDrop = [&](Vector2 worldPos, bool isOgre, bool isBoss) { SpawnEnemyDrop(worldPos, isOgre, isBoss); };
+    _combatDirector.UpdateEnemyDeaths(ctx, dt);
 }
 
 void Engine::TriggerScreenShake(float strength, float duration)
@@ -2407,43 +2052,13 @@ void Engine::DrawHUD()
                  Fade(Color{255, 180, 60, 255}, alpha));
     }
 
-    if (_debug.IsActive() && !_touchModeActive)
-    {
-        const char* debugHint = "Press F1 for Debug Menu";
-        const int hintSz = 16;
-        const int hintW = MeasureText(debugHint, hintSz);
-        const float boxW = (float)hintW + 24.f;
-        const float boxH = 34.f;
-        const float boxX = (float)GetScreenWidth() - boxW - 14.f;
-        const float boxY = 14.f;
-
-        DrawRectangleRounded({ boxX, boxY, boxW, boxH }, 0.22f, 6, Fade(BLACK, 0.58f));
-        DrawRectangleRoundedLines({ boxX, boxY, boxW, boxH }, 0.22f, 6, Fade(Color{ 255, 214, 150, 255 }, 0.45f));
-        DrawText(debugHint,
-            (int)(boxX + 12.f),
-            (int)(boxY + boxH * 0.5f - hintSz * 0.5f),
-            hintSz,
-            Color{ 255, 235, 210, 255 });
-    }
+    if (_debug.IsActive())
+        DrawDebugToggleTab();
 
     if (_touchModeActive)
     {
         DrawTouchAbilityArc();
         _touch.Draw(_windowWidth, _windowHeight);
-        if (_debug.IsActive())
-        {
-            const Rectangle debugTab{ (float)_windowWidth - 54.f, (float)_windowHeight * 0.43f, 42.f, 132.f };
-            DrawRectangleRounded(debugTab, 0.35f, 6, Fade(Color{ 92, 58, 26, 255 }, 0.78f));
-            DrawRectangleRoundedLines(debugTab, 0.35f, 6, Fade(Color{ 255, 214, 150, 255 }, 0.66f));
-
-            const char* tabLabel = _debug.IsOpen() ? "DBG <" : "DBG >";
-            const int tabSz = 18;
-            const int tabW = MeasureText(tabLabel, tabSz);
-            DrawText(tabLabel,
-                (int)(debugTab.x + debugTab.width * 0.5f - tabW * 0.5f),
-                (int)(debugTab.y + debugTab.height * 0.5f - tabSz * 0.5f),
-                tabSz, RAYWHITE);
-        }
 
         // Pause button — top-right corner, above the wave label
         {
@@ -3264,108 +2879,14 @@ void Engine::DrawAbilityChoice()
 // ── DrawDemoEnd ───────────────────────────────────────────────────────────────
 void Engine::DrawDemoEnd()
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
-
-    // Dark gradient background
-    DrawRectangleGradientV(0, 0, (int)sw, (int)sh,
-        Color{8, 4, 20, 255}, Color{20, 10, 40, 255});
-
-    // Decorative top and bottom bars
-    DrawRectangle(0, 0,           (int)sw, 6,  Color{120, 60, 200, 200});
-    DrawRectangle(0, (int)sh - 6, (int)sw, 6,  Color{120, 60, 200, 200});
-
-    float cy = sh * 0.12f;
-
-    // Title
-    const char* title = "THANKS FOR PLAYING!";
-    int titleSz = 64;
-    DrawText(title, (int)(sw * 0.5f - MeasureText(title, titleSz) * 0.5f),
-             (int)cy, titleSz, Color{220, 180, 255, 255});
-    cy += titleSz + 18.f;
-
-    // Game name
-    const char* gameName = "Mystic Onslaught  -  DEMO";
-    int nameSz = 30;
-    DrawText(gameName, (int)(sw * 0.5f - MeasureText(gameName, nameSz) * 0.5f),
-             (int)cy, nameSz, Color{160, 130, 210, 220});
-    cy += nameSz + 50.f;
-
-    // Divider
-    DrawLineEx({ sw * 0.25f, cy }, { sw * 0.75f, cy }, 1.f, Color{120, 60, 200, 120});
-    cy += 30.f;
-
-    // Thank-you message
-    const char* lines[] = {
-        "You've completed the demo — thank you for your time!",
-        "The full game is currently in development.",
-        "Your feedback means the world.",
-    };
-    int msgSz = 26;
-    for (auto& line : lines)
-    {
-        DrawText(line, (int)(sw * 0.5f - MeasureText(line, msgSz) * 0.5f),
-                 (int)cy, msgSz, Color{200, 200, 220, 220});
-        cy += msgSz + 14.f;
-    }
-    cy += 30.f;
-
-    // Run stats
-    const char* stats[] = {
-        TextFormat("Enemies defeated:  %d",  _enemiesKilled),
-        TextFormat("Bosses slain:      %d",  _bossesDefeated),
-        TextFormat("Gold collected:    %dg", _player.GetGold()),
-        TextFormat("Player level:      %d",  _player.GetLevel()),
-    };
-    int statSz = 22;
-    for (auto& s : stats)
-    {
-        DrawText(s, (int)(sw * 0.5f - MeasureText(s, statSz) * 0.5f),
-                 (int)cy, statSz, Color{180, 220, 180, 210});
-        cy += statSz + 10.f;
-    }
-    cy += 40.f;
-
-    // Debug unlock hint (only shown when unlocked via beating the game)
-    if (_demoCompleted)
-    {
-        const char* hint = "Debug Mode unlocked - use the Debug button on the main menu, then press F1 or F10 in-game";
-        int hintSz = 16;
-        DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, hintSz) * 0.5f),
-                 (int)cy, hintSz, Color{160, 120, 255, 180});
-        cy += hintSz + 30.f;
-    }
-
-    const char* returnHint = _touchModeActive
-        ? "Tap anywhere to return to the main menu"
-        : "Press any key or click anywhere to return to the main menu";
-    int returnHintSz = 18;
-    DrawText(returnHint,
-        (int)(sw * 0.5f - MeasureText(returnHint, returnHintSz) * 0.5f),
-        (int)cy, returnHintSz, Color{210, 200, 235, 190});
-    cy += returnHintSz + 24.f;
-
-    // Return to menu button
-    Vector2 mouse = GetMousePosition();
-    Rectangle btn = { sw * 0.5f - 160.f, sh * 0.88f, 320.f, 54.f };
-    bool hov = CheckCollisionPointRec(mouse, btn);
-    DrawRectangleRounded(btn, 0.4f, 8,
-        hov ? Color{70, 30, 130, 240} : Color{40, 16, 80, 200});
-    DrawRectangleRoundedLines(btn, 0.4f, 8,
-        hov ? Color{180, 100, 255, 255} : Color{120, 60, 200, 180});
-    const char* btnTxt = "Return to Main Menu";
-    int btnSz = 24;
-    DrawText(btnTxt,
-        (int)(btn.x + btn.width  * 0.5f - MeasureText(btnTxt, btnSz) * 0.5f),
-        (int)(btn.y + btn.height * 0.5f - btnSz * 0.5f),
-        btnSz, hov ? Color{220, 180, 255, 255} : RAYWHITE);
-
-    if (hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-    {
-        ResetRunState();
-        _menu.Init();
-        _gameState = GameState::Menu;
-    }
+    DemoEndRenderContext ctx{};
+    ctx.touchModeActive = _touchModeActive;
+    ctx.demoCompleted = _demoCompleted;
+    ctx.enemiesKilled = _enemiesKilled;
+    ctx.bossesDefeated = _bossesDefeated;
+    ctx.playerGold = _player.GetGold();
+    ctx.playerLevel = _player.GetLevel();
+    _overlayRenderer.DrawDemoEnd(ctx);
 }
 
 // ── UpdateExpTally ────────────────────────────────────────────────────────────
@@ -3450,116 +2971,15 @@ void Engine::UpdateExpTally(float dt)
 // the player's current level.  Dismiss hint appears once the bar is full.
 void Engine::DrawExpTally()
 {
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.65f));
-
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
-    const float cx = sw * 0.5f;
-    const int levelsGained = std::max(0, _player.GetLevel() - _tallyStartLevel);
-
-    // Title
-    const char* title = (levelsGained > 0) ? "Level Up!" : "Room Cleared!";
-    static constexpr int kTitleSize = 52;
-    int titleW = MeasureText(title, kTitleSize);
-    DrawText(title, (int)(cx - titleW * 0.5f), (int)(sh * 0.28f), kTitleSize, RAYWHITE);
-
-    // Level display
-    int level    = _player.GetLevel();
-    int maxLevel = _player.GetMaxLevel();
-    const char* levelStr = TextFormat("Level  %d", level);
-    static constexpr int kLevelSize = 38;
-    int levelW = MeasureText(levelStr, kLevelSize);
-    DrawText(levelStr, (int)(cx - levelW * 0.5f), (int)(sh * 0.41f), kLevelSize,
-        Color{ 255, 210, 0, 255 });
-
-    if (levelsGained > 0)
-    {
-        auto prevInt = [levelsGained](int currentValue, int perLevelGain) -> int
-        {
-            return currentValue - perLevelGain * levelsGained;
-        };
-        auto prevFloat = [levelsGained](float currentValue, float perLevelGain) -> float
-        {
-            return currentValue - perLevelGain * (float)levelsGained;
-        };
-
-        std::string hpLine = "HP  " + std::to_string(prevInt((int)_player.GetMaxHealthValue(), Character::kLevelHpGain))
-            + " -> " + std::to_string((int)_player.GetMaxHealthValue());
-        std::string atkLine = "ATK  " + std::to_string((int)std::ceil(prevFloat(_player.GetAttackPowerValue(), Character::kLevelAttackGain)))
-            + " -> " + std::to_string((int)std::ceil(_player.GetAttackPowerValue()));
-        std::string defLine = "DEF  " + std::to_string((int)std::ceil(prevFloat(_player.GetDefense(), Character::kLevelDefenseGain) * 100.f))
-            + "% -> " + std::to_string((int)std::ceil(_player.GetDefense() * 100.f)) + "%";
-        std::string manaLine = "MP  " + std::to_string(prevInt(_player.GetMaxMana(), Character::kLevelManaGain))
-            + " -> " + std::to_string(_player.GetMaxMana());
-
-        static constexpr int kGainSize = 24;
-        float gainY = sh * 0.465f;
-        DrawText(hpLine.c_str(), (int)(cx - MeasureText(hpLine.c_str(), kGainSize) * 0.5f), (int)gainY, kGainSize, Color{190, 255, 190, 255});
-        DrawText(atkLine.c_str(), (int)(cx - MeasureText(atkLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 30.f), kGainSize, Color{255, 210, 160, 255});
-        DrawText(defLine.c_str(), (int)(cx - MeasureText(defLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 60.f), kGainSize, Color{180, 220, 255, 255});
-        DrawText(manaLine.c_str(), (int)(cx - MeasureText(manaLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 90.f), kGainSize, Color{165, 195, 255, 255});
-    }
-
-    // EXP bar
-    static const Color kExpFill = { 255, 210, 0, 230 };
-    static constexpr float kBarW = 520.f;
-    static constexpr float kBarH = 38.f;
-    const float barX = cx - kBarW * 0.5f;
-    const float barY = (levelsGained > 0) ? sh * 0.64f : sh * 0.51f;
-
-    int curExp    = _player.GetExp();
-    int expToNext = _player.GetExpToNext();
-    float expPct  = (level < maxLevel && expToNext > 0)
-        ? (float)curExp / (float)expToNext : 1.f;
-
-    DrawRectangleRounded({ barX, barY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
-    if (level < maxLevel)
-        DrawRectangleRounded({ barX, barY, kBarW * expPct, kBarH }, 0.3f, 6, kExpFill);
-    DrawRectangleRoundedLines({ barX, barY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.30f));
-
-    const char* expLabel = (level < maxLevel)
-        ? TextFormat("%d / %d  EXP", curExp, expToNext)
-        : "MAX LEVEL";
-    int expLabelW = MeasureText(expLabel, 20);
-    DrawText(expLabel,
-        (int)(cx - expLabelW * 0.5f),
-        (int)(barY + kBarH * 0.5f - 10.f),
-        20, RAYWHITE);
-
-    // Pending EXP still to arrive
-    if (_pendingExp > 0.f)
-    {
-        const char* pendingStr = TextFormat("+%d EXP incoming", (int)_pendingExp);
-        int pendingW = MeasureText(pendingStr, 26);
-        DrawText(pendingStr,
-            (int)(cx - pendingW * 0.5f),
-            (int)(barY + kBarH + 14.f),
-            26, Fade(kExpFill, 0.85f));
-    }
-
-    // Dismiss / skip hint
-    float pulse = 0.60f + 0.40f * sinf((float)GetTime() * 4.f);
-    if (_expTallyDone)
-    {
-        const char* hint;
-        if (_tallyLevelUpsRemaining > 0 && !_tallyChoiceChaining)
-        {
-            // Level-up(s) waiting — tell the player something exciting is coming.
-            hint = _touchModeActive ? "Tap to choose an upgrade!" : "Space / Enter  —  Choose an Upgrade!";
-        }
-        else
-        {
-            hint = _touchModeActive ? "Tap to Continue" : "Space / Enter  to Continue";
-        }
-        int hintW = MeasureText(hint, 26);
-        DrawText(hint, (int)(cx - hintW * 0.5f), (int)(sh * 0.70f), 26, Fade(RAYWHITE, pulse));
-    }
-    else if (!_touchModeActive)
-    {
-        const char* skipHint = "Space / Enter  to skip";
-        int skipW = MeasureText(skipHint, 20);
-        DrawText(skipHint, (int)(cx - skipW * 0.5f), (int)(sh * 0.70f), 20, Fade(RAYWHITE, 0.45f));
-    }
+    ExpTallyRenderContext ctx{};
+    ctx.player = &_player;
+    ctx.tallyStartLevel = _tallyStartLevel;
+    ctx.pendingExp = _pendingExp;
+    ctx.expTallyDone = _expTallyDone;
+    ctx.tallyLevelUpsRemaining = _tallyLevelUpsRemaining;
+    ctx.tallyChoiceChaining = _tallyChoiceChaining;
+    ctx.touchModeActive = _touchModeActive;
+    _overlayRenderer.DrawExpTally(ctx);
 }
 
 // ── DrawMap ───────────────────────────────────────────────────────────────────
@@ -6074,29 +5494,12 @@ void Engine::ResetRunState()
 
 int Engine::GetActiveEnemyCount() const
 {
-    int count = 0;
-    for (const auto& enemy : _enemies)
-    {
-        if (enemy->IsActive())
-            count++;
-    }
-
-    return count;
+    return _combatDirector.GetActiveEnemyCount(_enemies);
 }
 
 bool Engine::IsBossFightActive() const
 {
-    for (const auto& enemy : _enemies)
-    {
-        if (!enemy->IsActive())
-            continue;
-        if (!enemy->IsAlive())
-            continue;
-        if (enemy->AsMolarbeast() != nullptr)
-            return true;
-    }
-
-    return false;
+    return _combatDirector.IsBossFightActive(_enemies);
 }
 
 bool Engine::TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance)
@@ -6125,74 +5528,31 @@ bool Engine::TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance)
 
 void Engine::SpawnBossSupportAdds()
 {
-    // Cyclops arrives immediately — ranged pressure from a distance is readable.
-    Vector2 cyclopsPos{};
-    if (TryGetFarSpawnPosition(cyclopsPos, kBossSupportMinPlayerDistance))
-        _bossCyclopsSupport.enemy = SpawnCyclops(cyclopsPos);
-    _bossCyclopsSupport.respawnTimer = 0.f;
-
-    // Ogre is held back so the player gets ~22s to learn the boss before a
-    // second melee threat joins. The pending-spawn path in UpdateBossSupportRespawns
-    // handles the null-enemy timer countdown.
-    _bossOgreSupport.enemy = nullptr;
-    _bossOgreSupport.respawnTimer = kBossOgreInitialDelay;
+    BossSupportContext ctx{};
+    ctx.bossCyclopsSupport = &_bossCyclopsSupport;
+    ctx.bossOgreSupport = &_bossOgreSupport;
+    ctx.tryGetFarSpawnPosition = [&](Vector2& pos, float minPlayerDistance) { return TryGetFarSpawnPosition(pos, minPlayerDistance); };
+    ctx.spawnCyclops = [&](Vector2 pos) { return SpawnCyclops(pos); };
+    ctx.spawnOgre = [&](Vector2 pos) { return SpawnOgre(pos); };
+    ctx.isBossFightActive = [&]() { return IsBossFightActive(); };
+    _combatDirector.SpawnBossSupportAdds(ctx);
 }
 
 void Engine::ClearBossSupportAdds()
 {
-    if (_bossCyclopsSupport.enemy != nullptr)
-    {
-        _bossCyclopsSupport.enemy->SetActive(false);
-        _bossCyclopsSupport.enemy->Teleport(Vector2{ -5000.f, -5000.f });
-    }
-
-    if (_bossOgreSupport.enemy != nullptr)
-    {
-        _bossOgreSupport.enemy->SetActive(false);
-        _bossOgreSupport.enemy->Teleport(Vector2{ -5000.f, -5000.f });
-    }
-
-    _bossCyclopsSupport = {};
-    _bossOgreSupport = {};
+    _combatDirector.ClearBossSupportAdds(_bossCyclopsSupport, _bossOgreSupport);
 }
 
 void Engine::UpdateBossSupportRespawns(float dt)
 {
-    if (!IsBossFightActive())
-    {
-        ClearBossSupportAdds();
-        return;
-    }
-
-    if (_bossCyclopsSupport.enemy != nullptr &&
-        !_bossCyclopsSupport.enemy->IsActive() &&
-        _bossCyclopsSupport.respawnTimer > 0.f)
-    {
-        _bossCyclopsSupport.respawnTimer -= dt;
-        if (_bossCyclopsSupport.respawnTimer <= 0.f)
-        {
-            Vector2 spawnPos{};
-            if (TryGetFarSpawnPosition(spawnPos, kBossSupportMinPlayerDistance))
-                _bossCyclopsSupport.enemy = SpawnCyclops(spawnPos);
-            _bossCyclopsSupport.respawnTimer = 0.f;
-        }
-    }
-
-    // Ogre: handles both the initial delayed entry (enemy == nullptr) and
-    // subsequent respawns after it has been killed.
-    bool ogrePendingSpawn = (_bossOgreSupport.enemy == nullptr && _bossOgreSupport.respawnTimer > 0.f);
-    bool ogrePendingRespawn = (_bossOgreSupport.enemy != nullptr && !_bossOgreSupport.enemy->IsActive() && _bossOgreSupport.respawnTimer > 0.f);
-    if (ogrePendingSpawn || ogrePendingRespawn)
-    {
-        _bossOgreSupport.respawnTimer -= dt;
-        if (_bossOgreSupport.respawnTimer <= 0.f)
-        {
-            Vector2 spawnPos{};
-            if (TryGetFarSpawnPosition(spawnPos, kBossSupportMinPlayerDistance))
-                _bossOgreSupport.enemy = SpawnOgre(spawnPos);
-            _bossOgreSupport.respawnTimer = 0.f;
-        }
-    }
+    BossSupportContext ctx{};
+    ctx.bossCyclopsSupport = &_bossCyclopsSupport;
+    ctx.bossOgreSupport = &_bossOgreSupport;
+    ctx.tryGetFarSpawnPosition = [&](Vector2& pos, float minPlayerDistance) { return TryGetFarSpawnPosition(pos, minPlayerDistance); };
+    ctx.spawnCyclops = [&](Vector2 pos) { return SpawnCyclops(pos); };
+    ctx.spawnOgre = [&](Vector2 pos) { return SpawnOgre(pos); };
+    ctx.isBossFightActive = [&]() { return IsBossFightActive(); };
+    _combatDirector.UpdateBossSupportRespawns(ctx, dt);
 }
 
 bool Engine::TryGetPooledEnemySpawn(Vector2 pos)
@@ -6658,37 +6018,64 @@ static Rectangle TouchAbilityRect(int slot, int screenW, int screenH)
              slotY, kTouchSlotSize, kTouchSlotSize };
 }
 
+Rectangle Engine::GetDebugToggleTabRect() const
+{
+    return Rectangle{ (float)_windowWidth - 54.f, (float)_windowHeight * 0.43f, 42.f, 132.f };
+}
+
+bool Engine::HandleDebugToggleTabInput()
+{
+    if (!_debug.IsActive())
+        return false;
+
+    const Rectangle debugTab = GetDebugToggleTabRect();
+    const int touchCount = GetTouchPointCount();
+
+    if (touchCount == 0)
+    {
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+            CheckCollisionPointRec(GetMousePosition(), debugTab))
+        {
+            _debug.ToggleOpen();
+            return true;
+        }
+        return false;
+    }
+
+    for (int i = 0; i < touchCount; ++i)
+    {
+        if (CheckCollisionPointRec(GetTouchPosition(i), debugTab))
+        {
+            _debug.ToggleOpen();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void Engine::DrawDebugToggleTab()
+{
+    if (!_debug.IsActive())
+        return;
+
+    const Rectangle debugTab = GetDebugToggleTabRect();
+    DrawRectangleRounded(debugTab, 0.35f, 6, Fade(Color{ 92, 58, 26, 255 }, 0.78f));
+    DrawRectangleRoundedLines(debugTab, 0.35f, 6, Fade(Color{ 255, 214, 150, 255 }, 0.66f));
+
+    const char* tabLabel = _debug.IsOpen() ? "DBG <" : "DBG >";
+    const int tabSz = 18;
+    const int tabW = MeasureText(tabLabel, tabSz);
+    DrawText(tabLabel,
+        (int)(debugTab.x + debugTab.width * 0.5f - tabW * 0.5f),
+        (int)(debugTab.y + debugTab.height * 0.5f - tabSz * 0.5f),
+        tabSz, RAYWHITE);
+}
+
 // Sets player touch direction/attack/dash from _touch, then scans for new
 // touches on the ability arc.  Called each gameplay frame when touch mode is on.
 void Engine::UpdateTouchControls()
 {
-    if (_debug.IsActive())
-    {
-        const Rectangle debugTab{ (float)_windowWidth - 54.f, (float)_windowHeight * 0.43f, 42.f, 132.f };
-        const int tabTouchCount = GetTouchPointCount();
-
-        if (tabTouchCount == 0)
-        {
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
-                CheckCollisionPointRec(GetMousePosition(), debugTab))
-            {
-                _debug.ToggleOpen();
-                return;
-            }
-        }
-        else
-        {
-            for (int i = 0; i < tabTouchCount; ++i)
-            {
-                if (CheckCollisionPointRec(GetTouchPosition(i), debugTab))
-                {
-                    _debug.ToggleOpen();
-                    return;
-                }
-            }
-        }
-    }
-
     _touch.Update(_windowWidth, _windowHeight);
 
     _player.SetTouchDirection(_touch.joystickDir);

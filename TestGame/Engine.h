@@ -31,6 +31,8 @@
 #include "WorldConfig.h"
 #include "AudioManager.h"
 #include "RunStateController.h"
+#include "CombatDirector.h"
+#include "OverlayRenderer.h"
 
 #include <vector>
 #include <string>
@@ -186,6 +188,9 @@ private:
     void UpdateTouchControls();
     void DrawTouchAbilityArc();
     void ScanAbilityArcTaps();
+    Rectangle GetDebugToggleTabRect() const;
+    bool HandleDebugToggleTabInput();
+    void DrawDebugToggleTab();
     void SaveKeybindings();
     void LoadKeybindings();
     int GetActiveEnemyCount() const;
@@ -215,12 +220,6 @@ private:
         bool     available = false;           // player can click this node now
         std::vector<int> nextNodes;           // indices into _actMap
         Vector2  drawPos{};                   // screen-space position (computed in GenerateActMap)
-    };
-
-    struct BossSupportState
-    {
-        Enemy* enemy = nullptr;
-        float respawnTimer = 0.f;
     };
 
     // ── Elite-room hazard ─────────────────────────────────────────────────
@@ -323,7 +322,7 @@ private:
     Vector2 _eliteLeapTarget          = {};
     float   _eliteLeapCooldown        = 0.f;
     float   _eliteLeapTimer           = 0.f;
-    std::vector<EliteHazard> _eliteHazards;
+    std::vector<::EliteHazard> _eliteHazards;
     float   _eliteHazardSpawnTimer    = 0.f;
 
     // ── Elite constants ───────────────────────────────────────────────────
@@ -389,6 +388,7 @@ private:
     Texture2D _abilityIconElectricTex{};
 
     Texture2D _shopBorderTex{};
+    Texture2D _shopZephTex{};
 
     // Map node icons (TileSet/MapIcons/)
     Texture2D _mapIconNormal{};
@@ -446,6 +446,8 @@ private:
     float _biomeTransitionTimer = 0.f;
     bool     _demoEndTouchHeld = false;
     AudioManager _audio;
+    CombatDirector _combatDirector;
+    OverlayRenderer _overlayRenderer;
 
     // ── Touch mode ───────────────────────────────────────────────────────────
     bool          _touchModeActive = false;

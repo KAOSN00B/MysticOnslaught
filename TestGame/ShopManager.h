@@ -23,6 +23,7 @@
 struct ShopTextures
 {
     Texture2D* border          = nullptr;
+    Texture2D* zephIdle        = nullptr;
     Texture2D* upgradeAttack   = nullptr;   // AttackPower and related
     Texture2D* upgradeRange    = nullptr;   // AttackRange and related
     Texture2D* upgradeHealth   = nullptr;   // MaxHealth and related
@@ -47,7 +48,7 @@ public:
     // ── Per-frame (Store room, GameState::Play) ───────────────────────────
     // Handles NPC collision push and proximity. Returns true if the player
     // pressed E to open the shop this frame.
-    bool UpdateNpc(Character& player);
+    bool UpdateNpc(Character& player, Vector2 worldOffset, bool touchMode);
 
     // Draw the NPC sprite at its world position.
     void DrawNpc(Vector2 worldOffset) const;
@@ -81,6 +82,8 @@ private:
     std::string _dialogue;
     Vector2     _npcPos         = {};
     bool        _nearNpc        = false;
+    bool        _touchPromptMode = false;
+    bool        _npcTouchHeld   = false;
     int         _rerollCost     = 20;
     int         _act            = 1;    // current act, set on Enter()
     int         _dailyDealIndex = -1;   // index of discounted item (-1 = none)

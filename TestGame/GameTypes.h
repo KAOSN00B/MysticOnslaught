@@ -1,5 +1,9 @@
 #pragma once
 
+#include "raylib.h"
+
+#include <vector>
+
 enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
 
 enum class RoomType
@@ -48,4 +52,15 @@ enum class MusicCue
     BattleVictory,
     BossVictory,
     GameOver,
+};
+
+struct MapNode
+{
+    int row = 0;
+    float normX = 0.5f;
+    RoomType type = RoomType::Standard;
+    bool completed = false;
+    bool available = false;
+    std::vector<int> nextNodes;
+    Vector2 drawPos{};
 };
