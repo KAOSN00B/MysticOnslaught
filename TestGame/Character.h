@@ -55,6 +55,7 @@ public:
     ~Character() override;
 
     void Init();
+    void ReloadSounds();
     void Update(float dt);
 
     void TakeDamage(int damage, Vector2 attackerPos) override;

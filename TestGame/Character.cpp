@@ -140,6 +140,18 @@ void Character::Init()
     _rightLeft = 1;
 }
 
+void Character::ReloadSounds()
+{
+    if (_footStepSound.frameCount == 0)
+        _footStepSound = LoadSound(AssetPath("Sounds/FootSteps.ogg").c_str());
+    if (_attackSound.frameCount == 0)
+        _attackSound = LoadSound(AssetPath("Sounds/SwordSwipe.ogg").c_str());
+    if (_hurtSound.frameCount == 0)
+        _hurtSound = LoadSound(AssetPath("Sounds/PlayerHurt.ogg").c_str());
+    if (_deathSound.frameCount == 0)
+        _deathSound = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
+}
+
 void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;

@@ -31,11 +31,11 @@ struct TouchControls
     // ── Layout constants ──────────────────────────────────────────────────────
     static constexpr float kJoyRadius      = 90.f;   // outer ring radius
     static constexpr float kJoyDeadZone    = 14.f;
-    static constexpr float kBtnRadius      = 60.f;   // ATK hit + visual radius
-    static constexpr float kDashBtnRadius  = 48.f;   // DASH hit + visual radius
-    static constexpr float kBtnRightPad    = 130.f;  // ATK centre x from right edge
-    static constexpr float kBtnBotPad      = 150.f;  // ATK centre y from bottom edge
-    static constexpr float kDashBtnOffset  = 150.f;  // DASH is this far left of ATK
+    static constexpr float kBtnRadius      = 81.f;   // ATK hit + visual radius
+    static constexpr float kDashBtnRadius  = 65.f;   // DASH hit + visual radius
+    static constexpr float kBtnRightPad    = 140.f;  // ATK centre x from right edge
+    static constexpr float kBtnBotPad      = 160.f;  // ATK centre y from bottom edge
+    static constexpr float kDashBtnOffset  = 185.f;  // DASH is this far left of ATK
 
     // ── API ───────────────────────────────────────────────────────────────────
     void Update(int screenW, int screenH);

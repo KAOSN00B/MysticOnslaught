@@ -174,8 +174,8 @@ void TouchControls::Draw(int screenW, int screenH) const
         DrawCircleV(atkCenter, kBtnRadius, held ? Fade(RED, 0.65f) : Fade(RED, 0.28f));
         DrawCircleLinesV(atkCenter, kBtnRadius, held ? Fade(WHITE, 0.85f) : Fade(WHITE, 0.45f));
         const char* label = "ATTACK";
-        int w = MeasureText(label, 20);
-        DrawText(label, (int)(atkCenter.x - w * 0.5f), (int)(atkCenter.y - 10), 20, RAYWHITE);
+        int w = MeasureText(label, 26);
+        DrawText(label, (int)(atkCenter.x - w * 0.5f), (int)(atkCenter.y - 13), 26, RAYWHITE);
     }
 
     // ── DASH button — medium blue circle ─────────────────────────────────────
@@ -184,8 +184,8 @@ void TouchControls::Draw(int screenW, int screenH) const
         DrawCircleV(dashCenter, kDashBtnRadius, held ? Fade(SKYBLUE, 0.65f) : Fade(SKYBLUE, 0.28f));
         DrawCircleLinesV(dashCenter, kDashBtnRadius, held ? Fade(WHITE, 0.85f) : Fade(WHITE, 0.45f));
         const char* label = "DASH";
-        int w = MeasureText(label, 17);
-        DrawText(label, (int)(dashCenter.x - w * 0.5f), (int)(dashCenter.y - 9), 17, RAYWHITE);
+        int w = MeasureText(label, 22);
+        DrawText(label, (int)(dashCenter.x - w * 0.5f), (int)(dashCenter.y - 11), 22, RAYWHITE);
     }
 
     // ── Virtual joystick (floating, appears where thumb first lands) ──────────

@@ -179,6 +179,7 @@ private:
     bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
 
     void UpdateMusicSystem();
+    void EnsureAudioInitialized();
     void StartVictoryMusic(MusicCue cue);
     void ResetMusicState();
 
@@ -237,6 +238,7 @@ private:
     int& _htpTab;
     float& _htpSlideOffset;
 
+    bool _audioInitialised = false;
     bool _shouldExit = false;
     bool _waveStarting = true;
     bool _wave1LevelUpDone = false; // ensures forced level-up after wave 1 only fires once

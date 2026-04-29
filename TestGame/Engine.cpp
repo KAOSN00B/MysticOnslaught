@@ -116,12 +116,15 @@ Engine::~Engine()
     GoldPickup::UnloadSharedResources();
     SpreadProjectile::UnloadSharedResources();
     LavaBallProjectile::UnloadSharedResources();
-    UnloadSound(_pickupSound);
-    UnloadSound(_fireballCastSound);
-    UnloadSound(_explosionSound);
-    UnloadSound(_lavaBallImpactSound);
-    UnloadSound(_buttonPressSound);
-    _audio.Shutdown();
+    if (_audioInitialised)
+    {
+        UnloadSound(_pickupSound);
+        UnloadSound(_fireballCastSound);
+        UnloadSound(_explosionSound);
+        UnloadSound(_lavaBallImpactSound);
+        UnloadSound(_buttonPressSound);
+        _audio.Shutdown();
+    }
     UnloadTexture(_map);
     UnloadTexture(_pillarTex);
     UnloadTexture(_torchTex);
@@ -154,7 +157,8 @@ Engine::~Engine()
     UnloadTexture(_shopBorderTex);
     UnloadTexture(_shopZephTex);
     _pauseUI.Unload();
-    CloseAudioDevice();
+    if (_audioInitialised)
+        CloseAudioDevice();
     CloseWindow();
 }
 
@@ -162,33 +166,10 @@ void Engine::Init()
 {
     InitWindow(_windowWidth, _windowHeight, "Mystic Onslaught");
     SetTargetFPS(60);
-    InitAudioDevice();
+
+    EnsureAudioInitialized();
 
     SetExitKey(KEY_NULL);
-
-    _pickupSound      = LoadSound(AssetPath("Sounds/PickupSound.ogg").c_str());
-    _fireballCastSound= LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
-    _explosionSound   = LoadSound(AssetPath("Sounds/GS1_Spell_Explode.ogg").c_str());
-    {
-        // Lavaball impact should only play for the first second of the clip.
-        // Cropping the wave at load time keeps playback simple and lets each
-        // collision just trigger a normal PlaySound call.
-        Wave lavaImpactWave = LoadWave(AssetPath("Sounds/Explosion.ogg").c_str());
-        int oneSecondFrame = lavaImpactWave.sampleRate;
-        if (oneSecondFrame > 0 && (int)lavaImpactWave.frameCount > oneSecondFrame)
-            WaveCrop(&lavaImpactWave, 0, oneSecondFrame);
-        _lavaBallImpactSound = LoadSoundFromWave(lavaImpactWave);
-        UnloadWave(lavaImpactWave);
-    }
-    _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.ogg").c_str());
-    _audio.Init();
-
-    SetSoundPitch (_buttonPressSound, 1.25f);
-    SetSoundVolume(_buttonPressSound, 0.35f);
-
-    SetSoundPitch (_pickupSound, 1.35f);
-    SetSoundVolume(_pickupSound, 0.45f);
-    SetSoundVolume(_lavaBallImpactSound, 0.45f);
 
     _pauseUI.Init();
     LoadKeybindings();
@@ -254,6 +235,43 @@ void Engine::Init()
     _pickupSpawnTimer = kDefaultTimedPickupInterval;
 
     ResetRunState();
+}
+
+void Engine::EnsureAudioInitialized()
+{
+    if (_audioInitialised)
+        return;
+
+    InitAudioDevice();
+    _audioInitialised = true;
+
+    _pickupSound       = LoadSound(AssetPath("Sounds/PickupSound.ogg").c_str());
+    _fireballCastSound = LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
+    _explosionSound    = LoadSound(AssetPath("Sounds/GS1_Spell_Explode.ogg").c_str());
+    {
+        // Lavaball impact should only play for the first second of the clip.
+        // Cropping the wave at load time keeps playback simple and lets each
+        // collision just trigger a normal PlaySound call.
+        Wave lavaImpactWave = LoadWave(AssetPath("Sounds/Explosion.ogg").c_str());
+        int oneSecondFrame = lavaImpactWave.sampleRate;
+        if (oneSecondFrame > 0 && (int)lavaImpactWave.frameCount > oneSecondFrame)
+            WaveCrop(&lavaImpactWave, 0, oneSecondFrame);
+        _lavaBallImpactSound = LoadSoundFromWave(lavaImpactWave);
+        UnloadWave(lavaImpactWave);
+    }
+    _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.ogg").c_str());
+    _audio.Init();
+
+    SetSoundPitch(_buttonPressSound, 1.25f);
+    SetSoundVolume(_buttonPressSound, 0.35f);
+
+    SetSoundPitch(_pickupSound, 1.35f);
+    SetSoundVolume(_pickupSound, 0.45f);
+    SetSoundVolume(_lavaBallImpactSound, 0.45f);
+
+    // Reload player sounds that failed to load during Engine::Init() because
+    // the audio device didn't exist yet (web deferred-init path).
+    _player.ReloadSounds();
 }
 
 void Engine::StartVictoryMusic(MusicCue cue)
@@ -6012,9 +6030,9 @@ void Engine::LoadKeybindings()
 // 4 square slots in a right-aligned row, above the ATK/DASH buttons.
 static Rectangle TouchAbilityRect(int slot, int screenW, int screenH)
 {
-    static constexpr float kTouchSlotSize = 96.f;
-    static constexpr float kTouchSlotGap  = 16.f;
-    static constexpr float kRightPad      = 24.f;
+    static constexpr float kTouchSlotSize = 130.f;
+    static constexpr float kTouchSlotGap  = 20.f;
+    static constexpr float kRightPad      = 30.f;
     const float slotY  = (float)screenH - TouchControls::kBtnBotPad
                          - TouchControls::kBtnRadius - 20.f - kTouchSlotSize;
     const float totalW = 4.f * kTouchSlotSize + 3.f * kTouchSlotGap;
@@ -6209,13 +6227,13 @@ void Engine::DrawTouchAbilityArc()
         {
             // Show slot number dimly, same as desktop bar
             DrawText(GetKeyName(_player.GetAbilityKey(slot)),
-                (int)(rec.x + 6.f), (int)(rec.y + 6.f), 14, Fade(WHITE, 0.25f));
+                (int)(rec.x + 8.f), (int)(rec.y + 8.f), 18, Fade(WHITE, 0.25f));
             continue;
         }
 
         // Slot number in top-left corner
         DrawText(GetKeyName(_player.GetAbilityKey(slot)),
-            (int)(rec.x + 6.f), (int)(rec.y + 6.f), 14, Fade(WHITE, 0.6f));
+            (int)(rec.x + 8.f), (int)(rec.y + 8.f), 18, Fade(WHITE, 0.6f));
 
         // Element icon centred in the upper portion of the slot
         const Texture2D* iconTex = &_abilityIconFireTex;
@@ -6238,23 +6256,23 @@ void Engine::DrawTouchAbilityArc()
 
         // Ability name at the bottom, matching desktop bar
         const char* abilityName = GetAbilityName(ability);
-        int nameW = MeasureText(abilityName, 12);
+        int nameW = MeasureText(abilityName, 16);
         DrawText(abilityName,
             (int)(rec.x + rec.width / 2.f - nameW / 2.f),
-            (int)(rec.y + rec.height - 18.f),
-            12, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
+            (int)(rec.y + rec.height - 22.f),
+            16, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
 
         // Level badge
         int abilityLv = _player.GetAbilityLevel(ability);
         if (abilityLv > 1)
         {
             const char* badge = TextFormat("Lv%d", abilityLv);
-            int badgeW = MeasureText(badge, 12);
+            int badgeW = MeasureText(badge, 16);
             Color badgeColor = (abilityLv >= 3) ? GOLD : Fade(SKYBLUE, 0.9f);
             DrawText(badge,
-                (int)(rec.x + rec.width - badgeW - 4.f),
-                (int)(rec.y + rec.height - 16.f),
-                12, badgeColor);
+                (int)(rec.x + rec.width - badgeW - 5.f),
+                (int)(rec.y + rec.height - 20.f),
+                16, badgeColor);
         }
     }
 }

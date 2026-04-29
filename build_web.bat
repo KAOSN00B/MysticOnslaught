@@ -70,9 +70,10 @@ call emcc ^
   -I%RAYLIB_SRC%\external ^
   %RAYLIB_SRC%\libraylib.a ^
   -sUSE_GLFW=3 ^
-  -sALLOW_MEMORY_GROWTH=1 ^
+  -sINITIAL_MEMORY=268435456 ^
   -sFORCE_FILESYSTEM=1 ^
   --shell-file shell.html ^
+  --post-js audio_resume.js ^
   --preload-file Hero ^
   --preload-file Enemy ^
   --preload-file Bosses ^
