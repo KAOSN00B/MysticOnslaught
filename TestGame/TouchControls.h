@@ -31,6 +31,7 @@ struct TouchControls
     // ── Layout constants ──────────────────────────────────────────────────────
     static constexpr float kJoyRadius      = 90.f;   // outer ring radius
     static constexpr float kJoyDeadZone    = 14.f;
+    static constexpr int   kJoyDirections  = 8;
     static constexpr float kBtnRadius      = 81.f;   // ATK hit + visual radius
     static constexpr float kDashBtnRadius  = 65.f;   // DASH hit + visual radius
     static constexpr float kBtnRightPad    = 140.f;  // ATK centre x from right edge
@@ -54,7 +55,9 @@ private:
     int _joyTouchId  = -1;
     int _atkTouchId  = -1;
     int _dashTouchId = -1;
+    int _joySector   = -1; // sticky 8-way sector for gameplay movement only
 
     static bool IsTouchIdAlive(int id, int touchCount);
     static int  FindTouchIndex(int id, int touchCount);
+    Vector2 QuantizeJoystickDir(Vector2 rawDir, float magnitude);
 };

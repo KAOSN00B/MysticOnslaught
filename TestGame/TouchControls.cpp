@@ -3,6 +3,18 @@
 #include <cmath>
 #include <algorithm>
 
+namespace
+{
+    constexpr float kPi = 3.14159265358979323846f;
+
+    float WrapAngle(float angle)
+    {
+        while (angle <= -kPi) angle += 2.f * kPi;
+        while (angle > kPi) angle -= 2.f * kPi;
+        return angle;
+    }
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 bool TouchControls::IsTouchIdAlive(int id, int touchCount)
@@ -17,6 +29,36 @@ int TouchControls::FindTouchIndex(int id, int touchCount)
     for (int i = 0; i < touchCount; i++)
         if (GetTouchPointId(i) == id) return i;
     return -1;
+}
+
+Vector2 TouchControls::QuantizeJoystickDir(Vector2 rawDir, float magnitude)
+{
+    if (magnitude <= 0.f || Vector2LengthSqr(rawDir) <= 0.000001f)
+    {
+        _joySector = -1;
+        return Vector2Zero();
+    }
+
+    const float sectorAngle = (2.f * kPi) / (float)kJoyDirections;
+    const float halfSector = sectorAngle * 0.5f;
+    const float hysteresis = sectorAngle * 0.22f;
+
+    const float angle = atan2f(rawDir.y, rawDir.x);
+    int candidate = ((int)floorf((angle + halfSector) / sectorAngle) % kJoyDirections + kJoyDirections) % kJoyDirections;
+
+    if (_joySector >= 0)
+    {
+        const float currentCenter = (float)_joySector * sectorAngle;
+        const float deltaToCurrent = fabsf(WrapAngle(angle - currentCenter));
+        if (deltaToCurrent <= halfSector + hysteresis)
+            candidate = _joySector;
+    }
+
+    _joySector = candidate;
+
+    const float snappedAngle = (float)candidate * sectorAngle;
+    const Vector2 snapped = { cosf(snappedAngle), sinf(snappedAngle) };
+    return Vector2Scale(snapped, magnitude);
 }
 
 // ─── Update ──────────────────────────────────────────────────────────────────
@@ -47,6 +89,7 @@ void TouchControls::Update(int screenW, int screenH)
             _joyTouchId  = -1;
             _atkTouchId  = -1;
             _dashTouchId = -1;
+            _joySector   = -1;
             joystickDir     = Vector2Zero();
             joystickVisible = false;
             return;
@@ -70,6 +113,7 @@ void TouchControls::Update(int screenW, int screenH)
                 _joyTouchId    = kMouseFakeId;
                 joystickAnchor = mousePos;
                 joystickStick  = mousePos;
+                _joySector     = -1;
                 joystickVisible = true;
                 joystickDir    = Vector2Zero();
             }
@@ -81,11 +125,12 @@ void TouchControls::Update(int screenW, int screenH)
             Vector2 delta  = Vector2Subtract(mousePos, joystickAnchor);
             float   dist   = Vector2Length(delta);
             float   clamp  = std::min(dist, kJoyRadius);
+            float   magnitude = clamp / kJoyRadius;
             joystickStick  = dist > 0.001f
                 ? Vector2Add(joystickAnchor, Vector2Scale(Vector2Normalize(delta), clamp))
                 : joystickAnchor;
             joystickDir = dist > kJoyDeadZone
-                ? Vector2Scale(Vector2Normalize(delta), clamp / kJoyRadius)
+                ? QuantizeJoystickDir(Vector2Normalize(delta), magnitude)
                 : Vector2Zero();
         }
         return;
@@ -97,6 +142,7 @@ void TouchControls::Update(int screenW, int screenH)
     if (_joyTouchId  >= 0 && !IsTouchIdAlive(_joyTouchId,  tc))
     {
         _joyTouchId     = -1;
+        _joySector      = -1;
         joystickDir     = Vector2Zero();
         joystickVisible = false;
     }
@@ -113,15 +159,19 @@ void TouchControls::Update(int screenW, int screenH)
             Vector2 delta = Vector2Subtract(pos, joystickAnchor);
             float   dist  = Vector2Length(delta);
             float   clamped = std::min(dist, kJoyRadius);
+            float   magnitude = clamped / kJoyRadius;
 
             joystickStick = (dist > 0.001f)
                 ? Vector2Add(joystickAnchor, Vector2Scale(Vector2Normalize(delta), clamped))
                 : joystickAnchor;
 
             if (dist > kJoyDeadZone)
-                joystickDir = Vector2Scale(Vector2Normalize(delta), clamped / kJoyRadius);
+                joystickDir = QuantizeJoystickDir(Vector2Normalize(delta), magnitude);
             else
+            {
+                _joySector = -1;
                 joystickDir = Vector2Zero();
+            }
         }
     }
 
@@ -155,6 +205,7 @@ void TouchControls::Update(int screenW, int screenH)
             _joyTouchId     = id;
             joystickAnchor  = pos;
             joystickStick   = pos;
+            _joySector      = -1;
             joystickVisible = true;
             joystickDir     = Vector2Zero();
         }

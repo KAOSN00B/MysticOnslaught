@@ -3038,7 +3038,7 @@ void Engine::DrawMap()
         (int)(mapCentreX - MeasureText(header.c_str(), hSz) / 2.f), 28, hSz, Color{255, 214, 102, 255});
     const char* sub = "Choose your path";
     DrawText(sub,
-        (int)(mapCentreX - MeasureText(sub, 22) / 2.f), 78, 22,
+        (int)(mapCentreX - MeasureText(sub, 26) / 2.f), 78, 26,
         Color{206, 242, 255, 210});
 
     if (_actMap.empty()) return;
@@ -3081,17 +3081,17 @@ void Engine::DrawMap()
         const float pX  = 48.f;
         const float pY  = 98.f;
         const float pH  = sh - pY - 98.f;
-        const float pW  = 468.f;
+        const float pW  = 490.f;
         const float pad = 30.f;
         const float legendIndent = 20.f;
-        const float titleSize = 28.f;
-        const float statFont = 24.f;
-        const float baseStatRowH = 36.f;
-        const float legendIconSize = 44.f;
-        const float legendLabelSize = 24.f;
-        const float legendDescSize = 17.f;
-        const float baseLegendRowH = 66.f;
-        const float legendGap = 18.f;
+        const float titleSize = 32.f;
+        const float statFont = 28.f;
+        const float baseStatRowH = 44.f;
+        const float legendIconSize = 56.f;
+        const float legendLabelSize = 28.f;
+        const float legendDescSize = 21.f;
+        const float baseLegendRowH = 80.f;
+        const float legendGap = 22.f;
         const float titleToRuleGap = 8.f;
         const float ruleToRowsGap = 16.f;
         const float sectionGapBase = 22.f;
@@ -3222,15 +3222,15 @@ void Engine::DrawMap()
             Fade(Color{130, 235, 255, 255}, 0.30f));
 
         float cy = jY + pad;
-        DrawText("JOURNEY", (int)(jX + pad), (int)cy, 26, Color{255, 214, 102, 255});
-        cy += 26.f + 6.f;
+        DrawText("JOURNEY", (int)(jX + pad), (int)cy, 30, Color{255, 214, 102, 255});
+        cy += 30.f + 6.f;
         DrawLineEx({ jX + pad, cy }, { jX + jW - pad, cy }, 1.f,
             Fade(Color{130, 235, 255, 255}, 0.55f));
         cy += 14.f;
 
         // Visited-room squares — one per completed node, coloured by room type
-        const float sqSz  = 28.f;
-        const float sqGap = 8.f;
+        const float sqSz  = 34.f;
+        const float sqGap = 10.f;
         const float sqRowW = jW - pad * 2.f;
         (void)sqRowW;
         float sx = jX + pad;
@@ -3256,8 +3256,8 @@ void Engine::DrawMap()
         if (drawn == 0)
         {
             DrawText("No rooms cleared yet",
-                (int)(jX + pad), (int)cy, 16, Fade(RAYWHITE, 0.45f));
-            cy += 20.f;
+                (int)(jX + pad), (int)cy, 19, Fade(RAYWHITE, 0.45f));
+            cy += 24.f;
         }
         else
         {
@@ -3266,10 +3266,10 @@ void Engine::DrawMap()
 
         cy += 16.f;
         DrawText(TextFormat("Rooms: %d", drawn),
-            (int)(jX + pad), (int)cy, 20, Color{188, 228, 238, 200});
-        cy += 28.f;
+            (int)(jX + pad), (int)cy, 23, Color{188, 228, 238, 200});
+        cy += 32.f;
         DrawText(TextFormat("Gold:  %d", _player.GetGold()),
-            (int)(jX + pad), (int)cy, 20, Color{255, 214, 102, 220});
+            (int)(jX + pad), (int)cy, 23, Color{255, 214, 102, 220});
 
         // ── Biome progress diamonds — fixed zone: bottom 56% of the panel ──
         {
@@ -3351,12 +3351,12 @@ void Engine::DrawMap()
             if (nextIdx < 0 || nextIdx >= (int)_actMap.size()) continue;
             const MapNode& m = _actMap[nextIdx];
             Color lc = n.completed ? Color{70, 136, 152, 185} : Color{120, 214, 234, 120};
-            DrawLineEx(n.drawPos, m.drawPos, 2.5f, lc);
+            DrawLineEx(n.drawPos, m.drawPos, 3.5f, lc);
         }
     }
 
     // ── Nodes ─────────────────────────────────────────────────────────────
-    static constexpr float kIconSz   = 52.f;
+    static constexpr float kIconSz   = 70.f;
     static constexpr float kIconHalf = kIconSz * 0.5f;
     int hoveredIdx = -1;
 
@@ -3439,7 +3439,7 @@ void Engine::DrawMap()
     if (hoveredIdx >= 0)
     {
         const char* dsc = nodeDesc(_actMap[hoveredIdx].type);
-        int dSz = 20;
+        int dSz = 24;
         DrawText(dsc,
             (int)(mapCentreX - MeasureText(dsc, dSz) / 2.f),
             (int)(sh - 90.f), dSz, Color{206, 242, 255, 230});
@@ -3449,7 +3449,7 @@ void Engine::DrawMap()
     const char* hint = _touchModeActive
         ? "Tap a highlighted node to enter"
         : "Click node  or  A/D  to select  -  Enter / Space  to confirm";
-    int ftSz = 18;
+    int ftSz = 21;
     DrawText(hint,
         (int)(mapCentreX - MeasureText(hint, ftSz) / 2.f),
         (int)(sh - 55.f), ftSz, Color{173, 223, 236, 185});
