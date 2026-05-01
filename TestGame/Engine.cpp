@@ -1411,8 +1411,9 @@ void Engine::Draw()
               const float sh = (float)GetScreenHeight();
 
               const char* btnTxt = _touchModeActive ? "Continue" : "Continue  [M]";
-            int btnTxtSz = 28;
-            const float btnW = 220.f, btnH = 58.f;
+            int btnTxtSz = _touchModeActive ? 36 : 28;
+            const float btnScale = _touchModeActive ? 1.3f : 1.f;
+            const float btnW = 220.f * btnScale, btnH = 58.f * btnScale;
             float btnX = sw / 2.f - btnW / 2.f;
             float btnY = sh * 0.82f;
             Rectangle btn{ btnX, btnY, btnW, btnH };
@@ -2090,8 +2091,8 @@ void Engine::DrawHUD()
 
     if (_touchModeActive)
     {
-        DrawTouchAbilityArc();
-        _touch.Draw(_windowWidth, _windowHeight);
+            DrawTouchAbilityArc();
+            _touch.Draw(GetScreenWidth(), GetScreenHeight());
 
         // Pause button — top-right corner, above the wave label
         {
@@ -2874,12 +2875,13 @@ void Engine::DrawAbilityChoice()
     }
 
     // Continue button
-    Rectangle contBtn{sw/2.f - 110.f, sh*0.87f, 220.f, 52.f};
+    const float contScale = _touchModeActive ? 1.3f : 1.f;
+    Rectangle contBtn{sw/2.f - (220.f * contScale) / 2.f, sh*0.87f, 220.f * contScale, 52.f * contScale};
     bool contHov = ready && CheckCollisionPointRec(mouse, contBtn);
     DrawRectangleRounded(contBtn, 0.4f, 8, contHov ? Color{35,60,35,235} : Color{18,35,18,200});
     DrawRectangleRoundedLines(contBtn, 0.4f, 8, contHov ? Color{100,210,100,255} : Color{55,120,55,160});
     const char* contTxt = "Continue";
-    int contSz = 24;
+    int contSz = _touchModeActive ? 31 : 24;
     DrawText(contTxt, (int)(contBtn.x + contBtn.width/2.f - MeasureText(contTxt, contSz)/2.f),
              (int)(contBtn.y + contBtn.height/2.f - contSz/2.f), contSz,
              contHov ? Color{160,255,160,255} : RAYWHITE);
@@ -6043,7 +6045,9 @@ static Rectangle TouchAbilityRect(int slot, int screenW, int screenH)
 
 Rectangle Engine::GetDebugToggleTabRect() const
 {
-    return Rectangle{ (float)_windowWidth - 54.f, (float)_windowHeight * 0.43f, 42.f, 132.f };
+    const float screenW = (float)GetScreenWidth();
+    const float screenH = (float)GetScreenHeight();
+    return Rectangle{ screenW - 54.f, screenH * 0.43f, 42.f, 132.f };
 }
 
 bool Engine::HandleDebugToggleTabInput()
@@ -6099,7 +6103,10 @@ void Engine::DrawDebugToggleTab()
 // touches on the ability arc.  Called each gameplay frame when touch mode is on.
 void Engine::UpdateTouchControls()
 {
-    _touch.Update(_windowWidth, _windowHeight);
+    const int screenW = GetScreenWidth();
+    const int screenH = GetScreenHeight();
+
+    _touch.Update(screenW, screenH);
 
     _player.SetTouchDirection(_touch.joystickDir);
     if (_touch.attackPressed) _player.SetTouchAttack();
@@ -6111,7 +6118,7 @@ void Engine::UpdateTouchControls()
     static constexpr float kPauseW   = 90.f;
     static constexpr float kPauseH   = 48.f;
     static constexpr float kPausePad = 14.f;
-    const Rectangle pauseRec{ (float)_windowWidth - kPauseW - kPausePad, kPausePad, kPauseW, kPauseH };
+    const Rectangle pauseRec{ (float)screenW - kPauseW - kPausePad, kPausePad, kPauseW, kPauseH };
 
     const int tc = GetTouchPointCount();
     if (tc == 0)
@@ -6153,11 +6160,13 @@ void Engine::ScanAbilityArcTaps()
 
     const int tc         = GetTouchPointCount();
     const int totalSlots = _player.GetMaxAbilitySlots();
+    const int screenW    = GetScreenWidth();
+    const int screenH    = GetScreenHeight();
 
     auto hitSlot = [&](Vector2 pos) -> int
     {
         for (int s = 0; s < totalSlots; s++)
-            if (CheckCollisionPointRec(pos, TouchAbilityRect(s, _windowWidth, _windowHeight))) return s;
+            if (CheckCollisionPointRec(pos, TouchAbilityRect(s, screenW, screenH))) return s;
         return -1;
     };
 
@@ -6208,11 +6217,13 @@ void Engine::ScanAbilityArcTaps()
 void Engine::DrawTouchAbilityArc()
 {
     const int totalSlots = _player.GetMaxAbilitySlots();
+    const int screenW    = GetScreenWidth();
+    const int screenH    = GetScreenHeight();
 
     for (int slot = 0; slot < totalSlots; slot++)
     {
         AbilityType ability = _player.GetLearnedAbility(slot);
-        Rectangle   rec     = TouchAbilityRect(slot, _windowWidth, _windowHeight);
+        Rectangle   rec     = TouchAbilityRect(slot, screenW, screenH);
         bool isEmpty = (ability == AbilityType::None);
         bool canCast = !isEmpty && _player.CanCastAbility(ability);
 
