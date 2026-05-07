@@ -347,14 +347,30 @@ Rectangle Molarbeast::GetCollisionRec() const
     if (_collisionSize.x == 0.f && stableHalfW > 0.f)
     {
         auto* s = const_cast<Molarbeast*>(this);
-        s->_collisionSize   = { stableHalfW * 2.f, stableHalfH * 2.f };
-        s->_collisionOffset = { 0.f, 0.f };
+        s->_collisionSize   = { 210.00f, 247.00f };
+        s->_collisionOffset = { 57.00f, -71.00f };
     }
     return Rectangle{
         _worldPos.x - stableHalfW + _collisionOffset.x,
         _worldPos.y - stableHalfH + _collisionOffset.y,
         _collisionSize.x, _collisionSize.y
     };
+}
+
+void Molarbeast::DrawHealthBar(Vector2 screenPos, float w, float h)
+{
+    if (_health <= 0.f)
+        return;
+
+    float healthPercent = _health / _maxHealth;
+    float barWidth      = w * 0.8f;
+    float barHeight     = 6.f;
+    float barX          = screenPos.x - barWidth / 2.f;
+    // Sprite draws with origin at 78% down — top of sprite is at screenPos.y - h*0.78f
+    float barY          = screenPos.y - h * 0.78f - 12.f;
+
+    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
+    DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)barHeight, GREEN);
 }
 
 Rectangle Molarbeast::GetBodyContactRec() const

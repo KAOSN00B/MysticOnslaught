@@ -30,6 +30,7 @@ public:
     void ApplyFreeze(float duration) override;
     void ApplyElectricCharge() override;
     Rectangle GetCollisionRec() const override;
+    void DrawHealthBar(Vector2 screenPos, float w, float h) override;
 
     Molarbeast* AsMolarbeast() override { return this; }
     bool UsesDirectPursuit() const override { return true; }

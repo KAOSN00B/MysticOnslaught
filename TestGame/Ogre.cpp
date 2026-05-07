@@ -268,10 +268,8 @@ Rectangle Ogre::GetCollisionRec() const
     if (_collisionSize.x == 0.f)
     {
         auto* s = const_cast<Ogre*>(this);
-        float vw = _visualFrameWidth  * _scale;
-        float vh = _visualFrameHeight * _scale;
-        s->_collisionSize   = { _visualFrameWidth * _scale, _visualFrameHeight * _scale };
-        s->_collisionOffset = { 0.f, 0.f };
+        s->_collisionSize   = { 232.00f, 136.00f };
+        s->_collisionOffset = { 38.00f, 14.00f };
     }
     float stableHalfW = _visualFrameWidth  * _scale * 0.5f;
     float stableHalfH = _visualFrameHeight * _scale * 0.5f;
