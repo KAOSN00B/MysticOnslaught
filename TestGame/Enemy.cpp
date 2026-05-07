@@ -82,6 +82,7 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _forcedPushActive    = false;
     _forcedPushDirection = Vector2Zero();
     _forcedPushSpeed     = 0.f;
+    _inAttackRange       = false;
 
     // Each enemy gets its own flank slot so nearby enemies naturally choose
     // slightly different approach lanes around the player instead of piling
@@ -115,15 +116,26 @@ void Enemy::ApplyEnrage()
 
 Rectangle Enemy::GetCollisionRec() const
 {
-    // Taller and higher than the base so the box covers the enemy body,
-    // not just the feet. This makes melee hits and attack collisions register
-    // against the visible sprite rather than the ground beneath it.
-    float w = _width * _scale * 0.175f;
-    float h = _height * _scale * 0.25f;
+    if (_collisionSize.x == 0.f && _width > 0.f)
+    {
+        auto* s = const_cast<Enemy*>(this);
+        s->_collisionSize   = { 67.60f, 69.00f };
+        s->_collisionOffset = { -6.00f, 11.52f };
+    }
     return Rectangle{
-        _worldPos.x - w * 0.5f,
-        _worldPos.y - h * 0.5f + (_height * _scale * 0.12f),
-        w, h
+        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
+        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _collisionSize.x, _collisionSize.y
+    };
+}
+
+Rectangle Enemy::GetAttackCollisionRec() const
+{
+    return Rectangle{
+        _worldPos.x + _collisionOffset.x + _attackBoxOffsetX * _rightLeft - _attackBoxWidth  * 0.5f,
+        _worldPos.y + _collisionOffset.y + _attackBoxOffsetY - _attackBoxHeight * 0.5f,
+        _attackBoxWidth,
+        _attackBoxHeight
     };
 }
 
@@ -166,6 +178,8 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
         return;
     }
 
+    if (_attacking)
+        _velocity = Vector2Zero();
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateBurns(dt);
@@ -199,6 +213,28 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters)
 {
     if (_target == nullptr || _dying)
+        return;
+
+    // Update attack-range hysteresis first — needed whether moving or attacking.
+    // Zero velocity on the frame we enter attack range so there is no slide.
+    {
+        float distToPlayer = Vector2Length(Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
+        if (!_inAttackRange)
+        {
+            if (distToPlayer <= _attackRange)
+            {
+                _inAttackRange = true;
+                _velocity = Vector2Zero();
+            }
+        }
+        else
+        {
+            _inAttackRange = (distToPlayer <= _attackRange + _attackRangeHysteresis);
+        }
+    }
+
+    // Position is completely locked during attack — mirrors how Character::HandleMovement works.
+    if (_attacking)
         return;
 
     Vector2 playerCenter = _target->GetFeetWorldPos();
@@ -304,25 +340,16 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         moveDir = Vector2Normalize(moveDir);
 
     Vector2 oldPos = _worldPos;
-
-    // Stop chasing once inside attack range — let the attack system take over.
-    // The enemy waits here (idle animation) until the player leaves the sensor
-    // or the cooldown expires and another swing fires.
-    float distToPlayer = Vector2Length(Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
-    bool inAttackRange = distToPlayer <= _attackRange;
+    bool inAttackRange = _inAttackRange;
 
     bool intentionalMove = false;
-    if (!_attacking && !_takingDamage && !IsFrozen() && !inAttackRange)
+    if (!_takingDamage && !IsFrozen() && !inAttackRange)
     {
         _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
         intentionalMove = true;
     }
 
-    // Position-level push: resolve physical overlap with other enemies so they
-    // never pass through each other. Each enemy moves only itself; the other
-    // enemy does the same in its own Update, so overlaps resolve symmetrically.
-    // The 0.35f factor keeps the push gentle so enemies slide apart smoothly
-    // rather than snapping or jittering.
+    // Position-level push: resolve physical overlap with other enemies.
     {
         const float minSep = 60.f;
         for (const auto& other : enemies)
@@ -341,7 +368,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
     // Stuck detection — only runs when the enemy is actively trying to chase.
     // Skipped inside attack range since standing still there is intentional.
-    if (!_attacking && !_takingDamage && !IsFrozen() && !inAttackRange)
+    if (!_takingDamage && !IsFrozen() && !inAttackRange)
     {
         _stuckTimer += dt;
 
@@ -383,10 +410,8 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         _stuckCheckPos = _worldPos;
     }
 
-    // Only switch to walk when the enemy is intentionally chasing and actually
-    // moving — push-induced drift while stopped in attack range should not
-    // trigger the walk animation.
-    if (!_attacking && !_takingDamage)
+    // Only switch to walk when the enemy is intentionally chasing and actually moving.
+    if (!_takingDamage)
     {
         if (intentionalMove && Vector2Length(Vector2Subtract(_worldPos, oldPos)) > 0.01f)
         {
@@ -416,6 +441,12 @@ void Enemy::HandleAttack()
     {
         _attacking = true;
         _damageApplied = false;
+        _velocity = Vector2Zero();   // prevent residual velocity from sliding during swing
+
+        // Face the player so the attack box extends the correct way
+        Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+        if (toPlayer.x < 0.f) _rightLeft = -1;
+        else if (toPlayer.x > 0.f) _rightLeft = 1;
 
         _attackCooldown = _attackDelay;
 
@@ -431,46 +462,10 @@ void Enemy::HandleAttack()
 
     if (_attacking && !_damageApplied && _frame == 2)
     {
-        Rectangle bodyRec = GetCollisionRec();
-
-        // Choose hurtbox direction based on where the player actually is:
-        //   horizontal — player is more to the side than above/below
-        //   up         — player is above
-        //   down       — player is below
-        Vector2 toTarget = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
-        float absX = fabsf(toTarget.x);
-        float absY = fabsf(toTarget.y);
-
-        Rectangle attackHurtbox{};
-
-        if (absY > absX)
-        {
-            // Vertical hurtbox — half-sprite-width wide, half-range tall, centred on enemy X
-            float hurtW = _width * _scale * 0.5f;
-            float hurtH = _attackRange * 0.75f;
-            float hurtX = _worldPos.x - hurtW * 0.5f;
-            float hurtY = (toTarget.y < 0)
-                ? _worldPos.y - hurtH   // player above: box extends upward
-                : _worldPos.y;          // player below: box extends downward
-            attackHurtbox = { hurtX, hurtY, hurtW, hurtH };
-        }
-        else
-        {
-            // Horizontal hurtbox — half-range wide, half sprite height, centred on enemy Y
-            float hurtW = _attackRange * 0.75f;
-            float hurtH = _height * _scale * 0.5f;
-            float hurtX = (_rightLeft > 0)
-                ? bodyRec.x + bodyRec.width   // right-facing
-                : bodyRec.x - hurtW;          // left-facing
-            attackHurtbox = { hurtX, _worldPos.y - hurtH * 0.5f, hurtW, hurtH };
-        }
-
-        if (CheckCollisionRecs(attackHurtbox, _target->GetCollisionRec()))
+        if (CheckCollisionRecs(GetAttackCollisionRec(), _target->GetCollisionRec()))
         {
             _target->TakeDamage((int)_attackPower, _worldPos);
             _damageApplied = true;
-            // Repick a new approach slot after landing a hit so enemies
-            // shuffle positions instead of immediately re-stacking.
             PickApproachOffset();
         }
     }
@@ -511,7 +506,11 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     screenPos.y += GetScreenHeight() / 2.f - launchLift;
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - w / 2.f, screenPos.y - h / 2.f, w, h };
+
+    float visualOffsetX = (_texture.id == _attackAnim.id) ? _attackVisualOffsetX * _rightLeft : 0.f;
+    float visualOffsetY = (_texture.id == _attackAnim.id) ? _attackVisualOffsetY              : 0.f;
+
+    Rectangle dest{ screenPos.x - w / 2.f + visualOffsetX, screenPos.y - h / 2.f + visualOffsetY, w, h };
 
     bool burning       = !_pendingBurns.empty();
     bool frozen        = IsFrozen();

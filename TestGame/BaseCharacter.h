@@ -32,6 +32,17 @@ public:
     const Texture2D& GetIdleAnim()   const { return _idleAnim; }
     float            GetSpriteWidth() const { return _width; }
 
+    // Collision shape — readable/writable so the debug hitbox editor can nudge
+    // them at runtime and print the result. Both default to {0,0}; GetCollisionRec
+    // lazy-initialises them from the original ratios on the first call after
+    // the sprite is loaded (_width > 0). Setting a non-zero _collisionSize in
+    // a constructor skips the lazy-init, letting you bake in exported values.
+    void    EnsureCollisionShape();
+    Vector2 GetCollisionOffset() const { return _collisionOffset; }
+    Vector2 GetCollisionSize()   const { return _collisionSize;   }
+    void    SetCollisionOffset(Vector2 v) { _collisionOffset = v; }
+    void    SetCollisionSize(Vector2 v)   { _collisionSize   = v; }
+
 protected:
 
     void Draw(Vector2 screenPos);
@@ -48,6 +59,9 @@ protected:
     Sound _deathSound{};
     Sound _attackSound{};
 
+
+    Vector2 _collisionOffset{};   // pixel offset from _worldPos to rect centre (x usually 0)
+    Vector2 _collisionSize{};     // pixel width/height; {0,0} = lazy-init pending
 
     Vector2 _worldPos{};
     Vector2 _worldPosLastFrame{};

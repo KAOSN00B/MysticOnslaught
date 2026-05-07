@@ -114,6 +114,10 @@ public:
     bool CanApplyMeleeDamage() const;
     void ConsumeMeleeDamageFrame();
     Rectangle GetAttackCollisionRec() const;
+    float GetAttackWidthAdjust()   const { return _attackWidthAdjust; }
+    float GetAttackHeightAdjust()  const { return _attackHeightAdjust; }
+    void  SetAttackWidthAdjust(float v)  { _attackWidthAdjust  = v; }
+    void  SetAttackHeightAdjust(float v) { _attackHeightAdjust = v; }
     Vector2 GetCastOrigin() const;
     Vector2 GetFacingDirection() const;
     Vector2 GetFeetWorldPos() const;
@@ -218,6 +222,8 @@ private:
     int _learnedCount     = 0;
     int _maxAbilitySlots  = 4;
 
+    float _attackWidthAdjust  = 0.f;   // pixel addition to melee box width (hitbox editor)
+    float _attackHeightAdjust = 0.f;   // pixel addition to melee box height (hitbox editor)
     float _attackUpdateTime = 1.f / 14.f;
     float _staffCastUpdateTime = 1.f / 12.f;
     float _dashSpeed = 1500.f;

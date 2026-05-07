@@ -501,16 +501,16 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
 
 Rectangle Cyclops::GetCollisionRec() const
 {
-    // Narrow body-only collision so the player can walk up to melee range
-    // without being stopped by the wide sprite extents.
-    const float width  = _width  * _scale * 0.26f;
-    const float height = _height * _scale * 0.36f;
-
+    if (_collisionSize.x == 0.f && _width > 0.f)
+    {
+        auto* s = const_cast<Cyclops*>(this);
+        s->_collisionSize   = { _width * _scale * 0.26f, _height * _scale * 0.36f };
+        s->_collisionOffset = { 0.f, _height * _scale * 0.22f };
+    }
     return Rectangle{
-        _worldPos.x - width  * 0.5f,
-        _worldPos.y - height * 0.5f + (_height * _scale * 0.22f),
-        width,
-        height
+        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
+        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _collisionSize.x, _collisionSize.y
     };
 }
 

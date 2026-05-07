@@ -341,15 +341,17 @@ void Molarbeast::ApplyElectricCharge()
 
 Rectangle Molarbeast::GetCollisionRec() const
 {
-    // Use _stableFrameW/H (set once from the idle sheet in Init) so this rect
-    // never changes shape when animations switch mid-fight.
-    float width  = _stableFrameW * _scale * _collisionWidthScale;
-    float height = _stableFrameH * _scale * _collisionHeightScale;
+    if (_collisionSize.x == 0.f && _stableFrameW > 0.f)
+    {
+        auto* s = const_cast<Molarbeast*>(this);
+        s->_collisionSize   = { _stableFrameW * _scale * _collisionWidthScale,
+                                 _stableFrameH * _scale * _collisionHeightScale };
+        s->_collisionOffset = { 0.f, _stableFrameH * _scale * _collisionYOffsetScale };
+    }
     return Rectangle{
-        _worldPos.x - width * 0.5f,
-        _worldPos.y - height * 0.5f + (_stableFrameH * _scale * _collisionYOffsetScale),
-        width,
-        height
+        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
+        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _collisionSize.x, _collisionSize.y
     };
 }
 

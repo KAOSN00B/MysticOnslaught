@@ -64,7 +64,17 @@ public:
     bool IsInvulnerable()    const { return _isInvulnerable; }
     bool IsLeapFrozen()      const { return _leapInvulnerable; }
     void ApplyEnrage();            // +50% speed, half attack cooldown, called by Engine on elite spawn
-    Rectangle GetCollisionRec() const override;
+    Rectangle GetCollisionRec()       const override;
+    virtual Rectangle GetAttackCollisionRec() const;
+
+    float GetAttackBoxWidth()   const { return _attackBoxWidth; }
+    float GetAttackBoxHeight()  const { return _attackBoxHeight; }
+    float GetAttackBoxOffsetX() const { return _attackBoxOffsetX; }
+    float GetAttackBoxOffsetY() const { return _attackBoxOffsetY; }
+    void  SetAttackBoxWidth(float v)   { _attackBoxWidth   = std::max(4.f, v); }
+    void  SetAttackBoxHeight(float v)  { _attackBoxHeight  = std::max(4.f, v); }
+    void  SetAttackBoxOffsetX(float v) { _attackBoxOffsetX = v; }
+    void  SetAttackBoxOffsetY(float v) { _attackBoxOffsetY = v; }
 
     // Wider rect used only for player melee hit-detection; defaults to solid rect.
     // Cyclops overrides this so the body can be hit from any angle while the
@@ -132,6 +142,19 @@ protected:
 
     float _attackRange = 110.f;
     float _attackUpdateTime = 1.f / 8.f;
+    bool  _inAttackRange = false;
+    static constexpr float _attackRangeHysteresis = 15.f;
+
+    float _attackBoxWidth   = 48.f;
+    float _attackBoxHeight  = 75.f;
+    float _attackBoxOffsetX = 57.f;
+    float _attackBoxOffsetY = 0.f;
+
+    // Sprite-only draw offset for the attack animation — compensates for
+    // the weapon swing requiring the body to be off-centre in the art.
+    // X is multiplied by _rightLeft so the correction mirrors correctly.
+    float _attackVisualOffsetX = 20.f;
+    float _attackVisualOffsetY = 0.f;
 
     float _attackCooldown = 0.f;
     float _attackDelay = 1.0f;

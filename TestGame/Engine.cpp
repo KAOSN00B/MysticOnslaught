@@ -1094,6 +1094,28 @@ void Engine::UpdateGamePlay(float dt)
         }
     }
 
+    // Hitbox editor toggle — 0 key while debug panel is active
+    if (_debug.IsActive() && IsKeyPressed(KEY_ZERO))
+    {
+        _isHitboxEditorActive = !_isHitboxEditorActive;
+        _hitboxSelectedEntity = nullptr;
+        _hitboxEditAttack     = false;
+        _hitboxNudgeAccum     = -kHitboxNudgeInitDelay;
+        if (_isHitboxEditorActive)
+            _debug.SetOpen(false);  // hide panel while editing
+    }
+    // Safety: auto-exit editor if debug is deactivated from outside
+    if (_isHitboxEditorActive && !_debug.IsActive())
+    {
+        _isHitboxEditorActive = false;
+        _hitboxSelectedEntity = nullptr;
+    }
+    if (_isHitboxEditorActive)
+    {
+        UpdateHitboxEditor();
+        return;
+    }
+
     if (IsKeyPressed(KEY_ESCAPE))
     {
         _gameState = GameState::Pause;
@@ -1462,6 +1484,9 @@ void Engine::Draw()
                 HandleRoomContinueAction();
             }
         }
+
+        if (_isHitboxEditorActive)
+            DrawHitboxEditor();
 
         if (_fadeInTimer > 0.f)
         {
@@ -6079,6 +6104,280 @@ bool Engine::HandleDebugToggleTabInput()
     }
 
     return false;
+}
+
+// ── Hitbox debug editor ───────────────────────────────────────────────────────
+
+void Engine::UpdateHitboxEditor()
+{
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+        _isHitboxEditorActive = false;
+        _hitboxSelectedEntity = nullptr;
+        return;
+    }
+
+    // Click to select an entity
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        Vector2 camRef = Vector2Subtract(_cameraPos, _shakeOffset);
+        float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+        auto toScreen = [&](Rectangle r) {
+            return Rectangle{ r.x - camRef.x + sw / 2.f, r.y - camRef.y + sh / 2.f, r.width, r.height };
+        };
+
+        Vector2 mouse = GetMousePosition();
+        BaseCharacter* hit = nullptr;
+
+        _player.EnsureCollisionShape();
+        if (CheckCollisionPointRec(mouse, toScreen(_player.GetCollisionRec())))
+            hit = &_player;
+
+        if (!hit)
+        {
+            for (auto& e : _enemies)
+            {
+                if (!e->IsActive()) continue;
+                e->EnsureCollisionShape();
+                if (CheckCollisionPointRec(mouse, toScreen(e->GetCollisionRec())))
+                {
+                    hit = e.get();
+                    break;
+                }
+            }
+        }
+
+        if (hit != _hitboxSelectedEntity)
+            _hitboxEditAttack = false;
+        _hitboxSelectedEntity = hit;
+    }
+
+    if (!_hitboxSelectedEntity) return;
+    _hitboxSelectedEntity->EnsureCollisionShape();
+
+    // TAB: toggle body / attack box (player and enemies)
+    if (IsKeyPressed(KEY_TAB))
+        _hitboxEditAttack = !_hitboxEditAttack;
+
+    // S: export values to VS output window
+    if (IsKeyPressed(KEY_S))
+    {
+        Vector2 offset = _hitboxSelectedEntity->GetCollisionOffset();
+        Vector2 size   = _hitboxSelectedEntity->GetCollisionSize();
+
+        const char* typeName   = "Unknown";
+        const char* funcName   = "Unknown::GetCollisionRec";
+        if (_hitboxSelectedEntity == &_player)
+        {
+            typeName = "Character (Player)";
+            funcName = "BaseCharacter::GetCollisionRec";
+        }
+        else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
+        {
+            if      (e->AsCyclops())    { typeName = "Cyclops";        funcName = "Cyclops::GetCollisionRec";    }
+            else if (e->AsOgre())       { typeName = "Ogre";           funcName = "Ogre::GetCollisionRec";       }
+            else if (e->AsMolarbeast()) { typeName = "Molarbeast";     funcName = "Molarbeast::GetCollisionRec"; }
+            else                        { typeName = "Enemy (Grunt)";  funcName = "Enemy::GetCollisionRec";      }
+        }
+
+        TraceLog(LOG_WARNING, "=== HITBOX EXPORT [%s] ===", typeName);
+        TraceLog(LOG_WARNING, "// In %s(), replace the lazy-init block values:", funcName);
+        TraceLog(LOG_WARNING, "s->_collisionSize   = { %.2ff, %.2ff };", size.x, size.y);
+        TraceLog(LOG_WARNING, "s->_collisionOffset = { %.2ff, %.2ff };", offset.x, offset.y);
+        if (_hitboxSelectedEntity == &_player)
+        {
+            TraceLog(LOG_WARNING, "// Attack box adjustments (add to GetAttackCollisionRec):");
+            TraceLog(LOG_WARNING, "_attackWidthAdjust  = %.2ff;", _player.GetAttackWidthAdjust());
+            TraceLog(LOG_WARNING, "_attackHeightAdjust = %.2ff;", _player.GetAttackHeightAdjust());
+        }
+        else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
+        {
+            TraceLog(LOG_WARNING, "// Attack box — paste into Enemy.h default values:");
+            TraceLog(LOG_WARNING, "float _attackBoxWidth   = %.2ff;", e->GetAttackBoxWidth());
+            TraceLog(LOG_WARNING, "float _attackBoxHeight  = %.2ff;", e->GetAttackBoxHeight());
+            TraceLog(LOG_WARNING, "float _attackBoxOffsetX = %.2ff;", e->GetAttackBoxOffsetX());
+            TraceLog(LOG_WARNING, "float _attackBoxOffsetY = %.2ff;", e->GetAttackBoxOffsetY());
+        }
+        TraceLog(LOG_WARNING, "=========================");
+    }
+
+    // Arrow key nudge with hold-repeat
+    float dt = GetFrameTime();
+    bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+
+    bool rDown = IsKeyDown(KEY_RIGHT), lDown = IsKeyDown(KEY_LEFT);
+    bool uDown = IsKeyDown(KEY_UP),    dDown = IsKeyDown(KEY_DOWN);
+    bool rPressed = IsKeyPressed(KEY_RIGHT), lPressed = IsKeyPressed(KEY_LEFT);
+    bool uPressed = IsKeyPressed(KEY_UP),    dPressed = IsKeyPressed(KEY_DOWN);
+    bool anyDown    = rDown    || lDown    || uDown    || dDown;
+    bool anyPressed = rPressed || lPressed || uPressed || dPressed;
+
+    float dx = 0.f, dy = 0.f;
+
+    if (anyPressed)
+    {
+        if (rPressed) dx += 1.f;
+        if (lPressed) dx -= 1.f;
+        if (uPressed) dy -= 1.f;
+        if (dPressed) dy += 1.f;
+        _hitboxNudgeAccum = -kHitboxNudgeInitDelay;
+    }
+    else if (anyDown)
+    {
+        _hitboxNudgeAccum += dt;
+        if (_hitboxNudgeAccum >= 0.f)
+        {
+            _hitboxNudgeAccum -= kHitboxNudgeRepeatRate;
+            if (rDown) dx += 1.f;
+            if (lDown) dx -= 1.f;
+            if (uDown) dy -= 1.f;
+            if (dDown) dy += 1.f;
+        }
+    }
+    else
+    {
+        _hitboxNudgeAccum = -kHitboxNudgeInitDelay;
+    }
+
+    if (dx == 0.f && dy == 0.f) return;
+
+    if (!_hitboxEditAttack)
+    {
+        Vector2 offset = _hitboxSelectedEntity->GetCollisionOffset();
+        Vector2 size   = _hitboxSelectedEntity->GetCollisionSize();
+        if (!shift)
+        {
+            offset.x += dx;
+            offset.y += dy;
+        }
+        else
+        {
+            size.x = std::max(4.f, size.x + dx);
+            size.y = std::max(4.f, size.y + dy);
+        }
+        _hitboxSelectedEntity->SetCollisionOffset(offset);
+        _hitboxSelectedEntity->SetCollisionSize(size);
+    }
+    else if (_hitboxSelectedEntity == &_player)
+    {
+        if (!shift)
+        {
+            _player.SetAttackWidthAdjust(_player.GetAttackWidthAdjust() + dx);
+            _player.SetAttackHeightAdjust(_player.GetAttackHeightAdjust() + dy);
+        }
+        else
+        {
+            _player.SetAttackWidthAdjust(_player.GetAttackWidthAdjust() + dx);
+            _player.SetAttackHeightAdjust(_player.GetAttackHeightAdjust() + dy);
+        }
+    }
+    else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
+    {
+        if (!shift)
+        {
+            e->SetAttackBoxOffsetX(e->GetAttackBoxOffsetX() + dx);
+            e->SetAttackBoxOffsetY(e->GetAttackBoxOffsetY() + dy);
+        }
+        else
+        {
+            e->SetAttackBoxWidth(std::max(4.f,  e->GetAttackBoxWidth()  + dx));
+            e->SetAttackBoxHeight(std::max(4.f, e->GetAttackBoxHeight() + dy));
+        }
+    }
+}
+
+void Engine::DrawHitboxEditor()
+{
+    Vector2 camRef = Vector2Subtract(_cameraPos, _shakeOffset);
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+
+    auto toScreen = [&](Rectangle r) {
+        return Rectangle{ r.x - camRef.x + sw / 2.f, r.y - camRef.y + sh / 2.f, r.width, r.height };
+    };
+
+    auto drawEntity = [&](BaseCharacter* entity)
+    {
+        entity->EnsureCollisionShape();
+        bool isSelected = (entity == _hitboxSelectedEntity);
+
+        Rectangle bodyScr = toScreen(entity->GetCollisionRec());
+        Color bodyCol  = (isSelected && !_hitboxEditAttack) ? GREEN : RED;
+        float bodyThick = (isSelected && !_hitboxEditAttack) ? 3.f : 1.5f;
+        DrawRectangleLinesEx(bodyScr, bodyThick, bodyCol);
+
+        if (isSelected && !_hitboxEditAttack)
+        {
+            const float hs = 7.f;
+            DrawRectangle((int)(bodyScr.x - hs/2.f),               (int)(bodyScr.y - hs/2.f),               (int)hs, (int)hs, BLUE);
+            DrawRectangle((int)(bodyScr.x + bodyScr.width - hs/2.f),(int)(bodyScr.y - hs/2.f),               (int)hs, (int)hs, BLUE);
+            DrawRectangle((int)(bodyScr.x - hs/2.f),               (int)(bodyScr.y + bodyScr.height - hs/2.f),(int)hs, (int)hs, BLUE);
+            DrawRectangle((int)(bodyScr.x + bodyScr.width - hs/2.f),(int)(bodyScr.y + bodyScr.height - hs/2.f),(int)hs, (int)hs, BLUE);
+        }
+
+        if (isSelected)
+        {
+            Rectangle atkScr = {};
+            if (entity == &_player)
+                atkScr = toScreen(_player.GetAttackCollisionRec());
+            else if (Enemy* e = dynamic_cast<Enemy*>(entity))
+                atkScr = toScreen(e->GetAttackCollisionRec());
+
+            Color atkCol   = _hitboxEditAttack ? GREEN : YELLOW;
+            float atkThick = _hitboxEditAttack ? 3.f   : 1.5f;
+            DrawRectangleLinesEx(atkScr, atkThick, atkCol);
+
+            if (_hitboxEditAttack)
+            {
+                const float hs = 7.f;
+                DrawRectangle((int)(atkScr.x - hs/2.f),                (int)(atkScr.y - hs/2.f),                (int)hs, (int)hs, ORANGE);
+                DrawRectangle((int)(atkScr.x + atkScr.width - hs/2.f), (int)(atkScr.y - hs/2.f),                (int)hs, (int)hs, ORANGE);
+                DrawRectangle((int)(atkScr.x - hs/2.f),                (int)(atkScr.y + atkScr.height - hs/2.f),(int)hs, (int)hs, ORANGE);
+                DrawRectangle((int)(atkScr.x + atkScr.width - hs/2.f), (int)(atkScr.y + atkScr.height - hs/2.f),(int)hs, (int)hs, ORANGE);
+            }
+        }
+    };
+
+    drawEntity(&_player);
+    for (auto& e : _enemies)
+        if (e->IsActive()) drawEntity(e.get());
+
+    // Top status bar
+    DrawRectangle(0, 0, (int)sw, 30, Fade(BLACK, 0.80f));
+    const char* modeStr;
+    if (!_hitboxSelectedEntity)
+        modeStr = "[HITBOX EDITOR]  Click entity  |  0: exit  |  S: save  |  ESC: exit";
+    else if (_hitboxEditAttack)
+        modeStr = "[HITBOX EDITOR]  ATTACK BOX  |  L/R: width   U/D: height  |  TAB: body  |  S: save  |  ESC: exit";
+    else
+        modeStr = "[HITBOX EDITOR]  BODY BOX  |  Arrows: offset  |  Shift+Arrows: size  |  TAB: attack  |  S: save  |  ESC: exit";
+    DrawText(modeStr, 8, 5, 18, YELLOW);
+
+    // Bottom values bar
+    if (_hitboxSelectedEntity)
+    {
+        _hitboxSelectedEntity->EnsureCollisionShape();
+        Vector2 offset = _hitboxSelectedEntity->GetCollisionOffset();
+        Vector2 size   = _hitboxSelectedEntity->GetCollisionSize();
+        DrawRectangle(0, (int)(sh - 30.f), (int)sw, 30, Fade(BLACK, 0.80f));
+        const char* info = "";
+        if (!_hitboxEditAttack)
+        {
+            info = TextFormat("  Body  Offset: (%.1f, %.1f)   Size: (%.1f, %.1f)   [S to export]", offset.x, offset.y, size.x, size.y);
+        }
+        else if (_hitboxSelectedEntity == &_player)
+        {
+            info = TextFormat("  Attack  Width adj: %.1f   Height adj: %.1f   [S to export]",
+                              _player.GetAttackWidthAdjust(), _player.GetAttackHeightAdjust());
+        }
+        else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
+        {
+            info = TextFormat("  Attack Box  Offset: (%.1f, %.1f)   Size: (%.1f, %.1f)   [S to export]",
+                              e->GetAttackBoxOffsetX(), e->GetAttackBoxOffsetY(),
+                              e->GetAttackBoxWidth(), e->GetAttackBoxHeight());
+        }
+        DrawText(info, 8, (int)(sh - 24.f), 18, WHITE);
+    }
 }
 
 void Engine::DrawDebugToggleTab()

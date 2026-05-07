@@ -459,4 +459,15 @@ private:
     std::vector<int> _abilityTapSeenIds;
 
     DebugPanel _debug;
+
+    // ── Hitbox debug editor (F12 while debug active) ─────────────────────────
+    bool           _isHitboxEditorActive = false;
+    BaseCharacter* _hitboxSelectedEntity = nullptr;
+    bool           _hitboxEditAttack     = false;
+    float          _hitboxNudgeAccum     = 0.f;
+    static constexpr float kHitboxNudgeInitDelay  = 0.30f;
+    static constexpr float kHitboxNudgeRepeatRate = 0.05f;
+
+    void UpdateHitboxEditor();
+    void DrawHitboxEditor();
 };

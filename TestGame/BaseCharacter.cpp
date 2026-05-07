@@ -7,13 +7,24 @@ BaseCharacter::BaseCharacter()
 	_worldPosLastFrame = Vector2Zero();
 }
 
+void BaseCharacter::EnsureCollisionShape()
+{
+    GetCollisionRec(); // triggers lazy-init as a side-effect
+}
+
 Rectangle BaseCharacter::GetCollisionRec() const
 {
-	float w = _width * _scale * 0.35f;
-	float h = _height * _scale * 0.28f;
-
-	return Rectangle{_worldPos.x - w / 2.f,_worldPos.y - h / 2.f 
-		+ (_height * _scale * 0.3f),w,h};
+    if (_collisionSize.x == 0.f && _width > 0.f)
+    {
+        auto* s = const_cast<BaseCharacter*>(this);
+        s->_collisionSize   = { 89.20f, 103.76f };
+        s->_collisionOffset = { 4.00f, 49.60f };
+    }
+    return Rectangle{
+        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
+        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _collisionSize.x, _collisionSize.y
+    };
 }
 
 void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)

@@ -265,21 +265,18 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
 
 Rectangle Ogre::GetCollisionRec() const
 {
-    // Ogre collision is intentionally smaller than the sprite. The enemy art
-    // has broad shoulders and a large charge pose, but gameplay collision
-    // should follow the lower body so pillar contact and melee hits read
-    // fairly against what the player sees on screen.
-    float visualWidth  = _visualFrameWidth * _scale;
-    float visualHeight = _visualFrameHeight * _scale;
-    float collisionW   = visualWidth * _collisionWidthScale;
-    float collisionH   = visualHeight * _collisionHeightScale;
-    float collisionY   = visualHeight * _collisionYOffsetScale;
-
+    if (_collisionSize.x == 0.f)
+    {
+        auto* s = const_cast<Ogre*>(this);
+        float vw = _visualFrameWidth  * _scale;
+        float vh = _visualFrameHeight * _scale;
+        s->_collisionSize   = { vw * _collisionWidthScale, vh * _collisionHeightScale };
+        s->_collisionOffset = { 0.f, vh * _collisionYOffsetScale };
+    }
     return Rectangle{
-        _worldPos.x - collisionW / 2.f,
-        _worldPos.y - collisionH / 2.f + collisionY,
-        collisionW,
-        collisionH
+        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
+        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _collisionSize.x, _collisionSize.y
     };
 }
 
