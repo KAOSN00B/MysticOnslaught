@@ -118,4 +118,9 @@ private:
     float _uiBtnFs          = 26.0f;   // 21 Leave / Reroll text (auto-shrinks to fit)
     float _uiRarityFs       = 22.0f;   // 22 Rarity label font size
     float _uiRarityPad      = 9.0f;    // 23 Rarity label offset from card corner
+    float _uiZephScale      = 1.4f;    // 24 Zeph portrait uniform scale (1.0 = 180px tall)
+    float _uiZephPosX       = 545.f;   // 25 Zeph portrait X center (screen space)
+    float _uiZephPosY       = 780.f;   // 26 Zeph portrait Y center (screen space)
+    float _uiDialPosX       = 620.f;   // 27 Dialogue text block X start (screen space)
+    float _uiDialPosY       = 850.f;   // 28 Dialogue text block Y center (screen space)
 };

@@ -22,5 +22,11 @@ private:
     Texture2D _btnTex{};
     Texture2D _htpBtnTex{};
 
-    int _rebindingSlot = -1;   // -1 = not rebinding
+    int     _rebindingSlot      = -1;   // -1 = not rebinding
+
+    // Panel drag state for Button Mapping screen
+    Vector2 _keybindPanelOffset{};      // offset from screen-centre
+    bool    _keybindDragging    = false;
+    Vector2 _keybindDragStart{};
+    Vector2 _keybindPanelAtDrag{};
 };

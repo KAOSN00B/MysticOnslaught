@@ -28,15 +28,19 @@ struct TouchControls
     Vector2 joystickAnchor{};
     Vector2 joystickStick{};
 
-    // ── Layout constants ──────────────────────────────────────────────────────
-    static constexpr float kJoyRadius      = 90.f;   // outer ring radius
-    static constexpr float kJoyDeadZone    = 14.f;
-    static constexpr int   kJoyDirections  = 8;
-    static constexpr float kBtnRadius      = 81.f;   // ATK hit + visual radius
-    static constexpr float kDashBtnRadius  = 65.f;   // DASH hit + visual radius
-    static constexpr float kBtnRightPad    = 140.f;  // ATK centre x from right edge
-    static constexpr float kBtnBotPad      = 160.f;  // ATK centre y from bottom edge
-    static constexpr float kDashBtnOffset  = 185.f;  // DASH is this far left of ATK
+    // ── Layout constants (tunable via HUD editor — Engine syncs from HUDConfig) ──
+    float kJoyRadius      = 90.f;   // outer ring radius
+    float kBtnRadius      = 81.f;   // ATK hit + visual radius
+    float kDashBtnRadius  = 65.f;   // DASH hit + visual radius
+    float kBtnRightPad    = 140.f;  // ATK centre x from right edge
+    float kBtnBotPad      = 160.f;  // ATK centre y from bottom edge
+    float kDashBtnOffset  = 185.f;  // DASH is this far left of ATK
+    float kAtkLabelFs     = 26.f;   // ATK button text size
+    float kDashLabelFs    = 22.f;   // DASH button text size
+
+    // ── Fixed constants ────────────────────────────────────────────────────────
+    static constexpr float kJoyDeadZone   = 14.f;
+    static constexpr int   kJoyDirections = 8;
 
     // ── API ───────────────────────────────────────────────────────────────────
     void Update(int screenW, int screenH);

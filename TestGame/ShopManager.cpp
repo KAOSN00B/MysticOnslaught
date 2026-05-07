@@ -296,7 +296,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
 
         if (_isUIEditorActive)
         {
-            constexpr int kVarCount = 24;
+            constexpr int kVarCount = 29;
             if (IsKeyPressed(KEY_UP))
                 _uiEditorSelectedIndex = (_uiEditorSelectedIndex - 1 + kVarCount) % kVarCount;
             if (IsKeyPressed(KEY_DOWN))
@@ -308,11 +308,14 @@ bool ShopManager::Update(Character& player, bool debugActive)
                 &_uiItemNameFs, &_uiItemDescFs, &_uiItemTextOffsetY, &_uiPriceFs,
                 &_uiDialNameFs, &_uiDialTextFs, &_uiPotionH, &_uiPotionFs,
                 &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs,
-                &_uiRarityFs, &_uiRarityPad
+                &_uiRarityFs, &_uiRarityPad,
+                &_uiZephScale, &_uiZephPosX, &_uiZephPosY,
+                &_uiDialPosX, &_uiDialPosY
             };
-            float step = (_uiEditorSelectedIndex == 1) ? 0.01f : 1.0f;
-            if (IsKeyPressed(KEY_RIGHT)) *vars[_uiEditorSelectedIndex] += step;
-            if (IsKeyPressed(KEY_LEFT))  *vars[_uiEditorSelectedIndex] -= step;
+            float step = (_uiEditorSelectedIndex == 1)  ? 0.01f :
+                         (_uiEditorSelectedIndex == 24) ? 0.1f  : 1.0f;
+            if (IsKeyDown(KEY_RIGHT)) *vars[_uiEditorSelectedIndex] += step;
+            if (IsKeyDown(KEY_LEFT))  *vars[_uiEditorSelectedIndex] -= step;
 
             if (IsKeyPressed(KEY_S))
             {
@@ -341,6 +344,11 @@ bool ShopManager::Update(Character& player, bool debugActive)
                 TraceLog(LOG_INFO, "_uiBtnFs           = %.2ff;", _uiBtnFs);
                 TraceLog(LOG_INFO, "_uiRarityFs        = %.2ff;", _uiRarityFs);
                 TraceLog(LOG_INFO, "_uiRarityPad       = %.2ff;", _uiRarityPad);
+                TraceLog(LOG_INFO, "_uiZephScale       = %.2ff;", _uiZephScale);
+                TraceLog(LOG_INFO, "_uiZephPosX        = %.2ff;", _uiZephPosX);
+                TraceLog(LOG_INFO, "_uiZephPosY        = %.2ff;", _uiZephPosY);
+                TraceLog(LOG_INFO, "_uiDialPosX        = %.2ff;", _uiDialPosX);
+                TraceLog(LOG_INFO, "_uiDialPosY        = %.2ff;", _uiDialPosY);
             }
 
             return false;   // block all shop interaction while editor is open
@@ -1199,17 +1207,40 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         int ntFs = (int)_uiDialNameFs;
         int dtFs = (int)_uiDialTextFs;
 
-        float totalH = ntFs + 4.f + dtFs;
-        float startY = innerMid - totalH * 0.5f;
-
-        int ntW = MeasureText(nameTag, ntFs);
-        DrawText(nameTag, (int)(shopX + iPad + 8.f), (int)(startY + 4.f), ntFs, BLACK);
-
         const char* dText = _dialogue.c_str();
+        int ntW = MeasureText(nameTag, ntFs);
+
+        DrawText(nameTag,
+            (int)_uiDialPosX,
+            (int)(_uiDialPosY - ntFs * 0.5f),
+            ntFs, BLACK);
         DrawText(dText,
-            (int)(shopX + iPad + 8.f + ntW + 10.f),
-            (int)(startY + 4.f + ntFs * 0.5f - dtFs * 0.5f),
+            (int)(_uiDialPosX + ntW + 10.f),
+            (int)(_uiDialPosY - dtFs * 0.5f),
             dtFs, BLACK);
+    }
+
+    // ── ZEPH PORTRAIT (dialogue box, bottom-right) ───────────────────────
+    if (_tex.zephIdle && _tex.zephIdle->id > 0)
+    {
+        constexpr int   kZFrames   = 6;
+        constexpr float kZLoop     = 3.f;
+        int zFrame = (int)(fmod(GetTime(), kZLoop) / (kZLoop / kZFrames));
+        zFrame = std::max(0, std::min(kZFrames - 1, zFrame));
+
+        const float frameW = (float)_tex.zephIdle->width  / (float)kZFrames;
+        const float frameH = (float)_tex.zephIdle->height;
+        Rectangle   zSrc   = { zFrame * frameW, 0.f, frameW, frameH };
+
+        constexpr float kBaseH = 180.f;
+        float dstH = kBaseH * _uiZephScale;
+        float dstW = dstH * (frameW / frameH);
+        Rectangle zDst = {
+            _uiZephPosX - dstW * 0.5f,
+            _uiZephPosY - dstH * 0.5f,
+            dstW, dstH
+        };
+        DrawTexturePro(*_tex.zephIdle, zSrc, zDst, {}, 0.f, WHITE);
     }
 
     // ── POTION STRIP ─────────────────────────────────────────────────────
@@ -1295,7 +1326,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     // ── UI Editor debug panel ─────────────────────────────────────────────
     if (debugActive && _isUIEditorActive)
     {
-        const char* varNames[24] = {
+        constexpr int kN = 29;
+        const char* varNames[kN] = {
             "0  Padding",
             "1  Left Panel W",
             "2  Title Font",
@@ -1320,43 +1352,62 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             "21 Btn Font",
             "22 Rarity Label Font",
             "23 Rarity Label Pad",
+            "24 Zeph Scale",
+            "25 Zeph Pos X",
+            "26 Zeph Pos Y",
+            "27 Dial Pos X",
+            "28 Dial Pos Y",
         };
-        const float* varPtrs[24] = {
+        const float* varPtrs[kN] = {
             &_uiPad, &_uiLeftPanelW, &_uiTitleFs, &_uiStatFs, &_uiSlotFs,
             &_uiSlotBtnFs, &_uiHpFs, &_uiTabH, &_uiBuyBtnH,
             &_uiItemNameFs, &_uiItemDescFs, &_uiItemTextOffsetY, &_uiPriceFs,
             &_uiDialNameFs, &_uiDialTextFs, &_uiPotionH, &_uiPotionFs,
             &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs,
-            &_uiRarityFs, &_uiRarityPad
+            &_uiRarityFs, &_uiRarityPad,
+            &_uiZephScale, &_uiZephPosX, &_uiZephPosY,
+            &_uiDialPosX, &_uiDialPosY
         };
 
-        constexpr float panW = 300.f, panH = 760.f;
+        // Two-column layout: left col = 0..half-1, right col = half..kN-1
+        constexpr int   kHalf  = (kN + 1) / 2;  // 15
+        constexpr float colW   = 310.f;
+        constexpr float colGap = 20.f;
+        constexpr float rowH   = 32.f;
+        const float panW = colW * 2.f + colGap;
+        const float panH = 40.f + kHalf * rowH;
         const float panX = sw * 0.5f - panW * 0.5f;
         const float panY = 10.f;
+
         DrawRectangle((int)panX, (int)panY, (int)panW, (int)panH, Fade(BLACK, 0.82f));
         DrawRectangleLines((int)panX, (int)panY, (int)panW, (int)panH, DARKGRAY);
+        // Divider between columns
+        DrawLine((int)(panX + colW + colGap * 0.5f), (int)(panY + 36.f),
+                 (int)(panX + colW + colGap * 0.5f), (int)(panY + panH - 4.f), DARKGRAY);
 
         DrawText("UI EDITOR  [9] close", (int)(panX + 8.f), (int)(panY + 6.f), 11, GRAY);
         DrawText("[UP/DOWN] select  [L/R] nudge  [S] export",
             (int)(panX + 8.f), (int)(panY + 20.f), 10, DARKGRAY);
 
-        const float rowH  = (panH - 40.f) / 24.f;
-        for (int i = 0; i < 24; i++)
+        for (int i = 0; i < kN; i++)
         {
-            float ry = panY + 38.f + i * rowH;
+            int   col = i / kHalf;
+            int   row = i % kHalf;
+            float cx  = panX + col * (colW + colGap);
+            float ry  = panY + 38.f + row * rowH;
             bool  sel = (i == _uiEditorSelectedIndex);
-            Color col = sel ? YELLOW : WHITE;
+            Color col_c = sel ? YELLOW : WHITE;
 
             if (sel)
-                DrawText("->", (int)(panX + 4.f), (int)(ry + rowH * 0.5f - 8.f), 14, YELLOW);
+                DrawText("->", (int)(cx + 4.f), (int)(ry + rowH * 0.5f - 7.f), 13, YELLOW);
 
             DrawText(varNames[i],
-                (int)(panX + 28.f), (int)(ry + rowH * 0.5f - 8.f), 14, col);
+                (int)(cx + 26.f), (int)(ry + rowH * 0.5f - 7.f), 13, col_c);
 
             const char* valStr = TextFormat("%.2f", *varPtrs[i]);
-            int valW = MeasureText(valStr, 14);
+            int valW = MeasureText(valStr, 13);
             DrawText(valStr,
-                (int)(panX + panW - valW - 8.f), (int)(ry + rowH * 0.5f - 8.f), 14, col);
+                (int)(cx + colW - valW - 6.f), (int)(ry + rowH * 0.5f - 7.f), 13, col_c);
         }
     }
 }

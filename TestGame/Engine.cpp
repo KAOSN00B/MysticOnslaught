@@ -1962,16 +1962,11 @@ void Engine::DrawWorld()
 void Engine::DrawHUD()
 {
     {
-    static constexpr float kNewBarW   = 400.f;
-    static constexpr float kNewBarH   = 28.f;
-    static constexpr float kNewBarGap = 8.f;
-    static constexpr float kNewBotPad = 12.f;
-    static constexpr float kNewTopPad = 18.f;
+    const HUDConfig& hc = _hudCfg;
 
-    const float hpBarY   = kNewTopPad;
-    const float manaBarY = hpBarY + kNewBarH + kNewBarGap;
-    const float slotY    = (float)GetScreenHeight() - kNewBotPad - 80.f;
-    const float barX     = (float)GetScreenWidth() / 2.f - kNewBarW / 2.f;
+    const float hpBarY   = hc.barTopPad;
+    const float manaBarY = hpBarY + hc.barH + hc.barGap;
+    const float barX     = (float)GetScreenWidth() / 2.f - hc.barW / 2.f;
 
     auto drawLabelBox = [&](const char* text, float x, float y, int fontSize, Color textColor)
     {
@@ -1984,11 +1979,13 @@ void Engine::DrawHUD()
         DrawText(text, (int)x, (int)y, fontSize, textColor);
     };
 
-    drawLabelBox(("Gold: " + std::to_string(_player.GetGold())).c_str(), 20.f, 16.f, 28, GOLD);
-    drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20.f, 58.f, 28, RAYWHITE);
+    drawLabelBox(("Gold: " + std::to_string(_player.GetGold())).c_str(),
+        hc.goldX, hc.goldY, (int)hc.goldFs, GOLD);
+    drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(),
+        hc.enemiesX, hc.enemiesY, (int)hc.enemiesFs, RAYWHITE);
 
     {
-        bool isBoss = (_currentRoomType == RoomType::Boss);
+        bool isBoss  = (_currentRoomType == RoomType::Boss);
         bool isElite = (_currentRoomType == RoomType::Elite);
         const char* roomTypeSuffix =
             isBoss    ? "  BOSS" :
@@ -1998,9 +1995,11 @@ void Engine::DrawHUD()
             (_currentRoomType == RoomType::Store)    ? "  SHOP" : "";
         const char* roomLabel = TextFormat("Act %d  Room %d%s",
             _currentAct, _currentRoom, roomTypeSuffix);
-        int roomLabelW = MeasureText(roomLabel, 32);
+        int roomLabelW = MeasureText(roomLabel, (int)hc.actFs);
         Color labelColor = isBoss ? ORANGE : (isElite ? Color{255,140,0,255} : RAYWHITE);
-        drawLabelBox(roomLabel, (float)(GetScreenWidth() - roomLabelW - 130), 18.f, 32, labelColor);
+        drawLabelBox(roomLabel,
+            (float)(GetScreenWidth() - roomLabelW - (int)hc.actOffsetX),
+            hc.actY, (int)hc.actFs, labelColor);
     }
 
     {
@@ -2011,77 +2010,68 @@ void Engine::DrawHUD()
 
         if (hpPct <= 0.30f)
         {
-            float pulse      = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
-            float exps[]     = { 4.f, 9.f, 15.f };
-            float alphas[]   = { 0.45f, 0.28f, 0.13f };
+            float pulse    = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
+            float exps[]   = { 4.f, 9.f, 15.f };
+            float alphas[] = { 0.45f, 0.28f, 0.13f };
             for (int i = 0; i < 3; i++)
             {
                 float e = exps[i];
                 DrawRectangleRounded(
-                    { barX - e, hpBarY - e, kNewBarW + e * 2.f, kNewBarH + e * 2.f },
+                    { barX - e, hpBarY - e, hc.barW + e * 2.f, hc.barH + e * 2.f },
                     0.35f, 6, Fade(RED, alphas[i] * pulse));
             }
         }
 
-        DrawRectangleRounded({ barX, hpBarY, kNewBarW * hpPct, kNewBarH }, 0.3f, 6, fillColor);
-        DrawRectangleRoundedLines({ barX, hpBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+        DrawRectangleRounded({ barX, hpBarY, hc.barW * hpPct, hc.barH }, 0.3f, 6, fillColor);
+        DrawRectangleRoundedLines({ barX, hpBarY, hc.barW, hc.barH }, 0.3f, 6, Fade(WHITE, 0.25f));
 
+        int lFs    = (int)hc.barLabelFs;
         const char* hpLabel = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
-        int labelW = MeasureText(hpLabel, 18);
+        int labelW = MeasureText(hpLabel, lFs);
         DrawText(hpLabel,
-            (int)(barX + kNewBarW / 2.f - labelW / 2.f),
-            (int)(hpBarY + kNewBarH / 2.f - 9.f),
-            18, BLACK);
+            (int)(barX + hc.barW / 2.f - labelW / 2.f),
+            (int)(hpBarY + hc.barH / 2.f - lFs / 2.f),
+            lFs, BLACK);
     }
 
     {
-        int curMana = _player.GetMana();
-        int maxMana = _player.GetMaxMana();
+        int curMana  = _player.GetMana();
+        int maxMana  = _player.GetMaxMana();
         float manaPct = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
         static const Color kManaFill = { 60, 120, 255, 230 };
 
-        DrawRectangleRounded({ barX, manaBarY, kNewBarW * manaPct, kNewBarH }, 0.3f, 6, kManaFill);
-        DrawRectangleRoundedLines({ barX, manaBarY, kNewBarW, kNewBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+        DrawRectangleRounded({ barX, manaBarY, hc.barW * manaPct, hc.barH }, 0.3f, 6, kManaFill);
+        DrawRectangleRoundedLines({ barX, manaBarY, hc.barW, hc.barH }, 0.3f, 6, Fade(WHITE, 0.25f));
 
+        int lFs = (int)hc.barLabelFs;
         const char* manaLabel = TextFormat("MP  %d / %d", curMana, maxMana);
-        int manaLabelW = MeasureText(manaLabel, 18);
+        int manaLabelW = MeasureText(manaLabel, lFs);
         DrawText(manaLabel,
-            (int)(barX + kNewBarW / 2.f - manaLabelW / 2.f),
-            (int)(manaBarY + kNewBarH / 2.f - 9.f),
-            18, BLACK);
+            (int)(barX + hc.barW / 2.f - manaLabelW / 2.f),
+            (int)(manaBarY + hc.barH / 2.f - lFs / 2.f),
+            lFs, BLACK);
     }
 
-    // Elite mechanic label (persistent, top-right under room label)
     if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
     {
         static constexpr const char* kMechanicNames[] = {
-            "ARENA CONSTRICTION",
-            "INVULNERABILITY LINKS",
-            "PERMANENT ENRAGE",
-            "GAP-CLOSER LEAP",
-            "ROOM HAZARDS"
+            "ARENA CONSTRICTION", "INVULNERABILITY LINKS", "PERMANENT ENRAGE",
+            "GAP-CLOSER LEAP",    "ROOM HAZARDS"
         };
         static constexpr Color kMechanicColors[] = {
-            Color{220, 40, 200, 255},   // 0 cage — magenta
-            Color{180, 100, 255, 255},  // 1 bodyguard — purple
-            Color{255, 60,  60, 255},   // 2 enrage — red
-            Color{255,180,  60, 255},   // 3 leap — orange
-            Color{255,220,  80, 255},   // 4 hazards — yellow
+            Color{220, 40, 200, 255}, Color{180, 100, 255, 255}, Color{255, 60,  60, 255},
+            Color{255,180,  60, 255}, Color{255,220,  80, 255},
         };
         const char* mechLabel = kMechanicNames[_eliteMechanic];
         Color mechColor = kMechanicColors[_eliteMechanic];
         int mw = MeasureText(mechLabel, 20);
-        drawLabelBox(mechLabel,
-            (float)(GetScreenWidth() - mw - 130), 58.f, 20, mechColor);
+        drawLabelBox(mechLabel, (float)(GetScreenWidth() - mw - (int)hc.actOffsetX), 58.f, 20, mechColor);
     }
 
-    // Elite enrage warning banner
     if (_currentRoomType == RoomType::Elite && _eliteEnrageWarningTimer > 0.f)
     {
         const float sw = (float)GetScreenWidth();
         const float sh = (float)GetScreenHeight();
-
-        // Fade in over first 0.5s, hold, fade out over last 0.5s
         float alpha = 1.f;
         if (_eliteEnrageWarningTimer > kEliteEnrageWarningDuration - 0.5f)
             alpha = (kEliteEnrageWarningDuration - _eliteEnrageWarningTimer) / 0.5f;
@@ -2091,24 +2081,14 @@ void Engine::DrawHUD()
 
         const char* line1 = "ELITE ENCOUNTER";
         const char* line2 = "CONDITION: ENRAGED  |  FAST & LETHAL";
-
-        const int sz1 = 48;
-        const int sz2 = 28;
+        const int sz1 = 48, sz2 = 28;
         const float bannerH = 120.f;
         const float bannerY = sh * 0.38f;
-
-        // Dark semi-transparent background
         DrawRectangle(0, (int)bannerY, (int)sw, (int)bannerH, Fade(Color{20,0,0,220}, alpha));
         DrawRectangle(0, (int)bannerY, (int)sw, 3, Fade(Color{200,0,0,255}, alpha));
         DrawRectangle(0, (int)(bannerY + bannerH - 3), (int)sw, 3, Fade(Color{200,0,0,255}, alpha));
-
-        int w1 = MeasureText(line1, sz1);
-        int w2 = MeasureText(line2, sz2);
-
-        DrawText(line1, (int)(sw / 2.f - w1 / 2.f), (int)(bannerY + 14.f), sz1,
-                 Fade(Color{255, 60, 60, 255}, alpha));
-        DrawText(line2, (int)(sw / 2.f - w2 / 2.f), (int)(bannerY + 14.f + sz1 + 8.f), sz2,
-                 Fade(Color{255, 180, 60, 255}, alpha));
+        DrawText(line1, (int)(sw/2.f - MeasureText(line1,sz1)/2.f), (int)(bannerY+14.f), sz1, Fade(Color{255,60,60,255},alpha));
+        DrawText(line2, (int)(sw/2.f - MeasureText(line2,sz2)/2.f), (int)(bannerY+14.f+sz1+8.f), sz2, Fade(Color{255,180,60,255},alpha));
     }
 
     if (_debug.IsActive())
@@ -2116,29 +2096,140 @@ void Engine::DrawHUD()
 
     if (_touchModeActive)
     {
-            DrawTouchAbilityArc();
-            _touch.Draw(GetScreenWidth(), GetScreenHeight());
+        DrawTouchAbilityArc();
+        _touch.Draw(GetScreenWidth(), GetScreenHeight());
 
-        // Pause button — top-right corner, above the wave label
-        {
-            static constexpr float kPauseW = 90.f;
-            static constexpr float kPauseH = 48.f;
-            static constexpr float kPausePad = 14.f;
-            Rectangle pauseRec{ (float)_windowWidth - kPauseW - kPausePad, kPausePad, kPauseW, kPauseH };
-            DrawRectangleRounded(pauseRec, 0.22f, 6, Fade(BLACK, 0.55f));
-            DrawRectangleRoundedLines(pauseRec, 0.22f, 6, Fade(WHITE, 0.40f));
-            int pw = MeasureText("II", 26);
-            DrawText("II",
-                (int)(pauseRec.x + pauseRec.width / 2.f - pw / 2.f),
-                (int)(pauseRec.y + pauseRec.height / 2.f - 13.f),
-                26, RAYWHITE);
-        }
+        // Pause button
+        Rectangle pauseRec{ (float)_windowWidth - hc.touchPauseW - hc.touchPausePad,
+                             hc.touchPausePad, hc.touchPauseW, hc.touchPauseH };
+        DrawRectangleRounded(pauseRec, 0.22f, 6, Fade(BLACK, 0.55f));
+        DrawRectangleRoundedLines(pauseRec, 0.22f, 6, Fade(WHITE, 0.40f));
+        int pw = MeasureText("II", 26);
+        DrawText("II",
+            (int)(pauseRec.x + pauseRec.width / 2.f - pw / 2.f),
+            (int)(pauseRec.y + pauseRec.height / 2.f - 13.f),
+            26, RAYWHITE);
     }
     else
     {
         DrawAbilityBar();
     }
     DrawMiniMap();
+
+    // ── HUD debug editor ──────────────────────────────────────────────────
+    if (IsKeyPressed(KEY_NINE))
+        _hudEditorActive = !_hudEditorActive;
+
+    if (_hudEditorActive)
+    {
+        constexpr int kN = 43;
+        const char* varNames[kN] = {
+            "0  Bar Width",       "1  Bar Height",      "2  Bar Gap",
+            "3  Bar Top Pad",     "4  Bar Label Font",
+            "5  Gold X",          "6  Gold Y",          "7  Gold Font",
+            "8  Enemies X",       "9  Enemies Y",       "10 Enemies Font",
+            "11 Act Offset X",    "12 Act Y",            "13 Act Font",
+            "14 Mini X",          "15 Mini Y",           "16 Mini Width",
+            "17 Dot Boss",        "18 Dot Elite",        "19 Dot Enemy",
+            "20 Dot Prop",        "21 Dot Pickup",       "22 Dot Player",
+            "23 Slot Size",       "24 Slot Gap",         "25 Slot Bot Pad",
+            "26 Key Label Font",  "27 Name Font",
+            "28 Joy Radius",      "29 Atk Radius",       "30 Dash Radius",
+            "31 Atk Pad Right",   "32 Atk Pad Bot",      "33 Dash Offset",
+            "34 Pause Width",     "35 Pause Height",     "36 Pause Pad",
+            "37 Atk Label Font",  "38 Dash Label Font",
+            "39 Touch Slot Size", "40 Touch Slot Gap",
+            "41 Slot Right Pad",  "42 Slot Y Offset",
+        };
+        float* vars[kN] = {
+            &_hudCfg.barW,        &_hudCfg.barH,        &_hudCfg.barGap,
+            &_hudCfg.barTopPad,   &_hudCfg.barLabelFs,
+            &_hudCfg.goldX,       &_hudCfg.goldY,       &_hudCfg.goldFs,
+            &_hudCfg.enemiesX,    &_hudCfg.enemiesY,    &_hudCfg.enemiesFs,
+            &_hudCfg.actOffsetX,  &_hudCfg.actY,        &_hudCfg.actFs,
+            &_hudCfg.miniX,       &_hudCfg.miniY,       &_hudCfg.miniW,
+            &_hudCfg.miniDotBoss, &_hudCfg.miniDotElite,&_hudCfg.miniDotEnemy,
+            &_hudCfg.miniDotProp, &_hudCfg.miniDotPickup,&_hudCfg.miniDotPlayer,
+            &_hudCfg.slotSz,      &_hudCfg.slotGap,     &_hudCfg.slotBotPad,
+            &_hudCfg.slotKeyFs,   &_hudCfg.slotNameFs,
+            &_hudCfg.touchJoyR,   &_hudCfg.touchAtkR,   &_hudCfg.touchDashR,
+            &_hudCfg.touchAtkPadR,&_hudCfg.touchAtkPadB,&_hudCfg.touchDashOffset,
+            &_hudCfg.touchPauseW, &_hudCfg.touchPauseH, &_hudCfg.touchPausePad,
+            &_hudCfg.touchAtkFs,  &_hudCfg.touchDashFs,
+            &_hudCfg.touchSlotSz, &_hudCfg.touchSlotGap,
+            &_hudCfg.touchSlotRightPad, &_hudCfg.touchSlotYOff,
+        };
+
+        if (IsKeyPressed(KEY_UP))
+            _hudEditorSelIdx = (_hudEditorSelIdx - 1 + kN) % kN;
+        if (IsKeyPressed(KEY_DOWN))
+            _hudEditorSelIdx = (_hudEditorSelIdx + 1) % kN;
+        if (IsKeyDown(KEY_RIGHT)) *vars[_hudEditorSelIdx] += 1.f;
+        if (IsKeyDown(KEY_LEFT))  *vars[_hudEditorSelIdx] -= 1.f;
+
+        if (IsKeyPressed(KEY_S))
+        {
+            TraceLog(LOG_INFO, "=== HUD Editor Export ===");
+            TraceLog(LOG_INFO, "barW=%g barH=%g barGap=%g barTopPad=%g barLabelFs=%g",
+                hc.barW, hc.barH, hc.barGap, hc.barTopPad, hc.barLabelFs);
+            TraceLog(LOG_INFO, "goldX=%g goldY=%g goldFs=%g", hc.goldX, hc.goldY, hc.goldFs);
+            TraceLog(LOG_INFO, "enemiesX=%g enemiesY=%g enemiesFs=%g", hc.enemiesX, hc.enemiesY, hc.enemiesFs);
+            TraceLog(LOG_INFO, "actOffsetX=%g actY=%g actFs=%g", hc.actOffsetX, hc.actY, hc.actFs);
+            TraceLog(LOG_INFO, "miniX=%g miniY=%g miniW=%g", hc.miniX, hc.miniY, hc.miniW);
+            TraceLog(LOG_INFO, "miniDots: boss=%g elite=%g enemy=%g prop=%g pickup=%g player=%g",
+                hc.miniDotBoss, hc.miniDotElite, hc.miniDotEnemy, hc.miniDotProp, hc.miniDotPickup, hc.miniDotPlayer);
+            TraceLog(LOG_INFO, "slotSz=%g slotGap=%g slotBotPad=%g slotKeyFs=%g slotNameFs=%g",
+                hc.slotSz, hc.slotGap, hc.slotBotPad, hc.slotKeyFs, hc.slotNameFs);
+            TraceLog(LOG_INFO, "touchJoyR=%g atkR=%g dashR=%g atkPadR=%g atkPadB=%g dashOff=%g",
+                hc.touchJoyR, hc.touchAtkR, hc.touchDashR, hc.touchAtkPadR, hc.touchAtkPadB, hc.touchDashOffset);
+            TraceLog(LOG_INFO, "pauseW=%g pauseH=%g pausePad=%g atkFs=%g dashFs=%g",
+                hc.touchPauseW, hc.touchPauseH, hc.touchPausePad, hc.touchAtkFs, hc.touchDashFs);
+            TraceLog(LOG_INFO, "touchSlotSz=%g touchSlotGap=%g touchSlotRightPad=%g touchSlotYOff=%g",
+                hc.touchSlotSz, hc.touchSlotGap, hc.touchSlotRightPad, hc.touchSlotYOff);
+            TraceLog(LOG_INFO, "touchSlotOffsets: [0]=(%.1f,%.1f) [1]=(%.1f,%.1f) [2]=(%.1f,%.1f) [3]=(%.1f,%.1f)",
+                _touchSlotOffset[0].x, _touchSlotOffset[0].y,
+                _touchSlotOffset[1].x, _touchSlotOffset[1].y,
+                _touchSlotOffset[2].x, _touchSlotOffset[2].y,
+                _touchSlotOffset[3].x, _touchSlotOffset[3].y);
+        }
+
+        // Two-column panel
+        constexpr int   kHalf = (kN + 1) / 2;  // 20
+        constexpr float colW  = 310.f;
+        constexpr float colGap= 20.f;
+        constexpr float rowH  = 30.f;
+        const float panW = colW * 2.f + colGap;
+        const float panH = 40.f + kHalf * rowH;
+        const float sw   = (float)GetScreenWidth();
+        const float panX = sw * 0.5f - panW * 0.5f;
+        const float panY = 10.f;
+
+        DrawRectangle((int)panX, (int)panY, (int)panW, (int)panH, Fade(BLACK, 0.82f));
+        DrawRectangleLines((int)panX, (int)panY, (int)panW, (int)panH, DARKGRAY);
+        DrawLine((int)(panX+colW+colGap*0.5f),(int)(panY+36.f),
+                 (int)(panX+colW+colGap*0.5f),(int)(panY+panH-4.f), DARKGRAY);
+        DrawText("HUD EDITOR  [9] close", (int)(panX+8.f),(int)(panY+6.f),11,GRAY);
+        DrawText("[UP/DOWN] sel  [L/R] nudge  [S] export  |  drag touch slots with mouse",
+            (int)(panX+8.f),(int)(panY+20.f),10,DARKGRAY);
+
+        for (int i = 0; i < kN; i++)
+        {
+            int   col  = i / kHalf;
+            int   row  = i % kHalf;
+            float cx   = panX + col * (colW + colGap);
+            float ry   = panY + 38.f + row * rowH;
+            bool  sel  = (i == _hudEditorSelIdx);
+            Color col_c= sel ? YELLOW : WHITE;
+
+            if (sel)
+                DrawText("->", (int)(cx+4.f), (int)(ry+rowH*0.5f-7.f), 13, YELLOW);
+            DrawText(varNames[i], (int)(cx+26.f), (int)(ry+rowH*0.5f-7.f), 13, col_c);
+
+            const char* valStr = TextFormat("%.1f", *vars[i]);
+            int valW = MeasureText(valStr, 13);
+            DrawText(valStr, (int)(cx+colW-valW-6.f), (int)(ry+rowH*0.5f-7.f), 13, col_c);
+        }
+    }
 
     }
     return;
@@ -2271,13 +2362,15 @@ void Engine::DrawHUD()
 void Engine::DrawAbilityBar()
 {
     {
-    const int totalSlots = _player.GetMaxAbilitySlots();
-    const float slotSize = 80.f;
-    const float slotGap = 10.f;
-    static constexpr float kNewBotPad = 12.f;
-    const float slotY = (float)GetScreenHeight() - kNewBotPad - slotSize;
-    const float totalW = totalSlots * slotSize + (totalSlots - 1) * slotGap;
-    const float startX = GetScreenWidth() / 2.f - totalW / 2.f;
+    const HUDConfig& hc = _hudCfg;
+    const int   totalSlots = _player.GetMaxAbilitySlots();
+    const float slotSize   = hc.slotSz;
+    const float slotGap    = hc.slotGap;
+    const float slotY      = (float)GetScreenHeight() - hc.slotBotPad - slotSize;
+    const float totalW     = totalSlots * slotSize + (totalSlots - 1) * slotGap;
+    const float startX     = GetScreenWidth() / 2.f - totalW / 2.f;
+    const int   keyFs      = (int)hc.slotKeyFs;
+    const int   nameFs     = (int)hc.slotNameFs;
 
     Vector2 mouse = GetMousePosition();
 
@@ -2290,7 +2383,7 @@ void Engine::DrawAbilityBar()
         Rectangle slot{ x, slotY, slotSize, slotSize };
         bool hovered = !isEmpty && CheckCollisionPointRec(mouse, slot);
 
-        Color bgColor = isEmpty ? Fade(BLACK, 0.30f) : (hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
+        Color bgColor     = isEmpty ? Fade(BLACK, 0.30f) : (hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
         Color borderColor = isEmpty ? Fade(WHITE, 0.12f) :
             hovered ? Fade(GOLD, 0.70f) :
             canCast ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
@@ -2300,12 +2393,12 @@ void Engine::DrawAbilityBar()
         if (isEmpty)
         {
             DrawText(GetKeyName(_player.GetAbilityKey(i)),
-                (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.25f));
+                (int)(x + 6.f), (int)(slotY + 6.f), keyFs, Fade(WHITE, 0.25f));
             continue;
         }
 
         DrawText(GetKeyName(_player.GetAbilityKey(i)),
-            (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.6f));
+            (int)(x + 6.f), (int)(slotY + 6.f), keyFs, Fade(WHITE, 0.6f));
 
         if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _player.TriggerAbilityCast(i);
@@ -2316,32 +2409,32 @@ void Engine::DrawAbilityBar()
         else if (ability == AbilityType::ElectricSpread || ability == AbilityType::ElectricBolt || ability == AbilityType::ElectricUltimate)
             iconTex = &_abilityIconElectricTex;
 
-        Color iconTint = canCast ? WHITE : Fade(WHITE, 0.35f);
+        Color iconTint    = canCast ? WHITE : Fade(WHITE, 0.35f);
         float maxIconSize = slotSize * 0.55f;
-        float iconScale = std::min(maxIconSize / (float)iconTex->width, maxIconSize / (float)iconTex->height);
-        float iw = iconTex->width * iconScale;
+        float iconScale   = std::min(maxIconSize / (float)iconTex->width, maxIconSize / (float)iconTex->height);
+        float iw = iconTex->width  * iconScale;
         float ih = iconTex->height * iconScale;
         float cx = x + slotSize * 0.5f;
         float cy = slotY + slotSize * 0.42f;
         DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
 
         const char* abilityName = GetAbilityName(ability);
-        int nameW = MeasureText(abilityName, 12);
+        int nameW = MeasureText(abilityName, nameFs);
         DrawText(abilityName,
             (int)(x + slotSize / 2.f - nameW / 2.f),
-            (int)(slotY + slotSize - 18.f),
-            12, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
+            (int)(slotY + slotSize - nameFs - 6.f),
+            nameFs, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
 
         int abilityLv = _player.GetAbilityLevel(ability);
         if (abilityLv > 1)
         {
             const char* badge = TextFormat("Lv%d", abilityLv);
-            int badgeW = MeasureText(badge, 12);
+            int badgeW = MeasureText(badge, nameFs);
             Color badgeColor = (abilityLv >= 3) ? GOLD : Fade(SKYBLUE, 0.9f);
             DrawText(badge,
                 (int)(x + slotSize - badgeW - 4.f),
-                (int)(slotY + slotSize - 16.f),
-                12, badgeColor);
+                (int)(slotY + slotSize - nameFs - 4.f),
+                nameFs, badgeColor);
         }
     }
 
@@ -3057,15 +3150,17 @@ void Engine::DrawMap()
 
     // ── Header — centred over the node graph area ─────────────────────────
     // Graph spans 30–76% of the screen; journey panel occupies 78–97%.
-    const float mapCentreX = sw * 0.53f;
+    const float mapCentreX = sw * _mapHeaderX;
     std::string header = "Act " + std::to_string(_currentAct)
                        + "  -  " + GetBiomeName(actBiome);
-    int hSz = 42;
+    int hSz = (int)_mapHeaderFs;
     DrawText(header.c_str(),
-        (int)(mapCentreX - MeasureText(header.c_str(), hSz) / 2.f), 28, hSz, Color{255, 214, 102, 255});
+        (int)(mapCentreX - MeasureText(header.c_str(), hSz) / 2.f), (int)_mapHeaderY, hSz, Color{255, 214, 102, 255});
     const char* sub = "Choose your path";
+    const float subCentreX = sw * _mapSubX;
+    const int subFs = (int)_mapSubFs;
     DrawText(sub,
-        (int)(mapCentreX - MeasureText(sub, 26) / 2.f), 78, 26,
+        (int)(subCentreX - MeasureText(sub, subFs) / 2.f), (int)_mapSubY, subFs,
         Color{206, 242, 255, 210});
 
     if (_actMap.empty()) return;
@@ -3237,11 +3332,11 @@ void Engine::DrawMap()
 
     // ── Right panel: journey history ──────────────────────────────────────
     {
-        const float jX  = sw * 0.785f;
+        const float jX  = sw * _mapJourneyX;
         const float jY  = 98.f;
         const float jW  = sw - jX - 48.f;
         const float jH  = sh - jY - 98.f;
-        const float pad = 22.f;
+        const float pad = _mapPad;
 
         DrawRectangleRounded({ jX, jY, jW, jH }, 0.05f, 8,
             Fade(Color{12, 71, 84, 255}, 0.92f));
@@ -3249,87 +3344,114 @@ void Engine::DrawMap()
             Fade(Color{130, 235, 255, 255}, 0.30f));
 
         float cy = jY + pad;
-        DrawText("JOURNEY", (int)(jX + pad), (int)cy, 30, Color{255, 214, 102, 255});
-        cy += 30.f + 6.f;
+        DrawText("JOURNEY", (int)(jX + pad), (int)cy, (int)_mapTitleFs, Color{255, 214, 102, 255});
+        cy += _mapTitleFs + 6.f;
         DrawLineEx({ jX + pad, cy }, { jX + jW - pad, cy }, 1.f,
             Fade(Color{130, 235, 255, 255}, 0.55f));
         cy += 14.f;
 
-        // Visited-room squares — one per completed node, coloured by room type
-        const float sqSz  = 34.f;
-        const float sqGap = 10.f;
-        const float sqRowW = jW - pad * 2.f;
-        (void)sqRowW;
-        float sx = jX + pad;
-
+        // Visited-room tiles — one per completed node, stamped with the room
+        // icon and crossed with a red diagonal slash.
         int drawn = 0;
         for (const auto& node : _actMap)
-        {
-            if (!node.completed) continue;
+            if (node.completed) drawn++;
 
-            Color col = nodeColor(node.type);
-            DrawRectangleRounded({ sx, cy, sqSz, sqSz }, 0.25f, 4, Fade(col, 0.85f));
-            DrawRectangleRoundedLines({ sx, cy, sqSz, sqSz }, 0.25f, 4, col);
+        int maxJourneySlots = 0;
+        for (const auto& node : _actMap)
+            maxJourneySlots = std::max(maxJourneySlots, node.row + 1);
+        maxJourneySlots = std::max(1, maxJourneySlots);
 
-            sx += sqSz + sqGap;
-            drawn++;
-            if (sx + sqSz > jX + jW - pad)
-            {
-                sx = jX + pad;
-                cy += sqSz + sqGap;
-            }
-        }
+        const float baseGap = _mapSqGap;
+        const float availW = jW - pad * 2.f;
+        float fitSqSz = _mapSqSz;
+        fitSqSz = std::min(fitSqSz, (availW - baseGap * (maxJourneySlots - 1)) / (float)maxJourneySlots);
+        fitSqSz = std::max(20.f, fitSqSz);
+
+        float fitGap = (maxJourneySlots > 1)
+            ? std::min(baseGap, std::max(4.f, (availW - fitSqSz * maxJourneySlots) / (float)(maxJourneySlots - 1)))
+            : 0.f;
+        const float historyRowH = fitSqSz;
+        const float historyStartX = jX + pad;
 
         if (drawn == 0)
         {
             DrawText("No rooms cleared yet",
-                (int)(jX + pad), (int)cy, 19, Fade(RAYWHITE, 0.45f));
-            cy += 24.f;
+                (int)historyStartX, (int)(cy + historyRowH * 0.5f - _mapNoRoomsFs * 0.5f),
+                (int)_mapNoRoomsFs, RAYWHITE);
         }
         else
         {
-            cy += sqSz + sqGap + 6.f;
+            float sx = historyStartX;
+
+            for (const auto& node : _actMap)
+            {
+                if (!node.completed) continue;
+
+                Color col = nodeColor(node.type);
+                Rectangle tile{ sx, cy, fitSqSz, fitSqSz };
+                DrawRectangleRounded(tile, 0.25f, 4, Fade(BLACK, 0.92f));
+                DrawRectangleRoundedLines(tile, 0.25f, 4, Fade(col, 0.95f));
+
+                if (Texture2D* icon = roomIcon(node.type); icon && icon->id > 0)
+                {
+                    const float iconPad = std::max(4.f, fitSqSz * 0.12f);
+                    Rectangle src = { 0.f, 0.f, (float)icon->width, (float)icon->height };
+                    Rectangle dst = {
+                        sx + iconPad,
+                        cy + iconPad,
+                        fitSqSz - iconPad * 2.f,
+                        fitSqSz - iconPad * 2.f
+                    };
+                    DrawTexturePro(*icon, src, dst, {}, 0.f, WHITE);
+                }
+
+                const float slashPad = std::max(3.f, fitSqSz * 0.10f);
+                DrawLineEx(
+                    { sx + slashPad,               cy + fitSqSz - slashPad },
+                    { sx + fitSqSz - slashPad,     cy + slashPad },
+                    std::max(3.f, fitSqSz * 0.08f),
+                    Color{ 215, 55, 55, 255 });
+
+                sx += fitSqSz + fitGap;
+            }
         }
 
+        cy += historyRowH + 12.f;
+
         cy += 16.f;
-        DrawText(TextFormat("Rooms: %d", drawn),
-            (int)(jX + pad), (int)cy, 23, Color{188, 228, 238, 200});
-        cy += 32.f;
         DrawText(TextFormat("Gold:  %d", _player.GetGold()),
-            (int)(jX + pad), (int)cy, 23, Color{255, 214, 102, 220});
+            (int)(jX + pad), (int)cy, (int)_mapRoomsFs, Color{255, 214, 102, 220});
 
-        // ── Biome progress diamonds — fixed zone: bottom 56% of the panel ──
+        // ── Biome progress diamonds — size-aware zone that lifts upward as
+        // the diamonds get larger so the divider and label make room ─────────
         {
-            // Zone boundaries derived purely from the panel box
-            const float divY    = jY + jH * 0.44f;          // divider between rooms and diamonds
-            const float zoneTop = divY + 26.f;               // below "BIOMES" label
-            const float zoneBot = jY + jH - pad;             // bottom of panel minus padding
-            const float zoneH   = zoneBot - zoneTop;
+            const float minDivY = cy + _mapRoomsFs + 20.f;
+            const float zoneBot = jY + jH - pad;
+            const float wantedHalf = _mapDiamondSz;
+            const float wantedSlot = wantedHalf * 2.35f;
+            const float wantedZoneH = wantedSlot * (float)kTotalActs;
+            const float wantedHeadH = _mapBiomeTitleFs + 22.f;
+            const float divY = std::max(minDivY, zoneBot - wantedZoneH - wantedHeadH);
+            const float zoneTop = divY + wantedHeadH;
+            const float zoneH   = std::max(1.f, zoneBot - zoneTop);
 
-            // Divider + section label
             DrawLineEx({ jX + pad, divY }, { jX + jW - pad, divY }, 1.f,
                 Fade(Color{130, 235, 255, 255}, 0.30f));
-            DrawText("BIOMES", (int)(jX + pad), (int)(divY + 4.f), 18,
+            DrawText("BIOMES", (int)(jX + pad), (int)(divY + 4.f), (int)_mapBiomeTitleFs,
                 Color{255, 214, 102, 200});
 
-            // Each act gets an equal slot; diamond is centered inside its slot
             const float slot   = zoneH / (float)kTotalActs;
-
-            // Half-size: fit within slot height and panel width
-            const float halfH  = slot * 0.38f;
             const float halfW  = (jW - pad * 2.f) * 0.42f;
-            const float half   = std::min(halfH, halfW);
-
+            const float half   = std::min(_mapDiamondSz, std::min(halfW, slot * 0.45f));
             const float dcx    = jX + jW * 0.5f;
 
-            // Diamond draw helper — state: 0=visited, 1=current, 2=future
             auto drawDiamond = [&](float cx, float dcy, float h, const char* label, int state)
             {
                 if (state != 0)
                 {
                     Color fill = (state == 1)
-                        ? Color{255, 185, 30, 230}   // current — gold
-                        : Color{12,  12,  20, 220};  // future  — near-black
+                        ? Color{255, 185, 30, 230}
+                        : Color{12,  12,  20, 220};
                     DrawTriangle({cx, dcy - h}, {cx + h, dcy}, {cx - h, dcy}, fill);
                     DrawTriangle({cx - h, dcy}, {cx + h, dcy}, {cx, dcy + h}, fill);
                 }
@@ -3344,8 +3466,8 @@ void Engine::DrawMap()
                 DrawLineEx({cx,     dcy + h}, {cx - h, dcy    }, thick, border);
                 DrawLineEx({cx - h, dcy    }, {cx,     dcy - h}, thick, border);
 
-                int fs = (int)(h * 0.40f);
-                fs = std::max(9, std::min(fs, 16));
+                int fs = (int)(h * _mapBiomeLabelFs);
+                fs = std::max(9, std::min(fs, 24));
                 Color tc = (state == 0) ? Color{110, 110, 120, 180}
                          : (state == 1) ? Color{255, 245, 190, 255}
                                         : Color{ 70,  70,  85, 200};
@@ -3355,9 +3477,8 @@ void Engine::DrawMap()
 
             for (int i = 0; i < kTotalActs; i++)
             {
-                // i=0 → act 5 at top; i=4 → act 1 at bottom
-                int   act  = kTotalActs - i;
-                float dcy  = zoneTop + (i + 0.5f) * slot;
+                int   act   = kTotalActs - i;
+                float dcy   = zoneTop + (i + 0.5f) * slot;
                 int   state = (act < _currentAct)  ? 0
                             : (act == _currentAct) ? 1
                                                    : 2;
@@ -3383,8 +3504,8 @@ void Engine::DrawMap()
     }
 
     // ── Nodes ─────────────────────────────────────────────────────────────
-    static constexpr float kIconSz   = 70.f;
-    static constexpr float kIconHalf = kIconSz * 0.5f;
+    const float kIconSz   = _mapIconSz;
+    const float kIconHalf = kIconSz * 0.5f;
     int hoveredIdx = -1;
 
     for (int i = 0; i < (int)_actMap.size(); i++)
@@ -3414,9 +3535,9 @@ void Engine::DrawMap()
             Rectangle src = { 0, 0, (float)icon->width, (float)icon->height };
             Rectangle dst = { n.drawPos.x - kIconHalf, n.drawPos.y - kIconHalf,
                                kIconSz, kIconSz };
-            Color tint = n.completed ? Fade(DARKGRAY, 0.45f)
-                       : n.available ? (hov ? WHITE : Fade(WHITE, 0.88f))
-                       :               Fade(WHITE, 0.20f);
+            Color tint = n.completed ? DARKGRAY
+                       : n.available ? WHITE
+                       :               Fade(WHITE, 0.35f);
             DrawTexturePro(*icon, src, dst, {}, 0.f, tint);
         }
         else
@@ -3476,10 +3597,110 @@ void Engine::DrawMap()
     const char* hint = _touchModeActive
         ? "Tap a highlighted node to enter"
         : "Click node  or  A/D  to select  -  Enter / Space  to confirm";
-    int ftSz = 21;
+    int ftSz = (int)_mapHintFs;
     DrawText(hint,
         (int)(mapCentreX - MeasureText(hint, ftSz) / 2.f),
-        (int)(sh - 55.f), ftSz, Color{173, 223, 236, 185});
+        (int)(sh - _mapHintY), ftSz, Color{173, 223, 236, 185});
+
+    // ── Map right-panel debug editor ──────────────────────────────────────
+    if (IsKeyPressed(KEY_NINE))
+        _mapEditorActive = !_mapEditorActive;
+
+    if (_mapEditorActive)
+    {
+        constexpr int kN = 19;
+        const char* varNames[kN] = {
+            "0  Journey Panel X",
+            "1  Padding",
+            "2  Title Font",
+            "3  Rooms/Gold Font",
+            "4  No Rooms Font",
+            "5  Biome Title Font",
+            "6  Diamond Label Fs",
+            "7  Square Size",
+            "8  Square Gap",
+            "9  Icon Size",
+            "10 Diamond Size",
+            "11 Act X",
+            "12 Act Y",
+            "13 Act Font",
+            "14 Path X",
+            "15 Path Y",
+            "16 Path Font",
+            "17 Hint Y",
+            "18 Hint Font",
+        };
+        float* vars[kN] = {
+            &_mapJourneyX, &_mapPad, &_mapTitleFs, &_mapRoomsFs, &_mapNoRoomsFs,
+            &_mapBiomeTitleFs, &_mapBiomeLabelFs, &_mapSqSz, &_mapSqGap, &_mapIconSz,
+            &_mapDiamondSz, &_mapHeaderX, &_mapHeaderY, &_mapHeaderFs,
+            &_mapSubX, &_mapSubY, &_mapSubFs, &_mapHintY, &_mapHintFs
+        };
+
+        if (IsKeyPressed(KEY_UP))
+            _mapEditorSelIdx = (_mapEditorSelIdx - 1 + kN) % kN;
+        if (IsKeyPressed(KEY_DOWN))
+            _mapEditorSelIdx = (_mapEditorSelIdx + 1) % kN;
+
+        // Fractional X/font fraction controls use finer steps.
+        float step = (_mapEditorSelIdx == 0 || _mapEditorSelIdx == 6
+                   || _mapEditorSelIdx == 11 || _mapEditorSelIdx == 14) ? 0.005f : 1.f;
+        if (IsKeyDown(KEY_RIGHT)) *vars[_mapEditorSelIdx] += step;
+        if (IsKeyDown(KEY_LEFT))  *vars[_mapEditorSelIdx] -= step;
+
+        if (IsKeyPressed(KEY_S))
+        {
+            TraceLog(LOG_INFO, "=== Map Right-Panel Editor Export ===");
+            TraceLog(LOG_INFO, "_mapJourneyX     = %.3ff;", _mapJourneyX);
+            TraceLog(LOG_INFO, "_mapPad          = %.2ff;", _mapPad);
+            TraceLog(LOG_INFO, "_mapTitleFs      = %.2ff;", _mapTitleFs);
+            TraceLog(LOG_INFO, "_mapRoomsFs      = %.2ff;", _mapRoomsFs);
+            TraceLog(LOG_INFO, "_mapNoRoomsFs    = %.2ff;", _mapNoRoomsFs);
+            TraceLog(LOG_INFO, "_mapBiomeTitleFs = %.2ff;", _mapBiomeTitleFs);
+            TraceLog(LOG_INFO, "_mapBiomeLabelFs = %.3ff;", _mapBiomeLabelFs);
+            TraceLog(LOG_INFO, "_mapSqSz         = %.2ff;", _mapSqSz);
+            TraceLog(LOG_INFO, "_mapSqGap        = %.2ff;", _mapSqGap);
+            TraceLog(LOG_INFO, "_mapIconSz       = %.2ff;", _mapIconSz);
+            TraceLog(LOG_INFO, "_mapDiamondSz    = %.2ff;", _mapDiamondSz);
+            TraceLog(LOG_INFO, "_mapHeaderX      = %.3ff;", _mapHeaderX);
+            TraceLog(LOG_INFO, "_mapHeaderY      = %.2ff;", _mapHeaderY);
+            TraceLog(LOG_INFO, "_mapHeaderFs     = %.2ff;", _mapHeaderFs);
+            TraceLog(LOG_INFO, "_mapSubX         = %.3ff;", _mapSubX);
+            TraceLog(LOG_INFO, "_mapSubY         = %.2ff;", _mapSubY);
+            TraceLog(LOG_INFO, "_mapSubFs        = %.2ff;", _mapSubFs);
+            TraceLog(LOG_INFO, "_mapHintY        = %.2ff;", _mapHintY);
+            TraceLog(LOG_INFO, "_mapHintFs       = %.2ff;", _mapHintFs);
+        }
+
+        // ── Panel draw ────────────────────────────────────────────────────
+        constexpr float rowH = 30.f;
+        constexpr float panW = 290.f;
+        const float panH = 40.f + kN * rowH;
+        const float panX = 10.f;
+        const float panY = 10.f;
+
+        DrawRectangle((int)panX, (int)panY, (int)panW, (int)panH, Fade(BLACK, 0.82f));
+        DrawRectangleLines((int)panX, (int)panY, (int)panW, (int)panH, DARKGRAY);
+        DrawText("MAP EDITOR  [9] close", (int)(panX + 8.f), (int)(panY + 6.f), 11, GRAY);
+        DrawText("[UP/DOWN] sel  [L/R] nudge  [S] export",
+            (int)(panX + 8.f), (int)(panY + 20.f), 10, DARKGRAY);
+
+        for (int i = 0; i < kN; i++)
+        {
+            float ry  = panY + 38.f + i * rowH;
+            bool  sel = (i == _mapEditorSelIdx);
+            Color col = sel ? YELLOW : WHITE;
+
+            if (sel)
+                DrawText("->", (int)(panX + 4.f), (int)(ry + rowH * 0.5f - 7.f), 13, YELLOW);
+            DrawText(varNames[i], (int)(panX + 26.f), (int)(ry + rowH * 0.5f - 7.f), 13, col);
+
+            const char* valStr = TextFormat("%.3f", *vars[i]);
+            int valW = MeasureText(valStr, 13);
+            DrawText(valStr, (int)(panX + panW - valW - 6.f),
+                (int)(ry + rowH * 0.5f - 7.f), 13, col);
+        }
+    }
 }
 
 void Engine::DrawLevelUpChoice()
@@ -5069,16 +5290,18 @@ void Engine::DrawHowToPlay()
 
 void Engine::DrawMiniMap()
 {
+    const HUDConfig& hc = _hudCfg;
     const float mapW = _map.width  * _mapScale;
     const float mapH = _map.height * _mapScale;
 
-    const float miniW = 160.f;
-    const float miniH = miniW * (mapH / mapW);
-    const float padding = 12.f;
-    const float originX = padding;
-    const float originY = 112.f;
+    const float miniW   = hc.miniW;
+    const float miniH   = miniW * (mapH / mapW);
+    const float originX = hc.miniX;
+    const float originY = hc.miniY;
 
-    // Background
+    // Dots auto-scale with miniW so circles stay proportional when map is resized
+    const float dotScale = miniW / 160.f;
+
     DrawRectangleRounded(Rectangle{ originX - 2.f, originY - 2.f, miniW + 4.f, miniH + 4.f },
         0.08f, 4, Fade(BLACK, 0.85f));
     DrawRectangle((int)originX, (int)originY, (int)miniW, (int)miniH, Fade(DARKGRAY, 0.5f));
@@ -5090,50 +5313,36 @@ void Engine::DrawMiniMap()
         };
     };
 
-    // Enemy dots — red
     for (const auto& enemy : _enemies)
     {
-        if (!enemy->IsActive())
-            continue;
-        if (!enemy->IsAlive())
-            continue;
-
+        if (!enemy->IsActive() || !enemy->IsAlive()) continue;
         Vector2 dot = toMini(enemy->GetWorldPos());
         if (enemy->AsMolarbeast() != nullptr)
-            DrawCircleV(dot, 6.f, Fade(MAROON, 0.95f));
+            DrawCircleV(dot, hc.miniDotBoss * dotScale, Fade(MAROON, 0.95f));
         else if (enemy->AsCyclops() != nullptr)
-            DrawCircleV(dot, 4.f, Fade(ORANGE, 0.9f));
+            DrawCircleV(dot, hc.miniDotElite * dotScale, Fade(ORANGE, 0.9f));
         else if (enemy->AsOgre() != nullptr)
-            DrawCircleV(dot, 4.f, Fade(BROWN, 0.9f));
+            DrawCircleV(dot, hc.miniDotElite * dotScale, Fade(BROWN, 0.9f));
         else
-            DrawCircleV(dot, 3.f, Fade(RED, 0.9f));
+            DrawCircleV(dot, hc.miniDotEnemy * dotScale, Fade(RED, 0.9f));
     }
 
-    // Cyclops dots — orange
-
-    // Prop dots — blue
     for (const auto& prop : _props)
     {
         Vector2 dot = toMini(prop.GetWorldPos());
-        DrawCircleV(dot, 3.f, Fade(SKYBLUE, 0.55f));
+        DrawCircleV(dot, hc.miniDotProp * dotScale, Fade(SKYBLUE, 0.55f));
     }
 
-    // Pickup dots — gold for gold pickups, green for everything else
     for (const auto& pickup : _pickups)
     {
-        if (!pickup->IsActive())
-            continue;
-
+        if (!pickup->IsActive()) continue;
         Vector2 dot = toMini(pickup->GetWorldPos());
-        if (pickup->GetType() == PickupType::Gold)
-            DrawCircleV(dot, 4.f, Fade(GOLD, 0.95f));
-        else
-            DrawCircleV(dot, 4.f, Fade(GREEN, 0.9f));
+        DrawCircleV(dot, hc.miniDotPickup * dotScale,
+            pickup->GetType() == PickupType::Gold ? Fade(GOLD, 0.95f) : Fade(GREEN, 0.9f));
     }
 
-    // Player dot — yellow
     Vector2 playerDot = toMini(_player.GetWorldPos());
-    DrawCircleV(playerDot, 5.f, Fade(YELLOW, 1.0f));
+    DrawCircleV(playerDot, hc.miniDotPlayer * dotScale, Fade(YELLOW, 1.0f));
 
     DrawRectangleLinesEx(Rectangle{ originX, originY, miniW, miniH }, 1.f, Fade(LIGHTGRAY, 0.6f));
 }
@@ -6055,17 +6264,17 @@ void Engine::LoadKeybindings()
 // Screen angles: 270° = straight up, 210° = upper-left.
 // Free helper — computes the bounding rect for touch-mode ability slot `slot`.
 // 4 square slots in a right-aligned row, above the ATK/DASH buttons.
-static Rectangle TouchAbilityRect(int slot, int screenW, int screenH)
+// `offset` is a per-slot drag offset applied on top of the computed base position.
+static Rectangle TouchAbilityRect(int slot, int screenW, int screenH,
+                                   float btnBotPad, float btnRadius,
+                                   float slotSz, float slotGap, float rightPad, float yOff,
+                                   Vector2 offset)
 {
-    static constexpr float kTouchSlotSize = 130.f;
-    static constexpr float kTouchSlotGap  = 20.f;
-    static constexpr float kRightPad      = 30.f;
-    const float slotY  = (float)screenH - TouchControls::kBtnBotPad
-                         - TouchControls::kBtnRadius - 20.f - kTouchSlotSize;
-    const float totalW = 4.f * kTouchSlotSize + 3.f * kTouchSlotGap;
-    const float startX = (float)screenW - kRightPad - totalW;
-    return { startX + (float)slot * (kTouchSlotSize + kTouchSlotGap),
-             slotY, kTouchSlotSize, kTouchSlotSize };
+    const float slotY  = (float)screenH - btnBotPad - btnRadius - yOff - slotSz;
+    const float totalW = 4.f * slotSz + 3.f * slotGap;
+    const float startX = (float)screenW - rightPad - totalW;
+    return { startX + (float)slot * (slotSz + slotGap) + offset.x,
+             slotY + offset.y, slotSz, slotSz };
 }
 
 Rectangle Engine::GetDebugToggleTabRect() const
@@ -6406,6 +6615,57 @@ void Engine::UpdateTouchControls()
     const int screenW = GetScreenWidth();
     const int screenH = GetScreenHeight();
 
+    // Sync touch layout from HUD config so editor changes take effect immediately
+    _touch.kJoyRadius     = _hudCfg.touchJoyR;
+    _touch.kBtnRadius     = _hudCfg.touchAtkR;
+    _touch.kDashBtnRadius = _hudCfg.touchDashR;
+    _touch.kBtnRightPad   = _hudCfg.touchAtkPadR;
+    _touch.kBtnBotPad     = _hudCfg.touchAtkPadB;
+    _touch.kDashBtnOffset = _hudCfg.touchDashOffset;
+    _touch.kAtkLabelFs    = _hudCfg.touchAtkFs;
+    _touch.kDashLabelFs   = _hudCfg.touchDashFs;
+
+    // ── Ability slot drag (only when HUD editor is open) ─────────────────────
+    if (_hudEditorActive)
+    {
+        const Vector2 mousePos = GetMousePosition();
+        const int ts = _player.GetMaxAbilitySlots();
+
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _touchSlotDragIdx < 0)
+        {
+            for (int s = 0; s < ts; s++)
+            {
+                Rectangle r = TouchAbilityRect(s, screenW, screenH,
+                    _hudCfg.touchAtkPadB, _hudCfg.touchAtkR,
+                    _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+                    _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+                    _touchSlotOffset[s]);
+                if (CheckCollisionPointRec(mousePos, r))
+                {
+                    _touchSlotDragIdx         = s;
+                    _touchSlotDragMouseStart  = mousePos;
+                    _touchSlotDragOffsetStart = _touchSlotOffset[s];
+                    break;
+                }
+            }
+        }
+
+        if (_touchSlotDragIdx >= 0)
+        {
+            if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+            {
+                Vector2 delta = Vector2Subtract(mousePos, _touchSlotDragMouseStart);
+                _touchSlotOffset[_touchSlotDragIdx] = Vector2Add(_touchSlotDragOffsetStart, delta);
+            }
+            else
+            {
+                _touchSlotDragIdx = -1;
+            }
+            _player.SetTouchDirection(Vector2Zero());
+            return;
+        }
+    }
+
     _touch.Update(screenW, screenH);
 
     _player.SetTouchDirection(_touch.joystickDir);
@@ -6415,10 +6675,8 @@ void Engine::UpdateTouchControls()
     ScanAbilityArcTaps();
 
     // Pause button (top-right corner) — same rect as DrawHUD draws it
-    static constexpr float kPauseW   = 90.f;
-    static constexpr float kPauseH   = 48.f;
-    static constexpr float kPausePad = 14.f;
-    const Rectangle pauseRec{ (float)screenW - kPauseW - kPausePad, kPausePad, kPauseW, kPauseH };
+    const Rectangle pauseRec{ (float)screenW - _hudCfg.touchPauseW - _hudCfg.touchPausePad,
+                               _hudCfg.touchPausePad, _hudCfg.touchPauseW, _hudCfg.touchPauseH };
 
     const int tc = GetTouchPointCount();
     if (tc == 0)
@@ -6466,7 +6724,11 @@ void Engine::ScanAbilityArcTaps()
     auto hitSlot = [&](Vector2 pos) -> int
     {
         for (int s = 0; s < totalSlots; s++)
-            if (CheckCollisionPointRec(pos, TouchAbilityRect(s, screenW, screenH))) return s;
+            if (CheckCollisionPointRec(pos, TouchAbilityRect(s, screenW, screenH,
+                    _touch.kBtnBotPad, _touch.kBtnRadius,
+                    _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+                    _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+                    _touchSlotOffset[s]))) return s;
         return -1;
     };
 
@@ -6523,13 +6785,20 @@ void Engine::DrawTouchAbilityArc()
     for (int slot = 0; slot < totalSlots; slot++)
     {
         AbilityType ability = _player.GetLearnedAbility(slot);
-        Rectangle   rec     = TouchAbilityRect(slot, screenW, screenH);
+        Rectangle   rec     = TouchAbilityRect(slot, screenW, screenH,
+                                  _touch.kBtnBotPad, _touch.kBtnRadius,
+                                  _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+                                  _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+                                  _touchSlotOffset[slot]);
         bool isEmpty = (ability == AbilityType::None);
         bool canCast = !isEmpty && _player.CanCastAbility(ability);
+        bool isDragged = (_hudEditorActive && slot == _touchSlotDragIdx);
 
-        Color bgColor     = isEmpty ? Fade(BLACK, 0.30f) : Fade(BLACK, 0.55f);
-        Color borderColor = isEmpty ? Fade(WHITE, 0.12f)
-                          : canCast  ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
+        Color bgColor     = isDragged ? Fade(DARKBLUE, 0.70f)
+                          : isEmpty   ? Fade(BLACK, 0.30f) : Fade(BLACK, 0.55f);
+        Color borderColor = isDragged ? Fade(YELLOW, 0.95f)
+                          : isEmpty   ? Fade(WHITE, 0.12f)
+                          : canCast   ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
 
         DrawRectangleRounded(rec, 0.18f, 6, bgColor);
         DrawRectangleRoundedLines(rec, 0.18f, 6, borderColor);

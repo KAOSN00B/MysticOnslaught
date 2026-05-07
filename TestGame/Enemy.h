@@ -102,7 +102,7 @@ protected:
     void UpdateLaunchVisual(float dt);
 
     void HandleAnimation(float dt);
-    void DrawHealthBar(Vector2 screenPos, float w, float h);
+    virtual void DrawHealthBar(Vector2 screenPos, float w, float h);
     void DrawEliteLabel(Vector2 screenPos, float w, float h);
 
     struct PendingBurn

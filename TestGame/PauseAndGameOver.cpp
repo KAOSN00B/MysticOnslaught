@@ -137,8 +137,8 @@ int PauseAndGameOver::DrawPause()
         result = 2;
     btnY += btnH + btnGap;
 
-    // Keybindings — blue tint
-    if (DrawButton(_btnTex, "Keybindings", { btnX, btnY, btnW, btnH }, Color{ 80, 150, 230, 255 }))
+    // Button Mapping — blue tint
+    if (DrawButton(_btnTex, "Button Mapping", { btnX, btnY, btnW, btnH }, Color{ 80, 150, 230, 255 }))
         result = 4;
     btnY += btnH + btnGap;
 
@@ -154,12 +154,18 @@ int PauseAndGameOver::DrawPause()
     return result;
 }
 
-// ── Keybindings ───────────────────────────────────────────────────────────────
+// ── Button Mapping ────────────────────────────────────────────────────────────
 // Returns true when Back is pressed. Modifies bindings in place.
+// Panel is draggable (touch or mouse on the title bar) to reposition it.
 bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
 {
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
+
+    // ── Unified input (touch maps to mouse in raylib) ─────────────────────────
+    const Vector2 inputPos   = GetMousePosition();
+    const bool    inputDown  = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+    const bool    inputPress = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
 
     DrawScrollingCheckerboard(sw, sh,
         Color{ 20, 74, 54, 255 },
@@ -226,17 +232,45 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
         + groupLabelH + 4.f * (rowH + rowGap)
         + groupGap + hintH + rowGap + backH + padV;
 
-    float panelX = sw / 2.f - panelW / 2.f;
-    float panelY = sh / 2.f - panelH / 2.f;
+    float panelX = sw / 2.f - panelW / 2.f + _keybindPanelOffset.x;
+    float panelY = sh / 2.f - panelH / 2.f + _keybindPanelOffset.y;
+
+    // ── Panel drag (title bar is the drag handle) ─────────────────────────────
+    const Rectangle titleBarRect{ panelX, panelY, panelW, padV + titleH };
+    if (_keybindDragging)
+    {
+        if (inputDown)
+        {
+            Vector2 delta = { inputPos.x - _keybindDragStart.x, inputPos.y - _keybindDragStart.y };
+            _keybindPanelOffset = { _keybindPanelAtDrag.x + delta.x, _keybindPanelAtDrag.y + delta.y };
+            panelX = sw / 2.f - panelW / 2.f + _keybindPanelOffset.x;
+            panelY = sh / 2.f - panelH / 2.f + _keybindPanelOffset.y;
+        }
+        else
+        {
+            _keybindDragging = false;
+        }
+    }
+    else if (inputPress && _rebindingSlot < 0 &&
+             CheckCollisionPointRec(inputPos, titleBarRect))
+    {
+        _keybindDragging    = true;
+        _keybindDragStart   = inputPos;
+        _keybindPanelAtDrag = _keybindPanelOffset;
+    }
 
     DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(Color{14, 64, 48, 255}, 0.94f));
     DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.05f, 8, Fade(Color{140, 255, 208, 255}, 0.38f));
 
+    // Drag hint strip on title bar when hovered
+    if (!_keybindDragging && CheckCollisionPointRec(inputPos, titleBarRect))
+        DrawRectangleRounded(titleBarRect, 0.05f, 4, Fade(WHITE, 0.06f));
+
     // Title
-    const char* title   = "KEYBINDINGS";
+    const char* title   = "BUTTON MAPPING";
     int         titleSz = (int)(sh * 0.046f);
     DrawText(title,
-        (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
+        (int)(panelX + panelW / 2.f - MeasureText(title, titleSz) / 2.f),
         (int)(panelY + padV), titleSz, Color{255, 212, 94, 255});
 
     int nameSz   = (int)(sh * 0.026f);
@@ -282,7 +316,7 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
             Rectangle badgeRect{ badgeX, badgeY, badgeW, badgeH };
 
             bool rebinding = (_rebindingSlot == slotIdx);
-            bool hovered   = CheckCollisionPointRec(GetMousePosition(), badgeRect) && !rebinding;
+            bool hovered   = CheckCollisionPointRec(inputPos, badgeRect) && !rebinding && !_keybindDragging;
 
             Color badgeCol = rebinding ? Fade(GOLD, 0.85f)
                            : hovered   ? Fade(Color{110, 255, 220, 255}, 0.82f)
@@ -297,7 +331,7 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
                 (int)(badgeY + badgeH / 2.f - keySz  / 2.f),
                 keySz, rebinding ? Color{46, 40, 12, 255} : Color{243, 255, 249, 255});
 
-            if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            if (hovered && inputPress)
                 _rebindingSlot = slotIdx;
 
             rowY += rowH + rowGap;
@@ -310,16 +344,16 @@ bool PauseAndGameOver::DrawKeybindings(KeyBindings& bindings)
         ? (slots[_rebindingSlot].clearable
             ? "Press a key  (ESC cancels  |  BKSP to clear)"
             : "Press a key  (ESC cancels)")
-        : "Click a badge to rebind";
+        : "Tap a badge to rebind  |  drag title to move panel";
     int hintSz = (int)(sh * 0.019f);
     DrawText(hintText,
-        (int)(sw / 2.f - MeasureText(hintText, hintSz) / 2.f),
+        (int)(panelX + panelW / 2.f - MeasureText(hintText, hintSz) / 2.f),
         (int)(rowY), hintSz, Fade(Color{214, 250, 233, 255}, 0.72f));
 
     // Back button
     rowY += hintH + rowGap;
     float backW = panelW * 0.40f;
-    float backX = sw / 2.f - backW / 2.f;
+    float backX = panelX + panelW / 2.f - backW / 2.f;
     bool done   = DrawButton(_btnTex, "Back", { backX, rowY, backW, backH }, Color{ 118, 220, 176, 255 });
 
     return done;

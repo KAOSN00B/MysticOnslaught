@@ -301,6 +301,94 @@ private:
     static constexpr int kTotalActs = 5;
     std::vector<Biome> _biomeSequence;      // 5 randomly chosen biomes per run
 
+    // ── Map screen right-panel debug editor ───────────────────────────────
+    bool  _mapEditorActive  = false;
+    int   _mapEditorSelIdx  = 0;
+    float _mapJourneyX      = 0.725f;  // 0  right panel X as fraction of sw
+    float _mapPad           = 21.f;    // 1  padding inside journey panel
+    float _mapTitleFs       = 43.f;    // 2  "JOURNEY" title font
+    float _mapRoomsFs       = 44.f;    // 3  Rooms / Gold row font
+    float _mapNoRoomsFs     = 30.f;    // 4  "No rooms cleared yet" font
+    float _mapBiomeTitleFs  = 43.f;    // 5  "BIOMES" label font
+    float _mapBiomeLabelFs  = 0.350f;  // 6  diamond text size as fraction of half-size
+    float _mapSqSz          = 96.f;    // 7  visited-room square size
+    float _mapSqGap         = 33.f;    // 8  gap between visited-room squares
+    float _mapIconSz        = 87.f;    // 9  map node icon size
+    float _mapDiamondSz     = 56.f;    // 10 biome diamond half-size in pixels
+    float _mapHeaderX       = 0.525f;  // 11 top Act header center X as fraction of sw
+    float _mapHeaderY       = 10.f;    // 12 top Act header Y
+    float _mapHeaderFs      = 55.f;    // 13 top Act header font size
+    float _mapSubX          = 0.535f;  // 14 subtitle center X as fraction of sw
+    float _mapSubY          = 61.f;    // 15 subtitle Y
+    float _mapSubFs         = 30.f;    // 16 subtitle font size
+    float _mapHintY         = 35.f;    // 17 bottom hint distance from screen bottom
+    float _mapHintFs        = 34.f;    // 18 bottom hint font size
+
+    // ── In-game HUD debug editor ──────────────────────────────────────────
+    struct HUDConfig
+    {
+        // HP / MP bars (0–4)
+        float barW         = 528.f;   // 0  bar width
+        float barH         = 48.f;    // 1  bar height
+        float barGap       = 25.f;    // 2  gap between HP and MP bars
+        float barTopPad    = 23.f;    // 3  Y of HP bar from top
+        float barLabelFs   = 18.f;    // 4  font inside bars
+        // Gold label (5–7)
+        float goldX        = 21.f;    // 5  gold X
+        float goldY        = 16.f;    // 6  gold Y
+        float goldFs       = 48.f;    // 7  gold font size
+        // Enemies left (8–10)
+        float enemiesX     = 22.f;    // 8  enemies label X
+        float enemiesY     = 90.f;    // 9  enemies label Y
+        float enemiesFs    = 45.f;    // 10 enemies label font size
+        // Act / Room label (11–13)
+        float actOffsetX   = 42.f;    // 11 offset from right edge
+        float actY         = 30.f;    // 12 act label Y
+        float actFs        = 43.f;    // 13 act label font size
+        // Minimap (14–22)
+        float miniX        = 16.f;    // 14 minimap origin X
+        float miniY        = 164.f;   // 15 minimap origin Y
+        float miniW        = 271.f;   // 16 minimap width (height auto-derived)
+        float miniDotBoss  = 6.f;     // 17 boss dot base radius
+        float miniDotElite = 2.f;     // 18 cyclops/ogre dot base radius
+        float miniDotEnemy = 0.f;     // 19 regular enemy dot base radius
+        float miniDotProp  = 3.f;     // 20 prop dot base radius
+        float miniDotPickup= 2.f;     // 21 pickup dot base radius
+        float miniDotPlayer= 4.f;     // 22 player dot base radius
+        // PC ability bar (23–27)
+        float slotSz       = 154.f;   // 23 ability slot size (square)
+        float slotGap      = 89.f;    // 24 gap between slots
+        float slotBotPad   = 76.f;    // 25 slot Y from bottom
+        float slotKeyFs    = 15.f;    // 26 keybind label font size
+        float slotNameFs   = 21.f;    // 27 ability name font size
+        // Touch buttons (28–38)
+        float touchJoyR       = 90.f;   // 28 joystick radius
+        float touchAtkR       = 113.f;  // 29 ATK button radius
+        float touchDashR      = 111.f;  // 30 DASH button radius
+        float touchAtkPadR    = 176.f;  // 31 ATK centre from right
+        float touchAtkPadB    = 214.f;  // 32 ATK centre from bottom
+        float touchDashOffset = 302.f;  // 33 DASH left-offset from ATK
+        float touchPauseW     = 130.f;  // 34 pause button width
+        float touchPauseH     = 67.f;   // 35 pause button height
+        float touchPausePad   = 85.f;   // 36 pause button edge padding
+        float touchAtkFs      = 46.f;   // 37 ATK button text size
+        float touchDashFs     = 57.f;   // 38 DASH button text size
+        // Touch ability slots (39–42)
+        float touchSlotSz      = 130.f;  // 39 ability slot square size
+        float touchSlotGap     = 20.f;   // 40 gap between slots
+        float touchSlotRightPad= 30.f;   // 41 right-edge padding for slot row
+        float touchSlotYOff    = 20.f;   // 42 gap between slot bottom and ATK top
+    };
+    HUDConfig _hudCfg;
+    bool  _hudEditorActive  = false;
+    int   _hudEditorSelIdx  = 0;
+
+    // Per-slot drag offsets (set interactively when HUD editor is open)
+    Vector2 _touchSlotOffset[4]{};
+    int     _touchSlotDragIdx        = -1;
+    Vector2 _touchSlotDragMouseStart{};
+    Vector2 _touchSlotDragOffsetStart{};
+
     // Level-up choice state
     UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };
     UpgradeType _levelUpUltimateOptions[3] = { UpgradeType::LearnFireUltimate, UpgradeType::LearnIceUltimate, UpgradeType::LearnElectricUltimate };
