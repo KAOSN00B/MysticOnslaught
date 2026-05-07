@@ -148,7 +148,7 @@ public:
     float GetManaRegenPerSecond() const { return kManaRegenBase * _manaRegenMultiplier; }
     static constexpr int   kLevelHpGain      = 1;
     static constexpr float kLevelAttackGain  = 0.4f;
-    static constexpr float kLevelDefenseGain = 0.01f;
+    static constexpr float kLevelDefenseGain = 0.5f;
     static constexpr int   kLevelManaGain    = 5;
 
     // Passive mana regen — flat rate scaled only by the regen multiplier.
@@ -250,7 +250,7 @@ private:
     int   _mana    = 0;
     int   _maxMana = 10;
     float _ultimateManaWarningTimer = 0.f;
-    float _defense = 0.f;           // 0.0 – 1.0 damage reduction fraction
+    float _defense = 0.f;           // flat armor — subtracted from incoming damage (min 1)
     float _attackRangeMultiplier = 1.f;
 
     // Fractional player burn is kept separate from the normal integer hit path

@@ -594,9 +594,9 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
 
-    // Apply percentage defense reduction (rounded up so 1 damage always deals at least 1)
+    // Subtract flat armor — always deal at least 1 damage
     if (_defense > 0.f)
-        damage = std::max(1, (int)std::ceil(damage * (1.f - _defense)));
+        damage = std::max(1, damage - (int)_defense);
 
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
@@ -997,7 +997,7 @@ void Character::AddExp(int amount)
         _maxHealth += kLevelHpGain;
         Heal(kLevelHpGain);
         _attackPower += kLevelAttackGain;
-        _defense = std::min(_defense + kLevelDefenseGain, 0.60f);
+        _defense += kLevelDefenseGain;
         _maxMana += kLevelManaGain;
         _mana = std::min(_mana + kLevelManaGain, _maxMana);
 
@@ -1033,84 +1033,69 @@ void Character::ApplyUpgrade(UpgradeType type)
 {
     switch (type)
     {
+    // ── Common ────────────────────────────────────────────────────────────────
     case UpgradeType::AttackPower:
-        _attackPower *= 1.10f;
+        _attackPower += 1.0f;
         break;
     case UpgradeType::AttackRange:
-        _attackRangeMultiplier *= 1.10f;
+        _attackRangeMultiplier += 0.15f;
         break;
     case UpgradeType::MaxHealth:
-    {
-        int bonus = std::max(1, (int)std::ceil(_maxHealth * 0.15f));
-        _maxHealth += bonus;
-        Heal(bonus);
+        _maxHealth += 2;
+        Heal(2);
         break;
-    }
     case UpgradeType::MaxMana:
-        _maxMana += 15;
-        _mana = std::min(_mana + 15, _maxMana);
+        _maxMana += 3;
         break;
     case UpgradeType::Defense:
-        _defense = std::min(_defense + 0.06f, 0.60f);
+        _defense += 1.0f;
         break;
     case UpgradeType::MoveSpeed:
-        _speed *= 1.10f;
+        _speed += 20.0f;
         break;
     // ── Rare ──────────────────────────────────────────────────────────────────
     case UpgradeType::IronConstitution:
-    {
-        int bonus = std::max(2, (int)std::ceil(_maxHealth * 0.25f));
-        _maxHealth += bonus;
-        Heal(bonus);
+        _maxHealth += 4;
+        Heal(4);
         break;
-    }
     case UpgradeType::SwiftFeet:
-        _speed *= 1.15f;
+        _speed += 40.0f;
         break;
     case UpgradeType::Ferocity:
-        _attackPower *= 1.15f;
+        _attackPower += 2.0f;
         break;
     case UpgradeType::ArcaneMind:
-        _maxMana += 25;
-        _mana = std::min(_mana + 25, _maxMana);
-        _manaRegenMultiplier += 0.20f;   // +20% regen speed
+        _maxMana += 5;
+        _manaRegenMultiplier += 0.10f;
         break;
     case UpgradeType::IronSkin:
-        _defense = std::min(_defense + 0.08f, 0.60f);
+        _defense += 2.0f;
         break;
     case UpgradeType::BladeEdge:
-        _attackPower *= 1.10f;
-        _attackRangeMultiplier *= 1.08f;
+        _attackPower += 1.0f;
+        _attackRangeMultiplier += 0.10f;
         break;
     // ── Epic ──────────────────────────────────────────────────────────────────
     case UpgradeType::WarGod:
-        _attackPower *= 1.20f;
-        _attackRangeMultiplier *= 1.10f;
+        _attackPower += 3.0f;
+        _attackRangeMultiplier += 0.20f;
         break;
     case UpgradeType::Resilience:
-    {
-        int bonus = std::max(2, (int)std::ceil(_maxHealth * 0.30f));
-        _maxHealth += bonus;
-        Heal(3);
+        _maxHealth += 6;
+        Heal(6);
         break;
-    }
     case UpgradeType::BladeStorm:
-        _attackPower *= 1.18f;
-        _speed *= 1.18f;
+        _attackPower += 2.0f;
+        _speed += 50.0f;
         break;
     case UpgradeType::Juggernaut:
-    {
-        int bonus = std::max(2, (int)std::ceil(_maxHealth * 0.20f));
-        _maxHealth += bonus;
-        Heal(bonus);
-        _defense = std::min(_defense + 0.08f, 0.60f);
+        _maxHealth += 4;
+        _defense += 3.0f;
         break;
-    }
     case UpgradeType::ArcaneColossus:
-        _maxMana += 30;
-        _mana = std::min(_mana + 30, _maxMana);
-        _attackPower *= 1.15f;
-        _manaRegenMultiplier += 0.25f;   // +25% regen speed (epic bonus)
+        _maxMana += 5;
+        _attackPower += 2.0f;
+        _manaRegenMultiplier += 0.25f;
         break;
     case UpgradeType::LearnFireSpread:
         LearnAbility(AbilityType::FireSpread);
@@ -1204,16 +1189,23 @@ void Character::RemoveAbilityAtSlot(int slot)
         if (_learnedCount == 4) _learnedCount = 3;
         return;
     }
-    if (slot < 0 || slot >= _learnedCount)
+    // Count actual non-ultimate abilities so the shift never reaches slot 3.
+    int nonUltCount = 0;
+    for (int i = 0; i < 3; i++)
+        if (_learnedAbilities[i] != AbilityType::None) nonUltCount++;
+
+    if (slot < 0 || slot >= nonUltCount)
         return;
-    for (int i = slot; i < std::min(_learnedCount - 1, 3); i++)
+
+    // Shift strictly within slots 0-2 — slot 3 (ultimate) is never touched.
+    for (int i = slot; i < nonUltCount - 1; i++)
     {
         _learnedAbilities[i] = _learnedAbilities[i + 1];
         _abilityLevels[i]    = _abilityLevels[i + 1];
     }
-    if (_learnedCount > 0 && _learnedCount <= 3)
-    {
-        _learnedAbilities[--_learnedCount] = AbilityType::None;
-        _abilityLevels[_learnedCount]      = 1;
-    }
+    _learnedAbilities[nonUltCount - 1] = AbilityType::None;
+    _abilityLevels[nonUltCount - 1]    = 1;
+
+    // Rebuild _learnedCount from actual state so ultimate presence is preserved.
+    _learnedCount = (_learnedAbilities[3] != AbilityType::None) ? 4 : nonUltCount - 1;
 }

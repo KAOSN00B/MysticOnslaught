@@ -982,7 +982,7 @@ void Engine::Update(float dt)
         break;
 
     case GameState::Shop:
-        if (_shop.Update(_player))
+        if (_shop.Update(_player, _debug.IsActive()))
         {
             _gameState = GameState::Play;
             if (_currentRoomType == RoomType::Store)
@@ -1619,7 +1619,7 @@ void Engine::Draw()
 
     case GameState::Shop:
     {
-        _shop.Draw(_player);
+        _shop.Draw(_player, _debug.IsActive());
         break;
     }
 
@@ -3861,9 +3861,9 @@ void Engine::DrawLevelUpChoice()
             borderNormal = Color{55,100,200,150}; borderHover = Color{100,160,255,255};
             stripColor = Color{35,75,180,210}; nameColor = Color{160,210,255,255}; rarityLabel = "RARE"; break;
         default: // Epic
-            bgNormal = Color{30,15,42,210}; bgHover = Color{60,25,85,230};
-            borderNormal = Color{130,45,200,150}; borderHover = Color{210,100,255,255};
-            stripColor = Color{100,35,165,220}; nameColor = Color{225,155,255,255}; rarityLabel = "EPIC"; break;
+            bgNormal = Color{35,18,5,210}; bgHover = Color{70,35,10,230};
+            borderNormal = Color{200,100,20,150}; borderHover = Color{255,160,50,255};
+            stripColor = Color{180,85,15,220}; nameColor = Color{255,185,80,255}; rarityLabel = "EPIC"; break;
         }
         Color bgColor = hovered ? bgHover : bgNormal;
         DrawRectangleRounded(card, 0.12f, 8, bgColor);

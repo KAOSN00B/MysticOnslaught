@@ -37,23 +37,23 @@ static const char* ShopUpgradeDesc(UpgradeType t)
 {
     switch (t)
     {
-    case UpgradeType::AttackPower:      return "+10% attack";
-    case UpgradeType::AttackRange:      return "+10% range";
-    case UpgradeType::MaxHealth:        return "+10 max HP";
-    case UpgradeType::MaxMana:          return "+10 max MP";
-    case UpgradeType::Defense:          return "+5% defense";
-    case UpgradeType::MoveSpeed:        return "+5% speed";
-    case UpgradeType::IronConstitution: return "+25% max HP";
-    case UpgradeType::SwiftFeet:        return "+15% speed";
-    case UpgradeType::Ferocity:         return "+15% attack";
-    case UpgradeType::ArcaneMind:       return "+40 max mana";
-    case UpgradeType::IronSkin:         return "+8% defense";
-    case UpgradeType::BladeEdge:        return "+15% range";
-    case UpgradeType::WarGod:           return "+20% atk  +10% range";
-    case UpgradeType::Resilience:       return "+30% HP  heal 3";
-    case UpgradeType::BladeStorm:       return "+18% atk  +18% spd";
-    case UpgradeType::Juggernaut:       return "+20% HP  +8% def";
-    case UpgradeType::ArcaneColossus:   return "+50 mana  +15% atk";
+    case UpgradeType::AttackPower:      return "+1.0 Attack";
+    case UpgradeType::AttackRange:      return "Slightly extends attack range";
+    case UpgradeType::MaxHealth:        return "+2 Max HP";
+    case UpgradeType::MaxMana:          return "+3 Max MP";
+    case UpgradeType::Defense:          return "+1 Defense";
+    case UpgradeType::MoveSpeed:        return "Slightly increases movement speed";
+    case UpgradeType::IronConstitution: return "+4 Max HP";
+    case UpgradeType::SwiftFeet:        return "Moderately increases movement speed";
+    case UpgradeType::Ferocity:         return "+2.0 Attack";
+    case UpgradeType::ArcaneMind:       return "+5 Max MP, +0.10 Regen";
+    case UpgradeType::IronSkin:         return "+2 Defense";
+    case UpgradeType::BladeEdge:        return "+1.0 Attack, Slightly extends range";
+    case UpgradeType::WarGod:           return "+3.0 Attack, Greatly extends range";
+    case UpgradeType::Resilience:       return "+6 Max HP (Heals 6)";
+    case UpgradeType::BladeStorm:       return "+2.0 Attack, Greatly increases movement speed";
+    case UpgradeType::Juggernaut:       return "+4 Max HP, +3 Defense";
+    case UpgradeType::ArcaneColossus:   return "+5 Max MP, +2.0 Attack, +0.25 Regen";
     default:                            return "";
     }
 }
@@ -120,7 +120,7 @@ static Color ShopRarityColor(UpgradeRarity r)
     {
     case UpgradeRarity::Common: return Color{ 80, 80,  80, 255};
     case UpgradeRarity::Rare:   return Color{ 55,100, 200, 255};
-    default:                    return Color{130, 45, 200, 255};
+    default:                    return Color{220,110,  20, 255};
     }
 }
 
@@ -286,11 +286,71 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
 
 // ── Per-frame (GameState::Shop) ───────────────────────────────────────────────
 
-bool ShopManager::Update(Character& player)
+bool ShopManager::Update(Character& player, bool debugActive)
 {
+    // ── UI Editor ────────────────────────────────────────────────────────────
+    if (debugActive)
+    {
+        if (IsKeyPressed(KEY_NINE))
+            _isUIEditorActive = !_isUIEditorActive;
+
+        if (_isUIEditorActive)
+        {
+            constexpr int kVarCount = 22;
+            if (IsKeyPressed(KEY_UP))
+                _uiEditorSelectedIndex = (_uiEditorSelectedIndex - 1 + kVarCount) % kVarCount;
+            if (IsKeyPressed(KEY_DOWN))
+                _uiEditorSelectedIndex = (_uiEditorSelectedIndex + 1) % kVarCount;
+
+            float* vars[] = {
+                &_uiPad, &_uiLeftPanelW, &_uiTitleFs, &_uiStatFs, &_uiSlotFs,
+                &_uiSlotBtnFs, &_uiHpFs, &_uiTabH, &_uiBuyBtnH,
+                &_uiItemNameFs, &_uiItemDescFs, &_uiItemTextOffsetY, &_uiPriceFs,
+                &_uiDialNameFs, &_uiDialTextFs, &_uiPotionH, &_uiPotionFs,
+                &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs
+            };
+            float step = (_uiEditorSelectedIndex == 1) ? 0.01f : 1.0f;
+            if (IsKeyPressed(KEY_RIGHT)) *vars[_uiEditorSelectedIndex] += step;
+            if (IsKeyPressed(KEY_LEFT))  *vars[_uiEditorSelectedIndex] -= step;
+
+            if (IsKeyPressed(KEY_S))
+            {
+                TraceLog(LOG_INFO, "=== Shop UI Editor Export ===");
+                TraceLog(LOG_INFO, "_uiPad             = %.2ff;", _uiPad);
+                TraceLog(LOG_INFO, "_uiLeftPanelW      = %.2ff;", _uiLeftPanelW);
+                TraceLog(LOG_INFO, "_uiTitleFs         = %.2ff;", _uiTitleFs);
+                TraceLog(LOG_INFO, "_uiStatFs          = %.2ff;", _uiStatFs);
+                TraceLog(LOG_INFO, "_uiSlotFs          = %.2ff;", _uiSlotFs);
+                TraceLog(LOG_INFO, "_uiSlotBtnFs       = %.2ff;", _uiSlotBtnFs);
+                TraceLog(LOG_INFO, "_uiHpFs            = %.2ff;", _uiHpFs);
+                TraceLog(LOG_INFO, "_uiTabH            = %.2ff;", _uiTabH);
+                TraceLog(LOG_INFO, "_uiBuyBtnH         = %.2ff;", _uiBuyBtnH);
+                TraceLog(LOG_INFO, "_uiItemNameFs      = %.2ff;", _uiItemNameFs);
+                TraceLog(LOG_INFO, "_uiItemDescFs      = %.2ff;", _uiItemDescFs);
+                TraceLog(LOG_INFO, "_uiItemTextOffsetY = %.2ff;", _uiItemTextOffsetY);
+                TraceLog(LOG_INFO, "_uiPriceFs         = %.2ff;", _uiPriceFs);
+                TraceLog(LOG_INFO, "_uiDialNameFs      = %.2ff;", _uiDialNameFs);
+                TraceLog(LOG_INFO, "_uiDialTextFs      = %.2ff;", _uiDialTextFs);
+                TraceLog(LOG_INFO, "_uiPotionH         = %.2ff;", _uiPotionH);
+                TraceLog(LOG_INFO, "_uiPotionFs        = %.2ff;", _uiPotionFs);
+                TraceLog(LOG_INFO, "_uiAbilTitleFs     = %.2ff;", _uiAbilTitleFs);
+                TraceLog(LOG_INFO, "_uiBtnH            = %.2ff;", _uiBtnH);
+                TraceLog(LOG_INFO, "_uiLeaveW          = %.2ff;", _uiLeaveW);
+                TraceLog(LOG_INFO, "_uiRerollW         = %.2ff;", _uiRerollW);
+                TraceLog(LOG_INFO, "_uiBtnFs           = %.2ff;", _uiBtnFs);
+            }
+
+            return false;   // block all shop interaction while editor is open
+        }
+    }
+    else
+    {
+        _isUIEditorActive = false;
+    }
+
     const float sw  = (float)GetScreenWidth();
     const float sh  = (float)GetScreenHeight();
-    const float pad = 16.f;
+    const float pad = _uiPad;
 
     Vector2 mouse   = GetMousePosition();
     bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
@@ -298,11 +358,10 @@ bool ShopManager::Update(Character& player)
     // ── Layout (must match Draw exactly) ─────────────────────────────────
     static constexpr float kBorderDst_u  = 32.f;
     static constexpr float kPotionPrice  = 25;
-    static constexpr float kPotionStripH = 52.f;
-    const float leftW   = sw * 0.30f;
-    const float leaveH  = 48.f;
+    const float leftW   = sw * _uiLeftPanelW;
+    const float leaveH  = _uiBtnH;
     const float leaveY  = sh - pad - leaveH;
-    const float potionY = leaveY - pad * 0.5f - kPotionStripH;
+    const float potionY = leaveY - pad * 0.5f - _uiPotionH;
     const float dialH   = std::max(sh * 0.12f, kBorderDst_u * 2.f + 30.f);
     const float dialY   = potionY - pad * 0.5f - dialH;
     const float shopX   = pad + leftW + pad;
@@ -312,8 +371,8 @@ bool ShopManager::Update(Character& player)
     const float iPad    = kBorderDst_u;
 
     // ── Leave button ─────────────────────────────────────────────────────
-    const float leaveW  = 180.f;
-    const float rerollW = 200.f;
+    const float leaveW  = _uiLeaveW;
+    const float rerollW = _uiRerollW;
     const float leaveX  = shopX + shopW * 0.5f + 8.f;
     const float rerollX = shopX + shopW * 0.5f - rerollW - 8.f;
     Rectangle leaveBtn  = { leaveX,  leaveY, leaveW,  leaveH };
@@ -342,8 +401,8 @@ bool ShopManager::Update(Character& player)
 
     // ── Potion buttons (fixed — not affected by rerolls) ──────────────────
     const float potBtnW  = (shopW - 8.f) * 0.5f;
-    Rectangle hpotBtn = { shopX,                   potionY, potBtnW, kPotionStripH };
-    Rectangle mpotBtn = { shopX + potBtnW + 8.f,   potionY, potBtnW, kPotionStripH };
+    Rectangle hpotBtn = { shopX,                   potionY, potBtnW, _uiPotionH };
+    Rectangle mpotBtn = { shopX + potBtnW + 8.f,   potionY, potBtnW, _uiPotionH };
 
     if (clicked && CheckCollisionPointRec(mouse, hpotBtn))
     {
@@ -376,26 +435,35 @@ bool ShopManager::Update(Character& player)
         const float cw = leftW - cp * 2.f;
         // Mirror the cy progression from Draw() to land on the slot positions
         float cy = ly + cp + 34.f + 12.f;
-        const float barH2    = std::min(26.f, cw * 0.13f);
-        cy += (barH2 + 8.f) + (barH2 + 14.f);
-        const float statFs2   = std::min(20.f, cw * 0.09f);
+        const float hpFs2 = _uiHpFs;
+        cy += (hpFs2 + 8.f) + (hpFs2 + 14.f);
+        const float statFs2   = _uiStatFs;
         const float statRowH2 = statFs2 + 9.f;
-        cy += 4.f * statRowH2 + 10.f + 10.f + 28.f;
+        cy += 3.f * statRowH2 + 10.f + 10.f + _uiAbilTitleFs + 6.f;
 
-        const int   slotCount = player.GetMaxAbilitySlots();
-        const float slotH2    = std::min(72.f, (lh - (cy - ly) - cp) / (float)slotCount);
-        const float btnH2     = std::min(22.f, slotH2 * 0.32f);
-        const float btnW2     = (cw - 8.f) * 0.5f;
+        const int slotCount = player.GetMaxAbilitySlots();
+        int occupiedCount = 0;
+        for (int i = 0; i < slotCount; i++)
+            if (player.GetLearnedAbility(i) != AbilityType::None) occupiedCount++;
+
+        const float btnH    = _uiSlotBtnFs + 12.f;
+        const float btnGap  = 4.f;
+        const float slotGap = 3.f;
+        const float availH  = (ly + lh - cp) - cy;
+        float slotH = (availH - (float)occupiedCount * (btnH + btnGap)
+                               - (float)slotCount * slotGap) / (float)slotCount;
+        slotH = std::max(30.f, slotH);
+        const float btnW = (cw - 8.f) * 0.5f;
 
         for (int i = 0; i < slotCount; i++)
         {
             AbilityType ab = player.GetLearnedAbility(i);
+            cy += slotH + slotGap;   // skip over the slot box (same as Draw)
+
             if (ab != AbilityType::None)
             {
-                float btnTopY = cy + (slotH2 - 4.f) - btnH2 - 5.f;
-                Rectangle upgBtn = { lx + cp,               btnTopY, btnW2, btnH2 };
-                Rectangle remBtn = { lx + cp + btnW2 + 8.f, btnTopY, btnW2, btnH2 };
-
+                Rectangle upgBtn = { lx + cp,              cy, btnW, btnH };
+                Rectangle remBtn = { lx + cp + btnW + 8.f, cy, btnW, btnH };
                 int upgCost = player.GetAbilityLevel(ab) * 100;
 
                 if (clicked && CheckCollisionPointRec(mouse, upgBtn))
@@ -424,14 +492,14 @@ bool ShopManager::Update(Character& player)
                     }
                     return false;
                 }
+                cy += btnH + btnGap;
             }
-            cy += slotH2;
         }
     }
 
     // ── Tab buttons ───────────────────────────────────────────────────────
     const float titleH = 46.f;
-    const float tabH   = 38.f;
+    const float tabH   = _uiTabH;
     const float tabW   = (shopW - iPad * 2.f) * 0.5f - 4.f;
     const float tabY   = shopY + titleH;
     Rectangle tabWares = { shopX + iPad,               tabY, tabW, tabH };
@@ -451,7 +519,7 @@ bool ShopManager::Update(Character& player)
         const float cols   = 3.f, rows = 2.f, gap = 10.f;
         const float itemW  = (contentW - gap * (cols - 1.f)) / cols;
         const float itemH  = (contentH - gap * (rows - 1.f)) / rows;
-        const float buyH   = std::min(30.f, itemH * 0.20f);
+        const float buyH   = _uiBuyBtnH;
         int displayIdx = 0;
 
         for (int idx = 0; idx < (int)_inventory.size(); idx++)
@@ -464,8 +532,8 @@ bool ShopManager::Update(Character& player)
             float ix   = shopX + iPad + col * (itemW + gap);
             float iy   = contentY + row * (itemH + gap);
 
-            Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
-            if (clicked && CheckCollisionPointRec(mouse, buyBtn))
+            Rectangle cardRect = { ix, iy, itemW, itemH };
+            if (clicked && CheckCollisionPointRec(mouse, cardRect))
             {
                 if (item.isAbility && player.GetLearnedCount() >= 3)
                 {
@@ -496,7 +564,7 @@ bool ShopManager::Update(Character& player)
         const float cols   = 3.f, rows = 2.f, gap = 10.f;
         const float itemW  = (contentW - gap * (cols - 1.f)) / cols;
         const float itemH  = (contentH - gap * (rows - 1.f)) / rows;
-        const float buyH   = std::min(30.f, itemH * 0.20f);
+        const float buyH   = _uiBuyBtnH;
         int displayIdx = 0;
 
         for (int idx = 0; idx < (int)_inventory.size(); idx++)
@@ -509,8 +577,8 @@ bool ShopManager::Update(Character& player)
             float ix   = shopX + iPad + col * (itemW + gap);
             float iy   = contentY + row * (itemH + gap);
 
-            Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
-            if (clicked && CheckCollisionPointRec(mouse, buyBtn))
+            Rectangle cardRect = { ix, iy, itemW, itemH };
+            if (clicked && CheckCollisionPointRec(mouse, cardRect))
             {
                 if (player.GetLearnedCount() >= 3)
                 {
@@ -535,11 +603,11 @@ bool ShopManager::Update(Character& player)
     return false;
 }
 
-void ShopManager::Draw(const Character& player) const
+void ShopManager::Draw(const Character& player, bool debugActive) const
 {
     const float sw  = (float)GetScreenWidth();
     const float sh  = (float)GetScreenHeight();
-    const float pad = 16.f;
+    const float pad = _uiPad;
 
     // ── Scrolling checkerboard background ────────────────────────────────
     {
@@ -563,11 +631,10 @@ void ShopManager::Draw(const Character& player) const
     // ── Layout ───────────────────────────────────────────────────────────
     static constexpr float kBorderDst_layout = 32.f;
     static constexpr int   kPotionPriceDraw  = 25;
-    static constexpr float kPotionStripHDraw = 52.f;
-    const float leftW   = sw * 0.30f;
-    const float leaveH  = 48.f;
+    const float leftW   = sw * _uiLeftPanelW;
+    const float leaveH  = _uiBtnH;
     const float leaveY  = sh - pad - leaveH;
-    const float potionY = leaveY - pad * 0.5f - kPotionStripHDraw;
+    const float potionY = leaveY - pad * 0.5f - _uiPotionH;
     const float dialH   = std::max(sh * 0.12f, kBorderDst_layout * 2.f + 30.f);
     const float dialY   = potionY - pad * 0.5f - dialH;
     const float shopX   = pad + leftW + pad;
@@ -614,45 +681,36 @@ void ShopManager::Draw(const Character& player) const
         const float cw = leftW - cp * 2.f;
 
         // Title
-        DrawText("PLAYER", (int)(lx + cp), (int)cy, 28, kGold);
+        DrawText("PLAYER", (int)(lx + cp), (int)cy, (int)_uiTitleFs, kGold);
         cy += 34.f;
         DrawLineEx({ lx + cp, cy }, { lx + leftW - cp, cy }, 1.f, Fade(kGold, 0.35f));
         cy += 12.f;
 
-        // HP bar
+        // HP text
         float maxHp = player.GetMaxHealthValue();
         float curHp = player.GetHealthValue();
-        float hpPct = (maxHp > 0.f) ? curHp / maxHp : 0.f;
-        const float barH = std::min(26.f, cw * 0.13f);
-        Color hpCol = (hpPct > 0.5f) ? GREEN : (hpPct > 0.25f) ? YELLOW : RED;
-        DrawRectangleRounded({ lx + cp, cy, cw * hpPct, barH }, 0.4f, 4, hpCol);
-        DrawRectangleRoundedLines({ lx + cp, cy, cw, barH }, 0.4f, 4, Fade(WHITE, 0.2f));
+        int hpFs = (int)_uiHpFs;
         const char* hpLbl = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
-        int hpFs = (int)std::min(18.f, barH * 0.85f);
-        DrawText(hpLbl, (int)(lx + cp + 4.f), (int)(cy + barH * 0.5f - hpFs * 0.5f), hpFs, BLACK);
-        cy += barH + 8.f;
+        DrawText(hpLbl, (int)(lx + cp + 4.f), (int)cy, hpFs, BLACK);
+        cy += hpFs + 8.f;
 
-        // MP bar
-        float manaPct = (player.GetMaxMana() > 0) ? (float)player.GetMana() / player.GetMaxMana() : 0.f;
-        DrawRectangleRounded({ lx + cp, cy, cw * manaPct, barH }, 0.4f, 4, Color{60,120,255,230});
-        DrawRectangleRoundedLines({ lx + cp, cy, cw, barH }, 0.4f, 4, Fade(WHITE, 0.2f));
+        // MP text
         const char* mpLbl = TextFormat("MP  %d / %d", player.GetMana(), player.GetMaxMana());
-        DrawText(mpLbl, (int)(lx + cp + 4.f), (int)(cy + barH * 0.5f - hpFs * 0.5f), hpFs, BLACK);
-        cy += barH + 14.f;
+        DrawText(mpLbl, (int)(lx + cp + 4.f), (int)cy, hpFs, BLACK);
+        cy += hpFs + 14.f;
 
         // Stats grid
         struct StatRow { const char* label; std::string value; };
         StatRow stats[] = {
-            { "ATK",  TextFormat("%.1f", player.GetAttackPowerValue())   },
-            { "SPD",  TextFormat("%.0f", player.GetMoveSpeedValue())     },
-            { "DEF",  TextFormat("%.0f%%", player.GetDefense() * 100.f) },
-            { "GOLD", std::to_string(player.GetGold())                   },
+            { "ATK",  TextFormat("%.1f", player.GetAttackPowerValue())  },
+            { "DEF",  TextFormat("%.0f", player.GetDefense())           },
+            { "GOLD", std::to_string(player.GetGold())                  },
         };
-        float statFs   = std::min(20.f, cw * 0.09f);
+        float statFs   = _uiStatFs;
         float statRowH = statFs + 9.f;
         for (auto& s : stats)
         {
-            DrawText(s.label, (int)(lx + cp), (int)cy, (int)statFs, BLACK);
+            DrawText(s.label, (int)(lx + cp + 4.f), (int)cy, (int)statFs, BLACK);
             int vw = MeasureText(s.value.c_str(), (int)statFs);
             DrawText(s.value.c_str(), (int)(lx + leftW - cp - vw - 18.f), (int)cy, (int)statFs, BLACK);
             cy += statRowH;
@@ -662,79 +720,126 @@ void ShopManager::Draw(const Character& player) const
         // Abilities section
         DrawLineEx({ lx + cp, cy }, { lx + leftW - cp, cy }, 1.f, Fade(kGold, 0.35f));
         cy += 10.f;
-        DrawText("ABILITIES", (int)(lx + cp), (int)cy, 22, kGold);
-        cy += 28.f;
+        DrawText("ABILITIES", (int)(lx + cp), (int)cy, (int)_uiAbilTitleFs, kGold);
+        cy += _uiAbilTitleFs + 6.f;
 
-        int   slotCount = player.GetMaxAbilitySlots();
-        float slotH     = std::min(72.f, (lh - (cy - ly) - cp) / (float)slotCount);
-        float slotFs    = std::min(16.f, slotH * 0.28f);
+        int slotCount = player.GetMaxAbilitySlots();
 
+        // Count occupied slots to reserve space for the external button rows
+        int occupiedCount = 0;
+        for (int i = 0; i < slotCount; i++)
+            if (player.GetLearnedAbility(i) != AbilityType::None) occupiedCount++;
+
+        const float btnH    = _uiSlotBtnFs + 12.f;
+        const float btnGap  = 4.f;
+        const float slotGap = 3.f;
+        const float availH  = (ly + lh - cp) - cy;
+        float slotH = (availH - (float)occupiedCount * (btnH + btnGap)
+                               - (float)slotCount * slotGap) / (float)slotCount;
+        slotH = std::max(30.f, slotH);
+
+        float slotFs = _uiSlotFs;
+        const float btnW = (cw - 8.f) * 0.5f;
         Vector2 mpLeft = GetMousePosition();
+
         for (int i = 0; i < slotCount; i++)
         {
             AbilityType ab = player.GetLearnedAbility(i);
-            Rectangle sr   = { lx + cp, cy, cw, slotH - 4.f };
+            int lv = (ab != AbilityType::None) ? player.GetAbilityLevel(ab) : 0;
+
+            // ── Slot box ──────────────────────────────────────────────────
+            Rectangle sr = { lx + cp, cy, cw, slotH };
             Color sbg = (ab == AbilityType::None) ? kSlotBg     : kSlotBgFull;
             Color sbo = (ab == AbilityType::None) ? Color{50,50,60,120} : Color{80,110,160,200};
             smallBox(sr, sbg, sbo);
 
             if (ab != AbilityType::None)
             {
-                int lv = player.GetAbilityLevel(ab);
-                DrawText(ShopAbilityName(ab),
-                    (int)(sr.x + 8.f), (int)(sr.y + 8.f),
-                    (int)std::min(16.f, slotFs + 2.f), RAYWHITE);
-                const char* lvLbl = TextFormat("Lv%d", lv);
-                int lvW = MeasureText(lvLbl, (int)slotFs);
-                DrawText(lvLbl, (int)(sr.x + sr.width - lvW - 6.f),
-                    (int)(sr.y + 8.f),
-                    (int)slotFs, lv >= 3 ? GOLD : SKYBLUE);
+                const char* abilName = ShopAbilityName(ab);
+                const char* lvLbl    = TextFormat("Lv%d", lv);
+                const float padX     = 8.f;
+                const float lblGap   = 10.f;
 
-                const float btnH2   = std::min(22.f, slotH * 0.32f);
-                const float btnW2   = (cw - 8.f) * 0.5f;
-                const float btnTopY = sr.y + sr.height - btnH2 - 5.f;
+                // Level font — clamp to slot height so it never spills vertically
+                float lvFs = std::min(slotFs, slotH - 8.f);
+                lvFs = std::max(8.f, lvFs);
+                int lvW = MeasureText(lvLbl, (int)lvFs);
+
+                // Ability name — clamp height first, then shrink width to fit
+                // alongside the level label without overlapping
+                float availNameW = cw - padX - (float)lvW - lblGap - padX;
+                float nameFs = std::min(_uiSlotFs, slotH - 8.f);
+                nameFs = std::max(8.f, nameFs);
+                while (nameFs > 8.f && MeasureText(abilName, (int)nameFs) > (int)availNameW)
+                    nameFs -= 1.f;
+
+                // Clip to slot rect so nothing bleeds into neighbouring slots
+                BeginScissorMode((int)sr.x, (int)sr.y, (int)sr.width, (int)sr.height);
+
+                DrawText(abilName,
+                    (int)(sr.x + padX),
+                    (int)(sr.y + slotH * 0.5f - nameFs * 0.5f),
+                    (int)nameFs, RAYWHITE);
+                DrawText(lvLbl,
+                    (int)(sr.x + sr.width - lvW - padX),
+                    (int)(sr.y + slotH * 0.5f - lvFs * 0.5f),
+                    (int)lvFs, lv >= 3 ? GOLD : SKYBLUE);
+
+                EndScissorMode();
+
+                // Restore the outer left-panel scissor
+                BeginScissorMode((int)(lx + kBorderDst), (int)(ly + kBorderDst),
+                                 (int)(leftW - kBorderDst * 2.f), (int)(lh - kBorderDst * 2.f));
+            }
+            else
+            {
+                DrawText("-- empty --",
+                    (int)(sr.x + 8.f),
+                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f),
+                    (int)slotFs, Fade(RAYWHITE, 0.30f));
+            }
+            cy += slotH + slotGap;
+
+            // ── Upg / Rem buttons — only when slot is occupied ────────────
+            if (ab != AbilityType::None)
+            {
                 int  upgCost   = lv * 100;
                 bool canUpg    = player.CanUpgradeAbility(ab);
                 bool canAffUpg = player.GetGold() >= upgCost;
                 bool canAffRem = player.GetGold() >= 100;
+                int  ubFs      = (int)_uiSlotBtnFs;
 
-                Rectangle upgBtn2 = { sr.x,               btnTopY, btnW2, btnH2 };
-                Rectangle remBtn2 = { sr.x + btnW2 + 8.f, btnTopY, btnW2, btnH2 };
+                Rectangle upgBtn = { lx + cp,              cy, btnW, btnH };
+                Rectangle remBtn = { lx + cp + btnW + 8.f, cy, btnW, btnH };
 
-                bool upgHov = CheckCollisionPointRec(mpLeft, upgBtn2);
-                Color upgBg2 = (canUpg && canAffUpg) ? (upgHov ? Color{45,90,45,240} : Color{30,60,30,220})
-                                                      : Color{25,25,30,140};
-                Color upgBo2 = (canUpg && canAffUpg) ? (upgHov ? Color{120,220,120,255} : Color{80,180,80,220})
-                                                      : Color{60,60,70,120};
-                smallBox(upgBtn2, upgBg2, upgBo2);
-                int ubFs = (int)std::min(11.f, btnH2 * 0.55f);
-                const char* upgLbl2 = canUpg ? TextFormat("Upg %dg", upgCost) : "MAX";
-                int ulW2 = MeasureText(upgLbl2, ubFs);
-                DrawText(upgLbl2,
-                    (int)(upgBtn2.x + upgBtn2.width * 0.5f - ulW2 * 0.5f),
-                    (int)(upgBtn2.y + upgBtn2.height * 0.5f - ubFs * 0.5f),
+                bool upgHov = CheckCollisionPointRec(mpLeft, upgBtn);
+                Color upgBg = (canUpg && canAffUpg) ? (upgHov ? Color{45,90,45,240} : Color{30,60,30,220})
+                                                    : Color{25,25,30,140};
+                Color upgBo = (canUpg && canAffUpg) ? (upgHov ? Color{120,220,120,255} : Color{80,180,80,220})
+                                                    : Color{60,60,70,120};
+                smallBox(upgBtn, upgBg, upgBo);
+                const char* upgLbl = canUpg ? TextFormat("Upg %dg", upgCost) : "MAX";
+                int ulW = MeasureText(upgLbl, ubFs);
+                DrawText(upgLbl,
+                    (int)(upgBtn.x + upgBtn.width  * 0.5f - ulW * 0.5f),
+                    (int)(upgBtn.y + upgBtn.height * 0.5f - ubFs * 0.5f),
                     ubFs, (canUpg && canAffUpg) ? Color{180,255,180,255} : Fade(RAYWHITE, 0.35f));
 
-                bool remHov = CheckCollisionPointRec(mpLeft, remBtn2);
-                Color remBg2 = canAffRem ? (remHov ? Color{110,30,30,240} : Color{70,20,20,200})
-                                         : Color{25,25,30,140};
-                Color remBo2 = canAffRem ? (remHov ? Color{255,80,80,255} : Color{200,60,60,200})
-                                         : Color{60,60,70,120};
-                smallBox(remBtn2, remBg2, remBo2);
-                const char* remLbl2 = "Rem 100g";
-                int rlW2 = MeasureText(remLbl2, ubFs);
-                DrawText(remLbl2,
-                    (int)(remBtn2.x + remBtn2.width * 0.5f - rlW2 * 0.5f),
-                    (int)(remBtn2.y + remBtn2.height * 0.5f - ubFs * 0.5f),
+                bool remHov = CheckCollisionPointRec(mpLeft, remBtn);
+                Color remBg = canAffRem ? (remHov ? Color{110,30,30,240} : Color{70,20,20,200})
+                                        : Color{25,25,30,140};
+                Color remBo = canAffRem ? (remHov ? Color{255,80,80,255} : Color{200,60,60,200})
+                                        : Color{60,60,70,120};
+                smallBox(remBtn, remBg, remBo);
+                const char* remLbl = "Rem 100g";
+                int rlW = MeasureText(remLbl, ubFs);
+                DrawText(remLbl,
+                    (int)(remBtn.x + remBtn.width  * 0.5f - rlW * 0.5f),
+                    (int)(remBtn.y + remBtn.height * 0.5f - ubFs * 0.5f),
                     ubFs, canAffRem ? Color{255,140,140,255} : Fade(RAYWHITE, 0.35f));
+
+                cy += btnH + btnGap;
             }
-            else
-            {
-                DrawText("-- empty --", (int)(sr.x + 8.f),
-                    (int)(sr.y + slotH * 0.5f - slotFs * 0.5f),
-                    (int)slotFs, Fade(RAYWHITE, 0.30f));
-            }
-            cy += slotH;
         }
 
         // ── Player sprite portrait ────────────────────────────────────────
@@ -781,9 +886,9 @@ void ShopManager::Draw(const Character& player) const
                      (int)(shopW - kBorderDst * 2.f), (int)(shopH - kBorderDst * 2.f));
     {
         const float titleH = kBorderDst + 34.f;
-        const float tabH   = 38.f;
+        const float tabH   = _uiTabH;
 
-        DrawText("ZEPH'S WARES", (int)(shopX + iPad), (int)(shopY + iPad), 28, kGold);
+        DrawText("ZEPH'S WARES", (int)(shopX + iPad + 8.f), (int)(shopY + iPad + 4.f), (int)_uiTitleFs, kGold);
         DrawLineEx({ shopX + iPad, shopY + titleH - 4.f },
                    { shopX + shopW - iPad, shopY + titleH - 4.f },
                    1.f, Fade(kGold, 0.30f));
@@ -795,15 +900,20 @@ void ShopManager::Draw(const Character& player) const
 
         auto drawTab = [&](Rectangle r, const char* label, bool active)
         {
-            Color bg = active ? Color{40,60,110,240} : Color{20,25,40,180};
-            Color bo = active ? Color{100,150,255,255} : Color{80,100,140,180};
+            Vector2 mTab = GetMousePosition();
+            bool hov = CheckCollisionPointRec(mTab, r);
+            Color bg = active ? Color{40,60,110,240} : (hov ? Color{30,38,65,220} : Color{20,25,40,180});
+            Color bo = active ? Color{100,150,255,255} : (hov ? Color{120,150,220,240} : Color{80,100,140,180});
             smallBox(r, bg, bo);
-            int fs = (int)std::min(16.f, r.height * 0.44f);
-            int tw = MeasureText(label, fs);
+            float fs = std::min(_uiStatFs, r.height - 8.f);
+            fs = std::max(8.f, fs);
+            while (fs > 8.f && MeasureText(label, (int)fs) > (int)(r.width - 16.f))
+                fs -= 1.f;
+            int tw = MeasureText(label, (int)fs);
             DrawText(label,
                 (int)(r.x + r.width  * 0.5f - tw * 0.5f),
                 (int)(r.y + r.height * 0.5f - fs * 0.5f),
-                fs, active ? RAYWHITE : kDim);
+                (int)fs, active ? RAYWHITE : (hov ? Color{200,210,230,255} : kDim));
         };
         drawTab(tabWares, "WARES",     _tab == 0);
         drawTab(tabAb,    "ABILITIES", _tab == 1);
@@ -854,10 +964,10 @@ void ShopManager::Draw(const Character& player) const
             const float cols = 3.f, rows = 2.f, gap = 10.f;
             const float itemW = (contentW - gap * (cols - 1.f)) / cols;
             const float itemH = (contentH - gap * (rows - 1.f)) / rows;
-            const float buyH   = std::min(30.f, itemH * 0.20f);
+            const float buyH   = _uiBuyBtnH;
             const float iconSz = std::min(itemW * 0.40f, itemH * 0.35f);
-            const float nameFs = std::min(32.f, itemH * 0.22f);
-            const float descFsBase = std::min(26.f, itemH * 0.16f);
+            const float nameFs = _uiItemNameFs;
+            const float descFsBase = _uiItemDescFs;
             int availableWares = 0;
             for (const auto& item : _inventory)
                 if (!item.purchased && !item.isAbility)
@@ -912,7 +1022,7 @@ void ShopManager::Draw(const Character& player) const
                     DrawCircleLinesV({ iconCX, iconCY }, iconSz * 0.4f, Fade(rarCol, 0.70f));
                 }
 
-                float cy2 = iconCY + iconSz * 0.5f + 100.f;
+                float cy2 = iconCY + iconSz * 0.5f + _uiItemTextOffsetY;
                 const char* name = ShopUpgradeName(item.upgradeType);
                 const char* desc = ShopUpgradeDesc(item.upgradeType);
 
@@ -947,7 +1057,7 @@ void ShopManager::Draw(const Character& player) const
                 Color buyBo = canAfford ? Color{80,200,80,255} : Color{160,60,60,200};
                 Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
                 smallBox(buyBtn, buyBg, buyBo);
-                int prFs = (int)std::min(14.f, buyH * 0.55f);
+                int prFs = (int)_uiPriceFs;
                 const char* prLbl = (idx == _dailyDealIndex)
                     ? TextFormat("%dg  DEAL", item.price)
                     : TextFormat("%dg", item.price);
@@ -965,10 +1075,10 @@ void ShopManager::Draw(const Character& player) const
             const float cols = 3.f, rows = 2.f, gap = 10.f;
             const float itemW = (contentW - gap * (cols - 1.f)) / cols;
             const float itemH = (contentH - gap * (rows - 1.f)) / rows;
-            const float buyH   = std::min(30.f, itemH * 0.20f);
+            const float buyH   = _uiBuyBtnH;
             const float iconSz = std::min(itemW * 0.40f, itemH * 0.35f);
-            const float nameFs = std::min(32.f, itemH * 0.22f);
-            const float descFsBase = std::min(26.f, itemH * 0.16f);
+            const float nameFs = _uiItemNameFs;
+            const float descFsBase = _uiItemDescFs;
             bool slotsFull = (player.GetLearnedCount() >= 3);
 
             int availableAbilities = 0;
@@ -1048,7 +1158,7 @@ void ShopManager::Draw(const Character& player) const
                 Color buyBo = canBuy ? Color{80,200,80,255} : Color{160,60,60,200};
                 Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
                 smallBox(buyBtn, buyBg, buyBo);
-                int prFs = (int)std::min(14.f, buyH * 0.55f);
+                int prFs = (int)_uiPriceFs;
                 const char* prLbl = slotsFull ? "SLOTS FULL" : TextFormat("%dg", item.price);
                 int prW = MeasureText(prLbl, prFs);
                 DrawText(prLbl,
@@ -1069,19 +1179,19 @@ void ShopManager::Draw(const Character& player) const
         const float innerMid = innerTop + innerH * 0.5f;
 
         const char* nameTag = "Zeph:";
-        int ntFs = (int)std::min(20.f, innerH * 0.55f);
-        int dtFs = (int)std::min(18.f, innerH * 0.48f);
+        int ntFs = (int)_uiDialNameFs;
+        int dtFs = (int)_uiDialTextFs;
 
         float totalH = ntFs + 4.f + dtFs;
         float startY = innerMid - totalH * 0.5f;
 
         int ntW = MeasureText(nameTag, ntFs);
-        DrawText(nameTag, (int)(shopX + iPad), (int)startY, ntFs, BLACK);
+        DrawText(nameTag, (int)(shopX + iPad + 8.f), (int)(startY + 4.f), ntFs, BLACK);
 
         const char* dText = _dialogue.c_str();
         DrawText(dText,
-            (int)(shopX + iPad + ntW + 10.f),
-            (int)(startY + ntFs * 0.5f - dtFs * 0.5f),
+            (int)(shopX + iPad + 8.f + ntW + 10.f),
+            (int)(startY + 4.f + ntFs * 0.5f - dtFs * 0.5f),
             dtFs, BLACK);
     }
 
@@ -1097,7 +1207,7 @@ void ShopManager::Draw(const Character& player) const
             Color bg = canAffordPot ? (hov ? hovBg : baseBg) : Color{25,25,30,180};
             Color bo = canAffordPot ? border : Color{70,70,80,140};
             smallBox(r, bg, bo);
-            int fs = (int)std::min(14.f, kPotionStripHDraw * 0.30f);
+            int fs = (int)_uiPotionFs;
             int lw = MeasureText(label, fs);
             DrawText(label,
                 (int)(r.x + r.width * 0.5f - lw * 0.5f),
@@ -1105,18 +1215,18 @@ void ShopManager::Draw(const Character& player) const
                 fs, canAffordPot ? RAYWHITE : Fade(RAYWHITE, 0.35f));
         };
 
-        drawPotBtn({ shopX,                   potionY, potBtnW, kPotionStripHDraw },
+        drawPotBtn({ shopX,                   potionY, potBtnW, _uiPotionH },
             TextFormat("Health Potion  %dg   (Heals 25%% HP)", kPotionPriceDraw),
             Color{55,18,18,220}, Color{80,25,25,240}, Color{220,70,70,220});
 
-        drawPotBtn({ shopX + potBtnW + 8.f,   potionY, potBtnW, kPotionStripHDraw },
+        drawPotBtn({ shopX + potBtnW + 8.f,   potionY, potBtnW, _uiPotionH },
             TextFormat("Mana Potion  %dg   (Restores 50%% MP)", kPotionPriceDraw),
             Color{18,25,65,220}, Color{25,38,95,240}, Color{80,120,255,220});
     }
 
     // ── REROLL + LEAVE BUTTONS ────────────────────────────────────────────
-    const float leaveW  = 180.f;
-    const float rerollW = 200.f;
+    const float leaveW  = _uiLeaveW;
+    const float rerollW = _uiRerollW;
     const float leaveX  = shopX + shopW * 0.5f + 8.f;
     const float rerollX = shopX + shopW * 0.5f - rerollW - 8.f;
     Rectangle leaveBtn  = { leaveX,  leaveY, leaveW,  leaveH };
@@ -1130,12 +1240,18 @@ void ShopManager::Draw(const Character& player) const
     smallBox(leaveBtn,
         leaveHov ? Color{80,20,20,240} : Color{50,14,14,220},
         leaveHov ? Color{220,80,80,255} : Color{140,50,50,200});
-    int lvFs = (int)std::min(18.f, leaveH * 0.50f);
-    int lvW  = MeasureText("LEAVE SHOP", lvFs);
-    DrawText("LEAVE SHOP",
-        (int)(leaveX + leaveW * 0.5f - lvW * 0.5f),
-        (int)(leaveY + leaveH * 0.5f - lvFs * 0.5f),
-        lvFs, leaveHov ? Color{255,160,160,255} : Color{220,120,120,220});
+    {
+        // Leave — shrink font until label fits inside the button
+        float lFs = std::min(_uiBtnFs, leaveH - 8.f);
+        lFs = std::max(8.f, lFs);
+        while (lFs > 8.f && MeasureText("LEAVE SHOP", (int)lFs) > (int)(leaveW - 16.f))
+            lFs -= 1.f;
+        int lW = MeasureText("LEAVE SHOP", (int)lFs);
+        DrawText("LEAVE SHOP",
+            (int)(leaveX + leaveW * 0.5f - lW * 0.5f),
+            (int)(leaveY + leaveH * 0.5f - lFs * 0.5f),
+            (int)lFs, leaveHov ? Color{255,160,160,255} : Color{220,120,120,220});
+    }
 
     Color rrBg = canReroll
         ? (rerollHov ? Color{20,60,20,240} : Color{14,40,14,220})
@@ -1144,14 +1260,85 @@ void ShopManager::Draw(const Character& player) const
         ? (rerollHov ? Color{80,220,80,255} : Color{50,140,50,200})
         : Color{80,80,80,160};
     smallBox(rerollBtn, rrBg, rrBo);
-    const char* rrLabel = TextFormat("REROLL  %dg", _rerollCost);
-    int rrFs = (int)std::min(18.f, leaveH * 0.50f);
-    int rrW  = MeasureText(rrLabel, rrFs);
-    DrawText(rrLabel,
-        (int)(rerollX + rerollW * 0.5f - rrW * 0.5f),
-        (int)(leaveY + leaveH * 0.5f - rrFs * 0.5f),
-        rrFs, canReroll ? (rerollHov ? Color{180,255,180,255} : Color{140,220,140,220})
-                        : Fade(RAYWHITE, 0.35f));
+    {
+        // Reroll — shrink font until label fits inside the button
+        const char* rrLabel = TextFormat("REROLL  %dg", _rerollCost);
+        float rFs = std::min(_uiBtnFs, leaveH - 8.f);
+        rFs = std::max(8.f, rFs);
+        while (rFs > 8.f && MeasureText(rrLabel, (int)rFs) > (int)(rerollW - 16.f))
+            rFs -= 1.f;
+        int rW = MeasureText(rrLabel, (int)rFs);
+        DrawText(rrLabel,
+            (int)(rerollX + rerollW * 0.5f - rW * 0.5f),
+            (int)(leaveY + leaveH * 0.5f - rFs * 0.5f),
+            (int)rFs, canReroll ? (rerollHov ? Color{180,255,180,255} : Color{140,220,140,220})
+                                : Fade(RAYWHITE, 0.35f));
+    }
+
+    // ── UI Editor debug panel ─────────────────────────────────────────────
+    if (debugActive && _isUIEditorActive)
+    {
+        const char* varNames[22] = {
+            "0  Padding",
+            "1  Left Panel W",
+            "2  Title Font",
+            "3  Stat Font",
+            "4  Slot Font",
+            "5  Slot Btn Font",
+            "6  HP/MP Font",
+            "7  Tab Height",
+            "8  Buy Btn H",
+            "9  Item Name Font",
+            "10 Item Desc Font",
+            "11 Item Text Offset Y",
+            "12 Price Font",
+            "13 Dial Name Font",
+            "14 Dial Text Font",
+            "15 Potion Height",
+            "16 Potion Font",
+            "17 Abil Title Font",
+            "18 Btn Height",
+            "19 Leave Width",
+            "20 Reroll Width",
+            "21 Btn Font",
+        };
+        const float* varPtrs[22] = {
+            &_uiPad, &_uiLeftPanelW, &_uiTitleFs, &_uiStatFs, &_uiSlotFs,
+            &_uiSlotBtnFs, &_uiHpFs, &_uiTabH, &_uiBuyBtnH,
+            &_uiItemNameFs, &_uiItemDescFs, &_uiItemTextOffsetY, &_uiPriceFs,
+            &_uiDialNameFs, &_uiDialTextFs, &_uiPotionH, &_uiPotionFs,
+            &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs
+        };
+
+        constexpr float panW = 300.f, panH = 700.f;
+        const float panX = sw * 0.5f - panW * 0.5f;
+        const float panY = 10.f;
+        DrawRectangle((int)panX, (int)panY, (int)panW, (int)panH, Fade(BLACK, 0.82f));
+        DrawRectangleLines((int)panX, (int)panY, (int)panW, (int)panH, DARKGRAY);
+
+        DrawText("UI EDITOR  [9] close", (int)(panX + 8.f), (int)(panY + 6.f), 11, GRAY);
+        DrawText("[UP/DOWN] select  [L/R] nudge  [S] export",
+            (int)(panX + 8.f), (int)(panY + 20.f), 10, DARKGRAY);
+
+        const float rowH  = (panH - 40.f) / 22.f;
+        for (int i = 0; i < 22; i++)
+        {
+            float ry = panY + 38.f + i * rowH;
+            bool  sel = (i == _uiEditorSelectedIndex);
+            Color col = sel ? YELLOW : WHITE;
+
+            if (sel)
+                DrawText("->", (int)(panX + 4.f), (int)(ry + rowH * 0.5f - 8.f), 14, YELLOW);
+
+            DrawText(varNames[i],
+                (int)(panX + 28.f), (int)(ry + rowH * 0.5f - 8.f), 14, col);
+
+            const char* valStr = TextFormat("%.2f", *varPtrs[i]);
+            int valW = MeasureText(valStr, 14);
+            DrawText(valStr,
+                (int)(panX + panW - valW - 8.f), (int)(ry + rowH * 0.5f - 8.f), 14, col);
+        }
+    }
 }
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
