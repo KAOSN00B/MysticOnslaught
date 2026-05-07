@@ -341,16 +341,18 @@ void Molarbeast::ApplyElectricCharge()
 
 Rectangle Molarbeast::GetCollisionRec() const
 {
-    if (_collisionSize.x == 0.f && _stableFrameW > 0.f)
+    float stableHalfW = _stableFrameW * _scale * 0.5f;
+    float stableHalfH = _stableFrameH * _scale * 0.5f;
+
+    if (_collisionSize.x == 0.f && stableHalfW > 0.f)
     {
         auto* s = const_cast<Molarbeast*>(this);
-        s->_collisionSize   = { _stableFrameW * _scale * _collisionWidthScale,
-                                 _stableFrameH * _scale * _collisionHeightScale };
-        s->_collisionOffset = { 0.f, _stableFrameH * _scale * _collisionYOffsetScale };
+        s->_collisionSize   = { stableHalfW * 2.f, stableHalfH * 2.f };
+        s->_collisionOffset = { 0.f, 0.f };
     }
     return Rectangle{
-        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
-        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _worldPos.x - stableHalfW + _collisionOffset.x,
+        _worldPos.y - stableHalfH + _collisionOffset.y,
         _collisionSize.x, _collisionSize.y
     };
 }

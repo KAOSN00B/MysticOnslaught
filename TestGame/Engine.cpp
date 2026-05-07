@@ -6181,7 +6181,8 @@ void Engine::UpdateHitboxEditor()
         }
 
         TraceLog(LOG_WARNING, "=== HITBOX EXPORT [%s] ===", typeName);
-        TraceLog(LOG_WARNING, "// In %s(), replace the lazy-init block values:", funcName);
+        TraceLog(LOG_WARNING, "// Body box — sprite-space (offset from sprite top-left corner):");
+        TraceLog(LOG_WARNING, "// Paste into the lazy-init block of %s():", funcName);
         TraceLog(LOG_WARNING, "s->_collisionSize   = { %.2ff, %.2ff };", size.x, size.y);
         TraceLog(LOG_WARNING, "s->_collisionOffset = { %.2ff, %.2ff };", offset.x, offset.y);
         if (_hitboxSelectedEntity == &_player)
@@ -6192,7 +6193,7 @@ void Engine::UpdateHitboxEditor()
         }
         else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
         {
-            TraceLog(LOG_WARNING, "// Attack box — paste into Enemy.h default values:");
+            TraceLog(LOG_WARNING, "// Attack box — anchored to sprite center, paste into enemy ResetForSpawn or Enemy.h defaults:");
             TraceLog(LOG_WARNING, "float _attackBoxWidth   = %.2ff;", e->GetAttackBoxWidth());
             TraceLog(LOG_WARNING, "float _attackBoxHeight  = %.2ff;", e->GetAttackBoxHeight());
             TraceLog(LOG_WARNING, "float _attackBoxOffsetX = %.2ff;", e->GetAttackBoxOffsetX());

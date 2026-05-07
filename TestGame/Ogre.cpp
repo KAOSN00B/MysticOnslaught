@@ -270,12 +270,14 @@ Rectangle Ogre::GetCollisionRec() const
         auto* s = const_cast<Ogre*>(this);
         float vw = _visualFrameWidth  * _scale;
         float vh = _visualFrameHeight * _scale;
-        s->_collisionSize   = { 248.40f, 138.00f };
-        s->_collisionOffset = { 2.00f, 7.00f };
+        s->_collisionSize   = { _visualFrameWidth * _scale, _visualFrameHeight * _scale };
+        s->_collisionOffset = { 0.f, 0.f };
     }
+    float stableHalfW = _visualFrameWidth  * _scale * 0.5f;
+    float stableHalfH = _visualFrameHeight * _scale * 0.5f;
     return Rectangle{
-        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
-        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _worldPos.x - stableHalfW + _collisionOffset.x,
+        _worldPos.y - stableHalfH + _collisionOffset.y,
         _collisionSize.x, _collisionSize.y
     };
 }

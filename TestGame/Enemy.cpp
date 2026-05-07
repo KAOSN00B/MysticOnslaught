@@ -116,24 +116,30 @@ void Enemy::ApplyEnrage()
 
 Rectangle Enemy::GetCollisionRec() const
 {
-    if (_collisionSize.x == 0.f && _width > 0.f)
+    // Stable idle-frame dimensions are the sprite-space reference.
+    // _width is always 32 for the grunt idle sheet; _scale is set in ResetForSpawn.
+    float stableHalfW = 32.f * _scale * 0.5f;
+    float stableHalfH = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale * 0.5f;
+
+    if (_collisionSize.x == 0.f && stableHalfW > 0.f)
     {
         auto* s = const_cast<Enemy*>(this);
-        s->_collisionSize   = { 67.60f, 69.00f };
-        s->_collisionOffset = { -6.00f, 11.52f };
+        s->_collisionSize   = { 87.00f, 79.00f };
+        s->_collisionOffset = { 58.00f, 18.00f };
     }
     return Rectangle{
-        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
-        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _worldPos.x - stableHalfW + _collisionOffset.x,
+        _worldPos.y - stableHalfH + _collisionOffset.y,
         _collisionSize.x, _collisionSize.y
     };
 }
 
 Rectangle Enemy::GetAttackCollisionRec() const
 {
+    // Attack box anchored to sprite center (_worldPos), independent of body offset.
     return Rectangle{
-        _worldPos.x + _collisionOffset.x + _attackBoxOffsetX * _rightLeft - _attackBoxWidth  * 0.5f,
-        _worldPos.y + _collisionOffset.y + _attackBoxOffsetY - _attackBoxHeight * 0.5f,
+        _worldPos.x + _attackBoxOffsetX * _rightLeft - _attackBoxWidth  * 0.5f,
+        _worldPos.y + _attackBoxOffsetY              - _attackBoxHeight * 0.5f,
         _attackBoxWidth,
         _attackBoxHeight
     };

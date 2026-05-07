@@ -488,32 +488,31 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
         DrawCircleV(screenPos, radius * 0.45f,  Fade(WHITE,                      0.55f * pulse));
     }
 
-    EnsureCollisionShape();
-    float drawCX = screenPos.x + _collisionOffset.x;
-    float drawCY = screenPos.y + _collisionOffset.y;
-
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ drawCX - drawWidth / 2.f, drawCY - drawHeight / 2.f, drawWidth, drawHeight };
+    Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_health != _maxHealth)
-        DrawHealthBar({ drawCX, drawCY }, drawWidth, drawHeight);
+        DrawHealthBar(screenPos, drawWidth, drawHeight);
     if (_isEliteMiniboss)
-        DrawEliteLabel({ drawCX, drawCY }, drawWidth, drawHeight);
+        DrawEliteLabel(screenPos, drawWidth, drawHeight);
 }
 
 Rectangle Cyclops::GetCollisionRec() const
 {
-    if (_collisionSize.x == 0.f && _width > 0.f)
+    float stableHalfW = kCyclopsIdleFrameWidth * _scale * 0.5f;
+    float stableHalfH = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale * 0.5f;
+
+    if (_collisionSize.x == 0.f && stableHalfW > 0.f)
     {
         auto* s = const_cast<Cyclops*>(this);
-        s->_collisionSize   = { 72.05f, 81.00f };
-        s->_collisionOffset = { 23.00f, 9.50f };
+        s->_collisionSize   = { 83.50f, 89.00f };
+        s->_collisionOffset = { 30.00f, 18.00f };
     }
     return Rectangle{
-        _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
-        _worldPos.y - _collisionSize.y * 0.5f + _collisionOffset.y,
+        _worldPos.x - stableHalfW + _collisionOffset.x,
+        _worldPos.y - stableHalfH + _collisionOffset.y,
         _collisionSize.x, _collisionSize.y
     };
 }
