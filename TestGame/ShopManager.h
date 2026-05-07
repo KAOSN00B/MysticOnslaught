@@ -116,4 +116,6 @@ private:
     float _uiLeaveW         = 201.0f;  // 19 Leave button width
     float _uiRerollW        = 249.0f;  // 20 Reroll button width
     float _uiBtnFs          = 26.0f;   // 21 Leave / Reroll text (auto-shrinks to fit)
+    float _uiRarityFs       = 22.0f;   // 22 Rarity label font size
+    float _uiRarityPad      = 9.0f;    // 23 Rarity label offset from card corner
 };

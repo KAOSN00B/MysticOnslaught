@@ -296,7 +296,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
 
         if (_isUIEditorActive)
         {
-            constexpr int kVarCount = 22;
+            constexpr int kVarCount = 24;
             if (IsKeyPressed(KEY_UP))
                 _uiEditorSelectedIndex = (_uiEditorSelectedIndex - 1 + kVarCount) % kVarCount;
             if (IsKeyPressed(KEY_DOWN))
@@ -307,7 +307,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
                 &_uiSlotBtnFs, &_uiHpFs, &_uiTabH, &_uiBuyBtnH,
                 &_uiItemNameFs, &_uiItemDescFs, &_uiItemTextOffsetY, &_uiPriceFs,
                 &_uiDialNameFs, &_uiDialTextFs, &_uiPotionH, &_uiPotionFs,
-                &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs
+                &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs,
+                &_uiRarityFs, &_uiRarityPad
             };
             float step = (_uiEditorSelectedIndex == 1) ? 0.01f : 1.0f;
             if (IsKeyPressed(KEY_RIGHT)) *vars[_uiEditorSelectedIndex] += step;
@@ -338,6 +339,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
                 TraceLog(LOG_INFO, "_uiLeaveW          = %.2ff;", _uiLeaveW);
                 TraceLog(LOG_INFO, "_uiRerollW         = %.2ff;", _uiRerollW);
                 TraceLog(LOG_INFO, "_uiBtnFs           = %.2ff;", _uiBtnFs);
+                TraceLog(LOG_INFO, "_uiRarityFs        = %.2ff;", _uiRarityFs);
+                TraceLog(LOG_INFO, "_uiRarityPad       = %.2ff;", _uiRarityPad);
             }
 
             return false;   // block all shop interaction while editor is open
@@ -990,17 +993,31 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 float iy  = contentY + row * (itemH + gap);
 
                 UpgradeRarity rar = ShopUpgradeRarity(item.upgradeType);
-                Color rarCol = ShopRarityColor(rar);
-                Color cardBg = Color{18, 20, 32, 220};
-                Color cardBo = Fade(rarCol, 0.55f);
+                Color rarCol    = ShopRarityColor(rar);
+                Color cardBg    = { (uint8_t)(rarCol.r / 3), (uint8_t)(rarCol.g / 3), (uint8_t)(rarCol.b / 3), 220 };
+                Color cardBgHov = { (uint8_t)(rarCol.r / 2), (uint8_t)(rarCol.g / 2), (uint8_t)(rarCol.b / 2), 240 };
+                Color cardBo    = Fade(rarCol, 0.55f);
                 Vector2 mouse = GetMousePosition();
                 bool    hov   = CheckCollisionPointRec(mouse, { ix, iy, itemW, itemH });
-                if (hov) { cardBg = Color{28,32,52,240}; cardBo = Fade(rarCol, 0.90f); }
-                smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
+                if (hov) { cardBo = Fade(rarCol, 0.90f); }
+                smallBox({ ix, iy, itemW, itemH }, hov ? cardBgHov : cardBg, cardBo);
 
                 DrawRectangle((int)ix, (int)iy, 5, (int)itemH, Fade(rarCol, 0.80f));
 
                 BeginScissorMode((int)ix + 6, (int)iy, (int)itemW - 6, (int)itemH);
+
+                // Rarity label — top-left corner
+                {
+                    const char* rarLbl = (rar == UpgradeRarity::Common) ? "COMMON" :
+                                         (rar == UpgradeRarity::Rare)   ? "RARE"   : "LEGENDARY";
+                    constexpr int kInner = 3;
+                    int rlFs = (int)_uiRarityFs;
+                    int rlW  = MeasureText(rarLbl, rlFs);
+                    float rlX = ix + 6.f + _uiRarityPad;
+                    float rlY = iy + _uiRarityPad;
+                    DrawRectangle((int)rlX, (int)rlY, rlW + kInner * 2, rlFs + kInner * 2, Fade(BLACK, 0.65f));
+                    DrawText(rarLbl, (int)(rlX + kInner), (int)(rlY + kInner), rlFs, WHITE);
+                }
 
                 const float iconCX = ix + itemW * 0.5f;
                 const float iconCY = iy + 8.f + iconSz * 0.5f;
@@ -1278,7 +1295,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     // ── UI Editor debug panel ─────────────────────────────────────────────
     if (debugActive && _isUIEditorActive)
     {
-        const char* varNames[22] = {
+        const char* varNames[24] = {
             "0  Padding",
             "1  Left Panel W",
             "2  Title Font",
@@ -1301,16 +1318,19 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             "19 Leave Width",
             "20 Reroll Width",
             "21 Btn Font",
+            "22 Rarity Label Font",
+            "23 Rarity Label Pad",
         };
-        const float* varPtrs[22] = {
+        const float* varPtrs[24] = {
             &_uiPad, &_uiLeftPanelW, &_uiTitleFs, &_uiStatFs, &_uiSlotFs,
             &_uiSlotBtnFs, &_uiHpFs, &_uiTabH, &_uiBuyBtnH,
             &_uiItemNameFs, &_uiItemDescFs, &_uiItemTextOffsetY, &_uiPriceFs,
             &_uiDialNameFs, &_uiDialTextFs, &_uiPotionH, &_uiPotionFs,
-            &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs
+            &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs,
+            &_uiRarityFs, &_uiRarityPad
         };
 
-        constexpr float panW = 300.f, panH = 700.f;
+        constexpr float panW = 300.f, panH = 760.f;
         const float panX = sw * 0.5f - panW * 0.5f;
         const float panY = 10.f;
         DrawRectangle((int)panX, (int)panY, (int)panW, (int)panH, Fade(BLACK, 0.82f));
@@ -1320,8 +1340,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         DrawText("[UP/DOWN] select  [L/R] nudge  [S] export",
             (int)(panX + 8.f), (int)(panY + 20.f), 10, DARKGRAY);
 
-        const float rowH  = (panH - 40.f) / 22.f;
-        for (int i = 0; i < 22; i++)
+        const float rowH  = (panH - 40.f) / 24.f;
+        for (int i = 0; i < 24; i++)
         {
             float ry = panY + 38.f + i * rowH;
             bool  sel = (i == _uiEditorSelectedIndex);

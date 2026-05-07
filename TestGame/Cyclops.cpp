@@ -428,19 +428,19 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     if (!_isActive)
         return;
 
-    float w = _width * _scale;
-    float h = _height * _scale;
+    // Use stable idle-frame dimensions for drawing so the sprite center stays
+    // locked to _worldPos across all animation states. _width/_height still
+    // drive the source rect; drawWidth/drawHeight drive the destination size.
+    float drawWidth  = kCyclopsIdleFrameWidth * _scale;
+    float drawHeight = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale;
 
-    // Cyclops uses the same launch visual response as the base enemy so ogre
-    // rushes can visibly throw it upward without needing a separate effect
-    // system for each enemy subclass.
     float launchRatio = (_launchVisualDuration > 0.f)
         ? (_launchVisualTimer / _launchVisualDuration)
         : 0.f;
     float launchScale = 1.f + _launchVisualScaleBoost * launchRatio;
-    float launchLift = _launchVisualLift * launchRatio;
-    w *= launchScale;
-    h *= launchScale;
+    float launchLift  = _launchVisualLift * launchRatio;
+    drawWidth  *= launchScale;
+    drawHeight *= launchScale;
 
     Vector2 screenPos = Vector2Subtract(_worldPos, cameraRef);
     screenPos.x += GetScreenWidth()  / 2.f;
@@ -488,15 +488,19 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
         DrawCircleV(screenPos, radius * 0.45f,  Fade(WHITE,                      0.55f * pulse));
     }
 
+    EnsureCollisionShape();
+    float drawCX = screenPos.x + _collisionOffset.x;
+    float drawCY = screenPos.y + _collisionOffset.y;
+
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - w / 2.f, screenPos.y - h / 2.f, w, h };
+    Rectangle dest{ drawCX - drawWidth / 2.f, drawCY - drawHeight / 2.f, drawWidth, drawHeight };
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_health != _maxHealth)
-        DrawHealthBar(screenPos, w, h);
+        DrawHealthBar({ drawCX, drawCY }, drawWidth, drawHeight);
     if (_isEliteMiniboss)
-        DrawEliteLabel(screenPos, w, h);
+        DrawEliteLabel({ drawCX, drawCY }, drawWidth, drawHeight);
 }
 
 Rectangle Cyclops::GetCollisionRec() const
@@ -504,8 +508,8 @@ Rectangle Cyclops::GetCollisionRec() const
     if (_collisionSize.x == 0.f && _width > 0.f)
     {
         auto* s = const_cast<Cyclops*>(this);
-        s->_collisionSize   = { _width * _scale * 0.26f, _height * _scale * 0.36f };
-        s->_collisionOffset = { 0.f, _height * _scale * 0.22f };
+        s->_collisionSize   = { 72.05f, 81.00f };
+        s->_collisionOffset = { 23.00f, 9.50f };
     }
     return Rectangle{
         _worldPos.x - _collisionSize.x * 0.5f + _collisionOffset.x,
