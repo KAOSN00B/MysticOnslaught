@@ -91,6 +91,30 @@ private:
 
     ShopTextures _tex;
 
+    // ── Shop intro animation ───────────────────────────────────────────────
+    enum class IntroPhase { Off, PanelSettle, ZephReveal, ContentReveal, Done };
+    IntroPhase _introPhase        = IntroPhase::Done;
+    float      _introTimer        = 0.f;
+    bool       _introFirstEntry   = true;
+    bool       _introFull         = true;
+    float      _introSkipLock     = 0.f;
+    bool       _introTouchWasDown = false;
+
+    // Computed by Update(), read by Draw()
+    float _introFullAlpha     = 0.f;
+    float _introZephAlpha     = 0.f;
+    float _introContentAlpha  = 0.f;
+    float _introZephScaleMult = 1.f;
+    float _introPanelYOff     = 0.f;
+
+    static constexpr float kIntroPanelDur       = 1.32f;
+    static constexpr float kIntroShortDur        = 0.15f;
+    static constexpr float kIntroZephDur         = 0.84f;
+    static constexpr float kIntroContentDur      = 0.84f;
+    static constexpr float kIntroPanelStartYOff  = 28.f;
+    static constexpr float kIntroZephScaleStart  = 0.75f;
+    static constexpr float kIntroOverlayAlpha    = 0.85f;
+
     // ── UI Editor (debug-only) ─────────────────────────────────────────────
     bool  _isUIEditorActive      = false;
     int   _uiEditorSelectedIndex = 0;

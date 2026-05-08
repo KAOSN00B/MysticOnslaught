@@ -142,6 +142,13 @@ namespace
             touchMode ? 32.f : 24.f
         };
     }
+
+    float EaseOutQuad(float t) { return 1.f - (1.f - t) * (1.f - t); }
+    float EaseOutBack(float t)
+    {
+        const float c1 = 1.70158f, c3 = c1 + 1.f;
+        return 1.f + c3 * powf(t - 1.f, 3.f) + c1 * powf(t - 1.f, 2.f);
+    }
 }
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -163,14 +170,16 @@ void ShopManager::Init(const ShopTextures& tex)
 
 void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
 {
-    _npcPos         = npcWorldPos;
-    _nearNpc        = false;
+    _npcPos          = npcWorldPos;
+    _nearNpc         = false;
     _touchPromptMode = false;
-    _npcTouchHeld   = false;
-    _tab            = 0;
-    _rerollCost     = 20;
-    _act            = std::max(1, act);
-    _dialogue       = "Welcome to Zeph's Wares! What do you need?";
+    _npcTouchHeld    = false;
+    _tab             = 0;
+    _rerollCost      = 20;
+    _act             = std::max(1, act);
+    _dialogue        = "Welcome to Zeph's Wares! What do you need?";
+    _introFirstEntry = true;
+    _introPhase      = IntroPhase::Off;
     GenerateInventory(player);
 }
 
@@ -320,6 +329,100 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
 
 bool ShopManager::Update(Character& player, bool debugActive)
 {
+    const float dt = GetFrameTime();
+
+    // ── Intro animation ───────────────────────────────────────────────────────
+    if (_introSkipLock > 0.f) _introSkipLock -= dt;
+
+    if (_introPhase == IntroPhase::Off)
+    {
+        _introFull          = _introFirstEntry;
+        _introFirstEntry    = false;
+        _introPhase         = IntroPhase::PanelSettle;
+        _introTimer         = 0.f;
+        _introFullAlpha     = kIntroOverlayAlpha;
+        _introZephAlpha     = _introFull ? kIntroOverlayAlpha : 0.f;
+        _introContentAlpha  = _introFull ? kIntroOverlayAlpha : 0.f;
+        _introPanelYOff     = kIntroPanelStartYOff;
+        _introZephScaleMult = _introFull ? kIntroZephScaleStart : 1.f;
+    }
+
+    if (_introPhase != IntroPhase::Done)
+    {
+        int  tc       = GetTouchPointCount();
+        bool touchTap = (tc > 0) && !_introTouchWasDown;
+        _introTouchWasDown = (tc > 0);
+
+        bool skipPressed = _introSkipLock <= 0.f &&
+                           (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+                            IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) ||
+                            IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE) ||
+                            touchTap);
+        if (skipPressed)
+        {
+            _introPhase        = IntroPhase::Done;
+            _introSkipLock     = 0.08f;
+            _introFullAlpha    = 0.f;
+            _introZephAlpha    = 0.f;
+            _introContentAlpha = 0.f;
+            _introZephScaleMult = 1.f;
+            _introPanelYOff    = 0.f;
+            _introTouchWasDown = (tc > 0);
+            return false;
+        }
+
+        _introTimer += dt;
+
+        switch (_introPhase)
+        {
+        case IntroPhase::PanelSettle:
+        {
+            float dur  = _introFull ? kIntroPanelDur : kIntroShortDur;
+            float t    = std::min(_introTimer / dur, 1.f);
+            float ease = EaseOutQuad(t);
+            _introPanelYOff = kIntroPanelStartYOff * (1.f - ease);
+            _introFullAlpha = kIntroOverlayAlpha   * (1.f - ease);
+            if (t >= 1.f)
+            {
+                _introPanelYOff = 0.f;
+                _introFullAlpha = 0.f;
+                if (_introFull) { _introPhase = IntroPhase::ZephReveal; _introTimer = 0.f; }
+                else            { _introZephAlpha = 0.f; _introContentAlpha = 0.f; _introPhase = IntroPhase::Done; }
+            }
+            break;
+        }
+        case IntroPhase::ZephReveal:
+        {
+            float t = std::min(_introTimer / kIntroZephDur, 1.f);
+            _introZephAlpha     = kIntroOverlayAlpha * (1.f - EaseOutQuad(t));
+            _introZephScaleMult = kIntroZephScaleStart + (1.f - kIntroZephScaleStart) * EaseOutBack(t);
+            _introZephScaleMult = std::max(0.01f, _introZephScaleMult);
+            if (t >= 1.f)
+            {
+                _introZephAlpha     = 0.f;
+                _introZephScaleMult = 1.f;
+                _introPhase         = IntroPhase::ContentReveal;
+                _introTimer         = 0.f;
+            }
+            break;
+        }
+        case IntroPhase::ContentReveal:
+        {
+            float t = std::min(_introTimer / kIntroContentDur, 1.f);
+            _introContentAlpha = kIntroOverlayAlpha * (1.f - EaseOutQuad(t));
+            if (t >= 1.f)
+            {
+                _introContentAlpha = 0.f;
+                _introPhase        = IntroPhase::Done;
+            }
+            break;
+        }
+        default: break;
+        }
+
+        return false;  // shop is non-interactive during intro
+    }
+
     // ── UI Editor ────────────────────────────────────────────────────────────
     if (debugActive)
     {
@@ -429,7 +532,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
 
     if (clicked && CheckCollisionPointRec(mouse, leaveBtn))
     {
-        _dialogue = "Safe travels, adventurer.";
+        _dialogue   = "Safe travels, adventurer.";
+        _introPhase = IntroPhase::Off;  // re-open will play short fade
         return true;   // engine: transition to GameState::Play
     }
     if (clicked && CheckCollisionPointRec(mouse, rerollBtn))
@@ -657,6 +761,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     const float sw  = (float)GetScreenWidth();
     const float sh  = (float)GetScreenHeight();
     const float pad = _uiPad;
+    const float introYOff = _introPanelYOff;
 
     // ── Scrolling checkerboard background ────────────────────────────────
     {
@@ -682,12 +787,12 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     static constexpr int   kPotionPriceDraw  = 25;
     const float leftW   = sw * _uiLeftPanelW;
     const float leaveH  = _uiBtnH;
-    const float leaveY  = sh - pad - leaveH;
+    const float leaveY  = sh - pad - leaveH + introYOff;
     const float potionY = leaveY - pad * 0.5f - _uiPotionH;
     const float dialH   = std::max(sh * 0.12f, kBorderDst_layout * 2.f + 30.f);
     const float dialY   = potionY - pad * 0.5f - dialH;
     const float shopX   = pad + leftW + pad;
-    const float shopY   = pad;
+    const float shopY   = pad + introYOff;
     const float shopW   = sw - shopX - pad;
     const float shopH   = dialY - pad * 0.5f - shopY;
 
@@ -718,7 +823,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     };
 
     // ── LEFT PANEL ───────────────────────────────────────────────────────
-    const float lx = pad, ly = pad;
+    const float lx = pad, ly = pad + introYOff;
     const float lh = sh - pad * 2.f;
     box({ lx, ly, leftW, lh }, WHITE);
 
@@ -1271,7 +1376,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         Rectangle   zSrc   = { zFrame * frameW, 0.f, frameW, frameH };
 
         constexpr float kBaseH = 180.f;
-        float dstH = kBaseH * _uiZephScale;
+        float dstH = kBaseH * _uiZephScale * _introZephScaleMult;
         float dstW = dstH * (frameW / frameH);
         Rectangle zDst = {
             _uiZephPosX - dstW * 0.5f,
@@ -1360,6 +1465,18 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             (int)rFs, canReroll ? (rerollHov ? Color{180,255,180,255} : Color{140,220,140,220})
                                 : Fade(RAYWHITE, 0.35f));
     }
+
+    // ── Intro animation overlays (drawn on top of shop, under debug panel) ──
+    if (_introZephAlpha > 0.001f)
+        DrawRectangle((int)shopX, (int)(dialY - 4.f),
+                      (int)(sw - shopX), (int)(sh - (dialY - 4.f)),
+                      Fade(BLACK, _introZephAlpha));
+    if (_introContentAlpha > 0.001f)
+        DrawRectangle((int)(shopX - 1.f), (int)(shopY - 1.f),
+                      (int)(shopW + 2.f), (int)(shopH + 2.f),
+                      Fade(BLACK, _introContentAlpha));
+    if (_introFullAlpha > 0.001f)
+        DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, _introFullAlpha));
 
     // ── UI Editor debug panel ─────────────────────────────────────────────
     if (debugActive && _isUIEditorActive)

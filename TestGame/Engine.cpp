@@ -1544,8 +1544,15 @@ void Engine::Draw()
             _shouldClose = true;
         else if (pauseResult == 4)
         {
-            EnterTouchButtonMapping();
-            _gameState = GameState::TouchButtonMapping;
+            if (_touchModeActive)
+            {
+                EnterTouchButtonMapping();
+                _gameState = GameState::TouchButtonMapping;
+            }
+            else
+            {
+                _gameState = GameState::Keybindings;
+            }
         }
         else if (pauseResult == 5)
         {
