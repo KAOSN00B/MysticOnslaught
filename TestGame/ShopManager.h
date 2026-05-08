@@ -66,6 +66,7 @@ public:
     // ── Queries ───────────────────────────────────────────────────────────
     bool        IsNearNpc()    const { return _nearNpc; }
     Vector2     GetNpcPos()    const { return _npcPos;  }
+    Rectangle   GetNpcTouchBtnRect(float sx, float sy) const;
 
 private:
     struct ShopItem
@@ -123,4 +124,11 @@ private:
     float _uiZephPosY       = 780.f;   // 26 Zeph portrait Y center (screen space)
     float _uiDialPosX       = 620.f;   // 27 Dialogue text block X start (screen space)
     float _uiDialPosY       = 850.f;   // 28 Dialogue text block Y center (screen space)
+
+    // NPC touch button (appears above Zeph in touch mode when near)
+    float _uiNpcBtnW        = 220.f;   // 29 button width
+    float _uiNpcBtnH        = 75.f;    // 30 button height
+    float _uiNpcBtnOffsetX  = 0.f;     // 31 X offset from Zeph screen centre
+    float _uiNpcBtnOffsetY  = -165.f;  // 32 Y offset (negative = above Zeph)
+    float _uiNpcBtnFs       = 34.f;    // 33 button label font size
 };

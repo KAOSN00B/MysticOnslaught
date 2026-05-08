@@ -38,6 +38,7 @@ enum class GameState
     Map,
     Shop,
     DemoEnd,
+    TouchButtonMapping,   // drag-to-place touch button layout editor
 };
 
 enum class MusicCue

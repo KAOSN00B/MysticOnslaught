@@ -928,7 +928,8 @@ void Engine::Update(float dt)
     }
 
     case GameState::Keybindings:
-        // Navigation handled in the Draw case (Back button)
+    case GameState::TouchButtonMapping:
+        // Navigation handled in the Draw case (Back/Save/Default buttons)
         break;
 
     case GameState::Play:
@@ -1543,8 +1544,8 @@ void Engine::Draw()
             _shouldClose = true;
         else if (pauseResult == 4)
         {
-            _keybindingsEdit = _player.GetBindings();
-            _gameState = GameState::Keybindings;
+            EnterTouchButtonMapping();
+            _gameState = GameState::TouchButtonMapping;
         }
         else if (pauseResult == 5)
         {
@@ -1583,6 +1584,38 @@ void Engine::Draw()
             _player.SetBindings(_keybindingsEdit);
             SaveKeybindings();
             _gameState = GameState::Pause;
+        }
+        break;
+    }
+
+    case GameState::TouchButtonMapping:
+    {
+        int r = DrawTouchButtonMapping();
+        if (r == 1)  // Save
+        {
+            for (int i = 0; i < 6; i++) _touchCustomPos[i] = _touchMappingPos[i];
+            _touchLayoutCustom = true;
+            ApplyTouchCustomLayout();
+            _gameState = GameState::Pause;
+        }
+        else if (r == 2)  // Back
+        {
+            _gameState = GameState::Pause;
+        }
+        else if (r == 3)  // Default
+        {
+            // Restore everything to the original baked values captured on first open
+            if (_touchDefaults.captured)
+            {
+                _hudCfg.touchAtkPadR    = _touchDefaults.atkPadR;
+                _hudCfg.touchAtkPadB    = _touchDefaults.atkPadB;
+                _hudCfg.touchDashOffset = _touchDefaults.dashOffset;
+                _hudCfg.touchDashBotPad = _touchDefaults.dashBotPad;
+                for (int s = 0; s < 4; s++) _touchSlotOffset[s] = _touchDefaults.slotOffset[s];
+                for (int i = 0; i < 6; i++) _touchMappingPos[i] = _touchDefaults.pos[i];
+            }
+            _touchLayoutCustom   = false;
+            _touchMappingDragIdx = -1;
         }
         break;
     }
@@ -6624,6 +6657,7 @@ void Engine::UpdateTouchControls()
     _touch.kDashBtnOffset = _hudCfg.touchDashOffset;
     _touch.kAtkLabelFs    = _hudCfg.touchAtkFs;
     _touch.kDashLabelFs   = _hudCfg.touchDashFs;
+    _touch.kDashBotPad    = _hudCfg.touchDashBotPad;
 
     // ── Ability slot drag (only when HUD editor is open) ─────────────────────
     if (_hudEditorActive)
@@ -6664,6 +6698,43 @@ void Engine::UpdateTouchControls()
             _player.SetTouchDirection(Vector2Zero());
             return;
         }
+    }
+
+    // ── Zeph tap priority ─────────────────────────────────────────────────────
+    // If a new press lands near Zeph's sprite, skip _touch.Update() so the
+    // joystick never activates. UpdateNpc() (called later in UpdateGamePlay)
+    // will handle the tap independently.
+    if (_currentRoomType == RoomType::Store && _shop.IsNearNpc())
+    {
+        const float sw2 = screenW * 0.5f;
+        const float sh2 = screenH * 0.5f;
+        const Vector2 worldOff = { -_cameraPos.x + _shakeOffset.x,
+                                   -_cameraPos.y + _shakeOffset.y };
+        const Vector2 npc = _shop.GetNpcPos();
+        const Vector2 npcScreen = { npc.x + worldOff.x + sw2,
+                                    npc.y + worldOff.y + sh2 };
+        const Rectangle btnRect = _shop.GetNpcTouchBtnRect(npcScreen.x, npcScreen.y);
+
+        bool zephHit = false;
+        const int tc0 = GetTouchPointCount();
+        if (tc0 == 0)
+        {
+            zephHit = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+                      CheckCollisionPointRec(GetMousePosition(), btnRect);
+        }
+        else
+        {
+            for (int i = 0; i < tc0; i++)
+            {
+                int id = GetTouchPointId(i);
+                if (id == _touch.GetJoyTouchId() ||
+                    id == _touch.GetAtkTouchId()  ||
+                    id == _touch.GetDashTouchId()) continue;
+                if (CheckCollisionPointRec(GetTouchPosition(i), btnRect))
+                { zephHit = true; break; }
+            }
+        }
+        if (zephHit) return;
     }
 
     _touch.Update(screenW, screenH);
@@ -6855,5 +6926,237 @@ void Engine::DrawTouchAbilityArc()
                 16, badgeColor);
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Touch Button Mapping Screen
+// ─────────────────────────────────────────────────────────────────────────────
+
+float Engine::GetTouchMappingRadius(int idx) const
+{
+    if (idx == 0) return _hudCfg.touchAtkR;
+    if (idx == 1) return _hudCfg.touchDashR;
+    return _hudCfg.touchSlotSz * 0.58f;
+}
+
+void Engine::EnterTouchButtonMapping()
+{
+    _touchMappingDragIdx = -1;
+    const int sw = GetScreenWidth();
+    const int sh = GetScreenHeight();
+
+    if (_touchLayoutCustom)
+    {
+        for (int i = 0; i < 6; i++) _touchMappingPos[i] = _touchCustomPos[i];
+    }
+    else
+    {
+        // Derive positions from current HUDConfig (only valid before any Save has dirtied it)
+        _touchMappingPos[0] = { (float)sw - _hudCfg.touchAtkPadR,
+                                 (float)sh - _hudCfg.touchAtkPadB };
+        const float dashBotY = (_hudCfg.touchDashBotPad >= 0.f)
+                               ? _hudCfg.touchDashBotPad : _hudCfg.touchAtkPadB;
+        _touchMappingPos[1] = { (float)sw - _hudCfg.touchAtkPadR - _hudCfg.touchDashOffset,
+                                 (float)sh - dashBotY };
+        for (int s = 0; s < 4; s++)
+        {
+            Rectangle r = TouchAbilityRect(s, sw, sh,
+                _hudCfg.touchAtkPadB, _hudCfg.touchAtkR,
+                _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+                _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+                _touchSlotOffset[s]);
+            _touchMappingPos[2+s] = { r.x + r.width * 0.5f, r.y + r.height * 0.5f };
+        }
+
+        // Capture the baked-in defaults exactly once — before any Save can dirty _hudCfg
+        if (!_touchDefaults.captured)
+        {
+            _touchDefaults.atkPadR    = _hudCfg.touchAtkPadR;
+            _touchDefaults.atkPadB    = _hudCfg.touchAtkPadB;
+            _touchDefaults.dashOffset = _hudCfg.touchDashOffset;
+            _touchDefaults.dashBotPad = _hudCfg.touchDashBotPad;
+            for (int s = 0; s < 4; s++) _touchDefaults.slotOffset[s] = _touchSlotOffset[s];
+            for (int i = 0; i < 6; i++) _touchDefaults.pos[i] = _touchMappingPos[i];
+            _touchDefaults.captured = true;
+        }
+    }
+}
+
+void Engine::ApplyTouchCustomLayout()
+{
+    const int sw = GetScreenWidth();
+    const int sh = GetScreenHeight();
+
+    _hudCfg.touchAtkPadR    = (float)sw - _touchCustomPos[0].x;
+    _hudCfg.touchAtkPadB    = (float)sh - _touchCustomPos[0].y;
+    _hudCfg.touchDashBotPad = (float)sh - _touchCustomPos[1].y;
+    _hudCfg.touchDashOffset  = _touchCustomPos[0].x - _touchCustomPos[1].x;
+
+    for (int s = 0; s < 4; s++)
+    {
+        Rectangle rDef = TouchAbilityRect(s, sw, sh,
+            _hudCfg.touchAtkPadB, _hudCfg.touchAtkR,
+            _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+            _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+            {0.f, 0.f});
+        Vector2 defCenter = { rDef.x + rDef.width * 0.5f, rDef.y + rDef.height * 0.5f };
+        _touchSlotOffset[s] = { _touchCustomPos[2+s].x - defCenter.x,
+                                 _touchCustomPos[2+s].y - defCenter.y };
+    }
+}
+
+int Engine::DrawTouchButtonMapping()
+{
+    const int sw = GetScreenWidth();
+    const int sh = GetScreenHeight();
+
+    DrawWorld();
+    DrawHUD();
+    DrawRectangle(0, 0, sw, sh, Fade(BLACK, 0.54f));
+
+    const Vector2 inputPos  = GetMousePosition();
+    const bool    inputDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+    const bool    inputPress= IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+
+    auto hitButton = [&](Vector2 pos) -> int
+    {
+        for (int i = 0; i < 2; i++)
+            if (Vector2Distance(pos, _touchMappingPos[i]) <= GetTouchMappingRadius(i)) return i;
+        for (int i = 2; i < 6; i++)
+        {
+            float half = _hudCfg.touchSlotSz * 0.5f;
+            Rectangle r{ _touchMappingPos[i].x - half, _touchMappingPos[i].y - half,
+                         _hudCfg.touchSlotSz, _hudCfg.touchSlotSz };
+            if (CheckCollisionPointRec(pos, r)) return i;
+        }
+        return -1;
+    };
+
+    if (inputPress && _touchMappingDragIdx < 0)
+    {
+        int hit = hitButton(inputPos);
+        if (hit >= 0)
+        {
+            _touchMappingDragIdx   = hit;
+            _touchMappingDragStart = inputPos;
+            _touchMappingPosAtDrag = _touchMappingPos[hit];
+        }
+    }
+
+    if (_touchMappingDragIdx >= 0)
+    {
+        if (inputDown)
+        {
+            Vector2 delta  = Vector2Subtract(inputPos, _touchMappingDragStart);
+            Vector2 newPos = Vector2Add(_touchMappingPosAtDrag, delta);
+
+            for (int i = 0; i < 6; i++)
+            {
+                if (i == _touchMappingDragIdx) continue;
+                float minD = GetTouchMappingRadius(_touchMappingDragIdx) + GetTouchMappingRadius(i);
+                Vector2 diff = Vector2Subtract(newPos, _touchMappingPos[i]);
+                float dist   = Vector2Length(diff);
+                if (dist < minD && dist > 0.001f)
+                    newPos = Vector2Add(_touchMappingPos[i],
+                                        Vector2Scale(Vector2Normalize(diff), minD));
+            }
+
+            float r = GetTouchMappingRadius(_touchMappingDragIdx);
+            newPos.x = Clamp(newPos.x, r, (float)sw - r);
+            newPos.y = Clamp(newPos.y, r, (float)sh - r);
+            _touchMappingPos[_touchMappingDragIdx] = newPos;
+        }
+        else
+        {
+            _touchMappingDragIdx = -1;
+        }
+    }
+
+    // ── ATK button ───────────────────────────────────────────────────────────
+    {
+        bool drag = (_touchMappingDragIdx == 0);
+        DrawCircleV(_touchMappingPos[0], _hudCfg.touchAtkR,
+                    drag ? Fade(YELLOW, 0.65f) : Fade(RED, 0.58f));
+        DrawCircleLinesV(_touchMappingPos[0], _hudCfg.touchAtkR,
+                         drag ? YELLOW : Fade(WHITE, 0.75f));
+        const char* lbl = "ATTACK";
+        int fs = (int)_hudCfg.touchAtkFs;
+        DrawText(lbl,
+            (int)(_touchMappingPos[0].x - MeasureText(lbl, fs) * 0.5f),
+            (int)(_touchMappingPos[0].y - fs * 0.5f), fs, RAYWHITE);
+    }
+
+    // ── DASH button ──────────────────────────────────────────────────────────
+    {
+        bool drag = (_touchMappingDragIdx == 1);
+        DrawCircleV(_touchMappingPos[1], _hudCfg.touchDashR,
+                    drag ? Fade(YELLOW, 0.65f) : Fade(SKYBLUE, 0.58f));
+        DrawCircleLinesV(_touchMappingPos[1], _hudCfg.touchDashR,
+                         drag ? YELLOW : Fade(WHITE, 0.75f));
+        const char* lbl = "DASH";
+        int fs = (int)_hudCfg.touchDashFs;
+        DrawText(lbl,
+            (int)(_touchMappingPos[1].x - MeasureText(lbl, fs) * 0.5f),
+            (int)(_touchMappingPos[1].y - fs * 0.5f), fs, RAYWHITE);
+    }
+
+    // ── Ability slots ─────────────────────────────────────────────────────────
+    static const Color kSlotColors[4] = {
+        {220,120, 60,255}, {60,160,220,255}, {120,200,80,255}, {180,80,200,255}
+    };
+    for (int s = 0; s < 4; s++)
+    {
+        int   idx  = 2 + s;
+        bool  drag = (_touchMappingDragIdx == idx);
+        float half = _hudCfg.touchSlotSz * 0.5f;
+        Rectangle r{ _touchMappingPos[idx].x - half,
+                     _touchMappingPos[idx].y - half,
+                     _hudCfg.touchSlotSz, _hudCfg.touchSlotSz };
+        DrawRectangleRounded(r, 0.18f, 6,
+            drag ? Fade(YELLOW, 0.55f) : Fade(kSlotColors[s], 0.58f));
+        DrawRectangleRoundedLines(r, 0.18f, 6,
+            drag ? YELLOW : Fade(WHITE, 0.55f));
+        const char* numLabel = TextFormat("%d", s + 1);
+        int nfs = 42;
+        DrawText(numLabel,
+            (int)(r.x + r.width  * 0.5f - MeasureText(numLabel, nfs) * 0.5f),
+            (int)(r.y + r.height * 0.5f - nfs * 0.5f),
+            nfs, RAYWHITE);
+    }
+
+    // ── Center UI buttons ─────────────────────────────────────────────────────
+    const float btnW   = 230.f;
+    const float btnH   = 72.f;
+    const float bGap   = 18.f;
+    const float uiX    = (float)sw * 0.5f - btnW * 0.5f;
+    const float totalH = 3.f * btnH + 2.f * bGap;
+    const float uiY    = (float)sh * 0.5f - totalH * 0.5f;
+
+    auto drawBtn = [&](const char* label, float y, Color col) -> bool
+    {
+        Rectangle rec{ uiX, y, btnW, btnH };
+        bool hov = CheckCollisionPointRec(inputPos, rec) && _touchMappingDragIdx < 0;
+        DrawRectangleRounded(rec, 0.24f, 6, hov ? Fade(col, 0.92f) : Fade(col, 0.72f));
+        DrawRectangleRoundedLines(rec, 0.24f, 6, Fade(WHITE, 0.50f));
+        int fs = 32;
+        DrawText(label,
+            (int)(rec.x + rec.width  * 0.5f - MeasureText(label, fs) * 0.5f),
+            (int)(rec.y + rec.height * 0.5f - fs * 0.5f),
+            fs, WHITE);
+        return hov && inputPress;
+    };
+
+    int result = 0;
+    if (drawBtn("Back",    uiY,                   Color{ 80,  80,  80, 255})) result = 2;
+    if (drawBtn("Save",    uiY + btnH + bGap,     Color{ 55, 175,  85, 255})) result = 1;
+    if (drawBtn("Default", uiY + (btnH + bGap)*2.f, Color{195, 135,  40, 255})) result = 3;
+
+    const char* hint = "Drag buttons anywhere  |  they won't overlap";
+    int hfs = 24;
+    DrawText(hint,
+        (int)((float)sw * 0.5f - MeasureText(hint, hfs) * 0.5f),
+        22, hfs, Fade(WHITE, 0.80f));
+
+    return result;
 }
 

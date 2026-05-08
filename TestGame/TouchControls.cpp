@@ -71,8 +71,9 @@ void TouchControls::Update(int screenW, int screenH)
     const int tc = GetTouchPointCount();
 
     // Button positions (shared by real-touch and mouse-simulation paths)
+    const float dashBotY = (kDashBotPad >= 0.f) ? kDashBotPad : kBtnBotPad;
     const Vector2 atkCenter  = { (float)screenW - kBtnRightPad,                  (float)screenH - kBtnBotPad };
-    const Vector2 dashCenter = { (float)screenW - kBtnRightPad - kDashBtnOffset, (float)screenH - kBtnBotPad };
+    const Vector2 dashCenter = { (float)screenW - kBtnRightPad - kDashBtnOffset, (float)screenH - dashBotY };
 
     // ── Mouse simulation (desktop testing of touch mode) ──────────────────────
     // Uses fake touch ID 9999 so the rest of the logic stays uniform.
@@ -216,8 +217,9 @@ void TouchControls::Update(int screenW, int screenH)
 
 void TouchControls::Draw(int screenW, int screenH) const
 {
+    const float dashBotY2 = (kDashBotPad >= 0.f) ? kDashBotPad : kBtnBotPad;
     const Vector2 atkCenter  = { (float)screenW - kBtnRightPad,                  (float)screenH - kBtnBotPad };
-    const Vector2 dashCenter = { (float)screenW - kBtnRightPad - kDashBtnOffset, (float)screenH - kBtnBotPad };
+    const Vector2 dashCenter = { (float)screenW - kBtnRightPad - kDashBtnOffset, (float)screenH - dashBotY2 };
 
     // ── ATK button — large red circle ────────────────────────────────────────
     {

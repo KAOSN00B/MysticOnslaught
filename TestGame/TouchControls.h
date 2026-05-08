@@ -34,7 +34,8 @@ struct TouchControls
     float kDashBtnRadius  = 65.f;   // DASH hit + visual radius
     float kBtnRightPad    = 140.f;  // ATK centre x from right edge
     float kBtnBotPad      = 160.f;  // ATK centre y from bottom edge
-    float kDashBtnOffset  = 185.f;  // DASH is this far left of ATK
+    float kDashBtnOffset  = 185.f;  // DASH centre x = ATK x - this value
+    float kDashBotPad     = -1.f;   // DASH centre y from bottom; -1 = use kBtnBotPad
     float kAtkLabelFs     = 26.f;   // ATK button text size
     float kDashLabelFs    = 22.f;   // DASH button text size
 

@@ -146,6 +146,16 @@ namespace
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
+Rectangle ShopManager::GetNpcTouchBtnRect(float sx, float sy) const
+{
+    return Rectangle{
+        sx + _uiNpcBtnOffsetX - _uiNpcBtnW * 0.5f,
+        sy + _uiNpcBtnOffsetY - _uiNpcBtnH * 0.5f,
+        _uiNpcBtnW,
+        _uiNpcBtnH
+    };
+}
+
 void ShopManager::Init(const ShopTextures& tex)
 {
     _tex = tex;
@@ -207,18 +217,24 @@ bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMo
     Rectangle promptRect = GetZephPromptRect(sx, sy, touchMode);
 
     bool touchDown = touchMode && GetTouchPointCount() > 0;
-    bool touchTap = touchDown && !_npcTouchHeld;
-    _npcTouchHeld = touchDown;
+    bool mouseTap  = touchMode && GetTouchPointCount() == 0 && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+    bool touchTap  = mouseTap || (touchDown && !_npcTouchHeld);
+    _npcTouchHeld  = touchDown;
 
     bool openPressed = false;
     if (_nearNpc)
     {
         if (!touchMode && IsKeyPressed(KEY_E))
+        {
             openPressed = true;
+        }
         else if (touchMode && touchTap)
         {
-            Vector2 touchPos = GetTouchPosition(0);
-            openPressed = CheckCollisionPointRec(touchPos, promptRect);
+            Vector2 tapPos = GetTouchPointCount() > 0
+                             ? GetTouchPosition(0)
+                             : GetMousePosition();
+            Rectangle btnRect = GetNpcTouchBtnRect(sx, sy);
+            openPressed = CheckCollisionPointRec(tapPos, btnRect);
         }
     }
 
@@ -273,14 +289,30 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
 
     if (_nearNpc)
     {
-        const char* prompt = _touchPromptMode ? "Tap to Shop" : "[E] Shop";
-        int prFs = _touchPromptMode ? 20 : 18;
-        int prW = MeasureText(prompt, prFs);
-        Rectangle promptRect = GetZephPromptRect(sx, sy, _touchPromptMode);
-        DrawRectangleRounded(promptRect, 0.28f, 6, Fade(BLACK, 0.76f));
-        DrawRectangleRoundedLines(promptRect, 0.28f, 6, Fade(GOLD, 0.55f));
-        DrawText(prompt, (int)(sx - prW * 0.5f),
-                 (int)(promptRect.y + promptRect.height * 0.5f - prFs * 0.5f), prFs, RAYWHITE);
+        if (_touchPromptMode)
+        {
+            Rectangle btnRect = GetNpcTouchBtnRect(sx, sy);
+            DrawRectangleRounded(btnRect, 0.3f, 8, Fade(GOLD, 0.85f));
+            DrawRectangleRoundedLines(btnRect, 0.3f, 8, Fade(WHITE, 0.9f));
+            const char* label = "Enter Shop";
+            int fs = (int)_uiNpcBtnFs;
+            int lw = MeasureText(label, fs);
+            DrawText(label,
+                (int)(btnRect.x + btnRect.width * 0.5f - lw * 0.5f),
+                (int)(btnRect.y + btnRect.height * 0.5f - fs * 0.5f),
+                fs, BLACK);
+        }
+        else
+        {
+            const char* prompt = "[E] Shop";
+            int prFs = 18;
+            int prW = MeasureText(prompt, prFs);
+            Rectangle promptRect = GetZephPromptRect(sx, sy, false);
+            DrawRectangleRounded(promptRect, 0.28f, 6, Fade(BLACK, 0.76f));
+            DrawRectangleRoundedLines(promptRect, 0.28f, 6, Fade(GOLD, 0.55f));
+            DrawText(prompt, (int)(sx - prW * 0.5f),
+                     (int)(promptRect.y + promptRect.height * 0.5f - prFs * 0.5f), prFs, RAYWHITE);
+        }
     }
 }
 
@@ -296,7 +328,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
 
         if (_isUIEditorActive)
         {
-            constexpr int kVarCount = 29;
+            constexpr int kVarCount = 34;
             if (IsKeyPressed(KEY_UP))
                 _uiEditorSelectedIndex = (_uiEditorSelectedIndex - 1 + kVarCount) % kVarCount;
             if (IsKeyPressed(KEY_DOWN))
@@ -310,7 +342,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
                 &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs,
                 &_uiRarityFs, &_uiRarityPad,
                 &_uiZephScale, &_uiZephPosX, &_uiZephPosY,
-                &_uiDialPosX, &_uiDialPosY
+                &_uiDialPosX, &_uiDialPosY,
+                &_uiNpcBtnW, &_uiNpcBtnH, &_uiNpcBtnOffsetX, &_uiNpcBtnOffsetY, &_uiNpcBtnFs
             };
             float step = (_uiEditorSelectedIndex == 1)  ? 0.01f :
                          (_uiEditorSelectedIndex == 24) ? 0.1f  : 1.0f;
@@ -349,6 +382,11 @@ bool ShopManager::Update(Character& player, bool debugActive)
                 TraceLog(LOG_INFO, "_uiZephPosY        = %.2ff;", _uiZephPosY);
                 TraceLog(LOG_INFO, "_uiDialPosX        = %.2ff;", _uiDialPosX);
                 TraceLog(LOG_INFO, "_uiDialPosY        = %.2ff;", _uiDialPosY);
+                TraceLog(LOG_INFO, "_uiNpcBtnW         = %.2ff;", _uiNpcBtnW);
+                TraceLog(LOG_INFO, "_uiNpcBtnH         = %.2ff;", _uiNpcBtnH);
+                TraceLog(LOG_INFO, "_uiNpcBtnOffsetX   = %.2ff;", _uiNpcBtnOffsetX);
+                TraceLog(LOG_INFO, "_uiNpcBtnOffsetY   = %.2ff;", _uiNpcBtnOffsetY);
+                TraceLog(LOG_INFO, "_uiNpcBtnFs        = %.2ff;", _uiNpcBtnFs);
             }
 
             return false;   // block all shop interaction while editor is open
@@ -1326,7 +1364,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     // ── UI Editor debug panel ─────────────────────────────────────────────
     if (debugActive && _isUIEditorActive)
     {
-        constexpr int kN = 29;
+        constexpr int kN = 34;
         const char* varNames[kN] = {
             "0  Padding",
             "1  Left Panel W",
@@ -1357,6 +1395,11 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             "26 Zeph Pos Y",
             "27 Dial Pos X",
             "28 Dial Pos Y",
+            "29 NPC Btn Width",
+            "30 NPC Btn Height",
+            "31 NPC Btn Offset X",
+            "32 NPC Btn Offset Y",
+            "33 NPC Btn Font",
         };
         const float* varPtrs[kN] = {
             &_uiPad, &_uiLeftPanelW, &_uiTitleFs, &_uiStatFs, &_uiSlotFs,
@@ -1366,7 +1409,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             &_uiAbilTitleFs, &_uiBtnH, &_uiLeaveW, &_uiRerollW, &_uiBtnFs,
             &_uiRarityFs, &_uiRarityPad,
             &_uiZephScale, &_uiZephPosX, &_uiZephPosY,
-            &_uiDialPosX, &_uiDialPosY
+            &_uiDialPosX, &_uiDialPosY,
+            &_uiNpcBtnW, &_uiNpcBtnH, &_uiNpcBtnOffsetX, &_uiNpcBtnOffsetY, &_uiNpcBtnFs
         };
 
         // Two-column layout: left col = 0..half-1, right col = half..kN-1

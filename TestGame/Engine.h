@@ -189,6 +189,10 @@ private:
     void UpdateTouchControls();
     void DrawTouchAbilityArc();
     void ScanAbilityArcTaps();
+    void EnterTouchButtonMapping();
+    int  DrawTouchButtonMapping();     // returns 0=none 1=save 2=back 3=default
+    void ApplyTouchCustomLayout();
+    float GetTouchMappingRadius(int idx) const;
     Rectangle GetDebugToggleTabRect() const;
     bool HandleDebugToggleTabInput();
     void DrawDebugToggleTab();
@@ -367,7 +371,8 @@ private:
         float touchDashR      = 111.f;  // 30 DASH button radius
         float touchAtkPadR    = 176.f;  // 31 ATK centre from right
         float touchAtkPadB    = 214.f;  // 32 ATK centre from bottom
-        float touchDashOffset = 302.f;  // 33 DASH left-offset from ATK
+        float touchDashOffset = 302.f;  // 33 DASH left-offset from ATK (ATK.x - DASH.x)
+        float touchDashBotPad = 214.f;  // 33b DASH centre Y from bottom (-1 = share ATK pad)
         float touchPauseW     = 130.f;  // 34 pause button width
         float touchPauseH     = 67.f;   // 35 pause button height
         float touchPausePad   = 85.f;   // 36 pause button edge padding
@@ -388,6 +393,25 @@ private:
     int     _touchSlotDragIdx        = -1;
     Vector2 _touchSlotDragMouseStart{};
     Vector2 _touchSlotDragOffsetStart{};
+
+    // Touch button mapping screen
+    // Indices: 0=ATK  1=DASH  2..5=ability slots 0..3
+    bool    _touchLayoutCustom   = false;
+    Vector2 _touchCustomPos[6]{};      // saved absolute centres (session only)
+    Vector2 _touchMappingPos[6]{};     // working positions during mapping
+    int     _touchMappingDragIdx  = -1;
+    Vector2 _touchMappingDragStart{};
+    Vector2 _touchMappingPosAtDrag{};
+
+    // Snapshot of the original baked values — captured once on first mapping screen open.
+    // Default always restores to these, regardless of how many saves have been made.
+    struct TouchDefaults
+    {
+        float   atkPadR, atkPadB, dashOffset, dashBotPad;
+        Vector2 slotOffset[4];
+        Vector2 pos[6];
+        bool    captured = false;
+    } _touchDefaults;
 
     // Level-up choice state
     UpgradeType _levelUpOptions[3] = { UpgradeType::AttackPower, UpgradeType::AttackRange, UpgradeType::MaxHealth };
