@@ -30,6 +30,7 @@ public:
     void ApplyFreeze(float duration) override;
     void ApplyElectricCharge() override;
     Rectangle GetCollisionRec() const override;
+    Capsule2D GetCapsule()      const override;
     void DrawHealthBar(Vector2 screenPos, float w, float h) override;
 
     Molarbeast* AsMolarbeast() override { return this; }

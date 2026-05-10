@@ -517,6 +517,22 @@ Rectangle Cyclops::GetCollisionRec() const
     };
 }
 
+Capsule2D Cyclops::GetCapsule() const
+{
+    if (_capsuleRadius == 0.f)
+    {
+        auto* s = const_cast<Cyclops*>(this);
+        s->_capsuleRadius     = 41.f;
+        s->_capsuleHalfHeight = 5.f;
+        s->_capsuleOffset     = { 0.f, 0.f };
+    }
+    return Capsule2D{
+        { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+        _capsuleHalfHeight,
+        _capsuleRadius
+    };
+}
+
 Rectangle Cyclops::GetHitCollisionRec() const
 {
     // Wider than the solid collision rect so melee attacks register from any

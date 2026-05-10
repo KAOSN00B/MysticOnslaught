@@ -280,6 +280,22 @@ Rectangle Ogre::GetCollisionRec() const
     };
 }
 
+Capsule2D Ogre::GetCapsule() const
+{
+    if (_capsuleRadius == 0.f)
+    {
+        auto* s = const_cast<Ogre*>(this);
+        s->_capsuleRadius     = 65.f;
+        s->_capsuleHalfHeight = 15.f;
+        s->_capsuleOffset     = { 0.f, 0.f };
+    }
+    return Capsule2D{
+        { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+        _capsuleHalfHeight,
+        _capsuleRadius
+    };
+}
+
 void Ogre::TakeDamage(int damage, Vector2 attackerPos)
 {
     if (_dying)

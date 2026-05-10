@@ -357,6 +357,22 @@ Rectangle Molarbeast::GetCollisionRec() const
     };
 }
 
+Capsule2D Molarbeast::GetCapsule() const
+{
+    if (_capsuleRadius == 0.f)
+    {
+        auto* s = const_cast<Molarbeast*>(this);
+        s->_capsuleRadius     = 100.f;
+        s->_capsuleHalfHeight = 20.f;
+        s->_capsuleOffset     = { 0.f, 0.f };
+    }
+    return Capsule2D{
+        { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+        _capsuleHalfHeight,
+        _capsuleRadius
+    };
+}
+
 void Molarbeast::DrawHealthBar(Vector2 screenPos, float w, float h)
 {
     if (_health <= 0.f)

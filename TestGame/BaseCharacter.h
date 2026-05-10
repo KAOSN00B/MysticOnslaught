@@ -1,5 +1,6 @@
 #pragma once
 #include "raylib.h"
+#include "CapsuleCollision.h"
 
 class BaseCharacter
 {
@@ -43,6 +44,15 @@ public:
     void    SetCollisionOffset(Vector2 v) { _collisionOffset = v; }
     void    SetCollisionSize(Vector2 v)   { _collisionSize   = v; }
 
+    // Capsule collider — used for body-body and body-prop collision
+    virtual Capsule2D GetCapsule() const;
+    float   GetCapsuleRadius()     const { return _capsuleRadius;     }
+    float   GetCapsuleHalfHeight() const { return _capsuleHalfHeight; }
+    Vector2 GetCapsuleOffset()     const { return _capsuleOffset;     }
+    void    SetCapsuleRadius(float v)     { _capsuleRadius     = std::max(4.f, v);  }
+    void    SetCapsuleHalfHeight(float v) { _capsuleHalfHeight = std::max(0.f, v);  }
+    void    SetCapsuleOffset(Vector2 v)   { _capsuleOffset     = v;                 }
+
 protected:
 
     void Draw(Vector2 screenPos);
@@ -62,6 +72,10 @@ protected:
 
     Vector2 _collisionOffset{};   // pixel offset from _worldPos to rect centre (x usually 0)
     Vector2 _collisionSize{};     // pixel width/height; {0,0} = lazy-init pending
+
+    float   _capsuleRadius     = 0.f;  // half-width of capsule; 0 = uninitialised
+    float   _capsuleHalfHeight = 0.f;  // half of straight section; 0 = pure circle
+    Vector2 _capsuleOffset     = {};   // world-space offset of capsule centre from _worldPos
 
     Vector2 _worldPos{};
     Vector2 _worldPosLastFrame{};

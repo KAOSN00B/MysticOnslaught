@@ -65,6 +65,7 @@ public:
     bool IsLeapFrozen()      const { return _leapInvulnerable; }
     void ApplyEnrage();            // +50% speed, half attack cooldown, called by Engine on elite spawn
     Rectangle GetCollisionRec()       const override;
+    Capsule2D GetCapsule()            const override;
     virtual Rectangle GetAttackCollisionRec() const;
 
     float GetAttackBoxWidth()   const { return _attackBoxWidth; }

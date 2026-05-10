@@ -37,6 +37,7 @@ public:
 
     void DrawEnemy(Vector2 cameraRef) override;
     Rectangle GetCollisionRec()    const override;
+    Capsule2D GetCapsule()         const override;
     Rectangle GetHitCollisionRec() const override;
 
     void ApplyFreeze(float duration) override;

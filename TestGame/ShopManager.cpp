@@ -133,13 +133,14 @@ namespace
     Rectangle GetZephPromptRect(float sx, float sy, bool touchMode)
     {
         const char* prompt = touchMode ? "Tap to Shop" : "[E] Shop";
-        int fontSize = touchMode ? 20 : 18;
+        int fontSize = touchMode ? 40 : 36;
         int textW = MeasureText(prompt, fontSize);
+        float promptH = touchMode ? 56.f : 50.f;
         return Rectangle{
-            sx - textW * 0.5f - 10.f,
-            sy - kZephSpriteHeight * 0.5f - 54.f,
-            (float)textW + 20.f,
-            touchMode ? 32.f : 24.f
+             sx - textW * 0.5f - 10.f,
+            sy - kZephSpriteHeight * 0.5f - promptH - 40.f,
+             (float)textW + 20.f,
+             promptH
         };
     }
 
@@ -290,11 +291,13 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
     }
 
     const char* nameplate = "Zeph";
-    int npFs = 16, npW = MeasureText(nameplate, npFs);
-    DrawRectangle((int)(sx - npW * 0.5f - 5), (int)(sy - kZephSpriteHeight * 0.5f - 24),
-                  npW + 10, 20, Fade(BLACK, 0.6f));
+    int npFs = 32, npW = MeasureText(nameplate, npFs);
+    const float npH = 40.f;
+    const float npY = sy - kZephSpriteHeight * 0.5f - npH + 8.f;
+    DrawRectangle((int)(sx - npW * 0.5f - 10), (int)npY,
+                  npW + 20, (int)npH, Fade(BLACK, 0.6f));
     DrawText(nameplate, (int)(sx - npW * 0.5f),
-             (int)(sy - kZephSpriteHeight * 0.5f - 22), npFs, GOLD);
+             (int)(npY + npH * 0.5f - npFs * 0.5f), npFs, GOLD);
 
     if (_nearNpc)
     {
@@ -314,7 +317,7 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
         else
         {
             const char* prompt = "[E] Shop";
-            int prFs = 18;
+            int prFs = 36;
             int prW = MeasureText(prompt, prFs);
             Rectangle promptRect = GetZephPromptRect(sx, sy, false);
             DrawRectangleRounded(promptRect, 0.28f, 6, Fade(BLACK, 0.76f));

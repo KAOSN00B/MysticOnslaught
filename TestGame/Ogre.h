@@ -26,6 +26,7 @@ public:
     void TakeDamage(int damage, Vector2 attackerPos) override;
     void ApplyElectricCharge() override;
     Rectangle GetCollisionRec() const override;
+    Capsule2D GetCapsule()      const override;
     Ogre* AsOgre() override { return this; }
     void PlayHurtSound() override;
     void PlayDeathSound() override;

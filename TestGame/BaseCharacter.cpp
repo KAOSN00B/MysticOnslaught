@@ -27,6 +27,22 @@ Rectangle BaseCharacter::GetCollisionRec() const
     };
 }
 
+Capsule2D BaseCharacter::GetCapsule() const
+{
+    if (_capsuleRadius == 0.f)
+    {
+        auto* s = const_cast<BaseCharacter*>(this);
+        s->_capsuleRadius     = 50.f;
+        s->_capsuleHalfHeight = 0.f;
+        s->_capsuleOffset     = { 0.f, 48.f };
+    }
+    return Capsule2D{
+        { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+        _capsuleHalfHeight,
+        _capsuleRadius
+    };
+}
+
 void BaseCharacter::TakeDamage(int damage, Vector2 attackerPos)
 {
 	if (_dying) return;

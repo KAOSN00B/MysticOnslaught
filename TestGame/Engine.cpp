@@ -3,6 +3,7 @@
 
 #include "AnimationUtils.h"
 #include "AssetPaths.h"
+#include "CapsuleCollision.h"
 #include "NineSlice.h"
 #include "raymath.h"
 
@@ -1688,27 +1689,14 @@ void Engine::HandleCollisions()
 
     for (auto& prop : _props)
     {
-        if (CheckCollisionRecs(prop.GetCollisionRec(), _player.GetCollisionRec()))
+        Vector2 mtv{};
+        if (CheckCapsuleRect(_player.GetCapsule(), prop.GetCollisionRec(), mtv))
         {
             if (_player.IsBeingForcedPushed())
                 _player.OnForcedPushCollision();
 
-            // Always eject the player fully outside the prop via MTV
-            Rectangle pr    = _player.GetCollisionRec();
-            Rectangle propr = prop.GetCollisionRec();
-            float overlapX = std::min(pr.x + pr.width,  propr.x + propr.width)  - std::max(pr.x, propr.x);
-            float overlapY = std::min(pr.y + pr.height, propr.y + propr.height) - std::max(pr.y, propr.y);
             Vector2 ppos = _player.GetWorldPos();
-            if (overlapX < overlapY)
-            {
-                float dir = (pr.x + pr.width * 0.5f < propr.x + propr.width * 0.5f) ? -1.f : 1.f;
-                _player.SetWorldPos({ ppos.x + dir * overlapX, ppos.y });
-            }
-            else
-            {
-                float dir = (pr.y + pr.height * 0.5f < propr.y + propr.height * 0.5f) ? -1.f : 1.f;
-                _player.SetWorldPos({ ppos.x, ppos.y + dir * overlapY });
-            }
+            _player.SetWorldPos({ ppos.x + mtv.x, ppos.y + mtv.y });
         }
 
         for (auto& enemy : _enemies)
@@ -1736,24 +1724,12 @@ void Engine::HandleCollisions()
                         molarbeast->OnDashBlocked();
                 }
 
-                // Always eject the enemy fully outside the prop via MTV
-                Rectangle er    = enemy->GetCollisionRec();
-                Rectangle propr = prop.GetCollisionRec();
-                if (CheckCollisionRecs(er, propr))
+                // Eject the enemy via capsule MTV
+                Vector2 eMtv{};
+                if (CheckCapsuleRect(enemy->GetCapsule(), prop.GetCollisionRec(), eMtv))
                 {
-                    float overlapX = std::min(er.x + er.width,  propr.x + propr.width)  - std::max(er.x, propr.x);
-                    float overlapY = std::min(er.y + er.height, propr.y + propr.height) - std::max(er.y, propr.y);
                     Vector2 epos = enemy->GetWorldPos();
-                    if (overlapX < overlapY)
-                    {
-                        float dir = (er.x + er.width * 0.5f < propr.x + propr.width * 0.5f) ? -1.f : 1.f;
-                        enemy->Teleport({ epos.x + dir * overlapX, epos.y });
-                    }
-                    else
-                    {
-                        float dir = (er.y + er.height * 0.5f < propr.y + propr.height * 0.5f) ? -1.f : 1.f;
-                        enemy->Teleport({ epos.x, epos.y + dir * overlapY });
-                    }
+                    enemy->Teleport({ epos.x + eMtv.x, epos.y + eMtv.y });
                 }
                 else
                 {
@@ -1810,41 +1786,17 @@ void Engine::HandleCollisions()
             if (!enemy->IsActive() || !enemy->IsAlive())
                 continue;
 
-            Rectangle pr = _player.GetCollisionRec();
-            Rectangle er = enemy->GetCollisionRec();
-            if (!CheckCollisionRecs(pr, er))
+            Vector2 peMtv{};
+            if (!CheckCapsuleCapsule(_player.GetCapsule(), enemy->GetCapsule(), peMtv))
                 continue;
 
-            // If the player is being force-pushed by an Ogre charge, hitting an
-            // enemy should stop the push (same behaviour as hitting a prop/wall).
-            // Using UndoMovement here causes the player to jitter inside the enemy
-            // because the forced-push velocity overrides the revert every frame.
-            // While the player is being force-pushed they slide through enemies;
-            // only walls and props stop the push.
             if (_player.IsBeingForcedPushed())
                 continue;
 
-            // Normal case: revert the movement that caused the overlap
-            _player.UndoMovement();
-
-            // If still overlapping (e.g. stuck inside after a dash), eject via MTV
-            pr = _player.GetCollisionRec();
-            if (CheckCollisionRecs(pr, er))
-            {
-                float overlapX = std::min(pr.x + pr.width,  er.x + er.width)  - std::max(pr.x, er.x);
-                float overlapY = std::min(pr.y + pr.height, er.y + er.height) - std::max(pr.y, er.y);
-                Vector2 pos    = _player.GetWorldPos();
-                if (overlapX < overlapY)
-                {
-                    float dir = (pr.x + pr.width * 0.5f < er.x + er.width * 0.5f) ? -1.f : 1.f;
-                    _player.SetWorldPos({ pos.x + dir * overlapX, pos.y });
-                }
-                else
-                {
-                    float dir = (pr.y + pr.height * 0.5f < er.y + er.height * 0.5f) ? -1.f : 1.f;
-                    _player.SetWorldPos({ pos.x, pos.y + dir * overlapY });
-                }
-            }
+            // Apply MTV directly without undoing movement — lateral motion is preserved
+            // giving a natural slide around enemy capsules instead of a hard stop.
+            Vector2 pos = _player.GetWorldPos();
+            _player.SetWorldPos({ pos.x + peMtv.x, pos.y + peMtv.y });
         }
     }
 }
@@ -6374,8 +6326,15 @@ void Engine::UpdateHitboxEditor()
         Vector2 mouse = GetMousePosition();
         BaseCharacter* hit = nullptr;
 
-        _player.EnsureCollisionShape();
-        if (CheckCollisionPointRec(mouse, toScreen(_player.GetCollisionRec())))
+        // Helper: check if mouse is inside a capsule (screen space)
+        auto mouseInCapsule = [&](const Capsule2D& cap) {
+            Vector2 sc = { cap.center.x - camRef.x + sw*0.5f, cap.center.y - camRef.y + sh*0.5f };
+            float syTop = sc.y - cap.halfHeight, syBot = sc.y + cap.halfHeight;
+            Vector2 closest = { sc.x, std::max(syTop, std::min(mouse.y, syBot)) };
+            return Vector2Distance(mouse, closest) < cap.radius;
+        };
+
+        if (mouseInCapsule(_player.GetCapsule()))
             hit = &_player;
 
         if (!hit)
@@ -6383,8 +6342,7 @@ void Engine::UpdateHitboxEditor()
             for (auto& e : _enemies)
             {
                 if (!e->IsActive()) continue;
-                e->EnsureCollisionShape();
-                if (CheckCollisionPointRec(mouse, toScreen(e->GetCollisionRec())))
+                if (mouseInCapsule(e->GetCapsule()))
                 {
                     hit = e.get();
                     break;
@@ -6407,44 +6365,43 @@ void Engine::UpdateHitboxEditor()
     // S: export values to VS output window
     if (IsKeyPressed(KEY_S))
     {
-        Vector2 offset = _hitboxSelectedEntity->GetCollisionOffset();
-        Vector2 size   = _hitboxSelectedEntity->GetCollisionSize();
-
-        const char* typeName   = "Unknown";
-        const char* funcName   = "Unknown::GetCollisionRec";
+        const char* typeName = "Unknown";
         if (_hitboxSelectedEntity == &_player)
-        {
-            typeName = "Character (Player)";
-            funcName = "BaseCharacter::GetCollisionRec";
-        }
+            typeName = "Player";
         else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
         {
-            if      (e->AsCyclops())    { typeName = "Cyclops";        funcName = "Cyclops::GetCollisionRec";    }
-            else if (e->AsOgre())       { typeName = "Ogre";           funcName = "Ogre::GetCollisionRec";       }
-            else if (e->AsMolarbeast()) { typeName = "Molarbeast";     funcName = "Molarbeast::GetCollisionRec"; }
-            else                        { typeName = "Enemy (Grunt)";  funcName = "Enemy::GetCollisionRec";      }
+            if      (e->AsCyclops())    typeName = "Cyclops";
+            else if (e->AsOgre())       typeName = "Ogre";
+            else if (e->AsMolarbeast()) typeName = "Molarbeast";
+            else                        typeName = "Grunt";
         }
 
-        TraceLog(LOG_WARNING, "=== HITBOX EXPORT [%s] ===", typeName);
-        TraceLog(LOG_WARNING, "// Body box — sprite-space (offset from sprite top-left corner):");
-        TraceLog(LOG_WARNING, "// Paste into the lazy-init block of %s():", funcName);
-        TraceLog(LOG_WARNING, "s->_collisionSize   = { %.2ff, %.2ff };", size.x, size.y);
-        TraceLog(LOG_WARNING, "s->_collisionOffset = { %.2ff, %.2ff };", offset.x, offset.y);
-        if (_hitboxSelectedEntity == &_player)
+        if (!_hitboxEditAttack)
         {
-            TraceLog(LOG_WARNING, "// Attack box adjustments (add to GetAttackCollisionRec):");
+            Capsule2D cap = _hitboxSelectedEntity->GetCapsule();
+            Vector2   off = _hitboxSelectedEntity->GetCapsuleOffset();
+            TraceLog(LOG_WARNING, "=== CAPSULE EXPORT [%s] ===", typeName);
+            TraceLog(LOG_WARNING, "s->_capsuleRadius     = %.2ff;", cap.radius);
+            TraceLog(LOG_WARNING, "s->_capsuleHalfHeight = %.2ff;", cap.halfHeight);
+            TraceLog(LOG_WARNING, "s->_capsuleOffset     = { %.2ff, %.2ff };", off.x, off.y);
+            TraceLog(LOG_WARNING, "===========================");
+        }
+        else if (_hitboxSelectedEntity == &_player)
+        {
+            TraceLog(LOG_WARNING, "=== ATTACK EXPORT [Player] ===");
             TraceLog(LOG_WARNING, "_attackWidthAdjust  = %.2ff;", _player.GetAttackWidthAdjust());
             TraceLog(LOG_WARNING, "_attackHeightAdjust = %.2ff;", _player.GetAttackHeightAdjust());
+            TraceLog(LOG_WARNING, "==============================");
         }
         else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
         {
-            TraceLog(LOG_WARNING, "// Attack box — anchored to sprite center, paste into enemy ResetForSpawn or Enemy.h defaults:");
+            TraceLog(LOG_WARNING, "=== ATTACK EXPORT [%s] ===", typeName);
             TraceLog(LOG_WARNING, "float _attackBoxWidth   = %.2ff;", e->GetAttackBoxWidth());
             TraceLog(LOG_WARNING, "float _attackBoxHeight  = %.2ff;", e->GetAttackBoxHeight());
             TraceLog(LOG_WARNING, "float _attackBoxOffsetX = %.2ff;", e->GetAttackBoxOffsetX());
             TraceLog(LOG_WARNING, "float _attackBoxOffsetY = %.2ff;", e->GetAttackBoxOffsetY());
+            TraceLog(LOG_WARNING, "==========================");
         }
-        TraceLog(LOG_WARNING, "=========================");
     }
 
     // Arrow key nudge with hold-repeat
@@ -6489,33 +6446,27 @@ void Engine::UpdateHitboxEditor()
 
     if (!_hitboxEditAttack)
     {
-        Vector2 offset = _hitboxSelectedEntity->GetCollisionOffset();
-        Vector2 size   = _hitboxSelectedEntity->GetCollisionSize();
         if (!shift)
         {
-            offset.x += dx;
-            offset.y += dy;
+            // LR = radius (fatter/skinnier), UD = halfHeight (UP=taller, DOWN=shorter)
+            if (dx != 0.f)
+                _hitboxSelectedEntity->SetCapsuleRadius(_hitboxSelectedEntity->GetCapsuleRadius() + dx);
+            if (dy != 0.f)
+                _hitboxSelectedEntity->SetCapsuleHalfHeight(_hitboxSelectedEntity->GetCapsuleHalfHeight() - dy);
         }
         else
         {
-            size.x = std::max(4.f, size.x + dx);
-            size.y = std::max(4.f, size.y + dy);
+            // Shift+arrows = move capsule offset
+            Vector2 off = _hitboxSelectedEntity->GetCapsuleOffset();
+            off.x += dx;
+            off.y += dy;
+            _hitboxSelectedEntity->SetCapsuleOffset(off);
         }
-        _hitboxSelectedEntity->SetCollisionOffset(offset);
-        _hitboxSelectedEntity->SetCollisionSize(size);
     }
     else if (_hitboxSelectedEntity == &_player)
     {
-        if (!shift)
-        {
-            _player.SetAttackWidthAdjust(_player.GetAttackWidthAdjust() + dx);
-            _player.SetAttackHeightAdjust(_player.GetAttackHeightAdjust() + dy);
-        }
-        else
-        {
-            _player.SetAttackWidthAdjust(_player.GetAttackWidthAdjust() + dx);
-            _player.SetAttackHeightAdjust(_player.GetAttackHeightAdjust() + dy);
-        }
+        _player.SetAttackWidthAdjust(_player.GetAttackWidthAdjust() + dx);
+        _player.SetAttackHeightAdjust(_player.GetAttackHeightAdjust() + dy);
     }
     else if (Enemy* e = dynamic_cast<Enemy*>(_hitboxSelectedEntity))
     {
@@ -6544,22 +6495,17 @@ void Engine::DrawHitboxEditor()
 
     auto drawEntity = [&](BaseCharacter* entity)
     {
-        entity->EnsureCollisionShape();
         bool isSelected = (entity == _hitboxSelectedEntity);
 
-        Rectangle bodyScr = toScreen(entity->GetCollisionRec());
-        Color bodyCol  = (isSelected && !_hitboxEditAttack) ? GREEN : RED;
-        float bodyThick = (isSelected && !_hitboxEditAttack) ? 3.f : 1.5f;
-        DrawRectangleLinesEx(bodyScr, bodyThick, bodyCol);
+        // Draw capsule body outline
+        Capsule2D cap = entity->GetCapsule();
+        Vector2 capScr = { cap.center.x - camRef.x + sw*0.5f, cap.center.y - camRef.y + sh*0.5f };
+        Color bodyCol = (isSelected && !_hitboxEditAttack) ? GREEN : RED;
+        DrawCapsule2DLines(capScr, cap.halfHeight, cap.radius, bodyCol);
 
+        // Draw centre dot when selected
         if (isSelected && !_hitboxEditAttack)
-        {
-            const float hs = 7.f;
-            DrawRectangle((int)(bodyScr.x - hs/2.f),               (int)(bodyScr.y - hs/2.f),               (int)hs, (int)hs, BLUE);
-            DrawRectangle((int)(bodyScr.x + bodyScr.width - hs/2.f),(int)(bodyScr.y - hs/2.f),               (int)hs, (int)hs, BLUE);
-            DrawRectangle((int)(bodyScr.x - hs/2.f),               (int)(bodyScr.y + bodyScr.height - hs/2.f),(int)hs, (int)hs, BLUE);
-            DrawRectangle((int)(bodyScr.x + bodyScr.width - hs/2.f),(int)(bodyScr.y + bodyScr.height - hs/2.f),(int)hs, (int)hs, BLUE);
-        }
+            DrawCircle((int)capScr.x, (int)capScr.y, 5.f, BLUE);
 
         if (isSelected)
         {
@@ -6592,24 +6538,24 @@ void Engine::DrawHitboxEditor()
     DrawRectangle(0, 0, (int)sw, 30, Fade(BLACK, 0.80f));
     const char* modeStr;
     if (!_hitboxSelectedEntity)
-        modeStr = "[HITBOX EDITOR]  Click entity  |  0: exit  |  S: save  |  ESC: exit";
+        modeStr = "[CAPSULE EDITOR]  Click entity to select  |  ESC: exit";
     else if (_hitboxEditAttack)
-        modeStr = "[HITBOX EDITOR]  ATTACK BOX  |  L/R: width   U/D: height  |  TAB: body  |  S: save  |  ESC: exit";
+        modeStr = "[CAPSULE EDITOR]  ATTACK BOX  |  LR: width   UD: height  |  Shift+LR/UD: offset  |  TAB: capsule  |  S: export  |  ESC: exit";
     else
-        modeStr = "[HITBOX EDITOR]  BODY BOX  |  Arrows: offset  |  Shift+Arrows: size  |  TAB: attack  |  S: save  |  ESC: exit";
+        modeStr = "[CAPSULE EDITOR]  CAPSULE  |  LR: radius   UD: halfHeight  |  Shift+Arrows: offset  |  TAB: attack  |  S: export  |  ESC: exit";
     DrawText(modeStr, 8, 5, 18, YELLOW);
 
     // Bottom values bar
     if (_hitboxSelectedEntity)
     {
-        _hitboxSelectedEntity->EnsureCollisionShape();
-        Vector2 offset = _hitboxSelectedEntity->GetCollisionOffset();
-        Vector2 size   = _hitboxSelectedEntity->GetCollisionSize();
         DrawRectangle(0, (int)(sh - 30.f), (int)sw, 30, Fade(BLACK, 0.80f));
         const char* info = "";
         if (!_hitboxEditAttack)
         {
-            info = TextFormat("  Body  Offset: (%.1f, %.1f)   Size: (%.1f, %.1f)   [S to export]", offset.x, offset.y, size.x, size.y);
+            Capsule2D cap = _hitboxSelectedEntity->GetCapsule();
+            Vector2   off = _hitboxSelectedEntity->GetCapsuleOffset();
+            info = TextFormat("  Capsule  Radius: %.1f   HalfHeight: %.1f   Offset: (%.1f, %.1f)   [S to export]",
+                              cap.radius, cap.halfHeight, off.x, off.y);
         }
         else if (_hitboxSelectedEntity == &_player)
         {

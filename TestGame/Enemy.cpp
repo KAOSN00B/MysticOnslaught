@@ -134,6 +134,22 @@ Rectangle Enemy::GetCollisionRec() const
     };
 }
 
+Capsule2D Enemy::GetCapsule() const
+{
+    if (_capsuleRadius == 0.f)
+    {
+        auto* s = const_cast<Enemy*>(this);
+        s->_capsuleRadius     = 36.f;
+        s->_capsuleHalfHeight = 0.f;
+        s->_capsuleOffset     = { -6.f, 6.f };
+    }
+    return Capsule2D{
+        { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+        _capsuleHalfHeight,
+        _capsuleRadius
+    };
+}
+
 Rectangle Enemy::GetAttackCollisionRec() const
 {
     // Attack box anchored to sprite center (_worldPos), independent of body offset.
