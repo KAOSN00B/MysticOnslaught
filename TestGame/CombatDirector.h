@@ -23,14 +23,6 @@ struct BossSupportState
     float respawnTimer = 0.f;
 };
 
-struct EliteHazard
-{
-    Vector2 worldPos{};
-    float   warningTimer = 0.f;
-    bool    struck = false;
-    float   strikeFlashTimer = 0.f;
-};
-
 struct CombatSpawnContext
 {
     Texture2D* map = nullptr;
@@ -50,7 +42,6 @@ struct CombatSpawnContext
     bool* eliteIsLeaping = nullptr;
     float* eliteLeapCooldown = nullptr;
     float* eliteLeapTimer = nullptr;
-    std::vector<EliteHazard>* eliteHazards = nullptr;
     float* eliteHazardSpawnTimer = nullptr;
 
     std::function<bool(Vector2)> isSpawnPositionValid;
@@ -81,7 +72,6 @@ struct EliteMechanicsContext
     Vector2* eliteLeapTarget = nullptr;
     float* eliteLeapCooldown = nullptr;
     float* eliteLeapTimer = nullptr;
-    std::vector<EliteHazard>* eliteHazards = nullptr;
     float* eliteHazardSpawnTimer = nullptr;
 
     std::function<bool(Vector2)> isSpawnPositionValid;

@@ -335,7 +335,6 @@ void Engine::StartNextRoom(RoomType type)
     _eliteCageRadius         = 0.f;
     _eliteIsLeaping          = false;
     _eliteEnrageWarningTimer = 0.f;
-    _eliteHazards.clear();
     _eliteHazardSpawnTimer   = 0.f;
 
     // Store room — place Zeph at map centre and stock the shop
@@ -409,7 +408,6 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _eliteMinibossPtr = nullptr;
     _eliteCageRadius = 0.f;
     _eliteEnrageWarningTimer = 0.f;
-    _eliteHazards.clear();
     _eliteHazardSpawnTimer = 0.f;
     _eliteIsLeaping = false;
     _eliteLeapCooldown = 0.f;
@@ -847,7 +845,6 @@ void Engine::SpawnEnemies()
     ctx.eliteIsLeaping = &_eliteIsLeaping;
     ctx.eliteLeapCooldown = &_eliteLeapCooldown;
     ctx.eliteLeapTimer = &_eliteLeapTimer;
-    ctx.eliteHazards = &_eliteHazards;
     ctx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
     ctx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
     ctx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
@@ -1283,7 +1280,6 @@ void Engine::UpdateGamePlay(float dt)
         eliteCtx.eliteLeapTarget = &_eliteLeapTarget;
         eliteCtx.eliteLeapCooldown = &_eliteLeapCooldown;
         eliteCtx.eliteLeapTimer = &_eliteLeapTimer;
-        eliteCtx.eliteHazards = &_eliteHazards;
         eliteCtx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
         eliteCtx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
         eliteCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };

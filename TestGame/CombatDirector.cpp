@@ -23,8 +23,8 @@ namespace
     constexpr float kLeapDuration = 1.5f;
     constexpr float kLeapAoERadius = 90.f;
     constexpr int   kLeapAoEDamage = 3;
-    constexpr float kHazardVolleyMinInterval = 0.55f;
-    constexpr float kHazardVolleyMaxInterval = 0.95f;
+    constexpr float kHazardVolleyMinInterval = 1.5f;
+    constexpr float kHazardVolleyMaxInterval = 2.5f;
     constexpr int   kHazardVolleyMinCount = 3;
     constexpr int   kHazardVolleyMaxCount = 6;
 }
@@ -135,7 +135,6 @@ void CombatDirector::SpawnEnemies(const CombatSpawnContext& ctx) const
         *ctx.eliteIsLeaping = false;
         *ctx.eliteLeapCooldown = 0.f;
         *ctx.eliteLeapTimer = 0.f;
-        ctx.eliteHazards->clear();
         *ctx.eliteHazardSpawnTimer = 0.f;
 
         switch (*ctx.eliteMechanic)

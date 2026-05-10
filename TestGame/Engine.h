@@ -227,15 +227,6 @@ private:
         Vector2  drawPos{};                   // screen-space position (computed in GenerateActMap)
     };
 
-    // ── Elite-room hazard ─────────────────────────────────────────────────
-    struct EliteHazard
-    {
-        Vector2 worldPos{};
-        float   warningTimer    = 0.f;   // counts down; strike fires when reaches 0
-        bool    struck          = false;
-        float   strikeFlashTimer = 0.f;  // brief flash after impact
-    };
-
     RunStateController _runState;
     GameState& _gameState;
     GameState& _howToPlayFrom;
@@ -436,7 +427,6 @@ private:
     Vector2 _eliteLeapTarget          = {};
     float   _eliteLeapCooldown        = 0.f;
     float   _eliteLeapTimer           = 0.f;
-    std::vector<::EliteHazard> _eliteHazards;
     float   _eliteHazardSpawnTimer    = 0.f;
 
     // ── Elite constants ───────────────────────────────────────────────────
