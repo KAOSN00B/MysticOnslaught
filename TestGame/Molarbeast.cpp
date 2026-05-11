@@ -362,9 +362,9 @@ Capsule2D Molarbeast::GetCapsule() const
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<Molarbeast*>(this);
-        s->_capsuleRadius     = 100.f;
-        s->_capsuleHalfHeight = 20.f;
-        s->_capsuleOffset     = { 0.f, 0.f };
+        s->_capsuleRadius     = 94.f;
+        s->_capsuleHalfHeight = 1.f;
+        s->_capsuleOffset     = { -2.f, -49.f };
     }
     return Capsule2D{
         { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },

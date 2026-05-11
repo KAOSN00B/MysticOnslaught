@@ -522,9 +522,9 @@ Capsule2D Cyclops::GetCapsule() const
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<Cyclops*>(this);
-        s->_capsuleRadius     = 41.f;
-        s->_capsuleHalfHeight = 5.f;
-        s->_capsuleOffset     = { 0.f, 0.f };
+        s->_capsuleRadius     = 33.f;
+        s->_capsuleHalfHeight = 0.f;
+        s->_capsuleOffset     = { 3.f, 6.f };
     }
     return Capsule2D{
         { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },

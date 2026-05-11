@@ -80,7 +80,7 @@ private:
 
     void HandleAnimation(float dt);
     void UpdateBurns(float dt);
-    void DrawHealthBar(Vector2 screenPos, float w, float h);
+    void DrawHealthBar(Vector2 screenPos, float w, float h) override;
     void CancelCharge();
 
     struct PendingBurn
