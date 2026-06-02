@@ -856,20 +856,20 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         DrawText(mpLbl, (int)(lx + cp + 4.f), (int)cy, hpFs, BLACK);
         cy += hpFs + 14.f;
 
-        // Stats grid
+        // Stats grid — explicit size avoids MSVC deduction issues with std::string members
         struct StatRow { const char* label; std::string value; };
-        StatRow stats[] = {
-            { "ATK",  TextFormat("%.1f", player.GetAttackPowerValue())  },
-            { "DEF",  TextFormat("%.0f", player.GetDefense())           },
-            { "GOLD", std::to_string(player.GetGold())                  },
+        StatRow stats[3] = {
+            { "ATK",    TextFormat("%.1f", player.GetAttackPowerValue())                               },
+            { "ARMOUR", TextFormat("%d / %d", player.GetArmour(), player.GetMaxArmour())               },
+            { "GOLD",   std::to_string(player.GetGold())                                               },
         };
         float statFs   = _uiStatFs;
         float statRowH = statFs + 9.f;
-        for (auto& s : stats)
+        for (int si = 0; si < 3; si++)
         {
-            DrawText(s.label, (int)(lx + cp + 4.f), (int)cy, (int)statFs, BLACK);
-            int vw = MeasureText(s.value.c_str(), (int)statFs);
-            DrawText(s.value.c_str(), (int)(lx + leftW - cp - vw - 18.f), (int)cy, (int)statFs, BLACK);
+            DrawText(stats[si].label, (int)(lx + cp + 4.f), (int)cy, (int)statFs, BLACK);
+            int vw = MeasureText(stats[si].value.c_str(), (int)statFs);
+            DrawText(stats[si].value.c_str(), (int)(lx + leftW - cp - vw - 18.f), (int)cy, (int)statFs, BLACK);
             cy += statRowH;
         }
         cy += 10.f;

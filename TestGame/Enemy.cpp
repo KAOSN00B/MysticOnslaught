@@ -79,6 +79,15 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _stuckTimer    = 0.f;
     _stuckCheckPos = _worldPos;
+
+    // Clear the cached waypoint path and stagger each enemy's first refresh
+    // with a small random offset so they don't all hit the nav grid at once.
+    _waypoints.clear();
+    _waypointIndex = 0;
+    _pathRefreshInterval = kPathRefreshMin
+        + (float)GetRandomValue(0, 100) / 100.f * (kPathRefreshMax - kPathRefreshMin);
+    _pathRefreshTimer = (float)GetRandomValue(0, (int)(_pathRefreshInterval * 100.f)) / 100.f;
+
     _forcedPushActive    = false;
     _forcedPushDirection = Vector2Zero();
     _forcedPushSpeed     = 0.f;
@@ -260,7 +269,44 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         return;
 
     Vector2 playerCenter = _target->GetFeetWorldPos();
-    Vector2 targetPos = hasNavigationTarget ? navigationTarget : Vector2Add(playerCenter, _approachOffset);
+
+    // ── Waypoint path management ──────────────────────────────────────────────
+    // Tick down this enemy's personal refresh timer.
+    _pathRefreshTimer -= dt;
+    bool needsRefresh = (_pathRefreshTimer <= 0.f || _waypoints.empty());
+
+    if (needsRefresh && _nav != nullptr)
+    {
+        // Extract a fresh waypoint list by following the shared flow-field gradient.
+        // This is cheap (O(path length)) because the BFS is already computed.
+        _waypoints = _nav->GetWaypointPath(_worldPos, playerCenter, kMaxWaypoints);
+        _waypointIndex = 0;
+        _pathRefreshTimer = _pathRefreshInterval;
+    }
+
+    // Advance through waypoints: move to the next one when close enough.
+    if (!_waypoints.empty())
+    {
+        const float waypointReachRadius = _nav ? _nav->GetCellSize() * 0.6f : 48.f;
+        while (_waypointIndex < (int)_waypoints.size() - 1 &&
+               Vector2Distance(_worldPos, _waypoints[_waypointIndex]) < waypointReachRadius)
+        {
+            _waypointIndex++;
+        }
+    }
+
+    // Choose movement target: use the current waypoint when we have a cached path,
+    // otherwise fall back to the engine-supplied single-step or direct approach.
+    Vector2 targetPos;
+    bool usingWaypoints = (!_waypoints.empty() && _waypointIndex < (int)_waypoints.size());
+
+    if (usingWaypoints)
+        targetPos = _waypoints[_waypointIndex];
+    else if (hasNavigationTarget)
+        targetPos = navigationTarget;
+    else
+        targetPos = Vector2Add(playerCenter, _approachOffset);
+
     Vector2 toPlayer = Vector2Subtract(targetPos, _worldPos);
 
     Vector2 moveDir = Vector2Zero();
@@ -268,10 +314,9 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     if (Vector2Length(toPlayer) > 0.01f)
         moveDir = Vector2Normalize(toPlayer);
 
-    // Even when the nav grid is routing around an obstacle, blend a gentle pull
-    // toward this enemy's personal approach slot so enemies fan out along the
-    // path rather than single-filing to the same waypoint.
-    if (hasNavigationTarget)
+    // Blend a gentle pull toward this enemy's approach slot so enemies fan out
+    // along the path rather than single-filing to the same waypoint cell.
+    if (usingWaypoints || hasNavigationTarget)
     {
         Vector2 slotTarget = Vector2Add(playerCenter, _approachOffset);
         Vector2 toSlot = Vector2Subtract(slotTarget, _worldPos);

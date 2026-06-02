@@ -19,7 +19,6 @@ public:
     bool HowToPressed()          const;
     bool DebugPressed()          const;
     void SetDebugUnlocked(bool unlocked);
-    bool IsTouchMode()        const { return _touchModeActive; }
 
 private:
 
@@ -41,5 +40,4 @@ private:
     bool _howToPressed       = false;
     bool _debugPressed       = false;
     bool _debugUnlocked      = false;
-    bool _touchModeActive    = false;
 };

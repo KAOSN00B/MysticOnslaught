@@ -1,6 +1,7 @@
 #pragma once
 #include "BaseCharacter.h"
 #include "Character.h"
+#include "NavigationGrid.h"
 #include "raymath.h"
 #include <vector>
 #include <memory>
@@ -24,7 +25,12 @@ public:
     virtual void SetWaveScale(int wave);
     virtual void ApplyEnemyPowerLevel(int enemyPowerLevel);
 
-    void SetTarget(Character* character) { _target = character; }
+    void SetTarget(Character* character)  { _target = character; }
+
+    // Give each enemy a non-owning pointer to the shared nav grid so it can
+    // request its own waypoint path instead of relying on the engine to pass
+    // a single-step target every frame.
+    void SetNavigationGrid(NavigationGrid* nav) { _nav = nav; }
     void Init();
     virtual void ResetForSpawn(Vector2 pos);
     virtual void DrawEnemy(Vector2 heroWorldPos);
@@ -113,7 +119,19 @@ protected:
         Vector2 sourcePos{};
     };
 
-    Character* _target = nullptr;
+    Character*      _target = nullptr;
+    NavigationGrid* _nav    = nullptr;   // non-owning; set once by Engine on spawn
+
+    // ── Waypoint path cache ───────────────────────────────────────────────────
+    // Extracted from the shared flow field. Each enemy refreshes its own path
+    // on a staggered timer so not all enemies query the grid on the same frame.
+    std::vector<Vector2> _waypoints;        // cached path from flow field
+    int   _waypointIndex          = 0;     // which waypoint we're heading toward
+    float _pathRefreshTimer       = 0.f;   // countdown to next refresh
+    float _pathRefreshInterval    = 0.5f;  // randomised per-enemy at spawn
+    static constexpr float kPathRefreshMin = 0.30f;  // minimum refresh interval
+    static constexpr float kPathRefreshMax = 0.70f;  // maximum refresh interval
+    static constexpr int   kMaxWaypoints   = 14;     // path length cap
     bool _isActive        = true;
     bool _isEliteMiniboss = false;
     bool _isInvulnerable  = false;   // bodyguard shield (engine-driven)

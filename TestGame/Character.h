@@ -15,13 +15,13 @@ enum class UpgradeType
     SwiftFeet,         // +15% move speed
     Ferocity,          // +15% attack power
     ArcaneMind,        // +40 max mana
-    IronSkin,          // +8% damage reduction
+    IronSkin,          // +1 armour
     BladeEdge,         // +15% attack range
     // ── Epic ───────────────────────────────────────────────────────────────────
     WarGod,            // +20% attack power, +10% attack range
     Resilience,        // +30% max HP, heal 3
     BladeStorm,        // +18% attack power, +18% move speed
-    Juggernaut,        // +20% max HP, +8% defense
+    Juggernaut,        // +20% max HP, +1 armour
     ArcaneColossus,    // +50 max mana, +15% attack power
     // ── Ability unlocks (5th-wave ability screen only) ─────────────────────────
     LearnFireSpread, LearnIceSpread, LearnElectricSpread,
@@ -146,19 +146,23 @@ public:
     float GetMoveSpeedValue() const { return _speed; }
     float GetAttackRangeMultiplierValue() const { return _attackRangeMultiplier; }
     float GetManaRegenPerSecond() const { return kManaRegenBase * _manaRegenMultiplier; }
-    static constexpr int   kLevelHpGain      = 1;
-    static constexpr float kLevelAttackGain  = 0.4f;
-    static constexpr float kLevelDefenseGain = 0.5f;
-    static constexpr int   kLevelManaGain    = 5;
+    static constexpr int   kLevelHpGain    = 1;
+    static constexpr float kLevelAttackGain = 0.4f;
+    static constexpr int   kLevelManaGain   = 5;
+
+    // Armour absorbs one direct hit before HP is affected (0–3 slots).
+    static constexpr int kMaxArmour = 3;
 
     // Passive mana regen — flat rate scaled only by the regen multiplier.
     // Higher regen should always feel faster, regardless of current mana.
     // _manaRegenMultiplier scales via upgrades and (eventually) the store.
     static constexpr float kManaRegenBase = 0.2f;  // 1 mana per 5 seconds
 
-    // Defense & upgrade
-    float GetDefense() const { return _defense; }
-    void  ApplyUpgrade(UpgradeType type);
+    // Armour
+    int  GetArmour()    const { return _armour; }
+    int  GetMaxArmour() const { return _maxArmour; }
+    void AddArmour(int amount);
+    void ApplyUpgrade(UpgradeType type);
 
     // Combat damage accessors -------------------------------------------------
     // Melee scales through _attackPower from level-ups, so it already has a
@@ -250,7 +254,8 @@ private:
     int   _mana    = 0;
     int   _maxMana = 10;
     float _ultimateManaWarningTimer = 0.f;
-    float _defense = 0.f;           // flat armor — subtracted from incoming damage (min 1)
+    int   _armour    = 0;   // current armour slots filled
+    int   _maxArmour = kMaxArmour;  // can be raised by upgrades; hard-capped at kMaxArmour
     float _attackRangeMultiplier = 1.f;
 
     // Fractional player burn is kept separate from the normal integer hit path

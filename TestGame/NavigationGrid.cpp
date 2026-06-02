@@ -349,6 +349,89 @@ Vector2 NavigationGrid::GetTarget(Vector2 startWorldPos, Vector2 targetWorldPos)
     };
 }
 
+bool NavigationGrid::HasReachablePath(Vector2 from) const
+{
+    if (_cols <= 0 || _rows <= 0)
+        return false;
+
+    // Convert world position to the nearest open grid cell.
+    int col = std::max(0, std::min((int)(from.x / _cellSize), _cols - 1));
+    int row = std::max(0, std::min((int)(from.y / _cellSize), _rows - 1));
+    if (!FindNearestOpenCell(col, row))
+        return false;
+
+    // A finite cost means the BFS wave reached this cell — there IS a path.
+    return _distance[GetIndex(col, row)] < std::numeric_limits<int>::max();
+}
+
+std::vector<Vector2> NavigationGrid::GetWaypointPath(Vector2 from, Vector2 to, int maxSteps) const
+{
+    std::vector<Vector2> waypoints;
+    if (_cols <= 0 || _rows <= 0 || maxSteps <= 0)
+        return waypoints;
+
+    // Start at the nearest open cell to the enemy's world position.
+    int col = std::max(0, std::min((int)(from.x / _cellSize), _cols - 1));
+    int row = std::max(0, std::min((int)(from.y / _cellSize), _rows - 1));
+    if (!FindNearestOpenCell(col, row))
+        return waypoints;
+
+    int goalCol = std::max(0, std::min((int)(to.x / _cellSize), _cols - 1));
+    int goalRow = std::max(0, std::min((int)(to.y / _cellSize), _rows - 1));
+
+    static const int dc[] = { 1,-1, 0, 0, 1, 1,-1,-1 };
+    static const int dr[] = { 0, 0, 1,-1, 1,-1, 1,-1 };
+
+    // Walk the gradient of the distance field step by step, collecting
+    // cell centres as waypoints. This is O(path_length) and reuses the
+    // already-computed BFS result — no second A* search needed.
+    for (int step = 0; step < maxSteps; ++step)
+    {
+        // Record the centre of the current cell as a waypoint.
+        waypoints.push_back({
+            col * _cellSize + _cellSize * 0.5f,
+            row * _cellSize + _cellSize * 0.5f
+        });
+
+        if (col == goalCol && row == goalRow)
+            break;
+
+        // Choose the neighbour with the lowest distance cost (steepest descent).
+        int curCost  = _distance[GetIndex(col, row)];
+        int bestCost = curCost;
+        int bestCol  = col;
+        int bestRow  = row;
+
+        for (int i = 0; i < 8; ++i)
+        {
+            int nc = col + dc[i];
+            int nr = row + dr[i];
+            if (IsCellBlocked(nc, nr))
+                continue;
+            // Block diagonal moves through tight wall corners.
+            if (i >= 4 && (IsCellBlocked(col + dc[i], row) ||
+                           IsCellBlocked(col, row + dr[i])))
+                continue;
+            int nCost = _distance[GetIndex(nc, nr)];
+            if (nCost < bestCost)
+            {
+                bestCost = nCost;
+                bestCol  = nc;
+                bestRow  = nr;
+            }
+        }
+
+        // If no cheaper neighbour exists the gradient has ended — stop here.
+        if (bestCol == col && bestRow == row)
+            break;
+
+        col = bestCol;
+        row = bestRow;
+    }
+
+    return waypoints;
+}
+
 Vector2 NavigationGrid::GetAStarTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const
 {
     if (_cols <= 0 || _rows <= 0)

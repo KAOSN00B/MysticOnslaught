@@ -128,7 +128,8 @@ void Character::Init()
     _maxMana             = 10;
     _manaRegenMultiplier = 1.0f;
     _abilityDamageMultiplier = 1.0f;
-    _defense = 0.f;
+    _armour    = 0;
+    _maxArmour = kMaxArmour;  // reset max to base each run
     _attackRangeMultiplier = 1.5f;
 
     _invincibleTimer = 0.f;
@@ -594,9 +595,13 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
 
-    // Subtract flat armor — always deal at least 1 damage
-    if (_defense > 0.f)
-        damage = std::max(1, damage - (int)_defense);
+    // Armour absorbs the hit: lose one armour slot instead of HP.
+    // If armour is already empty the damage falls through to HP normally.
+    if (_armour > 0)
+    {
+        _armour--;
+        return;
+    }
 
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
@@ -614,6 +619,13 @@ void Character::TakeFractionalDamage(float damage, Vector2 attackerPos)
     // invulnerability window before the next direct boss hit can land.
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
+
+    // Armour absorbs direct boss contact the same as melee hits.
+    if (_armour > 0)
+    {
+        _armour--;
+        return;
+    }
 
     _health -= damage;
 
@@ -997,7 +1009,6 @@ void Character::AddExp(int amount)
         _maxHealth += kLevelHpGain;
         Heal(kLevelHpGain);
         _attackPower += kLevelAttackGain;
-        _defense += kLevelDefenseGain;
         _maxMana += kLevelManaGain;
         _mana = std::min(_mana + kLevelManaGain, _maxMana);
 
@@ -1029,6 +1040,17 @@ void Character::RestoreMana(int amount)
         _mana = _maxMana;
 }
 
+void Character::AddArmour(int amount)
+{
+    // Add armour slots, clamped to the maximum.
+    // Armour gained beyond the cap is simply lost — there is no overflow.
+    _armour += amount;
+    if (_armour > _maxArmour)
+        _armour = _maxArmour;
+    if (_armour < 0)
+        _armour = 0;
+}
+
 void Character::ApplyUpgrade(UpgradeType type)
 {
     switch (type)
@@ -1048,7 +1070,7 @@ void Character::ApplyUpgrade(UpgradeType type)
         _maxMana += 3;
         break;
     case UpgradeType::Defense:
-        _defense += 1.0f;
+        AddArmour(1);
         break;
     case UpgradeType::MoveSpeed:
         _speed += 20.0f;
@@ -1069,7 +1091,7 @@ void Character::ApplyUpgrade(UpgradeType type)
         _manaRegenMultiplier += 0.10f;
         break;
     case UpgradeType::IronSkin:
-        _defense += 2.0f;
+        AddArmour(1);
         break;
     case UpgradeType::BladeEdge:
         _attackPower += 1.0f;
@@ -1090,7 +1112,7 @@ void Character::ApplyUpgrade(UpgradeType type)
         break;
     case UpgradeType::Juggernaut:
         _maxHealth += 4;
-        _defense += 3.0f;
+        AddArmour(1);
         break;
     case UpgradeType::ArcaneColossus:
         _maxMana += 5;

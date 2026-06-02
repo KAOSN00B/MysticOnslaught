@@ -1,6 +1,10 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "Engine.h"
 
+#ifdef PLATFORM_WEB
+#include <emscripten.h>
+#endif
+
 #include "AnimationUtils.h"
 #include "AssetPaths.h"
 #include "CapsuleCollision.h"
@@ -167,6 +171,15 @@ void Engine::Init()
 {
     InitWindow(_windowWidth, _windowHeight, "Mystic Onslaught");
     SetTargetFPS(60);
+
+#ifdef PLATFORM_WEB
+    {
+        int mobile = emscripten_run_script_int(
+            "(/android|iphone|ipad|mobile/i.test(navigator.userAgent)) ? 1 : 0"
+        );
+        _touchModeActive = (mobile > 0);
+    }
+#endif
 
     EnsureAudioInitialized();
 
@@ -890,7 +903,6 @@ void Engine::Update(float dt)
 
         if (_menu.StartPressed())
         {
-            _touchModeActive = _menu.IsTouchMode();
             _debug.Deactivate();
             ResetRunState();
             _fadeInTimer = 2.0f; _fadeInDuration = 2.0f;
@@ -902,7 +914,6 @@ void Engine::Update(float dt)
         }
         if (_menu.DebugPressed() && _demoCompleted)
         {
-            _touchModeActive = _menu.IsTouchMode();
             DebugStartRun();
         }
         if (_menu.QuitPressed())
@@ -1952,8 +1963,12 @@ void Engine::DrawHUD()
     {
     const HUDConfig& hc = _hudCfg;
 
+    // Icon height matches the old circle diameter (barH * 0.56 ≈ 27 px at barH=48).
+    const float kArmourIconH = hc.barH * 0.56f;
+    const float kArmourGapY  = 5.f;   // space between HP bar bottom and icon row top
+
     const float hpBarY   = hc.barTopPad;
-    const float manaBarY = hpBarY + hc.barH + hc.barGap;
+    const float manaBarY = hpBarY + hc.barH + kArmourGapY + kArmourIconH + kArmourGapY;
     const float barX     = (float)GetScreenWidth() / 2.f - hc.barW / 2.f;
 
     auto drawLabelBox = [&](const char* text, float x, float y, int fontSize, Color textColor)
@@ -2020,6 +2035,28 @@ void Engine::DrawHUD()
             (int)(barX + hc.barW / 2.f - labelW / 2.f),
             (int)(hpBarY + hc.barH / 2.f - lFs / 2.f),
             lFs, BLACK);
+
+    }
+
+    // ── Armour icons — Defense.png, small, centred below the HP bar ─────────
+    // Filled = full opacity. Empty = faded so the player can still count slots.
+    if (_upgradeDefenseTex.id != 0)
+    {
+        const int   armour   = _player.GetArmour();
+        const int   maxArmour = _player.GetMaxArmour();
+        const float scale    = kArmourIconH / (float)_upgradeDefenseTex.height;
+        const float iconW    = _upgradeDefenseTex.width * scale;
+        const float iconGap  = kArmourIconH * 0.35f;   // matches old circle spacing
+        const float totalW   = maxArmour * iconW + (maxArmour - 1) * iconGap;
+        float iconX = barX + hc.barW * 0.5f - totalW * 0.5f;
+        const float iconY = hpBarY + hc.barH + kArmourGapY;
+
+        for (int i = 0; i < maxArmour; i++)
+        {
+            Color tint = (i < armour) ? WHITE : Fade(WHITE, 0.18f);
+            DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, scale, tint);
+            iconX += iconW + iconGap;
+        }
     }
 
     {
@@ -3265,8 +3302,9 @@ void Engine::DrawMap()
             TextFormat("%d / %d", _player.GetMana(), _player.GetMaxMana()),
             Color{100, 160, 255, 255});
 
-        statRow("Attack",  TextFormat("%d", (int)std::ceil((float)_player.GetMeleeDamage())));
-        statRow("Defense", TextFormat("%d%%", (int)std::ceil(_player.GetDefense() * 100.f)));
+        statRow("Attack", TextFormat("%d", (int)std::ceil((float)_player.GetMeleeDamage())));
+        statRow("Armour", TextFormat("%d / %d", _player.GetArmour(), _player.GetMaxArmour()),
+            Color{ 120, 180, 255, 255 });
 
         if (_player.GetLevel() < _player.GetMaxLevel())
             statRow("EXP",
@@ -3800,9 +3838,11 @@ void Engine::DrawLevelUpChoice()
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::Defense:
-            name = "Defense";
-            desc = "Def " + pctString(_player.GetDefense()) + " -> "
-                + pctString(std::min(_player.GetDefense() + 0.06f, 0.60f));
+            name = "Armour";
+            desc = "Armour " + std::to_string(_player.GetArmour()) + " -> "
+                + std::to_string(std::min(_player.GetArmour() + 1, _player.GetMaxArmour()))
+                + " / " + std::to_string(_player.GetMaxArmour())
+                + "\nAbsorbs 1 hit";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::MoveSpeed:
@@ -3836,8 +3876,10 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::IronSkin:
             name = "Iron Skin";
-            desc = "Def " + pctString(_player.GetDefense()) + " -> "
-                + pctString(std::min(_player.GetDefense() + 0.08f, 0.60f));
+            desc = "Armour " + std::to_string(_player.GetArmour()) + " -> "
+                + std::to_string(std::min(_player.GetArmour() + 1, _player.GetMaxArmour()))
+                + " / " + std::to_string(_player.GetMaxArmour())
+                + "\nAbsorbs 1 hit";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::BladeEdge:
@@ -3873,8 +3915,9 @@ void Engine::DrawLevelUpChoice()
             name = "Juggernaut";
             desc = linePreview("HP", _player.GetMaxHealthValue(),
                 _player.GetMaxHealthValue() + std::max(2, (int)std::ceil(_player.GetMaxHealthValue() * 0.20f)))
-                + "\nDef " + pctString(_player.GetDefense()) + " -> "
-                + pctString(std::min(_player.GetDefense() + 0.08f, 0.60f));
+                + "\nArmour " + std::to_string(_player.GetArmour()) + " -> "
+                + std::to_string(std::min(_player.GetArmour() + 1, _player.GetMaxArmour()))
+                + " / " + std::to_string(_player.GetMaxArmour());
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::ArcaneColossus:
@@ -5647,6 +5690,12 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
     if (Vector2Distance(pos, _player.GetWorldPos()) < playerSafeDistance)
         return false;
 
+    // Reject tiles that are completely cut off from the player by walls.
+    // HasReachablePath checks the flow-field cost — max_int means the BFS
+    // wave never reached this cell, so no path exists.
+    if (!_nav.HasReachablePath(pos))
+        return false;
+
     return true;
 }
 
@@ -5930,6 +5979,9 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
     enemy.SetWaveScale(_wave);
     enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
     enemy.SetTarget(&_player);
+    // Give every enemy its own pointer to the shared nav grid so it can
+    // extract waypoints on its own staggered timer (see Enemy::HandleMovement).
+    enemy.SetNavigationGrid(&_nav);
 }
 
 Enemy* Engine::SpawnCyclops(Vector2 pos)

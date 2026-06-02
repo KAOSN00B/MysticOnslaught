@@ -45,6 +45,15 @@ public:
     Vector2 GetTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const;
     Vector2 GetAStarTarget(Vector2 startWorldPos, Vector2 targetWorldPos) const;
 
+    // Returns true when the flow field has a finite-cost path from 'from' to
+    // the player. Call this during spawn validation to reject unreachable tiles.
+    bool HasReachablePath(Vector2 from) const;
+
+    // Follows the flow-field gradient from 'from' toward 'to' and returns up
+    // to maxSteps cell-centre waypoints. Enemies cache this and follow it
+    // waypoint-by-waypoint instead of querying the grid every frame.
+    std::vector<Vector2> GetWaypointPath(Vector2 from, Vector2 to, int maxSteps) const;
+
     // ── Utility ──────────────────────────────────────────────────────────────
     bool  IsCellBlocked(int col, int row) const;
     float GetCellSize() const { return _cellSize; }

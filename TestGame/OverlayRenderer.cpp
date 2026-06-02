@@ -143,21 +143,20 @@ void OverlayRenderer::DrawExpTally(const ExpTallyRenderContext& ctx) const
             return currentValue - perLevelGain * (float)levelsGained;
         };
 
-        std::string hpLine = "HP  " + std::to_string(prevInt((int)ctx.player->GetMaxHealthValue(), Character::kLevelHpGain))
+        std::string hpLine   = "HP  " + std::to_string(prevInt((int)ctx.player->GetMaxHealthValue(), Character::kLevelHpGain))
             + " -> " + std::to_string((int)ctx.player->GetMaxHealthValue());
-        std::string atkLine = "ATK  " + std::to_string((int)std::ceil(prevFloat(ctx.player->GetAttackPowerValue(), Character::kLevelAttackGain)))
+        std::string atkLine  = "ATK  " + std::to_string((int)std::ceil(prevFloat(ctx.player->GetAttackPowerValue(), Character::kLevelAttackGain)))
             + " -> " + std::to_string((int)std::ceil(ctx.player->GetAttackPowerValue()));
-        std::string defLine = "DEF  " + std::to_string((int)std::ceil(prevFloat(ctx.player->GetDefense(), Character::kLevelDefenseGain) * 100.f))
-            + "% -> " + std::to_string((int)std::ceil(ctx.player->GetDefense() * 100.f)) + "%";
         std::string manaLine = "MP  " + std::to_string(prevInt(ctx.player->GetMaxMana(), Character::kLevelManaGain))
             + " -> " + std::to_string(ctx.player->GetMaxMana());
 
+        // Armour does not auto-gain on level-up — it is earned through upgrades only.
+
         static constexpr int kGainSize = 24;
         float gainY = sh * 0.465f;
-        DrawText(hpLine.c_str(), (int)(cx - MeasureText(hpLine.c_str(), kGainSize) * 0.5f), (int)gainY, kGainSize, Color{190, 255, 190, 255});
-        DrawText(atkLine.c_str(), (int)(cx - MeasureText(atkLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 30.f), kGainSize, Color{255, 210, 160, 255});
-        DrawText(defLine.c_str(), (int)(cx - MeasureText(defLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 60.f), kGainSize, Color{180, 220, 255, 255});
-        DrawText(manaLine.c_str(), (int)(cx - MeasureText(manaLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 90.f), kGainSize, Color{165, 195, 255, 255});
+        DrawText(hpLine.c_str(),   (int)(cx - MeasureText(hpLine.c_str(),   kGainSize) * 0.5f), (int)gainY,          kGainSize, Color{190, 255, 190, 255});
+        DrawText(atkLine.c_str(),  (int)(cx - MeasureText(atkLine.c_str(),  kGainSize) * 0.5f), (int)(gainY + 30.f), kGainSize, Color{255, 210, 160, 255});
+        DrawText(manaLine.c_str(), (int)(cx - MeasureText(manaLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 60.f), kGainSize, Color{165, 195, 255, 255});
     }
 
     static const Color kExpFill = { 255, 210, 0, 230 };
