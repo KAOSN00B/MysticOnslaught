@@ -46,13 +46,48 @@ bool TileDefSet::LoadFromFile(const char* path)
         {
             float x, y, w, h;
             if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
-            props.push_back({ { x, y, w, h } });
+            // Try to read optional collision rect (cx cy cw ch).
+            // Old files only have 4 values; default collision = full sprite.
+            float cx = 0.f, cy = 0.f, cw = w, ch = h;
+            long savedPos = ftell(f);
+            float tmp[4]{};
+            if (fscanf_s(f, "%f %f %f %f", &tmp[0], &tmp[1], &tmp[2], &tmp[3]) == 4)
+                { cx = tmp[0]; cy = tmp[1]; cw = tmp[2]; ch = tmp[3]; }
+            else
+                fseek(f, savedPos, SEEK_SET);
+            props.push_back({ {x, y, w, h}, {cx, cy, cw, ch} });
         }
         else if (strcmp(tag, "DECOR") == 0)
         {
             float x, y, w, h;
             if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
             decors.push_back({ { x, y, w, h } });
+        }
+        else if (strcmp(tag, "ANIMDECOR") == 0)
+        {
+            float x, y, w, h;
+            int   fc;
+            float fps;
+            if (fscanf_s(f, "%f %f %f %f %d %f", &x, &y, &w, &h, &fc, &fps) != 6) continue;
+            animDecors.push_back({ {x, y, w, h}, fc, fps });
+        }
+        else if (strcmp(tag, "ANIMPROP") == 0)
+        {
+            // Format: cx cy cw ch fps frameCount  x0 y0 w0 h0  x1 y1 w1 h1 ...
+            float cx, cy, cw, ch, fps;
+            int   fc;
+            if (fscanf_s(f, "%f %f %f %f %f %d", &cx, &cy, &cw, &ch, &fps, &fc) != 6) continue;
+            AnimPropDef def;
+            def.collision = { cx, cy, cw, ch };
+            def.fps       = fps;
+            for (int i = 0; i < fc; i++)
+            {
+                float fx, fy, fw, fh;
+                if (fscanf_s(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
+                def.frames.push_back({ fx, fy, fw, fh });
+            }
+            if (!def.frames.empty())
+                animProps.push_back(std::move(def));
         }
         else
         {

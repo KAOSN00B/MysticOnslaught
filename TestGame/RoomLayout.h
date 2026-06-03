@@ -23,15 +23,19 @@ struct RoomLayout
     static constexpr int kRows = 16;
 
     TileType tiles[kRows][kCols]{};
-    std::vector<SpritePlacement> props;    // solid objects with collision
-    std::vector<SpritePlacement> decors;   // floor decorations, no collision
+    std::vector<SpritePlacement> props;       // solid objects with collision
+    std::vector<SpritePlacement> animProps;   // animated solid objects with collision
+    std::vector<SpritePlacement> decors;      // static floor decorations, no collision
+    std::vector<SpritePlacement> animDecors;  // animated decorations (torches/fire), no collision
 
     // Auto-generate a room with walls around the border and floor inside.
     // Door openings are 3 tiles wide (N/S walls) or 2 tiles tall (E/W walls).
-    // propCount / decorCount: how many definitions are available to pick from.
+    // *Count: how many definitions of each type are available to pick from.
     static RoomLayout Generate(bool hasNorth, bool hasSouth,
                                bool hasEast,  bool hasWest,
-                               RoomType type      = RoomType::Standard,
-                               int      propCount  = 0,
-                               int      decorCount = 0);
+                               RoomType type           = RoomType::Standard,
+                               int      propCount       = 0,
+                               int      decorCount      = 0,
+                               int      animDecorCount  = 0,
+                               int      animPropCount   = 0);
 };

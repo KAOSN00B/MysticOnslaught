@@ -3,7 +3,26 @@
 #include <vector>
 
 // A single sprite entry in the props or decorations array.
-struct SpriteDef { Rectangle src; };
+// collision: rect in source pixels relative to sprite top-left. Default = full sprite.
+struct SpriteDef {
+    Rectangle src;
+    Rectangle collision;
+};
+
+// An animated sprite (e.g. torch/fire). Frames are laid out horizontally in the sheet.
+struct AnimSpriteDef {
+    Rectangle firstFrame;  // source rect of frame 0; subsequent frames at +firstFrame.width each
+    int       frameCount = 1;
+    float     fps        = 8.f;
+};
+
+// An animated prop — each frame is a separate source rectangle you selected in the TileMapper.
+// Frames do not need to be equal-sized or laid out in a row.
+struct AnimPropDef {
+    std::vector<Rectangle> frames;    // one entry per frame, in playback order
+    Rectangle              collision; // hitbox in source-pixel space of frame[0]
+    float                  fps = 8.f;
+};
 
 // ── TileType ──────────────────────────────────────────────────────────────────
 // Matches TileMapper::kTypeNames order exactly.
@@ -47,8 +66,10 @@ struct TileDefSet
     // Falls back to Floor if the type wasn't assigned in the save file.
     Rectangle Get(TileType t) const;
 
-    std::vector<SpriteDef> props;    // collision obstacles placed in rooms
-    std::vector<SpriteDef> decors;   // floor decorations, no collision
+    std::vector<SpriteDef>     props;       // collision obstacles placed in rooms
+    std::vector<AnimPropDef>   animProps;   // animated collision obstacles placed in rooms
+    std::vector<SpriteDef>     decors;      // static floor decorations, no collision
+    std::vector<AnimSpriteDef> animDecors;  // animated floor decorations (torches, fire, etc.)
 
     // Load assignments from a tilemapper_<stem>.txt save file.
     // Returns true if the file was found and read.

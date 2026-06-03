@@ -60,16 +60,28 @@ public:
     // ── Biome names (match the game's Biome enum order) ───────────────────────
     static constexpr const char* kBiomeNames[] = {
         "Dungeon", "Forest", "Swamp", "Volcano",
-        "Tundra",  "Crypt",  "Desert", "Ruins"
+        "Tundra",  "Crypt",  "Desert", "Ruins", "Caverns"
     };
-    static constexpr int kBiomeCount = 8;
+    static constexpr int kBiomeCount = 9;
 
     static const Color kTypeColors[kTypeCount];
 
 private:
     // ── Internal state ────────────────────────────────────────────────────────
-    enum class Screen   { FileSelect, Mapping };
-    enum class PanelTab { Tiles, Props, Decors };
+    enum class Screen    { FileSelect, Mapping };
+    enum class PanelTab  { Tiles, Props, Decors };
+
+    // A prop sprite + its collision box (source-pixel coords, relative to src top-left).
+    struct PropDef { Rectangle src; Rectangle collision; };
+
+    // An animated prop — each frame is a separate drag-selected source rectangle.
+    struct AnimPropDef { std::vector<Rectangle> frames; Rectangle collision; float fps; };
+
+    // An animated decoration (frames laid out horizontally in the sheet).
+    struct AnimDecorDef { Rectangle firstFrame; int frameCount; float fps; };
+
+    // Eight handles used by the collision-box editor.
+    enum class CollHandle { None, TL, TC, TR, ML, MR, BL, BC, BR, Body };
 
     struct TilesetFile
     {
@@ -105,6 +117,11 @@ private:
     void DrawAssignments() const;
     void DrawSelection()   const;
     void DrawPanel()       const;
+
+    // Collision-box editor for a selected prop.
+    void GetCollEditorLayout(float& offX, float& offY, float& zoom) const;
+    void HandleCollisionEditorMouse();
+    void DrawCollisionEditor() const;
 
     void ConfirmSelection(int typeIdx);
     void ClearSelection();
@@ -149,10 +166,27 @@ private:
     std::vector<Assignment> _assignments;
 
     // Props and decorations defined for this tileset.
-    std::vector<Rectangle>  _propDefs;
-    std::vector<Rectangle>  _decorDefs;
-    float _propScrollY  = 0.f;
-    float _decorScrollY = 0.f;
+    std::vector<PropDef>      _propDefs;
+    std::vector<AnimPropDef>  _animPropDefs;
+    std::vector<Rectangle>    _decorDefs;
+    std::vector<AnimDecorDef> _animDecorDefs;
+    float _propScrollY      = 0.f;
+    float _decorScrollY     = 0.f;
+    int   _animDecorFrames  = 4;    // frame count for new animated decors
+    float _animDecorFps     = 8.f;  // fps for new animated decors
+    float _animPropFps      = 8.f;  // fps for the anim prop being built
+
+    // Frames accumulated during anim prop building; cleared after Finalize or Clear.
+    std::vector<Rectangle> _pendingAnimPropFrames;
+
+    // Collision-box editor state.
+    // Exactly one of _editingPropIdx or _editingAnimPropIdx is >= 0 at a time.
+    int        _editingPropIdx     = -1;
+    int        _editingAnimPropIdx = -1;
+    CollHandle _collHandle     = CollHandle::None;
+    bool       _collDragging   = false;
+    Vector2    _collDragStart  = {};
+    Rectangle  _collDragOrig   = {};
 
     // Index into _files for the sheet currently open
     int _openFileIdx = -1;

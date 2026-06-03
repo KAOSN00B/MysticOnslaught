@@ -42,6 +42,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <unordered_map>
 
 #if 0
 enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
@@ -571,11 +572,17 @@ private:
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;
 
+    // Per-room persistent state tracked during a pregen playtest session.
+    struct PregenRoomState { bool cleared = false; };
+
     // Pregen test sub-state
     enum class PregenView { Graph, Room, Play };
     PregenView _pregenView          = PregenView::Graph;
     int        _pregenViewedRoomIdx = -1;
     RoomLayout _pregenRoomLayout{};
+
+    std::unordered_map<int, PregenRoomState> _pregenRoomStates;
+    bool _pregenEnemiesSpawned = false;
 
     // Zelda-style room scroll transition
     bool       _pregenScrolling      = false;
@@ -605,4 +612,9 @@ private:
     void UpdatePregenTest(float dt);
     void DrawPregenTest();
     Rectangle GetPregenRoomRect(int roomIdx) const;
+
+    // Pregen combat helpers
+    Vector2 GetPregenSpawnPos(float cellW, float cellH) const;
+    void    SpawnPregenRoomEnemies();
+    void    ClearPregenEnemies();
 };

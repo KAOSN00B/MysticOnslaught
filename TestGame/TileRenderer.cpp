@@ -42,7 +42,7 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         }
     }
 
-    // ── Pass 1.5: decorations (half-size, centred in cell, no collision) ─────
+    // ── Pass 1.5a: static decorations (half-size, centred in cell) ───────────
     for (const SpritePlacement& d : layout.decors)
     {
         if (d.defIdx < 0 || d.defIdx >= (int)_defs.decors.size()) continue;
@@ -50,6 +50,28 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         float dScaleX = scaleX * 0.5f;
         float dScaleY = scaleY * 0.5f;
         // Centre the smaller sprite within the full cell.
+        float sx = screenOffset.x + d.col * cellW + (cellW - src.width  * dScaleX) * 0.5f;
+        float sy = screenOffset.y + d.row * cellH + (cellH - src.height * dScaleY) * 0.5f;
+        DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY);
+    }
+
+    // ── Pass 1.5b: animated decorations (torches, fire) ──────────────────────
+    // Frame is computed from elapsed time so every instance animates automatically.
+    for (const SpritePlacement& d : layout.animDecors)
+    {
+        if (d.defIdx < 0 || d.defIdx >= (int)_defs.animDecors.size()) continue;
+        const AnimSpriteDef& anim = _defs.animDecors[d.defIdx];
+
+        int frame = 0;
+        if (anim.frameCount > 1 && anim.fps > 0.f)
+            frame = (int)(GetTime() * anim.fps) % anim.frameCount;
+
+        Rectangle src = anim.firstFrame;
+        src.x += frame * src.width;
+
+        // Draw at half scale like static decors, centred in the cell.
+        float dScaleX = scaleX * 0.5f;
+        float dScaleY = scaleY * 0.5f;
         float sx = screenOffset.x + d.col * cellW + (cellW - src.width  * dScaleX) * 0.5f;
         float sy = screenOffset.y + d.row * cellH + (cellH - src.height * dScaleY) * 0.5f;
         DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY);
@@ -79,6 +101,22 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         float sx = screenOffset.x + p.col * cellW;
         float sy = screenOffset.y + p.row * cellH;
         DrawSpriteScaled(_defs.props[p.defIdx].src, sx, sy, scaleX, scaleY);
+    }
+
+    // ── Pass 3b: animated props (same layer as props, each frame is a direct rect) ─
+    for (const SpritePlacement& p : layout.animProps)
+    {
+        if (p.defIdx < 0 || p.defIdx >= (int)_defs.animProps.size()) continue;
+        const AnimPropDef& anim = _defs.animProps[p.defIdx];
+        if (anim.frames.empty()) continue;
+
+        int fc    = (int)anim.frames.size();
+        int frame = (fc > 1 && anim.fps > 0.f)
+            ? (int)(GetTime() * anim.fps) % fc : 0;
+
+        float sx = screenOffset.x + p.col * cellW;
+        float sy = screenOffset.y + p.row * cellH;
+        DrawSpriteScaled(anim.frames[frame], sx, sy, scaleX, scaleY);
     }
 }
 

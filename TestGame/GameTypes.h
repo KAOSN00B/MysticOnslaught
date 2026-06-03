@@ -4,7 +4,7 @@
 
 #include <vector>
 
-enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
+enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins, Caverns };
 
 enum class RoomType
 {

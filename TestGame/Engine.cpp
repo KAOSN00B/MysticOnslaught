@@ -5494,8 +5494,9 @@ const char* Engine::GetBiomeName(Biome biome) const
     case Biome::Tundra:  return "Tundra";
     case Biome::Crypt:   return "Crypt";
     case Biome::Desert:  return "Desert";
-    case Biome::Ruins:   return "Ruins";
-    default:             return "???";
+    case Biome::Ruins:    return "Ruins";
+    case Biome::Caverns:  return "Caverns";
+    default:              return "???";
     }
 }
 
@@ -6400,6 +6401,108 @@ bool Engine::HandleDebugToggleTabInput()
 
 // ── Hitbox debug editor ───────────────────────────────────────────────────────
 
+// ── Pregen combat helpers ──────────────────────────────────────────────────────
+
+Vector2 Engine::GetPregenSpawnPos(float cellW, float cellH) const
+{
+    Vector2 playerPos = _player.GetWorldPos();
+    float minDist = cellW * 4.f;   // stay at least 4 cells from the player
+
+    for (int attempt = 0; attempt < 40; attempt++)
+    {
+        int col = GetRandomValue(2, RoomLayout::kCols - 3);
+        int row = GetRandomValue(2, RoomLayout::kRows - 3);
+
+        TileType t = _pregenRoomLayout.tiles[row][col];
+        if (t != TileType::Floor && t != TileType::FloorVariant)
+            continue;
+
+        // Don't spawn on a prop cell.
+        bool onProp = false;
+        for (const SpritePlacement& p : _pregenRoomLayout.props)
+            if (p.col == col && p.row == row) { onProp = true; break; }
+        if (onProp) continue;
+
+        float x = (col + 0.5f) * cellW;
+        float y = (row + 0.5f) * cellH;
+        float dx = x - playerPos.x;
+        float dy = y - playerPos.y;
+        if (dx * dx + dy * dy < minDist * minDist) continue;
+
+        return { x, y };
+    }
+
+    // Fallback: far corner of the room.
+    return { (float)GetScreenWidth() * 0.75f, (float)GetScreenHeight() * 0.5f };
+}
+
+void Engine::SpawnPregenRoomEnemies()
+{
+    if (_pregenViewedRoomIdx < 0) return;
+
+    // Rooms that have already been cleared don't respawn.
+    if (_pregenRoomStates[_pregenViewedRoomIdx].cleared) return;
+
+    float sw    = (float)GetScreenWidth();
+    float sh    = (float)GetScreenHeight();
+    float cellW = sw / (float)RoomLayout::kCols;
+    float cellH = sh / (float)RoomLayout::kRows;
+
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (_pregenViewedRoomIdx >= (int)rooms.size()) return;
+
+    int i       = _pregenViewedRoomIdx;
+    int startIdx = _dungeonGen.GetStartIndex();
+    int bossIdx  = _dungeonGen.GetBossIndex();
+    RoomType type = rooms[i].type;
+
+    // Non-combat rooms — pre-clear so we never try to spawn here again.
+    if (i == startIdx || type == RoomType::Rest || type == RoomType::Treasure)
+    {
+        _pregenRoomStates[i].cleared = true;
+        return;
+    }
+
+    auto spawnAt = [&](auto spawnFn, int count = 1) {
+        for (int n = 0; n < count; n++)
+            spawnFn(GetPregenSpawnPos(cellW, cellH));
+    };
+
+    if (i == bossIdx)
+    {
+        SpawnMolarbeast(GetPregenSpawnPos(cellW, cellH));
+    }
+    else if (type == RoomType::Elite)
+    {
+        SpawnOgre(GetPregenSpawnPos(cellW, cellH));
+        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, 2);
+    }
+    else  // Standard, Key
+    {
+        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, GetRandomValue(2, 4));
+        if (type != RoomType::Standard || GetRandomValue(0, 2) == 0)
+            SpawnCyclops(GetPregenSpawnPos(cellW, cellH));
+    }
+
+    _pregenEnemiesSpawned = true;
+}
+
+void Engine::ClearPregenEnemies()
+{
+    for (auto& e : _enemies)
+    {
+        e->SetActive(false);
+        e->Teleport({ -5000.f, -5000.f });
+    }
+    _spreadProjectiles.clear();
+    _cyclopsLasers.clear();
+    _lavaBalls.clear();
+    _pickups.clear();
+    _vfx.Clear();
+    _pendingExp    = 0.f;
+    _pregenEnemiesSpawned = false;
+}
+
 Rectangle Engine::GetPregenRoomRect(int roomIdx) const
 {
     const auto& rooms = _dungeonGen.GetRooms();
@@ -6431,6 +6534,7 @@ void Engine::UpdatePregenTest(float dt)
     {
         if (!_pregenScrolling && IsKeyPressed(KEY_ESCAPE))
         {
+            ClearPregenEnemies();
             _pregenView = PregenView::Room;
             return;
         }
@@ -6450,7 +6554,7 @@ void Engine::UpdatePregenTest(float dt)
                 _pregenViewedRoomIdx = _pregenScrollNextIdx;
                 _player.SetWorldPos(_pregenScrollSpawnPos);
 
-                // Rebuild nav grid for the new room so pathfinding routes around its props.
+                // Rebuild nav grid and spawn enemies for the new room.
                 float cw = sw / (float)RoomLayout::kCols;
                 float ch = sh / (float)RoomLayout::kRows;
                 std::vector<Rectangle> propRects;
@@ -6459,6 +6563,7 @@ void Engine::UpdatePregenTest(float dt)
                 _nav.CancelAndReset();
                 _nav.Rebuild(sw, sh, propRects);
                 _nav.RefreshSync(_player.GetFeetWorldPos());
+                SpawnPregenRoomEnemies();
             }
             _cameraPos = { sw * 0.5f, sh * 0.5f };
             return;
@@ -6500,7 +6605,8 @@ void Engine::UpdatePregenTest(float dt)
             const DungeonRoom& next = rooms[nextIdx];
             _pregenScrollNextLayout  = RoomLayout::Generate(
                 next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
-                (int)_tileDefs.props.size(), (int)_tileDefs.decors.size());
+                (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
+                (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
             _pregenScrollNextIdx     = nextIdx;
             _pregenScrollSpawnPos    = spawnPos;
             _pregenScrollVec         = scrollVec;
@@ -6527,10 +6633,20 @@ void Engine::UpdatePregenTest(float dt)
             if (!canPassEast)  pos.x = std::min(pos.x, (RoomLayout::kCols - 1) * cellW);
             _player.SetWorldPos(pos);
 
-            // Prop collision — resolve player out of each solid prop cell.
+            // Prop collision — resolve player out of each prop's stored collision rect.
+            // Convert from source pixels to world/screen pixels using per-pixel scale.
+            float pxScaleX = cellW / 16.f;
+            float pxScaleY = cellH / 16.f;
             for (const SpritePlacement& prop : _pregenRoomLayout.props)
             {
-                Rectangle propRect{ prop.col * cellW, prop.row * cellH, cellW, cellH };
+                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
+                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+                Rectangle propRect{
+                    prop.col * cellW + coll.x * pxScaleX,
+                    prop.row * cellH + coll.y * pxScaleY,
+                    coll.width  * pxScaleX,
+                    coll.height * pxScaleY
+                };
                 Rectangle playerRect = _player.GetCollisionRec();
                 if (!CheckCollisionRecs(playerRect, propRect)) continue;
 
@@ -6547,6 +6663,41 @@ void Engine::UpdatePregenTest(float dt)
                 else
                     p.y += resolveY;
                 _player.SetWorldPos(p);
+            }
+        }
+
+        // ── Combat update ─────────────────────────────────────────────────────
+        _nav.TickRefresh(dt, _player.GetFeetWorldPos());
+        _nav.ApplyPendingRefresh();
+
+        EnemyRuntimeContext eCtx{};
+        eCtx.player             = &_player;
+        eCtx.nav                = &_nav;
+        eCtx.props              = &_props;   // empty in pregen mode
+        eCtx.enemies            = &_enemies;
+        eCtx.cyclopsLasers      = &_cyclopsLasers;
+        eCtx.lavaBalls          = &_lavaBalls;
+        eCtx.triggerScreenShake = [&](float s, float d){ TriggerScreenShake(s, d); };
+        _combatDirector.UpdateEnemyRuntime(eCtx, dt);
+
+        HandlePlayerMeleeDamage();
+        UpdateSpreadProjectiles(dt);
+        UpdateLavaBallProjectiles(dt);
+        UpdateCyclopsLasers(dt);
+        _vfx.Update(dt);
+        UpdateEnemyCount(dt);
+        _pendingExp = 0.f;   // no exp carry-over from pregen into the real run
+
+        // ── Room clear detection ───────────────────────────────────────────────
+        if (_pregenEnemiesSpawned)
+        {
+            bool allDead = true;
+            for (const auto& e : _enemies)
+                if (e->IsActive()) { allDead = false; break; }
+            if (allDead)
+            {
+                _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
+                _pregenEnemiesSpawned = false;
             }
         }
 
@@ -6573,7 +6724,7 @@ void Engine::UpdatePregenTest(float dt)
             _cameraPos = { hw, hh };
             _pregenView = PregenView::Play;
 
-            // Build nav grid so pathfinding routes around this room's props.
+            // Build nav grid and spawn room enemies.
             float sw2 = (float)GetScreenWidth();
             float sh2 = (float)GetScreenHeight();
             float cw  = sw2 / (float)RoomLayout::kCols;
@@ -6584,6 +6735,8 @@ void Engine::UpdatePregenTest(float dt)
             _nav.CancelAndReset();
             _nav.Rebuild(sw2, sh2, propRects);
             _nav.RefreshSync(_player.GetFeetWorldPos());
+            ClearPregenEnemies();
+            SpawnPregenRoomEnemies();
         }
         return;
     }
@@ -6610,7 +6763,8 @@ void Engine::UpdatePregenTest(float dt)
                 const DungeonRoom& room = rooms[i];
                 _pregenRoomLayout    = RoomLayout::Generate(
                     room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
-                    (int)_tileDefs.props.size(), (int)_tileDefs.decors.size());
+                    (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
+                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
                 _pregenViewedRoomIdx = i;
                 _pregenView          = PregenView::Room;
                 break;
@@ -6659,26 +6813,31 @@ void Engine::DrawPregenTest()
         {
             if (_pregenScrolling)
             {
-                // Smooth-step easing: slow start and end, fast middle.
-                float t = _pregenScrollT;
+                float t    = _pregenScrollT;
                 float ease = t * t * (3.f - 2.f * t);
-
-                // Current room slides in scrollVec direction; next room follows behind.
-                Vector2 curOff{
-                    _pregenScrollVec.x * ease * sw,
-                    _pregenScrollVec.y * ease * sh
-                };
-                Vector2 nextOff{
-                    curOff.x - _pregenScrollVec.x * sw,
-                    curOff.y - _pregenScrollVec.y * sh
-                };
-
-                _tileRenderer.DrawRoom(_pregenRoomLayout,        scaleX, scaleY, curOff);
-                _tileRenderer.DrawRoom(_pregenScrollNextLayout,  scaleX, scaleY, nextOff);
+                Vector2 curOff{  _pregenScrollVec.x * ease * sw,
+                                 _pregenScrollVec.y * ease * sh };
+                Vector2 nextOff{ curOff.x - _pregenScrollVec.x * sw,
+                                 curOff.y - _pregenScrollVec.y * sh };
+                _tileRenderer.DrawRoom(_pregenRoomLayout,       scaleX, scaleY, curOff);
+                _tileRenderer.DrawRoom(_pregenScrollNextLayout, scaleX, scaleY, nextOff);
             }
             else
             {
                 _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+
+                // Enemies, projectiles, VFX — world == screen in pregen mode.
+                Vector2 worldOffset{ -_cameraPos.x, -_cameraPos.y };
+                for (const auto& proj : _spreadProjectiles)
+                    proj.Draw(worldOffset);
+                DrawCyclopsLasers(worldOffset);
+                _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
+                for (auto& enemy : _enemies)
+                {
+                    if (!enemy->IsActive()) continue;
+                    enemy->DrawEnemy(_cameraPos);
+                }
+
                 _player.DrawPlayer(_cameraPos);
             }
         }
