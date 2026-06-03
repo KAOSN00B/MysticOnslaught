@@ -8,7 +8,7 @@
 //
 // Usage:
 //   _tileRenderer.Init(tilesheetPath, defs);
-//   _tileRenderer.DrawRoom(layout, 3.f, offset);
+//   _tileRenderer.DrawRoom(layout, scaleX, scaleY, offset);
 // ─────────────────────────────────────────────────────────────────────────────
 class TileRenderer
 {
@@ -17,22 +17,25 @@ public:
     void Unload();
 
     // Draw every tile in the layout.
-    // drawScale: display pixels per source pixel (e.g. 3 = 48px per 16px tile).
+    // scaleX/scaleY: display pixels per source pixel on each axis.
+    // Pass the same value for both if you want square tiles.
     // screenOffset: top-left screen position of the room.
-    void DrawRoom(const RoomLayout& layout, float drawScale,
+    void DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
                   Vector2 screenOffset) const;
 
     bool IsLoaded() const { return _sheet.id != 0; }
 
-    // Pixel size of one room at the given draw scale.
-    static constexpr float RoomPixelW(float scale)
-    { return RoomLayout::kCols * 16.f * scale; }
-    static constexpr float RoomPixelH(float scale)
-    { return RoomLayout::kRows * 16.f * scale; }
+    // Pixel size of one room at the given draw scales.
+    static constexpr float RoomPixelW(float scaleX)
+    { return RoomLayout::kCols * 16.f * scaleX; }
+    static constexpr float RoomPixelH(float scaleY)
+    { return RoomLayout::kRows * 16.f * scaleY; }
 
 private:
     void DrawTile(TileType type, float screenX, float screenY,
-                  float drawScale) const;
+                  float scaleX, float scaleY) const;
+    void DrawSpriteScaled(Rectangle src, float screenX, float screenY,
+                          float scaleX, float scaleY) const;
 
     Texture2D  _sheet{};
     TileDefSet _defs{};

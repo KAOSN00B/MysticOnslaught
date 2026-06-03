@@ -19,9 +19,16 @@ void DungeonGen::Generate()
 
 void DungeonGen::GrowRooms()
 {
-    // Place starting room in the centre of the grid.
-    int startCol = kGridSize / 2;
-    int startRow = kGridSize / 2;
+    // Place starting room on a random outer edge of the grid so the player
+    // always enters the dungeon from the perimeter, not the middle.
+    int startRow, startCol;
+    switch (GetRandomValue(0, 3))
+    {
+    case 0: startRow = 0;             startCol = GetRandomValue(0, kGridSize - 1); break; // top
+    case 1: startRow = kGridSize - 1; startCol = GetRandomValue(0, kGridSize - 1); break; // bottom
+    case 2: startRow = GetRandomValue(0, kGridSize - 1); startCol = 0;             break; // left
+    default:startRow = GetRandomValue(0, kGridSize - 1); startCol = kGridSize - 1; break; // right
+    }
 
     DungeonRoom start;
     start.col  = startCol;
@@ -76,12 +83,12 @@ void DungeonGen::AssignSpecialRooms()
     if (_rooms.empty())
         return;
 
-    // Boss room = room furthest from start (most doors to traverse).
+    // Boss = furthest room from start.
     _bossIdx = FindFurthest(_startIdx);
     if (_bossIdx >= 0)
         _rooms[_bossIdx].type = RoomType::Boss;
 
-    // Key room = furthest room that isn't start or boss.
+    // Key = second-furthest non-boss room.
     int bestDist = -1;
     _keyIdx = -1;
     for (int i = 0; i < (int)_rooms.size(); i++)
@@ -89,25 +96,27 @@ void DungeonGen::AssignSpecialRooms()
         if (i == _startIdx || i == _bossIdx)
             continue;
         int d = DistanceBFS(_startIdx, i);
-        if (d > bestDist)
-        {
-            bestDist = d;
-            _keyIdx  = i;
-        }
+        if (d > bestDist) { bestDist = d; _keyIdx = i; }
     }
 
-    // Sprinkle Elite, Rest, Treasure, and Shop rooms across the remainder.
+    // Collect all remaining Standard rooms and shuffle them.
+    std::vector<int> pool;
     for (int i = 0; i < (int)_rooms.size(); i++)
     {
         if (i == _startIdx || i == _bossIdx || i == _keyIdx)
             continue;
-        int roll = GetRandomValue(0, 9);
-        if      (roll <= 1) _rooms[i].type = RoomType::Elite;
-        else if (roll <= 2) _rooms[i].type = RoomType::Rest;
-        else if (roll <= 3) _rooms[i].type = RoomType::Treasure;
-        else if (roll <= 4) _rooms[i].type = RoomType::Store;
-        // else stays Standard
+        pool.push_back(i);
     }
+    for (int i = (int)pool.size() - 1; i > 0; i--)
+        std::swap(pool[i], pool[GetRandomValue(0, i)]);
+
+    // Assign exactly one of each special type from the shuffled pool.
+    // No Shop rooms — the shop is a post-boss reward handled separately.
+    int idx = 0;
+    if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Elite;    }
+    if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Rest;     }
+    if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Treasure; }
+    // All remaining rooms stay Standard.
 }
 
 int DungeonGen::FindFurthest(int fromIdx) const
@@ -127,6 +136,17 @@ int DungeonGen::FindFurthest(int fromIdx) const
         }
     }
     return bestIdx;
+}
+
+int DungeonGen::GetNeighborIndex(int roomIdx, int dr, int dc) const
+{
+    if (roomIdx < 0 || roomIdx >= (int)_rooms.size())
+        return -1;
+    int nr = _rooms[roomIdx].row + dr;
+    int nc = _rooms[roomIdx].col + dc;
+    if (nr < 0 || nr >= kGridSize || nc < 0 || nc >= kGridSize)
+        return -1;
+    return _grid[nr][nc];
 }
 
 int DungeonGen::DistanceBFS(int fromIdx, int toIdx) const

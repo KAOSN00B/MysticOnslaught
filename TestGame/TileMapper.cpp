@@ -1,4 +1,5 @@
 #include "TileMapper.h"
+#include "TileDefs.h"
 #include "raymath.h"
 #include <algorithm>
 #include <cstdio>
@@ -322,6 +323,11 @@ void TileMapper::OpenSelectedFile()
 
     _openFileIdx = _selectedFileIdx;
     _assignments.clear();
+    _propDefs.clear();
+    _decorDefs.clear();
+    _propScrollY  = 0.f;
+    _decorScrollY = 0.f;
+    _panelTab     = PanelTab::Tiles;
     _hasSelection  = false;
     _isDragging    = false;
     _hoveredTypeIdx = -1;
@@ -391,6 +397,10 @@ void TileMapper::HandleMouseMapping()
     if (_sheet.id == 0) return;
 
     Vector2 mouse = GetMousePosition();
+    float sw      = (float)GetScreenWidth();
+    float sh      = (float)GetScreenHeight();
+    float panelW  = sw - _panelX;
+
     float sheetRight  = _offX + _sheet.width  * _scale;
     float sheetBottom = _offY + _sheet.height * _scale;
     bool inSheet = (mouse.x >= _offX && mouse.x < sheetRight &&
@@ -419,55 +429,129 @@ void TileMapper::HandleMouseMapping()
         _isDragging = false;
     }
 
-    // Panel buttons
-    _hoveredTypeIdx = -1;
-    float panelW    = (float)GetScreenWidth() - _panelX;
-    float btnStartY = 138.f;
-    float btnH      = 30.f;
-    float btnGap    = 3.f;
-
-    for (int i = 0; i < kTypeCount; i++)
-    {
-        Rectangle btn{ _panelX + 10.f, btnStartY + i * (btnH + btnGap), panelW - 20.f, btnH };
-        if (CheckCollisionPointRec(mouse, btn))
-        {
-            _hoveredTypeIdx = i;
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
-                ConfirmSelection(i);
-        }
-    }
-
-    // Clear selection button
-    float clearY = btnStartY + kTypeCount * (btnH + btnGap) + 10.f;
-    Rectangle clearBtn{ _panelX + 10.f, clearY, panelW - 20.f, 28.f };
-    if (CheckCollisionPointRec(mouse, clearBtn) &&
-        IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-        ClearSelection();
-
-    // Clear ALL button
-    Rectangle clearAllBtn{ _panelX + 10.f, clearY + 34.f, panelW - 20.f, 28.f };
-    if (CheckCollisionPointRec(mouse, clearAllBtn) &&
-        IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-    {
-        _assignments.clear();
-        _hasSelection = false;
-    }
-
-    // Biome cycle in panel header
+    // Biome cycle
     float bx = _panelX + 10.f;
-    float by = 58.f;
-    Rectangle prevBiome{ bx, by, 24.f, 22.f };
-    Rectangle nextBiome{ bx + 24.f + 130.f, by, 24.f, 22.f };
+    float by = 40.f;
     if (_openFileIdx >= 0 && _openFileIdx < (int)_files.size())
     {
-        if (CheckCollisionPointRec(mouse, prevBiome) &&
+        if (CheckCollisionPointRec(mouse, { bx, by, 24.f, 22.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _files[_openFileIdx].biomeIdx =
                 (_files[_openFileIdx].biomeIdx - 1 + kBiomeCount) % kBiomeCount;
-        if (CheckCollisionPointRec(mouse, nextBiome) &&
+        if (CheckCollisionPointRec(mouse, { bx + 24.f + 130.f, by, 24.f, 22.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _files[_openFileIdx].biomeIdx =
                 (_files[_openFileIdx].biomeIdx + 1) % kBiomeCount;
+    }
+
+    // ── Layout constants — must match DrawPanel exactly ───────────────────────
+    static constexpr float kTabsY    = 96.f;
+    static constexpr float kTabH     = 26.f;
+    static constexpr float kContentY = kTabsY + kTabH + 4.f;   // = 126
+    static constexpr float kBtnStart = kContentY + 18.f;        // tile buttons start below hint text
+    static constexpr float kBtnH     = 30.f;
+    static constexpr float kBtnGap   = 3.f;
+    static constexpr float kListRowH = 52.f;
+    static constexpr float kAddBtnH  = 28.f;
+    static constexpr float kListY    = kContentY + kAddBtnH + 8.f;
+
+    // Tab row
+    float tabW = (panelW - 20.f) / 3.f;
+    for (int t = 0; t < 3; t++)
+    {
+        Rectangle tab{ _panelX + 10.f + t * tabW, kTabsY, tabW, kTabH };
+        if (CheckCollisionPointRec(mouse, tab) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            _panelTab = (PanelTab)t;
+    }
+
+    // ── Tiles tab ─────────────────────────────────────────────────────────────
+    if (_panelTab == PanelTab::Tiles)
+    {
+        _hoveredTypeIdx = -1;
+        int visibleIdx = 0;
+        for (int i = 0; i < kTypeCount; i++)
+        {
+            if (i == (int)TileType::WallInnerCornerL  ||
+                i == (int)TileType::WallInnerCornerR  ||
+                i == (int)TileType::WallInnerCornerBL ||
+                i == (int)TileType::WallInnerCornerBR)
+                continue;
+
+            Rectangle btn{ _panelX + 10.f, kBtnStart + visibleIdx * (kBtnH + kBtnGap),
+                           panelW - 20.f, kBtnH };
+            if (CheckCollisionPointRec(mouse, btn))
+            {
+                _hoveredTypeIdx = i;
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
+                    ConfirmSelection(i);
+            }
+            visibleIdx++;
+        }
+        float clearY = kBtnStart + visibleIdx * (kBtnH + kBtnGap) + 8.f;
+
+        if (CheckCollisionPointRec(mouse, { _panelX + 10.f, clearY, panelW - 20.f, 26.f }) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            ClearSelection();
+
+        if (CheckCollisionPointRec(mouse, { _panelX + 10.f, clearY + 32.f, panelW - 20.f, 26.f }) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        { _assignments.clear(); _hasSelection = false; }
+    }
+
+    // ── Props tab ─────────────────────────────────────────────────────────────
+    if (_panelTab == PanelTab::Props)
+    {
+        if (mouse.x > _panelX)
+            _propScrollY = std::max(0.f, _propScrollY - GetMouseWheelMove() * 50.f);
+
+        Rectangle addBtn{ _panelX + 10.f, kContentY, panelW - 20.f, kAddBtnH };
+        if (CheckCollisionPointRec(mouse, addBtn) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
+        {
+            _propDefs.push_back({
+                (float)(_selC0 * kTileSize), (float)(_selR0 * kTileSize),
+                (float)((_selC1 - _selC0 + 1) * kTileSize),
+                (float)((_selR1 - _selR0 + 1) * kTileSize) });
+            _hasSelection = false;
+        }
+
+        for (int i = 0; i < (int)_propDefs.size(); i++)
+        {
+            float ry = kListY + i * kListRowH - _propScrollY;
+            if (ry + kListRowH < kContentY || ry > sh) continue;
+            Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
+            if (CheckCollisionPointRec(mouse, removeBtn) &&
+                IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            { _propDefs.erase(_propDefs.begin() + i); break; }
+        }
+    }
+
+    // ── Decors tab ────────────────────────────────────────────────────────────
+    if (_panelTab == PanelTab::Decors)
+    {
+        if (mouse.x > _panelX)
+            _decorScrollY = std::max(0.f, _decorScrollY - GetMouseWheelMove() * 50.f);
+
+        Rectangle addBtn{ _panelX + 10.f, kContentY, panelW - 20.f, kAddBtnH };
+        if (CheckCollisionPointRec(mouse, addBtn) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
+        {
+            _decorDefs.push_back({
+                (float)(_selC0 * kTileSize), (float)(_selR0 * kTileSize),
+                (float)((_selC1 - _selC0 + 1) * kTileSize),
+                (float)((_selR1 - _selR0 + 1) * kTileSize) });
+            _hasSelection = false;
+        }
+
+        for (int i = 0; i < (int)_decorDefs.size(); i++)
+        {
+            float ry = kListY + i * kListRowH - _decorScrollY;
+            if (ry + kListRowH < kContentY || ry > sh) continue;
+            Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
+            if (CheckCollisionPointRec(mouse, removeBtn) &&
+                IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            { _decorDefs.erase(_decorDefs.begin() + i); break; }
+        }
     }
 }
 
@@ -522,6 +606,14 @@ void TileMapper::ExportAndSave() const
             a.col * kTileSize, a.row * kTileSize,
             a.spanCols * kTileSize, a.spanRows * kTileSize);
     }
+    for (int i = 0; i < (int)_propDefs.size(); i++)
+        TraceLog(LOG_INFO, "Prop[%d]          = { %3d, %3d, %3d, %3d };", i,
+            (int)_propDefs[i].x, (int)_propDefs[i].y,
+            (int)_propDefs[i].width, (int)_propDefs[i].height);
+    for (int i = 0; i < (int)_decorDefs.size(); i++)
+        TraceLog(LOG_INFO, "Decor[%d]         = { %3d, %3d, %3d, %3d };", i,
+            (int)_decorDefs[i].x, (int)_decorDefs[i].y,
+            (int)_decorDefs[i].width, (int)_decorDefs[i].height);
     TraceLog(LOG_INFO, "==========================================");
 
     std::string path = SavePath();
@@ -533,12 +625,15 @@ void TileMapper::ExportAndSave() const
         for (const Assignment& a : _assignments)
         {
             if (a.typeIdx < 0 || a.typeIdx >= kTypeCount) continue;
-            fprintf(f, "%d %d %d %d %d\n",
+            fprintf(f, "TILE %d %d %d %d %d\n",
                 a.col, a.row, a.spanCols, a.spanRows, a.typeIdx);
         }
+        for (const Rectangle& r : _propDefs)
+            fprintf(f, "PROP %.0f %.0f %.0f %.0f\n", r.x, r.y, r.width, r.height);
+        for (const Rectangle& r : _decorDefs)
+            fprintf(f, "DECOR %.0f %.0f %.0f %.0f\n", r.x, r.y, r.width, r.height);
         fclose(f);
 
-        // Update the hasSave flag so the badge appears next visit.
         if (_openFileIdx >= 0 && _openFileIdx < (int)_files.size())
             const_cast<TileMapper*>(this)->_files[_openFileIdx].hasSave = true;
     }
@@ -554,8 +649,8 @@ void TileMapper::TryLoadSave()
     if (!f) return;
 
     // First line: BIOME <name>
-    char tag[16]{}, biomeName[64]{};
-    if (fscanf_s(f, "%15s %63s", tag, (unsigned)sizeof(tag),
+    char biomeTag[16]{}, biomeName[64]{};
+    if (fscanf_s(f, "%15s %63s", biomeTag, (unsigned)sizeof(biomeTag),
                  biomeName, (unsigned)sizeof(biomeName)) == 2)
     {
         for (int i = 0; i < kBiomeCount; i++)
@@ -568,15 +663,38 @@ void TileMapper::TryLoadSave()
         }
     }
 
-    int col, row, sc, sr, ti;
-    while (fscanf_s(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &ti) == 5)
+    char tag[32]{};
+    while (fscanf_s(f, "%31s", tag, (unsigned)sizeof(tag)) == 1)
     {
-        if (ti < 0 || ti >= kTypeCount) continue;
-        Assignment a;
-        a.col = col; a.row = row;
-        a.spanCols = sc; a.spanRows = sr;
-        a.typeIdx  = ti;
-        _assignments.push_back(a);
+        if (strcmp(tag, "TILE") == 0)
+        {
+            int col, row, sc, sr, ti;
+            if (fscanf_s(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &ti) != 5) continue;
+            if (ti < 0 || ti >= kTypeCount) continue;
+            Assignment a; a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr; a.typeIdx = ti;
+            _assignments.push_back(a);
+        }
+        else if (strcmp(tag, "PROP") == 0)
+        {
+            float x, y, w, h;
+            if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
+            _propDefs.push_back({ x, y, w, h });
+        }
+        else if (strcmp(tag, "DECOR") == 0)
+        {
+            float x, y, w, h;
+            if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
+            _decorDefs.push_back({ x, y, w, h });
+        }
+        else
+        {
+            // Legacy format: tag is the col integer.
+            int col = atoi(tag), row, sc, sr, ti;
+            if (fscanf_s(f, "%d %d %d %d", &row, &sc, &sr, &ti) != 4) continue;
+            if (ti < 0 || ti >= kTypeCount) continue;
+            Assignment a; a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr; a.typeIdx = ti;
+            _assignments.push_back(a);
+        }
     }
     fclose(f);
 }
@@ -688,7 +806,7 @@ void TileMapper::DrawPanel() const
     DrawRectangle((int)_panelX, 0, (int)panelW, (int)sh, Color{ 16, 16, 22, 248 });
     DrawLineV({ _panelX, 0.f }, { _panelX, sh }, Fade(WHITE, 0.18f));
 
-    // File name + biome selector at the top
+    // File name
     std::string stemLabel = (_openFileIdx >= 0 && _openFileIdx < (int)_files.size())
         ? _files[_openFileIdx].stem : "?";
     int nameFs = 17;
@@ -710,60 +828,173 @@ void TileMapper::DrawPanel() const
 
     // Selection status
     const char* selInfo = _hasSelection
-        ? TextFormat("Sel: col %d row %d  (%dx%d)", _selC0, _selR0,
-              _selC1 - _selC0 + 1, _selR1 - _selR0 + 1)
-        : "Click a tile to select";
+        ? TextFormat("Sel: (%dx%d) px %d,%d",
+              (_selC1 - _selC0 + 1) * kTileSize, (_selR1 - _selR0 + 1) * kTileSize,
+              _selC0 * kTileSize, _selR0 * kTileSize)
+        : "Click or drag a region";
     DrawText(selInfo, (int)(_panelX + 10.f), 78, 12,
         _hasSelection ? SKYBLUE : Fade(WHITE, 0.4f));
-    DrawText(_hasSelection ? "Then click a type below:" : "(drag for multi-tile)",
-        (int)(_panelX + 10.f), 96, 12, Fade(WHITE, 0.45f));
 
-    // Type buttons
-    float btnStartY = 138.f;
-    float btnH      = 30.f;
-    float btnGap    = 3.f;
-
-    for (int i = 0; i < kTypeCount; i++)
+    // ── Tab row ───────────────────────────────────────────────────────────────
+    static constexpr float kTabsY   = 96.f;
+    static constexpr float kTabH    = 26.f;
+    static constexpr float kContentY = kTabsY + kTabH + 4.f;
+    const char* tabNames[] = { "Tiles", "Props", "Decors" };
+    float tabW = (panelW - 20.f) / 3.f;
+    for (int t = 0; t < 3; t++)
     {
-        Rectangle btn{ _panelX + 10.f, btnStartY + i * (btnH + btnGap), panelW - 20.f, btnH };
-        bool hov  = (i == _hoveredTypeIdx && _hasSelection);
-        DrawRectangleRec(btn, hov ? Fade(kTypeColors[i], 0.95f) : Fade(kTypeColors[i], 0.40f));
-        DrawRectangleLinesEx(btn, 1.f, hov ? WHITE : Fade(WHITE, 0.22f));
-        int fs = 13;
-        int tw = MeasureText(kTypeNames[i], fs);
-        DrawText(kTypeNames[i],
-            (int)(btn.x + btn.width * 0.5f - tw * 0.5f),
-            (int)(btn.y + btn.height * 0.5f - fs * 0.5f),
-            fs, WHITE);
+        Rectangle tab{ _panelX + 10.f + t * tabW, kTabsY, tabW, kTabH };
+        bool active = ((int)_panelTab == t);
+        DrawRectangleRec(tab, active ? Color{ 40, 80, 140, 220 } : Color{ 20, 20, 30, 180 });
+        DrawRectangleLinesEx(tab, 1.f, active ? Color{120,180,255,255} : Fade(WHITE,0.18f));
+        int tw = MeasureText(tabNames[t], 13);
+        DrawText(tabNames[t],
+            (int)(tab.x + tab.width * 0.5f - tw * 0.5f),
+            (int)(tab.y + tab.height * 0.5f - 6.f),
+            13, active ? WHITE : Fade(WHITE, 0.5f));
     }
 
-    // Clear + export
-    float clearY = btnStartY + kTypeCount * (btnH + btnGap) + 10.f;
-    Rectangle clearBtn{ _panelX + 10.f, clearY, panelW - 20.f, 26.f };
-    bool clearHov = CheckCollisionPointRec(GetMousePosition(), clearBtn) && _hasSelection;
-    DrawRectangleRec(clearBtn, clearHov ? Fade(RED, 0.75f) : Fade(RED, 0.30f));
-    DrawRectangleLinesEx(clearBtn, 1.f, clearHov ? WHITE : Fade(WHITE, 0.2f));
-    DrawText("Clear Selection", (int)(clearBtn.x + clearBtn.width * 0.5f - MeasureText("Clear Selection", 13) * 0.5f),
-        (int)(clearBtn.y + 6.f), 13, WHITE);
+    // ── Tiles tab ─────────────────────────────────────────────────────────────
+    if (_panelTab == PanelTab::Tiles)
+    {
+        DrawText(_hasSelection ? "Then click a type:" : "(drag for multi-tile)",
+            (int)(_panelX + 10.f), (int)(kContentY + 2.f), 12, Fade(WHITE, 0.45f));
 
-    // Clear All button
-    Rectangle clearAllBtn{ _panelX + 10.f, clearY + 34.f, panelW - 20.f, 28.f };
-    bool clearAllHov = CheckCollisionPointRec(GetMousePosition(), clearAllBtn);
-    DrawRectangleRec(clearAllBtn, clearAllHov ? Color{220, 30, 30, 230} : Color{160, 20, 20, 180});
-    DrawRectangleLinesEx(clearAllBtn, 1.f, clearAllHov ? WHITE : Fade(WHITE, 0.25f));
-    DrawText("Clear ALL", (int)(clearAllBtn.x + clearAllBtn.width * 0.5f - MeasureText("Clear ALL", 13) * 0.5f),
-        (int)(clearAllBtn.y + 6.f), 13, WHITE);
+        float btnH   = 30.f;
+        float btnGap = 3.f;
+        float btnStartY = kContentY + 18.f;
+        int visibleIdx  = 0;
 
-    int ew = MeasureText("[S]  Save & Export", 15);
-    DrawText("[S]  Save & Export",
-        (int)(_panelX + panelW * 0.5f - ew * 0.5f),
-        (int)(clearY + 70.f), 15, Fade(GOLD, 0.85f));
+        for (int i = 0; i < kTypeCount; i++)
+        {
+            if (i == (int)TileType::WallInnerCornerL  ||
+                i == (int)TileType::WallInnerCornerR  ||
+                i == (int)TileType::WallInnerCornerBL ||
+                i == (int)TileType::WallInnerCornerBR)
+                continue;
 
-    // Assigned count
-    const char* cnt = TextFormat("%d assigned", (int)_assignments.size());
-    DrawText(cnt,
-        (int)(_panelX + panelW * 0.5f - MeasureText(cnt, 13) * 0.5f),
-        (int)(sh - 26.f), 13, Fade(WHITE, 0.40f));
+            Rectangle btn{ _panelX + 10.f, btnStartY + visibleIdx * (btnH + btnGap), panelW - 20.f, btnH };
+            bool hov  = (i == _hoveredTypeIdx && _hasSelection);
+            DrawRectangleRec(btn, hov ? Fade(kTypeColors[i], 0.95f) : Fade(kTypeColors[i], 0.40f));
+            DrawRectangleLinesEx(btn, 1.f, hov ? WHITE : Fade(WHITE, 0.22f));
+            int fs = 13;
+            int tw2 = MeasureText(kTypeNames[i], fs);
+            DrawText(kTypeNames[i],
+                (int)(btn.x + btn.width * 0.5f - tw2 * 0.5f),
+                (int)(btn.y + btn.height * 0.5f - fs * 0.5f),
+                fs, WHITE);
+            visibleIdx++;
+        }
+
+        float clearY = btnStartY + visibleIdx * (btnH + btnGap) + 8.f;
+        bool clearHov    = CheckCollisionPointRec(GetMousePosition(),
+                               { _panelX + 10.f, clearY, panelW - 20.f, 26.f }) && _hasSelection;
+        bool clearAllHov = CheckCollisionPointRec(GetMousePosition(),
+                               { _panelX + 10.f, clearY + 32.f, panelW - 20.f, 26.f });
+        DrawRectangleRec({ _panelX + 10.f, clearY,        panelW - 20.f, 26.f },
+            clearHov    ? Fade(RED, 0.75f) : Fade(RED, 0.30f));
+        DrawRectangleLinesEx({ _panelX + 10.f, clearY, panelW - 20.f, 26.f }, 1.f,
+            clearHov ? WHITE : Fade(WHITE, 0.2f));
+        DrawText("Clear Selection",
+            (int)(_panelX + 10.f + (panelW - 20.f) * 0.5f - MeasureText("Clear Selection", 13) * 0.5f),
+            (int)(clearY + 6.f), 13, WHITE);
+
+        DrawRectangleRec({ _panelX + 10.f, clearY + 32.f, panelW - 20.f, 26.f },
+            clearAllHov ? Color{220,30,30,230} : Color{160,20,20,180});
+        DrawRectangleLinesEx({ _panelX + 10.f, clearY + 32.f, panelW - 20.f, 26.f }, 1.f,
+            clearAllHov ? WHITE : Fade(WHITE, 0.25f));
+        DrawText("Clear ALL",
+            (int)(_panelX + 10.f + (panelW - 20.f) * 0.5f - MeasureText("Clear ALL", 13) * 0.5f),
+            (int)(clearY + 38.f), 13, WHITE);
+
+        int ew = MeasureText("[S]  Save & Export", 15);
+        DrawText("[S]  Save & Export",
+            (int)(_panelX + panelW * 0.5f - ew * 0.5f),
+            (int)(clearY + 68.f), 15, Fade(GOLD, 0.85f));
+    }
+
+    // ── Props tab ─────────────────────────────────────────────────────────────
+    auto drawSpriteList = [&](const std::vector<Rectangle>& defs, float scrollY,
+                               const char* addLabel, const char* emptyLabel)
+    {
+        // Add button
+        bool addHov = CheckCollisionPointRec(GetMousePosition(),
+            { _panelX + 10.f, kContentY, panelW - 20.f, 28.f }) && _hasSelection;
+        DrawRectangleRec({ _panelX + 10.f, kContentY, panelW - 20.f, 28.f },
+            addHov ? Color{40,160,40,230} : Color{25,100,25,180});
+        DrawRectangleLinesEx({ _panelX + 10.f, kContentY, panelW - 20.f, 28.f }, 1.f,
+            addHov ? WHITE : Fade(WHITE, 0.25f));
+        DrawText(addLabel,
+            (int)(_panelX + 10.f + (panelW - 20.f) * 0.5f - MeasureText(addLabel, 13) * 0.5f),
+            (int)(kContentY + 7.f), 13, WHITE);
+
+        if (!_hasSelection)
+            DrawText("(select a region first)", (int)(_panelX + 10.f),
+                (int)(kContentY + 32.f), 11, Fade(WHITE, 0.35f));
+
+        float listY = kContentY + 36.f;
+
+        // Clip region for the scrollable list
+        BeginScissorMode((int)_panelX, (int)listY, (int)panelW, (int)(sh - listY));
+
+        if (defs.empty())
+        {
+            DrawText(emptyLabel, (int)(_panelX + 14.f), (int)(listY + 10.f), 13, Fade(WHITE, 0.35f));
+        }
+        else
+        {
+            for (int i = 0; i < (int)defs.size(); i++)
+            {
+                float ry = listY + i * 52.f - scrollY;
+                if (ry + 52.f < listY || ry > sh) continue;
+
+                Rectangle row{ _panelX + 6.f, ry, panelW - 12.f, 50.f };
+                DrawRectangleRec(row, Color{ 22, 22, 32, 200 });
+                DrawRectangleLinesEx(row, 1.f, Fade(WHITE, 0.15f));
+
+                // Sprite thumbnail
+                if (_sheet.id != 0)
+                {
+                    Rectangle dst{ _panelX + 12.f, ry + 7.f, 36.f, 36.f };
+                    DrawTexturePro(_sheet, defs[i], dst, {}, 0.f, WHITE);
+                    DrawRectangleLinesEx(dst, 1.f, Fade(WHITE, 0.3f));
+                }
+
+                // Label
+                DrawText(TextFormat("#%d  (%dx%d)", i,
+                             (int)defs[i].width, (int)defs[i].height),
+                    (int)(_panelX + 54.f), (int)(ry + 17.f), 12, RAYWHITE);
+
+                // Remove button
+                Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
+                bool remHov = CheckCollisionPointRec(GetMousePosition(), removeBtn);
+                DrawRectangleRec(removeBtn, remHov ? Fade(RED, 0.85f) : Fade(RED, 0.45f));
+                DrawRectangleLinesEx(removeBtn, 1.f, remHov ? WHITE : Fade(WHITE, 0.2f));
+                DrawText("X",
+                    (int)(removeBtn.x + removeBtn.width * 0.5f - MeasureText("X", 13) * 0.5f),
+                    (int)(removeBtn.y + 5.f), 13, WHITE);
+            }
+        }
+
+        EndScissorMode();
+
+        // Scroll indicator
+        if ((int)defs.size() > 6)
+            DrawText(TextFormat("[Scroll]  %d items", (int)defs.size()),
+                (int)(_panelX + 10.f), (int)(sh - 22.f), 11, Fade(WHITE, 0.35f));
+    };
+
+    if (_panelTab == PanelTab::Props)
+        drawSpriteList(_propDefs,  _propScrollY,  "+ Add Selected as Prop",  "No props yet");
+    if (_panelTab == PanelTab::Decors)
+        drawSpriteList(_decorDefs, _decorScrollY, "+ Add Selected as Decor", "No decors yet");
+
+    // Save hint (always visible)
+    int ew2 = MeasureText("[S]  Save & Export", 15);
+    if (_panelTab != PanelTab::Tiles)
+        DrawText("[S]  Save & Export",
+            (int)(_panelX + panelW * 0.5f - ew2 * 0.5f),
+            (int)(sh - 38.f), 15, Fade(GOLD, 0.85f));
 }
 
 // ── Coordinate helpers ────────────────────────────────────────────────────────

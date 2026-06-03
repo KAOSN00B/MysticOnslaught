@@ -2,105 +2,97 @@
 
 void TileRenderer::Init(const char* tilesheetPath, const TileDefSet& defs)
 {
-    if (_sheet.id != 0)
-    {
-        UnloadTexture(_sheet);
-        _sheet = {};
-    }
+    if (_sheet.id != 0) { UnloadTexture(_sheet); _sheet = {}; }
     _sheet = LoadTexture(tilesheetPath);
     _defs  = defs;
 }
 
 void TileRenderer::Unload()
 {
-    if (_sheet.id != 0)
-    {
-        UnloadTexture(_sheet);
-        _sheet = {};
-    }
+    if (_sheet.id != 0) { UnloadTexture(_sheet); _sheet = {}; }
 }
 
-void TileRenderer::DrawRoom(const RoomLayout& layout, float drawScale,
+void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
                             Vector2 screenOffset) const
 {
-    float cellPx = 16.f * drawScale;
+    float cellW = 16.f * scaleX;
+    float cellH = 16.f * scaleY;
 
     // ── Pass 1: floor base ────────────────────────────────────────────────────
-    // Draw floor under every cell first so transparent wall pixels reveal
-    // floor instead of the dark background.
     for (int r = 0; r < RoomLayout::kRows; r++)
     {
         for (int c = 0; c < RoomLayout::kCols; c++)
         {
             TileType type = layout.tiles[r][c];
-            float sx = screenOffset.x + c * cellPx;
-            float sy = screenOffset.y + r * cellPx;
+            float sx = screenOffset.x + c * cellW;
+            float sy = screenOffset.y + r * cellH;
 
             if (type == TileType::Void || type == TileType::None)
-            {
-                DrawRectangle((int)sx, (int)sy, (int)cellPx, (int)cellPx,
-                    Color{ 8, 6, 10, 255 });
-            }
+                DrawRectangle((int)sx, (int)sy, (int)cellW, (int)cellH, Color{ 8, 6, 10, 255 });
             else if (type == TileType::DoorOpen)
-            {
-                DrawRectangle((int)sx, (int)sy, (int)cellPx, (int)cellPx,
-                    Color{ 12, 10, 14, 255 });
-            }
+                DrawRectangle((int)sx, (int)sy, (int)cellW, (int)cellH, Color{ 12, 10, 14, 255 });
             else if (type == TileType::DoorLocked)
-            {
-                DrawRectangle((int)sx, (int)sy, (int)cellPx, (int)cellPx,
-                    Color{ 60, 10, 10, 255 });
-            }
+                DrawRectangle((int)sx, (int)sy, (int)cellW, (int)cellH, Color{ 60, 10, 10, 255 });
             else
             {
-                // FloorVariant cells use their own sprite; everything else
-                // (walls, corners) gets plain floor underneath.
                 TileType base = (type == TileType::FloorVariant)
                     ? TileType::FloorVariant : TileType::Floor;
-                DrawTile(base, sx, sy, drawScale);
+                DrawTile(base, sx, sy, scaleX, scaleY);
             }
         }
+    }
+
+    // ── Pass 1.5: decorations (half-size, centred in cell, no collision) ─────
+    for (const SpritePlacement& d : layout.decors)
+    {
+        if (d.defIdx < 0 || d.defIdx >= (int)_defs.decors.size()) continue;
+        const Rectangle& src = _defs.decors[d.defIdx].src;
+        float dScaleX = scaleX * 0.5f;
+        float dScaleY = scaleY * 0.5f;
+        // Centre the smaller sprite within the full cell.
+        float sx = screenOffset.x + d.col * cellW + (cellW - src.width  * dScaleX) * 0.5f;
+        float sy = screenOffset.y + d.row * cellH + (cellH - src.height * dScaleY) * 0.5f;
+        DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY);
     }
 
     // ── Pass 2: walls on top ──────────────────────────────────────────────────
-    // Skip floor, void, and doors — already handled in pass 1.
     for (int r = 0; r < RoomLayout::kRows; r++)
     {
         for (int c = 0; c < RoomLayout::kCols; c++)
         {
             TileType type = layout.tiles[r][c];
-            if (type == TileType::Floor        ||
-                type == TileType::FloorVariant ||
-                type == TileType::Void         ||
-                type == TileType::None         ||
-                type == TileType::DoorOpen     ||
-                type == TileType::DoorLocked)
+            if (type == TileType::Floor     || type == TileType::FloorVariant ||
+                type == TileType::Void      || type == TileType::None         ||
+                type == TileType::DoorOpen  || type == TileType::DoorLocked)
                 continue;
 
-            float sx = screenOffset.x + c * cellPx;
-            float sy = screenOffset.y + r * cellPx;
-            DrawTile(type, sx, sy, drawScale);
+            float sx = screenOffset.x + c * cellW;
+            float sy = screenOffset.y + r * cellH;
+            DrawTile(type, sx, sy, scaleX, scaleY);
         }
+    }
+
+    // ── Pass 3: props (solid objects, drawn last so they sit on top) ──────────
+    for (const SpritePlacement& p : layout.props)
+    {
+        if (p.defIdx < 0 || p.defIdx >= (int)_defs.props.size()) continue;
+        float sx = screenOffset.x + p.col * cellW;
+        float sy = screenOffset.y + p.row * cellH;
+        DrawSpriteScaled(_defs.props[p.defIdx].src, sx, sy, scaleX, scaleY);
     }
 }
 
 void TileRenderer::DrawTile(TileType type, float screenX, float screenY,
-                            float drawScale) const
+                            float scaleX, float scaleY) const
 {
-    if (_sheet.id == 0)
-        return;
+    if (_sheet.id == 0) return;
+    DrawSpriteScaled(_defs.Get(type), screenX, screenY, scaleX, scaleY);
+}
 
-    Rectangle src = _defs.Get(type);
-
-    // Draw at the tile's actual source dimensions so multi-tile sprites
-    // (e.g. Wall Bottom at 16×32) render at full height and extend naturally
-    // beyond the cell boundary — giving walls proper visible thickness.
-    Rectangle dst{
-        screenX,
-        screenY,
-        src.width  * drawScale,
-        src.height * drawScale
-    };
-
+void TileRenderer::DrawSpriteScaled(Rectangle src, float screenX, float screenY,
+                                    float scaleX, float scaleY) const
+{
+    if (_sheet.id == 0) return;
+    Rectangle dst{ screenX, screenY, src.width * scaleX, src.height * scaleY };
     DrawTexturePro(_sheet, src, dst, {}, 0.f, WHITE);
 }

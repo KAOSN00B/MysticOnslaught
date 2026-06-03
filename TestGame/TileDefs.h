@@ -1,5 +1,9 @@
 #pragma once
 #include "raylib.h"
+#include <vector>
+
+// A single sprite entry in the props or decorations array.
+struct SpriteDef { Rectangle src; };
 
 // ── TileType ──────────────────────────────────────────────────────────────────
 // Matches TileMapper::kTypeNames order exactly.
@@ -42,6 +46,9 @@ struct TileDefSet
     // Returns the source rect for a tile type.
     // Falls back to Floor if the type wasn't assigned in the save file.
     Rectangle Get(TileType t) const;
+
+    std::vector<SpriteDef> props;    // collision obstacles placed in rooms
+    std::vector<SpriteDef> decors;   // floor decorations, no collision
 
     // Load assignments from a tilemapper_<stem>.txt save file.
     // Returns true if the file was found and read.

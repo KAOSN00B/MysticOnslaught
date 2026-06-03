@@ -31,6 +31,9 @@ public:
     int GetBossIndex()  const { return _bossIdx;  }
     int GetKeyIndex()   const { return _keyIdx;   }
 
+    // Returns the room index adjacent to roomIdx in direction (dr, dc), or -1 if none.
+    int GetNeighborIndex(int roomIdx, int dr, int dc) const;
+
 private:
     void GrowRooms();
     void AssignSpecialRooms();

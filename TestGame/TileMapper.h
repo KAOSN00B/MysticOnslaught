@@ -68,7 +68,8 @@ public:
 
 private:
     // ── Internal state ────────────────────────────────────────────────────────
-    enum class Screen { FileSelect, Mapping };
+    enum class Screen   { FileSelect, Mapping };
+    enum class PanelTab { Tiles, Props, Decors };
 
     struct TilesetFile
     {
@@ -117,8 +118,9 @@ private:
     Rectangle GridToScreen(int col, int row, int spanCols, int spanRows) const;
 
     // ── State ─────────────────────────────────────────────────────────────────
-    Screen _screen = Screen::FileSelect;
-    bool   _wantsToExit = false;
+    Screen   _screen    = Screen::FileSelect;
+    PanelTab _panelTab  = PanelTab::Tiles;
+    bool     _wantsToExit = false;
 
     // File select state
     std::vector<TilesetFile> _files;
@@ -145,6 +147,12 @@ private:
     int  _hoveredTypeIdx = -1;
 
     std::vector<Assignment> _assignments;
+
+    // Props and decorations defined for this tileset.
+    std::vector<Rectangle>  _propDefs;
+    std::vector<Rectangle>  _decorDefs;
+    float _propScrollY  = 0.f;
+    float _decorScrollY = 0.f;
 
     // Index into _files for the sheet currently open
     int _openFileIdx = -1;

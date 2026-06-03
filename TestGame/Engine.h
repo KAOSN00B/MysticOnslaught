@@ -572,10 +572,19 @@ private:
     TileRenderer _tileRenderer;
 
     // Pregen test sub-state
-    enum class PregenView { Graph, Room };
+    enum class PregenView { Graph, Room, Play };
     PregenView _pregenView          = PregenView::Graph;
     int        _pregenViewedRoomIdx = -1;
     RoomLayout _pregenRoomLayout{};
+
+    // Zelda-style room scroll transition
+    bool       _pregenScrolling      = false;
+    float      _pregenScrollT        = 0.f;
+    Vector2    _pregenScrollVec      = {};         // direction current room slides (unit, applied to sw/sh)
+    RoomLayout _pregenScrollNextLayout{};
+    int        _pregenScrollNextIdx  = -1;
+    Vector2    _pregenScrollSpawnPos = {};
+    static constexpr float kPregenScrollDur = 0.40f;
 
     // Folder scanned by the TileMapper debug tool for PNG tilesets.
     static constexpr const char* kTilesheetFolder =
@@ -594,6 +603,6 @@ private:
 
     // Pregen test — dungeon map visualiser + tile room preview
     void UpdatePregenTest(float dt);
-    void DrawPregenTest() const;
+    void DrawPregenTest();
     Rectangle GetPregenRoomRect(int roomIdx) const;
 };

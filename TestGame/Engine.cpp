@@ -6426,15 +6426,164 @@ Rectangle Engine::GetPregenRoomRect(int roomIdx) const
 
 void Engine::UpdatePregenTest(float dt)
 {
-    (void)dt;
+    // ── Play view — player walks around the room ──────────────────────────────
+    if (_pregenView == PregenView::Play)
+    {
+        if (!_pregenScrolling && IsKeyPressed(KEY_ESCAPE))
+        {
+            _pregenView = PregenView::Room;
+            return;
+        }
 
+        float sw = (float)GetScreenWidth();
+        float sh = (float)GetScreenHeight();
+
+        // ── Scroll animation ─────────────────────────────────────────────────
+        if (_pregenScrolling)
+        {
+            _pregenScrollT += dt / kPregenScrollDur;
+            if (_pregenScrollT >= 1.f)
+            {
+                _pregenScrollT       = 1.f;
+                _pregenScrolling     = false;
+                _pregenRoomLayout    = _pregenScrollNextLayout;
+                _pregenViewedRoomIdx = _pregenScrollNextIdx;
+                _player.SetWorldPos(_pregenScrollSpawnPos);
+
+                // Rebuild nav grid for the new room so pathfinding routes around its props.
+                float cw = sw / (float)RoomLayout::kCols;
+                float ch = sh / (float)RoomLayout::kRows;
+                std::vector<Rectangle> propRects;
+                for (const SpritePlacement& p : _pregenRoomLayout.props)
+                    propRects.push_back({ p.col * cw, p.row * ch, cw, ch });
+                _nav.CancelAndReset();
+                _nav.Rebuild(sw, sh, propRects);
+                _nav.RefreshSync(_player.GetFeetWorldPos());
+            }
+            _cameraPos = { sw * 0.5f, sh * 0.5f };
+            return;
+        }
+
+        // ── Normal player update ──────────────────────────────────────────────
+        _player.SetCombatLocked(false);
+        _player.SetTouchModeEnabled(false);
+        _player.Update(dt);
+        _player.ConsumeCastRequest();
+
+        float cellW = sw / (float)RoomLayout::kCols;
+        float cellH = sh / (float)RoomLayout::kRows;
+
+        Vector2 pos = _player.GetWorldPos();
+        const auto& rooms = _dungeonGen.GetRooms();
+        const DungeonRoom& cur = rooms[_pregenViewedRoomIdx];
+
+        // Door ranges in world (= screen) coords.
+        int   doorCentreC = RoomLayout::kCols / 2;
+        float doorLeft    = (doorCentreC - 1) * cellW;
+        float doorRight   = (doorCentreC + 2) * cellW;
+        int   doorCentreR = RoomLayout::kRows / 2;
+        float doorTop     = (doorCentreR - 1) * cellH;
+        float doorBot     = (doorCentreR + 1) * cellH;
+
+        // Which walls have open doorways the player can walk through?
+        bool canPassNorth = cur.hasNorth && pos.x > doorLeft && pos.x < doorRight;
+        bool canPassSouth = cur.hasSouth && pos.x > doorLeft && pos.x < doorRight;
+        bool canPassWest  = cur.hasWest  && pos.y > doorTop  && pos.y < doorBot;
+        bool canPassEast  = cur.hasEast  && pos.y > doorTop  && pos.y < doorBot;
+
+        // Helper: begin a Zelda-style scroll into an adjacent room.
+        // scrollVec describes which direction the CURRENT room slides offscreen.
+        auto startScroll = [&](int dr, int dc, Vector2 scrollVec, Vector2 spawnPos)
+        {
+            int nextIdx = _dungeonGen.GetNeighborIndex(_pregenViewedRoomIdx, dr, dc);
+            if (nextIdx < 0) return;
+            const DungeonRoom& next = rooms[nextIdx];
+            _pregenScrollNextLayout  = RoomLayout::Generate(
+                next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
+                (int)_tileDefs.props.size(), (int)_tileDefs.decors.size());
+            _pregenScrollNextIdx     = nextIdx;
+            _pregenScrollSpawnPos    = spawnPos;
+            _pregenScrollVec         = scrollVec;
+            _pregenScrollT           = 0.f;
+            _pregenScrolling         = true;
+        };
+
+        // Check door thresholds and trigger scroll.
+        if      (canPassNorth && pos.y < cellH)
+            startScroll(-1,  0, { 0.f,  1.f }, { pos.x, (RoomLayout::kRows - 2) * cellH });
+        else if (canPassSouth && pos.y > (RoomLayout::kRows - 1) * cellH)
+            startScroll(+1,  0, { 0.f, -1.f }, { pos.x, cellH * 2.f });
+        else if (canPassWest  && pos.x < cellW)
+            startScroll( 0, -1, { 1.f,  0.f }, { (RoomLayout::kCols - 2) * cellW, pos.y });
+        else if (canPassEast  && pos.x > (RoomLayout::kCols - 1) * cellW)
+            startScroll( 0, +1, {-1.f,  0.f }, { cellW * 2.f, pos.y });
+
+        // Wall collision: solid walls clamp, door openings let the player through.
+        if (!_pregenScrolling)
+        {
+            if (!canPassNorth) pos.y = std::max(pos.y, cellH);
+            if (!canPassSouth) pos.y = std::min(pos.y, (RoomLayout::kRows - 2) * cellH);
+            if (!canPassWest)  pos.x = std::max(pos.x, cellW);
+            if (!canPassEast)  pos.x = std::min(pos.x, (RoomLayout::kCols - 1) * cellW);
+            _player.SetWorldPos(pos);
+
+            // Prop collision — resolve player out of each solid prop cell.
+            for (const SpritePlacement& prop : _pregenRoomLayout.props)
+            {
+                Rectangle propRect{ prop.col * cellW, prop.row * cellH, cellW, cellH };
+                Rectangle playerRect = _player.GetCollisionRec();
+                if (!CheckCollisionRecs(playerRect, propRect)) continue;
+
+                float overlapL = (playerRect.x + playerRect.width)  - propRect.x;
+                float overlapR = (propRect.x   + propRect.width)    - playerRect.x;
+                float overlapT = (playerRect.y + playerRect.height) - propRect.y;
+                float overlapB = (propRect.y   + propRect.height)   - playerRect.y;
+                float resolveX = (overlapL < overlapR) ? -overlapL : overlapR;
+                float resolveY = (overlapT < overlapB) ? -overlapT : overlapB;
+
+                Vector2 p = _player.GetWorldPos();
+                if (std::abs(resolveX) < std::abs(resolveY))
+                    p.x += resolveX;
+                else
+                    p.y += resolveY;
+                _player.SetWorldPos(p);
+            }
+        }
+
+        // Room fills the screen — camera stays fixed at screen centre.
+        _cameraPos = { sw * 0.5f, sh * 0.5f };
+        return;
+    }
+
+    // ── Room view — static tile preview ──────────────────────────────────────
     if (_pregenView == PregenView::Room)
     {
-        // ESC exits room view back to the graph.
         if (IsKeyPressed(KEY_ESCAPE))
         {
             _pregenView          = PregenView::Graph;
             _pregenViewedRoomIdx = -1;
+        }
+
+        // [Enter] enters the room with the player for walking around.
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
+        {
+            float hw = GetScreenWidth()  * 0.5f;
+            float hh = GetScreenHeight() * 0.5f;
+            _player.SetWorldPos({ hw, hh });
+            _cameraPos = { hw, hh };
+            _pregenView = PregenView::Play;
+
+            // Build nav grid so pathfinding routes around this room's props.
+            float sw2 = (float)GetScreenWidth();
+            float sh2 = (float)GetScreenHeight();
+            float cw  = sw2 / (float)RoomLayout::kCols;
+            float ch  = sh2 / (float)RoomLayout::kRows;
+            std::vector<Rectangle> propRects;
+            for (const SpritePlacement& p : _pregenRoomLayout.props)
+                propRects.push_back({ p.col * cw, p.row * ch, cw, ch });
+            _nav.CancelAndReset();
+            _nav.Rebuild(sw2, sh2, propRects);
+            _nav.RefreshSync(_player.GetFeetWorldPos());
         }
         return;
     }
@@ -6460,7 +6609,8 @@ void Engine::UpdatePregenTest(float dt)
             {
                 const DungeonRoom& room = rooms[i];
                 _pregenRoomLayout    = RoomLayout::Generate(
-                    room.hasNorth, room.hasSouth, room.hasEast, room.hasWest);
+                    room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
+                    (int)_tileDefs.props.size(), (int)_tileDefs.decors.size());
                 _pregenViewedRoomIdx = i;
                 _pregenView          = PregenView::Room;
                 break;
@@ -6469,44 +6619,95 @@ void Engine::UpdatePregenTest(float dt)
     }
 }
 
-void Engine::DrawPregenTest() const
+void Engine::DrawPregenTest()
 {
-    // ── Room view — show a single room rendered with tiles ────────────────────
+    const float sw = (float)GetScreenWidth();
+    const float sh = (float)GetScreenHeight();
+
+    // Scale so the room fills the entire game window exactly.
+    float scaleX = sw / (RoomLayout::kCols * 16.f);
+    float scaleY = sh / (RoomLayout::kRows * 16.f);
+
+    // ── Room type label helper ────────────────────────────────────────────────
+    auto drawRoomLabel = [&]()
+    {
+        const auto& rooms = _dungeonGen.GetRooms();
+        if (_pregenViewedRoomIdx < 0 || _pregenViewedRoomIdx >= (int)rooms.size()) return;
+        int i = _pregenViewedRoomIdx;
+        const char* label =
+            i == _dungeonGen.GetStartIndex() ? "START ROOM" :
+            i == _dungeonGen.GetBossIndex()  ? "BOSS ROOM"  :
+            i == _dungeonGen.GetKeyIndex()   ? "KEY ROOM"   :
+            [&]() -> const char* {
+                switch (rooms[i].type) {
+                case RoomType::Elite:    return "ELITE ROOM";
+                case RoomType::Rest:     return "REST ROOM";
+                case RoomType::Treasure: return "TREASURE ROOM";
+                default:                 return "STANDARD ROOM";
+                }
+            }();
+        int lw = MeasureText(label, 24);
+        DrawText(label, (int)(sw * 0.5f - lw * 0.5f), 16, 24, GOLD);
+    };
+
+    // ── Play view — tile room with live player ────────────────────────────────
+    if (_pregenView == PregenView::Play)
+    {
+        ClearBackground(Color{ 8, 6, 10, 255 });
+
+        if (_tileRenderer.IsLoaded())
+        {
+            if (_pregenScrolling)
+            {
+                // Smooth-step easing: slow start and end, fast middle.
+                float t = _pregenScrollT;
+                float ease = t * t * (3.f - 2.f * t);
+
+                // Current room slides in scrollVec direction; next room follows behind.
+                Vector2 curOff{
+                    _pregenScrollVec.x * ease * sw,
+                    _pregenScrollVec.y * ease * sh
+                };
+                Vector2 nextOff{
+                    curOff.x - _pregenScrollVec.x * sw,
+                    curOff.y - _pregenScrollVec.y * sh
+                };
+
+                _tileRenderer.DrawRoom(_pregenRoomLayout,        scaleX, scaleY, curOff);
+                _tileRenderer.DrawRoom(_pregenScrollNextLayout,  scaleX, scaleY, nextOff);
+            }
+            else
+            {
+                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+                _player.DrawPlayer(_cameraPos);
+            }
+        }
+        else
+        {
+            DrawText("Tilesheet not loaded.", 20, 20, 22, RED);
+        }
+
+        if (!_pregenScrolling)
+        {
+            drawRoomLabel();
+            DrawText("[ESC] Back to room view", 20, (int)(sh - 32.f), 18, Fade(WHITE, 0.55f));
+        }
+        return;
+    }
+
+    // ── Room view — static tile preview ──────────────────────────────────────
     if (_pregenView == PregenView::Room)
     {
         ClearBackground(Color{ 8, 6, 10, 255 });
 
-        constexpr float kDrawScale = 3.f;
-        float roomW = TileRenderer::RoomPixelW(kDrawScale);
-        float roomH = TileRenderer::RoomPixelH(kDrawScale);
-        Vector2 offset{
-            GetScreenWidth()  * 0.5f - roomW * 0.5f,
-            GetScreenHeight() * 0.5f - roomH * 0.5f
-        };
-
         if (_tileRenderer.IsLoaded())
-            _tileRenderer.DrawRoom(_pregenRoomLayout, kDrawScale, offset);
+            _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         else
             DrawText("Tilesheet not loaded. Check the path in Engine.cpp.",
                 20, 20, 22, RED);
 
-        // Room type label at top
-        const auto& rooms = _dungeonGen.GetRooms();
-        if (_pregenViewedRoomIdx >= 0 && _pregenViewedRoomIdx < (int)rooms.size())
-        {
-            int startIdx = _dungeonGen.GetStartIndex();
-            int bossIdx  = _dungeonGen.GetBossIndex();
-            int keyIdx   = _dungeonGen.GetKeyIndex();
-            int i        = _pregenViewedRoomIdx;
-            const char* label =
-                i == startIdx ? "START ROOM" :
-                i == bossIdx  ? "BOSS ROOM"  :
-                i == keyIdx   ? "KEY ROOM"   : "STANDARD ROOM";
-            int lw = MeasureText(label, 24);
-            DrawText(label, (int)(GetScreenWidth() * 0.5f - lw * 0.5f), 16, 24, GOLD);
-        }
-
-        DrawText("[ESC] Back to map", 20, (int)(GetScreenHeight() - 32.f), 18,
+        drawRoomLabel();
+        DrawText("[Enter] Walk in room   [ESC] Back to map", 20, (int)(sh - 32.f), 18,
             Fade(WHITE, 0.55f));
         return;
     }
@@ -6520,9 +6721,6 @@ void Engine::DrawPregenTest() const
         DrawText("No rooms generated.", 40, 40, 28, RED);
         return;
     }
-
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
 
     // Fit the dungeon grid into the centre of the screen.
     const float margin  = 90.f;
