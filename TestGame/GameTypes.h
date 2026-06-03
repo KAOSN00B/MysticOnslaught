@@ -39,6 +39,8 @@ enum class GameState
     Shop,
     DemoEnd,
     TouchButtonMapping,   // drag-to-place touch button layout editor
+    PregenTest,           // procedural dungeon map visualiser (debug)
+    TileMapper,           // interactive tilesheet assignment tool (debug)
 };
 
 enum class MusicCue

@@ -43,11 +43,18 @@ void MainMenu::Init()
     float lbW = sw * 0.14f;
     float lbH = sh * 0.055f;
     float cornerPad = sw * 0.018f;
+    float lbGap = sh * 0.008f;
 
-    _startPressed       = false;
-    _quitPressed        = false;
-    _howToPressed       = false;
-    _debugPressed       = false;
+    // Bottom-left dev tools — always visible so you can test without finishing the demo
+    _buttons.push_back({ "Pregen Mode", { cornerPad, sh - lbH * 2.f - lbGap - sh * 0.018f, lbW, lbH } });
+    _buttons.push_back({ "Tile Mapper", { cornerPad, sh - lbH             - sh * 0.018f,   lbW, lbH } });
+
+    _startPressed      = false;
+    _quitPressed       = false;
+    _howToPressed      = false;
+    _debugPressed      = false;
+    _pregenTestPressed = false;
+    _tileMapperPressed = false;
 
     if (_borderTex.id == 0)
         _borderTex  = LoadTexture(AssetPath("UI/MainMenuBorder.png").c_str());
@@ -72,10 +79,12 @@ void MainMenu::Update()
 
         if (button.hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
-            if (button.text == "Start Game")   _startPressed       = true;
-            if (button.text == "Quit")         _quitPressed        = true;
-            if (button.text == "How To Play")  _howToPressed       = true;
-            if (button.text == "Debug Mode")   _debugPressed       = true;
+            if (button.text == "Start Game")   _startPressed      = true;
+            if (button.text == "Quit")         _quitPressed       = true;
+            if (button.text == "How To Play")  _howToPressed      = true;
+            if (button.text == "Debug Mode")   _debugPressed      = true;
+            if (button.text == "Pregen Mode")  _pregenTestPressed = true;
+            if (button.text == "Tile Mapper")  _tileMapperPressed = true;
         }
     }
 }
@@ -170,6 +179,38 @@ void MainMenu::Draw()
             continue;
         }
 
+        // Pregen Mode button — teal
+        if (button.text == "Pregen Mode")
+        {
+            Color fill = button.hovered ? Color{ 40, 160, 160, 245 } : Color{ 25, 100, 100, 220 };
+            Color edge = button.hovered ? Color{ 100, 230, 230, 255 } : Color{ 60, 170, 170, 200 };
+            DrawRectangleRounded(button.bounds, 0.24f, 8, fill);
+            DrawRectangleRoundedLines(button.bounds, 0.24f, 8, edge);
+            int fs = (int)(sh * 0.026f);
+            int tw = MeasureText(button.text.c_str(), fs);
+            DrawText(button.text.c_str(),
+                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
+                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                fs, RAYWHITE);
+            continue;
+        }
+
+        // Tile Mapper button — orange
+        if (button.text == "Tile Mapper")
+        {
+            Color fill = button.hovered ? Color{ 180, 100, 30, 245 } : Color{ 120, 65, 18, 220 };
+            Color edge = button.hovered ? Color{ 255, 175, 80, 255 } : Color{ 200, 140, 60, 200 };
+            DrawRectangleRounded(button.bounds, 0.24f, 8, fill);
+            DrawRectangleRoundedLines(button.bounds, 0.24f, 8, edge);
+            int fs = (int)(sh * 0.026f);
+            int tw = MeasureText(button.text.c_str(), fs);
+            DrawText(button.text.c_str(),
+                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
+                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                fs, RAYWHITE);
+            continue;
+        }
+
         Texture2D* tex  = &_playBtnTex;
         Color      tint = WHITE;
 
@@ -205,3 +246,6 @@ void MainMenu::SetDebugUnlocked(bool unlocked)
 {
     if (unlocked) _debugUnlocked = true;
 }
+
+bool MainMenu::PregenTestPressed()  const { return _pregenTestPressed;  }
+bool MainMenu::TileMapperPressed()  const { return _tileMapperPressed;  }

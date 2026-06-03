@@ -33,6 +33,11 @@
 #include "RunStateController.h"
 #include "CombatDirector.h"
 #include "OverlayRenderer.h"
+#include "TileMapper.h"
+#include "DungeonGen.h"
+#include "TileDefs.h"
+#include "RoomLayout.h"
+#include "TileRenderer.h"
 
 #include <vector>
 #include <string>
@@ -560,7 +565,21 @@ private:
     // Cleared each frame when the touch lifts; prevents repeat casts on hold.
     std::vector<int> _abilityTapSeenIds;
 
-    DebugPanel _debug;
+    DebugPanel   _debug;
+    TileMapper   _tileMapper;
+    DungeonGen   _dungeonGen;
+    TileDefSet   _tileDefs;
+    TileRenderer _tileRenderer;
+
+    // Pregen test sub-state
+    enum class PregenView { Graph, Room };
+    PregenView _pregenView          = PregenView::Graph;
+    int        _pregenViewedRoomIdx = -1;
+    RoomLayout _pregenRoomLayout{};
+
+    // Folder scanned by the TileMapper debug tool for PNG tilesets.
+    static constexpr const char* kTilesheetFolder =
+        "C:/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/MapTilesets";
 
     // ── Hitbox debug editor (F12 while debug active) ─────────────────────────
     bool           _isHitboxEditorActive = false;
@@ -572,4 +591,9 @@ private:
 
     void UpdateHitboxEditor();
     void DrawHitboxEditor();
+
+    // Pregen test — dungeon map visualiser + tile room preview
+    void UpdatePregenTest(float dt);
+    void DrawPregenTest() const;
+    Rectangle GetPregenRoomRect(int roomIdx) const;
 };

@@ -140,7 +140,12 @@
     <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="Engine.cpp" />
     <ClCompile Include="MapDirector.cpp" />
+    <ClCompile Include="DungeonGen.cpp" />
     <ClCompile Include="NavigationGrid.cpp" />
+    <ClCompile Include="RoomLayout.cpp" />
+    <ClCompile Include="TileDefs.cpp" />
+    <ClCompile Include="TileMapper.cpp" />
+    <ClCompile Include="TileRenderer.cpp" />
     <ClCompile Include="VFXManager.cpp" />
     <ClCompile Include="Game.cpp" />
     <ClCompile Include="GoldPickup.cpp" />

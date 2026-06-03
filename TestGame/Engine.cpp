@@ -922,8 +922,43 @@ void Engine::Update(float dt)
         {
             _runState.OpenHowToPlay(GameState::Menu, _touchModeActive);
         }
+        if (_menu.PregenTestPressed())
+        {
+            _dungeonGen.Generate();
+            _pregenView          = PregenView::Graph;
+            _pregenViewedRoomIdx = -1;
+
+            // Load tile definitions from the Caverns tileset save file.
+            _tileDefs = {};
+            _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
+
+            // Load the tilesheet into the renderer.
+            std::string sheetPath = std::string(kTilesheetFolder) + "/Caverns.png";
+            _tileRenderer.Init(sheetPath.c_str(), _tileDefs);
+
+            _gameState = GameState::PregenTest;
+        }
+        if (_menu.TileMapperPressed())
+        {
+            _tileMapper.Init(kTilesheetFolder);
+            _gameState = GameState::TileMapper;
+        }
         break;
     }
+
+    case GameState::PregenTest:
+        UpdatePregenTest(dt);
+        break;
+
+    case GameState::TileMapper:
+        _tileMapper.Update();
+        if (_tileMapper.WantsToExit())
+        {
+            _tileMapper.Unload();
+            _menu.Init();
+            _gameState = GameState::Menu;
+        }
+        break;
 
     case GameState::HowToPlay:
     {
@@ -1574,6 +1609,14 @@ void Engine::Draw()
 
     case GameState::DemoEnd:
         DrawDemoEnd();
+        break;
+
+    case GameState::PregenTest:
+        DrawPregenTest();
+        break;
+
+    case GameState::TileMapper:
+        _tileMapper.Draw();
         break;
 
     case GameState::GameOver:
@@ -6356,6 +6399,225 @@ bool Engine::HandleDebugToggleTabInput()
 }
 
 // ── Hitbox debug editor ───────────────────────────────────────────────────────
+
+Rectangle Engine::GetPregenRoomRect(int roomIdx) const
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (roomIdx < 0 || roomIdx >= (int)rooms.size())
+        return {};
+
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float margin = 90.f;
+    float gridPx = std::min((sw - margin * 2.f) / DungeonGen::kGridSize,
+                            (sh - margin * 2.f - 80.f) / DungeonGen::kGridSize);
+    float startX = sw * 0.5f - (gridPx * DungeonGen::kGridSize) * 0.5f;
+    float startY = margin;
+
+    const DungeonRoom& room = rooms[roomIdx];
+    float pad = gridPx * 0.12f;
+    return Rectangle{
+        startX + room.col * gridPx + pad,
+        startY + room.row * gridPx + pad,
+        gridPx - pad * 2.f,
+        gridPx - pad * 2.f
+    };
+}
+
+void Engine::UpdatePregenTest(float dt)
+{
+    (void)dt;
+
+    if (_pregenView == PregenView::Room)
+    {
+        // ESC exits room view back to the graph.
+        if (IsKeyPressed(KEY_ESCAPE))
+        {
+            _pregenView          = PregenView::Graph;
+            _pregenViewedRoomIdx = -1;
+        }
+        return;
+    }
+
+    // Graph view.
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+        _tileRenderer.Unload();
+        _menu.Init();
+        _gameState = GameState::Menu;
+        return;
+    }
+    if (IsKeyPressed(KEY_R))
+        _dungeonGen.Generate();
+
+    // Click a room node to open its tile-rendered preview.
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        const auto& rooms = _dungeonGen.GetRooms();
+        for (int i = 0; i < (int)rooms.size(); i++)
+        {
+            if (CheckCollisionPointRec(GetMousePosition(), GetPregenRoomRect(i)))
+            {
+                const DungeonRoom& room = rooms[i];
+                _pregenRoomLayout    = RoomLayout::Generate(
+                    room.hasNorth, room.hasSouth, room.hasEast, room.hasWest);
+                _pregenViewedRoomIdx = i;
+                _pregenView          = PregenView::Room;
+                break;
+            }
+        }
+    }
+}
+
+void Engine::DrawPregenTest() const
+{
+    // ── Room view — show a single room rendered with tiles ────────────────────
+    if (_pregenView == PregenView::Room)
+    {
+        ClearBackground(Color{ 8, 6, 10, 255 });
+
+        constexpr float kDrawScale = 3.f;
+        float roomW = TileRenderer::RoomPixelW(kDrawScale);
+        float roomH = TileRenderer::RoomPixelH(kDrawScale);
+        Vector2 offset{
+            GetScreenWidth()  * 0.5f - roomW * 0.5f,
+            GetScreenHeight() * 0.5f - roomH * 0.5f
+        };
+
+        if (_tileRenderer.IsLoaded())
+            _tileRenderer.DrawRoom(_pregenRoomLayout, kDrawScale, offset);
+        else
+            DrawText("Tilesheet not loaded. Check the path in Engine.cpp.",
+                20, 20, 22, RED);
+
+        // Room type label at top
+        const auto& rooms = _dungeonGen.GetRooms();
+        if (_pregenViewedRoomIdx >= 0 && _pregenViewedRoomIdx < (int)rooms.size())
+        {
+            int startIdx = _dungeonGen.GetStartIndex();
+            int bossIdx  = _dungeonGen.GetBossIndex();
+            int keyIdx   = _dungeonGen.GetKeyIndex();
+            int i        = _pregenViewedRoomIdx;
+            const char* label =
+                i == startIdx ? "START ROOM" :
+                i == bossIdx  ? "BOSS ROOM"  :
+                i == keyIdx   ? "KEY ROOM"   : "STANDARD ROOM";
+            int lw = MeasureText(label, 24);
+            DrawText(label, (int)(GetScreenWidth() * 0.5f - lw * 0.5f), 16, 24, GOLD);
+        }
+
+        DrawText("[ESC] Back to map", 20, (int)(GetScreenHeight() - 32.f), 18,
+            Fade(WHITE, 0.55f));
+        return;
+    }
+
+    // ── Graph view ────────────────────────────────────────────────────────────
+    ClearBackground(Color{ 14, 14, 20, 255 });
+
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (rooms.empty())
+    {
+        DrawText("No rooms generated.", 40, 40, 28, RED);
+        return;
+    }
+
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+
+    // Fit the dungeon grid into the centre of the screen.
+    const float margin  = 90.f;
+    const float gridPx  = std::min((sw - margin * 2.f) / DungeonGen::kGridSize,
+                                   (sh - margin * 2.f - 80.f) / DungeonGen::kGridSize);
+    const float startX  = sw * 0.5f - (gridPx * DungeonGen::kGridSize) * 0.5f;
+    const float startY  = margin;
+
+    int startIdx = _dungeonGen.GetStartIndex();
+    int bossIdx  = _dungeonGen.GetBossIndex();
+    int keyIdx   = _dungeonGen.GetKeyIndex();
+
+    // Connections drawn first so they sit behind room squares.
+    for (const auto& room : rooms)
+    {
+        float cx = startX + (room.col + 0.5f) * gridPx;
+        float cy = startY + (room.row + 0.5f) * gridPx;
+        if (room.hasEast)
+            DrawLineEx({ cx, cy }, { cx + gridPx, cy }, 3.f, Fade(WHITE, 0.25f));
+        if (room.hasSouth)
+            DrawLineEx({ cx, cy }, { cx, cy + gridPx }, 3.f, Fade(WHITE, 0.25f));
+    }
+
+    // Room squares.
+    for (int i = 0; i < (int)rooms.size(); i++)
+    {
+        const DungeonRoom& room = rooms[i];
+        float pad = gridPx * 0.12f;
+        Rectangle rect{
+            startX + room.col * gridPx + pad,
+            startY + room.row * gridPx + pad,
+            gridPx - pad * 2.f,
+            gridPx - pad * 2.f
+        };
+
+        Color col;
+        const char* label = "";
+        if (i == startIdx) { col = Color{ 70,  210,  80, 255 }; label = "START";   }
+        else if (i == bossIdx)  { col = Color{210,  50,   50, 255 }; label = "BOSS";    }
+        else if (i == keyIdx)   { col = Color{160,  80,  220, 255 }; label = "KEY";     }
+        else switch (room.type)
+        {
+        case RoomType::Elite:    col = Color{220, 130,  40, 255 }; label = "ELITE";    break;
+        case RoomType::Rest:     col = Color{ 55, 160,  80, 255 }; label = "REST";     break;
+        case RoomType::Treasure: col = Color{200, 180,  40, 255 }; label = "CHEST";    break;
+        case RoomType::Store:    col = Color{ 55, 140, 200, 255 }; label = "SHOP";     break;
+        default:                 col = Color{ 75,  75,  90, 255 }; break;
+        }
+
+        DrawRectangleRounded(rect, 0.22f, 6, col);
+        DrawRectangleRoundedLines(rect, 0.22f, 6, Fade(WHITE, 0.35f));
+
+        if (label[0] != '\0')
+        {
+            int fs = (int)(gridPx * 0.16f);
+            fs = std::max(8, std::min(fs, 20));
+            int lw = MeasureText(label, fs);
+            DrawText(label,
+                (int)(rect.x + rect.width  * 0.5f - lw * 0.5f),
+                (int)(rect.y + rect.height * 0.5f - fs * 0.5f),
+                fs, WHITE);
+        }
+    }
+
+    // Title
+    const char* title = "PREGEN MAP TEST";
+    int titleW = MeasureText(title, 32);
+    DrawText(title, (int)(sw * 0.5f - titleW * 0.5f), 16, 32, GOLD);
+
+    const char* info = TextFormat("%d rooms  |  Click a room to preview  |  [R] Regenerate  |  [ESC] Back",
+        (int)rooms.size());
+    int infoW = MeasureText(info, 18);
+    DrawText(info, (int)(sw * 0.5f - infoW * 0.5f), (int)(sh - 32.f), 18, Fade(WHITE, 0.55f));
+
+    // Colour legend
+    struct LegendEntry { Color color; const char* name; };
+    const LegendEntry legend[] = {
+        { Color{ 70, 210,  80, 255}, "Start"    },
+        { Color{210,  50,  50, 255}, "Boss"     },
+        { Color{160,  80, 220, 255}, "Key Room" },
+        { Color{220, 130,  40, 255}, "Elite"    },
+        { Color{ 55, 160,  80, 255}, "Rest"     },
+        { Color{200, 180,  40, 255}, "Treasure" },
+        { Color{ 55, 140, 200, 255}, "Shop"     },
+        { Color{ 75,  75,  90, 255}, "Standard" },
+    };
+    float lx = 18.f;
+    float ly = sh - 60.f;
+    for (const auto& e : legend)
+    {
+        DrawRectangleRounded({ lx, ly, 16.f, 16.f }, 0.3f, 4, e.color);
+        DrawText(e.name, (int)(lx + 22.f), (int)(ly + 1.f), 14, Fade(WHITE, 0.65f));
+        lx += MeasureText(e.name, 14) + 44.f;
+    }
+}
 
 void Engine::UpdateHitboxEditor()
 {

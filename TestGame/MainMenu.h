@@ -18,6 +18,8 @@ public:
     bool QuitPressed()           const;
     bool HowToPressed()          const;
     bool DebugPressed()          const;
+    bool PregenTestPressed()     const;
+    bool TileMapperPressed()     const;
     void SetDebugUnlocked(bool unlocked);
 
 private:
@@ -35,9 +37,11 @@ private:
     Texture2D _playBtnTex{};
     Texture2D _htpBtnTex{};
 
-    bool _startPressed       = false;
-    bool _quitPressed        = false;
-    bool _howToPressed       = false;
-    bool _debugPressed       = false;
-    bool _debugUnlocked      = false;
+    bool _startPressed         = false;
+    bool _quitPressed          = false;
+    bool _howToPressed         = false;
+    bool _debugPressed         = false;
+    bool _pregenTestPressed    = false;
+    bool _tileMapperPressed    = false;
+    bool _debugUnlocked        = false;
 };
