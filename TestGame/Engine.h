@@ -239,8 +239,9 @@ private:
     int& _htpTab;
     float& _htpSlideOffset;
 
-    bool _audioInitialised = false;
-    bool _shouldExit = false;
+    bool       _audioInitialised  = false;
+    bool       _shouldExit        = false;
+    GameState  _stateBeforePause  = GameState::Play;  // so Pause ESC returns to the right state
     bool _waveStarting = true;
     bool _wave1LevelUpDone = false; // ensures forced level-up after wave 1 only fires once
     bool _playerDying = false;
@@ -380,6 +381,10 @@ private:
         float touchSlotGap     = 20.f;   // 40 gap between slots
         float touchSlotRightPad= 30.f;   // 41 right-edge padding for slot row
         float touchSlotYOff    = 20.f;   // 42 gap between slot bottom and ATK top
+        // EXP bar (43-45)
+        float expBarH    = 16.f;   // 43 height of the EXP bar
+        float expBarGap  = 12.f;   // 44 gap between MP bar bottom and EXP bar top
+        float expLabelFs = 13.f;   // 45 font size of the level / exp label
     };
     HUDConfig _hudCfg;
     bool  _hudEditorActive  = false;

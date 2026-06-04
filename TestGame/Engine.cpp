@@ -905,12 +905,46 @@ void Engine::Update(float dt)
         {
             _debug.Deactivate();
             ResetRunState();
-            _fadeInTimer = 2.0f; _fadeInDuration = 2.0f;
-            GenerateStartingAbilityOptions();
-            _awaitingStartingAbility = true;
-            _levelUpReturnState = GameState::Map;  // after picking, show the act map
-            _levelUpOpenTimer = 0.8f;
-            _gameState = GameState::LevelUpChoice;
+
+            // ── Enter the Caverns dungeon directly ────────────────────────────
+            _dungeonGen.Generate();
+            _tileDefs = {};
+            _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
+            {
+                std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
+                std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
+                _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
+            }
+
+            const auto& rooms2 = _dungeonGen.GetRooms();
+            int startIdx2 = _dungeonGen.GetStartIndex();
+            _pregenViewedRoomIdx = startIdx2;
+            const DungeonRoom& startRoom2 = rooms2[startIdx2];
+            _pregenRoomLayout = RoomLayout::Generate(
+                startRoom2.hasNorth, startRoom2.hasSouth,
+                startRoom2.hasEast,  startRoom2.hasWest, startRoom2.type,
+                (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
+                (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+            _pregenRoomStates.clear();
+            _pregenEnemiesSpawned = false;
+            _pregenScrolling      = false;
+            _pregenView           = PregenView::Play;
+
+            float hw2 = (float)GetScreenWidth()  * 0.5f;
+            float hh2 = (float)GetScreenHeight() * 0.5f;
+            _player.SetWorldPos({ hw2, hh2 });
+            _player.Revive();
+            _cameraPos = { hw2, hh2 };
+
+            RebuildPregenNav();
+            ClearPregenEnemies();
+            SpawnPregenRoomEnemies();
+            if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
+                ApplyPregenBossExitTiles(TileType::DoorLocked);
+
+            _fadeInTimer = 1.0f;
+            _fadeInDuration = 1.0f;
+            _gameState = GameState::PregenTest;
         }
         if (_menu.DebugPressed() && _demoCompleted)
         {
@@ -986,7 +1020,7 @@ void Engine::Update(float dt)
     case GameState::Pause:
     {
         if (IsKeyPressed(KEY_ESCAPE))
-            _gameState = GameState::Play;
+            _gameState = _stateBeforePause;
 
         break;
     }
@@ -1164,6 +1198,7 @@ void Engine::UpdateGamePlay(float dt)
 
     if (IsKeyPressed(KEY_ESCAPE))
     {
+        _stateBeforePause = GameState::Play;
         _gameState = GameState::Pause;
         return;
     }
@@ -1681,7 +1716,19 @@ void Engine::Draw()
 
     case GameState::LevelUpChoice:
     {
-        DrawWorld();
+        if (_levelUpReturnState == GameState::PregenTest)
+        {
+            // Draw the dungeon room as background instead of the wave-based world.
+            ClearBackground(Color{ 8, 6, 10, 255 });
+            float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
+            float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+            if (_tileRenderer.IsLoaded())
+                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+        }
+        else
+        {
+            DrawWorld();
+        }
         DrawHUD();
         DrawLevelUpChoice();
         break;
@@ -2121,6 +2168,28 @@ void Engine::DrawHUD()
             lFs, BLACK);
     }
 
+    // ── EXP bar — sits below the mana bar ────────────────────────────────────
+    {
+        int   curExp = _player.GetExp();
+        int   maxExp = _player.GetExpToNext();
+        float expPct = (maxExp > 0) ? std::min((float)curExp / (float)maxExp, 1.f) : 0.f;
+        float expBarY = manaBarY + hc.barH + hc.expBarGap;
+        static const Color kExpFill = { 160, 60, 255, 220 };
+
+        DrawRectangleRounded({ barX, expBarY, hc.barW * expPct, hc.expBarH }, 0.3f, 4, kExpFill);
+        DrawRectangleRoundedLines({ barX, expBarY, hc.barW, hc.expBarH }, 0.3f, 4, Fade(WHITE, 0.22f));
+
+        int eFs = (int)hc.expLabelFs;
+        const char* expLabel = (_player.GetLevel() >= _player.GetMaxLevel())
+            ? TextFormat("LVL MAX")
+            : TextFormat("LVL %d   EXP  %d / %d", _player.GetLevel(), curExp, maxExp);
+        int eLW = MeasureText(expLabel, eFs);
+        DrawText(expLabel,
+            (int)(barX + hc.barW / 2.f - eLW / 2.f),
+            (int)(expBarY + hc.expBarH / 2.f - eFs / 2.f),
+            eFs, WHITE);
+    }
+
     if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
     {
         static constexpr const char* kMechanicNames[] = {
@@ -2191,7 +2260,7 @@ void Engine::DrawHUD()
 
     if (_hudEditorActive)
     {
-        constexpr int kN = 43;
+        constexpr int kN = 46;
         const char* varNames[kN] = {
             "0  Bar Width",       "1  Bar Height",      "2  Bar Gap",
             "3  Bar Top Pad",     "4  Bar Label Font",
@@ -2209,6 +2278,7 @@ void Engine::DrawHUD()
             "37 Atk Label Font",  "38 Dash Label Font",
             "39 Touch Slot Size", "40 Touch Slot Gap",
             "41 Slot Right Pad",  "42 Slot Y Offset",
+            "43 EXP Bar Height",  "44 EXP Bar Gap",      "45 EXP Label Font",
         };
         float* vars[kN] = {
             &_hudCfg.barW,        &_hudCfg.barH,        &_hudCfg.barGap,
@@ -2227,6 +2297,7 @@ void Engine::DrawHUD()
             &_hudCfg.touchAtkFs,  &_hudCfg.touchDashFs,
             &_hudCfg.touchSlotSz, &_hudCfg.touchSlotGap,
             &_hudCfg.touchSlotRightPad, &_hudCfg.touchSlotYOff,
+            &_hudCfg.expBarH, &_hudCfg.expBarGap, &_hudCfg.expLabelFs,
         };
 
         if (IsKeyPressed(KEY_UP))
@@ -2255,6 +2326,8 @@ void Engine::DrawHUD()
                 hc.touchPauseW, hc.touchPauseH, hc.touchPausePad, hc.touchAtkFs, hc.touchDashFs);
             TraceLog(LOG_INFO, "touchSlotSz=%g touchSlotGap=%g touchSlotRightPad=%g touchSlotYOff=%g",
                 hc.touchSlotSz, hc.touchSlotGap, hc.touchSlotRightPad, hc.touchSlotYOff);
+            TraceLog(LOG_INFO, "expBarH=%g expBarGap=%g expLabelFs=%g",
+                hc.expBarH, hc.expBarGap, hc.expLabelFs);
             TraceLog(LOG_INFO, "touchSlotOffsets: [0]=(%.1f,%.1f) [1]=(%.1f,%.1f) [2]=(%.1f,%.1f) [3]=(%.1f,%.1f)",
                 _touchSlotOffset[0].x, _touchSlotOffset[0].y,
                 _touchSlotOffset[1].x, _touchSlotOffset[1].y,
@@ -6725,8 +6798,8 @@ void Engine::UpdatePregenTest(float dt)
     {
         if (!_pregenScrolling && IsKeyPressed(KEY_ESCAPE))
         {
-            ClearPregenEnemies();
-            _pregenView = PregenView::Room;
+            _stateBeforePause = GameState::PregenTest;
+            _gameState = GameState::Pause;
             return;
         }
 
@@ -6760,11 +6833,21 @@ void Engine::UpdatePregenTest(float dt)
         }
 
         // ── Normal player update ──────────────────────────────────────────────
-        // If the player died, respawn at room centre rather than freezing.
-        if (_player.GetHealthValue() <= 0.f)
+        if (_player.GetHealthValue() <= 0.f && !_playerDying)
         {
-            _player.Revive();
-            _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
+            _playerDying   = true;
+            _gameOverTimer = _gameOverDelay;
+        }
+        if (_playerDying)
+        {
+            _gameOverTimer -= dt;
+            if (_gameOverTimer <= 0.f)
+            {
+                _playerDying = false;
+                _gameState   = GameState::GameOver;
+            }
+            _cameraPos = { sw * 0.5f, sh * 0.5f };
+            return;
         }
 
         _player.SetCombatLocked(false);
@@ -6891,7 +6974,40 @@ void Engine::UpdatePregenTest(float dt)
         UpdateCyclopsLasers(dt);
         _vfx.Update(dt);
         UpdateEnemyCount(dt);
-        _pendingExp = 0.f;   // no exp carry-over from pregen into the real run
+        // Drain pending EXP slowly (50/sec) so the HUD bar animates, then trigger
+        // a LevelUpChoice screen for each level the player gains — same as the
+        // wave-based ExpTally flow but without the full overlay screen.
+        if (!_pregenScrolling && _pendingExp > 0.f)
+        {
+            static constexpr float kExpDrainRate = 50.f;
+            float drain        = std::min(kExpDrainRate * dt, _pendingExp);
+            _pendingExp       -= drain;
+            _expTallyAccum    += drain;
+
+            int levelBefore = _player.GetLevel();
+            int wholeExp    = (int)_expTallyAccum;
+            if (wholeExp > 0)
+            {
+                _expTallyAccum -= (float)wholeExp;
+                _player.AddExp(wholeExp);
+            }
+            if (_pendingExp <= 0.f)
+            {
+                _pendingExp    = 0.f;
+                _expTallyAccum = 0.f;
+            }
+            _tallyLevelUpsRemaining += _player.GetLevel() - levelBefore;
+        }
+
+        // Show a LevelUpChoice card screen for every level gained once the EXP drain finishes.
+        if (!_pregenScrolling && _pendingExp <= 0.f && _tallyLevelUpsRemaining > 0)
+        {
+            _tallyLevelUpsRemaining--;
+            GenerateLevelUpOptions(LevelUpOfferContext::NormalLevel);
+            _levelUpReturnState = GameState::PregenTest;
+            _levelUpOpenTimer   = 0.25f;
+            _gameState          = GameState::LevelUpChoice;
+        }
 
         // ── Room clear detection ───────────────────────────────────────────────
         if (_pregenEnemiesSpawned)
@@ -6918,8 +7034,26 @@ void Engine::UpdatePregenTest(float dt)
             Rectangle exitRect = GetPregenBossExitTrigger();
             if (CheckCollisionPointRec(_player.GetWorldPos(), exitRect))
             {
+                // Boss cleared — generate a fresh dungeon.
+                // (Biome/map selection will go here when ready.)
                 ClearPregenEnemies();
-                _pregenView = PregenView::Graph;
+                _dungeonGen.Generate();
+                const auto& freshRooms = _dungeonGen.GetRooms();
+                int freshStart = _dungeonGen.GetStartIndex();
+                _pregenViewedRoomIdx = freshStart;
+                const DungeonRoom& fr = freshRooms[freshStart];
+                _pregenRoomLayout = RoomLayout::Generate(
+                    fr.hasNorth, fr.hasSouth, fr.hasEast, fr.hasWest, fr.type,
+                    (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
+                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+                _pregenRoomStates.clear();
+                _pregenEnemiesSpawned = false;
+                _pregenScrolling      = false;
+                _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
+                _player.Revive();
+                _cameraPos = { sw * 0.5f, sh * 0.5f };
+                RebuildPregenNav();
+                SpawnPregenRoomEnemies();
                 return;
             }
         }
@@ -7065,8 +7199,8 @@ void Engine::DrawPregenTest()
 
         if (!_pregenScrolling)
         {
+            DrawHUD();
             drawRoomLabel();
-            DrawText("[ESC] Back to room view", 20, (int)(sh - 32.f), 18, Fade(WHITE, 0.55f));
         }
         return;
     }
