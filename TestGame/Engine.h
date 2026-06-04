@@ -606,6 +606,8 @@ private:
     {
         Vector2 worldPos{};
         float   timer = 0.f;
+        Rectangle glowRect{};
+        bool hasGlow = false;
     };
     std::vector<PregenClearEffect> _pregenClearEffects;
 

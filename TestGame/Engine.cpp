@@ -6553,15 +6553,28 @@ void Engine::SpawnPregenDoorOpenEffects()
     auto addDoorEffect = [&](PregenDoorSide side, bool exists) {
         if (!exists || side == _pregenEntryDoorSide) return;
         Vector2 pos{};
+        Rectangle glow{};
         switch (side)
         {
-        case PregenDoorSide::North: pos = { (doorStartC + 1.5f) * cellW, 0.65f * cellH }; break;
-        case PregenDoorSide::South: pos = { (doorStartC + 1.5f) * cellW, (RoomLayout::kRows - 0.65f) * cellH }; break;
-        case PregenDoorSide::West:  pos = { 0.65f * cellW, (doorStartR + 1.f) * cellH }; break;
-        case PregenDoorSide::East:  pos = { (RoomLayout::kCols - 0.65f) * cellW, (doorStartR + 1.f) * cellH }; break;
+        case PregenDoorSide::North:
+            pos = { (doorStartC + 1.5f) * cellW, 0.65f * cellH };
+            glow = { doorStartC * cellW, 0.f, 3.f * cellW, 0.85f * cellH };
+            break;
+        case PregenDoorSide::South:
+            pos = { (doorStartC + 1.5f) * cellW, (RoomLayout::kRows - 0.65f) * cellH };
+            glow = { doorStartC * cellW, (RoomLayout::kRows - 0.85f) * cellH, 3.f * cellW, 0.85f * cellH };
+            break;
+        case PregenDoorSide::West:
+            pos = { 0.65f * cellW, (doorStartR + 1.f) * cellH };
+            glow = { 0.f, doorStartR * cellH, 0.85f * cellW, 2.f * cellH };
+            break;
+        case PregenDoorSide::East:
+            pos = { (RoomLayout::kCols - 0.65f) * cellW, (doorStartR + 1.f) * cellH };
+            glow = { (RoomLayout::kCols - 0.85f) * cellW, doorStartR * cellH, 0.85f * cellW, 2.f * cellH };
+            break;
         default: return;
         }
-        _pregenClearEffects.push_back({ pos, 0.f });
+        _pregenClearEffects.push_back({ pos, 0.f, glow, true });
     };
 
     addDoorEffect(PregenDoorSide::North, room.hasNorth);
@@ -6573,10 +6586,10 @@ void Engine::SpawnPregenDoorOpenEffects()
     {
         Rectangle exit = GetPregenBossExitTrigger();
         if (exit.width > 0.f && exit.height > 0.f)
-            _pregenClearEffects.push_back({ { exit.x + exit.width * 0.5f, exit.y + exit.height * 0.5f }, 0.f });
+            _pregenClearEffects.push_back({ { exit.x + exit.width * 0.5f, exit.y + exit.height * 0.5f }, 0.f, exit, true });
     }
     if (_pregenClearEffects.size() == effectStartCount)
-        _pregenClearEffects.push_back({ { sw * 0.5f, sh * 0.5f }, 0.f });
+        _pregenClearEffects.push_back({ { sw * 0.5f, sh * 0.5f }, 0.f, {}, false });
 
     if (_roomClearExplosionSound.frameCount > 0)
     {
@@ -6598,17 +6611,34 @@ void Engine::UpdatePregenClearEffects(float dt)
 
 void Engine::DrawPregenClearEffects() const
 {
-    if (_roomClearExplosionTex.id == 0) return;
-
     static constexpr int kFrameW = 64;
     static constexpr int kFrameH = 64;
     static constexpr int kFrameCount = 24;
     static constexpr float kDuration = 1.75f;
-    static constexpr float kScale = 2.0f;
+    static constexpr float kScale = 4.0f;
 
     for (const PregenClearEffect& effect : _pregenClearEffects)
     {
         float pct = std::clamp(effect.timer / kDuration, 0.f, 0.999f);
+        if (effect.hasGlow)
+        {
+            float fadeOut = 1.f - pct;
+            float pulse = 0.65f + 0.35f * sinf(effect.timer * 13.f);
+            Rectangle outer{
+                effect.glowRect.x - 8.f,
+                effect.glowRect.y - 8.f,
+                effect.glowRect.width + 16.f,
+                effect.glowRect.height + 16.f
+            };
+            Color glow = Color{ 255, 204, 82, 255 };
+            DrawRectangleRounded(outer, 0.20f, 8, Fade(glow, 0.16f * fadeOut * pulse));
+            DrawRectangleRounded(effect.glowRect, 0.20f, 8, Fade(glow, 0.30f * fadeOut * pulse));
+            DrawRectangleRoundedLines(effect.glowRect, 0.20f, 8, Fade(WHITE, 0.55f * fadeOut * pulse));
+        }
+
+        if (_roomClearExplosionTex.id == 0)
+            continue;
+
         int frame = std::min((int)(pct * kFrameCount), kFrameCount - 1);
         Rectangle src = GetAnimationFrameRect(_roomClearExplosionTex, kFrameW, kFrameH, frame);
         Rectangle dst{
