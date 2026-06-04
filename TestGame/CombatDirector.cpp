@@ -339,10 +339,14 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
 {
     Vector2 playerFeet = ctx.player->GetFeetWorldPos();
 
-    std::vector<Vector2> propCenters;
-    propCenters.reserve(ctx.props->size());
-    for (const auto& prop : *ctx.props)
-        propCenters.push_back(prop.GetWorldPos());
+    _propCentersScratch.clear();
+    if (ctx.props != nullptr && !ctx.props->empty())
+    {
+        _propCentersScratch.reserve(ctx.props->size());
+        for (const auto& prop : *ctx.props)
+            _propCentersScratch.push_back(prop.GetWorldPos());
+    }
+    const std::vector<Vector2>& propCenters = _propCentersScratch;
 
     for (auto& enemy : *ctx.enemies)
     {
@@ -352,13 +356,8 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
         Vector2 navigationTarget = playerFeet;
         bool hasNavigationTarget = false;
 
-        if (enemy->IsBoss())
-        {
-            navigationTarget = ctx.nav->GetAStarTarget(enemy->GetWorldPos(), playerFeet);
-            hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
-        }
-        else if (!enemy->UsesDirectPursuit() &&
-                 !ctx.nav->HasLineOfSight(enemy->GetWorldPos(), playerFeet))
+        if (!enemy->UsesDirectPursuit() &&
+            !ctx.nav->HasLineOfSight(enemy->GetWorldPos(), playerFeet))
         {
             navigationTarget = ctx.nav->GetTarget(enemy->GetWorldPos(), playerFeet);
             hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);

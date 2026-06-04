@@ -126,4 +126,7 @@ public:
     void SpawnBossSupportAdds(const BossSupportContext& ctx) const;
     void ClearBossSupportAdds(BossSupportState& cyclopsSupport, BossSupportState& ogreSupport) const;
     void UpdateBossSupportRespawns(const BossSupportContext& ctx, float dt) const;
+
+private:
+    mutable std::vector<Vector2> _propCentersScratch;
 };

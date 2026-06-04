@@ -180,8 +180,10 @@ void NavigationGrid::TickRefresh(float dt, Vector2 playerFeetWorldPos)
     int playerRow = std::max(0, std::min((int)(playerFeetWorldPos.y / _cellSize), _rows - 1));
     int playerIdx = GetClosestOpenIndex(playerCol, playerRow);
 
-    if (!_refreshInFlight &&
-        (_refreshTimer <= 0.f || playerIdx != _lastPlayerNavIndex))
+    bool needsRefresh = (playerIdx != _lastPlayerNavIndex);
+    bool refreshReady = (_lastPlayerNavIndex < 0 || _refreshTimer <= 0.f);
+
+    if (!_refreshInFlight && needsRefresh && refreshReady)
     {
         std::vector<bool> blockedCopy = _blocked;
         int   cols     = _cols;
