@@ -96,8 +96,7 @@ MusicCue AudioManager::GetBiomeMusicCue(Biome biome) const
     switch (biome)
     {
     case Biome::Forest:
-    case Biome::Swamp:
-    case Biome::Tundra:
+    case Biome::Jungle:
         return MusicCue::Forest;
     default:
         return MusicCue::Dungeon;

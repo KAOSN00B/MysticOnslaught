@@ -71,6 +71,16 @@ bool TileDefSet::LoadFromFile(const char* path)
             if (fscanf_s(f, "%f %f %f %f %d %f", &x, &y, &w, &h, &fc, &fps) != 6) continue;
             animDecors.push_back({ {x, y, w, h}, fc, fps });
         }
+        else if (strcmp(tag, "GTILE") == 0)
+        {
+            int col, row, sc, sr, typeIdx;
+            if (fscanf_s(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &typeIdx) != 5) continue;
+            if (typeIdx < 0 || typeIdx >= (int)TileType::Count) continue;
+            rects[typeIdx]     = { (float)(col * kTileSize), (float)(row * kTileSize),
+                                   (float)(sc  * kTileSize), (float)(sr  * kTileSize) };
+            assigned[typeIdx]  = true;
+            fromGround[typeIdx] = true;
+        }
         else if (strcmp(tag, "ANIMPROP") == 0)
         {
             // Format: cx cy cw ch fps frameCount  x0 y0 w0 h0  x1 y1 w1 h1 ...

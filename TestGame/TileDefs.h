@@ -61,6 +61,7 @@ struct TileDefSet
 {
     Rectangle rects[(int)TileType::Count]{};
     bool      assigned[(int)TileType::Count]{};
+    bool      fromGround[(int)TileType::Count]{};  // true = rect is from Ground TIles.png, not the biome sheet
 
     // Returns the source rect for a tile type.
     // Falls back to Floor if the type wasn't assigned in the save file.

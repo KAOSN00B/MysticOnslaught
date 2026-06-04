@@ -59,10 +59,13 @@ public:
 
     // ── Biome names (match the game's Biome enum order) ───────────────────────
     static constexpr const char* kBiomeNames[] = {
-        "Dungeon", "Forest", "Swamp", "Volcano",
-        "Tundra",  "Crypt",  "Desert", "Ruins", "Caverns"
+        "Ancient Castle", "Caverns", "Demons Insides", "Dream Realm",
+        "Forest", "Graveyard", "Jungle", "Lost City", "The Sanctuary", "Wastelands"
     };
-    static constexpr int kBiomeCount = 9;
+    static constexpr int kBiomeCount = 10;
+
+    // Gap between main tileset and Ground TIles in the sheet view (in source pixels).
+    static constexpr int kGroundGap = 24;
 
     static const Color kTypeColors[kTypeCount];
 
@@ -70,6 +73,13 @@ private:
     // ── Internal state ────────────────────────────────────────────────────────
     enum class Screen    { FileSelect, Mapping };
     enum class PanelTab  { Tiles, Props, Decors };
+
+    struct Assignment
+    {
+        int col = 0, row = 0, spanCols = 1, spanRows = 1;
+        int typeIdx  = -1;
+        bool fromGround = false;  // true = selection came from Ground TIles.png
+    };
 
     // A prop sprite + its collision box (source-pixel coords, relative to src top-left).
     struct PropDef { Rectangle src; Rectangle collision; };
@@ -91,14 +101,6 @@ private:
         bool        hasSave  = false;
     };
 
-    struct Assignment
-    {
-        int col      = 0;
-        int row      = 0;
-        int spanCols = 1;
-        int spanRows = 1;
-        int typeIdx  = -1;
-    };
 
     // ── File select ───────────────────────────────────────────────────────────
     void ScanFolder(const char* folderPath);
@@ -133,6 +135,8 @@ private:
 
     Vector2   ScreenToGrid(Vector2 screen) const;
     Rectangle GridToScreen(int col, int row, int spanCols, int spanRows) const;
+    float     GroundSheetScreenY() const;   // top-left Y of the ground sheet in screen space
+    Rectangle GridToGroundScreen(int col, int row, int spanCols, int spanRows) const;
 
     // ── State ─────────────────────────────────────────────────────────────────
     Screen   _screen    = Screen::FileSelect;
@@ -146,18 +150,29 @@ private:
 
     // Mapping state
     Texture2D   _sheet{};
-    float _scale  = 1.f;
-    float _offX   = 0.f;
-    float _offY   = 0.f;
-    int   _sheetCols = 0;
-    int   _sheetRows = 0;
-    float _panelX    = 0.f;
+    Texture2D   _groundSheet{};   // Ground TIles.png — always loaded, shown below main sheet
+    float _scale    = 1.f;
+    float _minScale = 1.f;        // fit-to-view scale; zoom cannot go below this
+    float _offX     = 0.f;
+    float _offY     = 0.f;
+    int   _sheetCols  = 0;
+    int   _sheetRows  = 0;
+    int   _groundCols = 0;
+    int   _groundRows = 0;
+    float _panelX     = 0.f;
+
+    // Middle-mouse pan
+    bool    _middleDragging        = false;
+    Vector2 _middleDragStart       = {};
+    Vector2 _middleDragOffsetStart = {};
 
     bool _isDragging   = false;
     int  _dragC0 = 0, _dragR0 = 0;
     int  _dragC1 = 0, _dragR1 = 0;
 
-    bool _hasSelection = false;
+    bool _hasSelection   = false;
+    bool _selFromGround  = false;   // selection was made on Ground TIles sheet
+    bool _dragFromGround = false;   // current drag is on Ground TIles sheet
     int  _selC0 = 0, _selR0 = 0;
     int  _selC1 = 0, _selR1 = 0;
 

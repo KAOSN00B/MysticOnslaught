@@ -11,8 +11,8 @@ struct AudioContext
     RoomType currentRoomType = RoomType::Standard;
     bool roomClearPending = false;
     bool bossFightActive = false;
-    Biome actBiome = Biome::Dungeon;
-    Biome currentBiome = Biome::Dungeon;
+    Biome actBiome = Biome::Caverns;
+    Biome currentBiome = Biome::Caverns;
 };
 
 class AudioManager

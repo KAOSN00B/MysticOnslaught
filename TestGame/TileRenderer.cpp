@@ -1,15 +1,18 @@
 #include "TileRenderer.h"
 
-void TileRenderer::Init(const char* tilesheetPath, const TileDefSet& defs)
+void TileRenderer::Init(const char* tilesheetPath, const char* groundSheetPath, const TileDefSet& defs)
 {
-    if (_sheet.id != 0) { UnloadTexture(_sheet); _sheet = {}; }
-    _sheet = LoadTexture(tilesheetPath);
-    _defs  = defs;
+    if (_sheet.id != 0)       { UnloadTexture(_sheet);       _sheet       = {}; }
+    if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
+    _sheet       = LoadTexture(tilesheetPath);
+    _groundSheet = LoadTexture(groundSheetPath);
+    _defs = defs;
 }
 
 void TileRenderer::Unload()
 {
-    if (_sheet.id != 0) { UnloadTexture(_sheet); _sheet = {}; }
+    if (_sheet.id != 0)       { UnloadTexture(_sheet);       _sheet       = {}; }
+    if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
 }
 
 void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
@@ -47,8 +50,8 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
     {
         if (d.defIdx < 0 || d.defIdx >= (int)_defs.decors.size()) continue;
         const Rectangle& src = _defs.decors[d.defIdx].src;
-        float dScaleX = scaleX * 0.5f;
-        float dScaleY = scaleY * 0.5f;
+        float dScaleX = scaleX * 0.75f;
+        float dScaleY = scaleY * 0.75f;
         // Centre the smaller sprite within the full cell.
         float sx = screenOffset.x + d.col * cellW + (cellW - src.width  * dScaleX) * 0.5f;
         float sy = screenOffset.y + d.row * cellH + (cellH - src.height * dScaleY) * 0.5f;
@@ -70,8 +73,8 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         src.x += frame * src.width;
 
         // Draw at half scale like static decors, centred in the cell.
-        float dScaleX = scaleX * 0.5f;
-        float dScaleY = scaleY * 0.5f;
+        float dScaleX = scaleX * 0.75f;
+        float dScaleY = scaleY * 0.75f;
         float sx = screenOffset.x + d.col * cellW + (cellW - src.width  * dScaleX) * 0.5f;
         float sy = screenOffset.y + d.row * cellH + (cellH - src.height * dScaleY) * 0.5f;
         DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY);
@@ -123,8 +126,13 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
 void TileRenderer::DrawTile(TileType type, float screenX, float screenY,
                             float scaleX, float scaleY) const
 {
-    if (_sheet.id == 0) return;
-    DrawSpriteScaled(_defs.Get(type), screenX, screenY, scaleX, scaleY);
+    int idx = (int)type;
+    bool useGround = (idx >= 0 && idx < (int)TileType::Count && _defs.fromGround[idx]);
+    const Texture2D& tex = useGround ? _groundSheet : _sheet;
+    if (tex.id == 0) return;
+    Rectangle src = _defs.Get(type);
+    Rectangle dst{ screenX, screenY, src.width * scaleX, src.height * scaleY };
+    DrawTexturePro(tex, src, dst, {}, 0.f, WHITE);
 }
 
 void TileRenderer::DrawSpriteScaled(Rectangle src, float screenX, float screenY,

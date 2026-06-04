@@ -450,7 +450,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
         {
             const float navMapW = _map.width  * _mapScale;
             const float navMapH = _map.height * _mapScale;
-            const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp) ? 160.f : 220.f;
+            const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 160.f : 220.f;
             propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
         }
         _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
@@ -509,7 +509,7 @@ Biome Engine::GetBiomeForAct(int act) const
         return _biomeSequence[idx];
     // Fallback if sequence not generated yet
     bool isDungeon = _startBiomeDungeon ? ((act % 2) == 1) : ((act % 2) == 0);
-    return isDungeon ? Biome::Dungeon : Biome::Forest;
+    return isDungeon ? Biome::Caverns : Biome::Forest;
 }
 
 
@@ -743,7 +743,7 @@ void Engine::EnterMapRoom(int idx)
             {
                 const float navMapW = _map.width  * _mapScale;
                 const float navMapH = _map.height * _mapScale;
-                const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp) ? 160.f : 220.f;
+                const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 160.f : 220.f;
                 propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
             }
             _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
@@ -933,8 +933,9 @@ void Engine::Update(float dt)
             _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
 
             // Load the tilesheet into the renderer.
-            std::string sheetPath = std::string(kTilesheetFolder) + "/Caverns.png";
-            _tileRenderer.Init(sheetPath.c_str(), _tileDefs);
+            std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
+            std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
+            _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
 
             _gameState = GameState::PregenTest;
         }
@@ -1726,7 +1727,7 @@ void Engine::HandleCollisions()
     const float marginLeft   = 76.f;
     const float marginRight  = 96.f;
     const float marginTop    = 42.f;   // let the player go a little higher
-    const float marginBottom = ((_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp)) ? 160.f : 220.f;
+    const float marginBottom = ((_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle)) ? 160.f : 220.f;
 
     Vector2 pos = _player.GetWorldPos();
     if (pos.x < marginLeft  || pos.x > mapW - marginRight
@@ -5487,16 +5488,17 @@ const char* Engine::GetBiomeName(Biome biome) const
 {
     switch (biome)
     {
-    case Biome::Dungeon: return "Dungeon";
-    case Biome::Forest:  return "Forest";
-    case Biome::Swamp:   return "Swamp";
-    case Biome::Volcano: return "Volcano";
-    case Biome::Tundra:  return "Tundra";
-    case Biome::Crypt:   return "Crypt";
-    case Biome::Desert:  return "Desert";
-    case Biome::Ruins:    return "Ruins";
-    case Biome::Caverns:  return "Caverns";
-    default:              return "???";
+    case Biome::AncientCastle:  return "Ancient Castle";
+    case Biome::Caverns:        return "Caverns";
+    case Biome::DemonsInsides:  return "Demons Insides";
+    case Biome::DreamRealm:     return "Dream Realm";
+    case Biome::Forest:         return "Forest";
+    case Biome::Graveyard:      return "Graveyard";
+    case Biome::Jungle:         return "Jungle";
+    case Biome::LostCity:       return "Lost City";
+    case Biome::TheSanctuary:   return "The Sanctuary";
+    case Biome::Wastelands:     return "Wastelands";
+    default:                    return "???";
     }
 }
 
@@ -5573,7 +5575,7 @@ void Engine::ApplyBiome(Biome biome)
 
     // Forest-family biomes use the forest map; all others use the dungeon map.
     // New biome maps can be wired in here when the art is ready.
-    bool useForestMap = (biome == Biome::Forest || biome == Biome::Swamp);
+    bool useForestMap = (biome == Biome::Forest || biome == Biome::Jungle);
     if (useForestMap)
         _map = LoadTexture(AssetPath("ForestLevel/ForestMap.png").c_str());
     else
@@ -5596,7 +5598,7 @@ void Engine::ApplyBiome(Biome biome)
         {
             const float navMapW = _map.width  * _mapScale;
             const float navMapH = _map.height * _mapScale;
-            const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Swamp) ? 160.f : 220.f;
+            const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 160.f : 220.f;
             propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
         }
         _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
@@ -5793,7 +5795,7 @@ void Engine::ResetRunState()
     // Generate a random sequence of kTotalActs biomes, no two consecutive duplicates.
     {
         static constexpr Biome kAllBiomes[] = {
-            Biome::Dungeon, Biome::Forest
+            Biome::Caverns, Biome::Forest
         };
         static constexpr int kBiomeCount = (int)(sizeof(kAllBiomes) / sizeof(kAllBiomes[0]));
         _biomeSequence.clear();
@@ -5806,7 +5808,7 @@ void Engine::ResetRunState()
             _biomeSequence.push_back(pick);
             last = pick;
         }
-        _startBiomeDungeon = (_biomeSequence[0] == Biome::Dungeon);  // keep fallback in sync
+        _startBiomeDungeon = (_biomeSequence[0] == Biome::Caverns);  // keep fallback in sync
     }
 
     _spreadProjectiles.clear();
@@ -6468,19 +6470,33 @@ void Engine::SpawnPregenRoomEnemies()
             spawnFn(GetPregenSpawnPos(cellW, cellH));
     };
 
+    // Count cleared rooms as a progression tier (0 = early, 1 = mid, 2 = late).
+    int clearedRooms = 0;
+    for (const auto& [idx, state] : _pregenRoomStates)
+        if (state.cleared) clearedRooms++;
+    int tier = (clearedRooms <= 2) ? 0 : (clearedRooms <= 5) ? 1 : 2;
+
     if (i == bossIdx)
     {
         SpawnMolarbeast(GetPregenSpawnPos(cellW, cellH));
+        if (tier >= 1)
+            spawnAt([&](Vector2 p){ SpawnCyclops(p); }, 1);   // support adds scale with tier
     }
     else if (type == RoomType::Elite)
     {
         SpawnOgre(GetPregenSpawnPos(cellW, cellH));
-        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, 2);
+        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, tier == 0 ? 1 : 2);
     }
-    else  // Standard, Key
+    else  // Standard
     {
-        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, GetRandomValue(2, 4));
-        if (type != RoomType::Standard || GetRandomValue(0, 2) == 0)
+        // Basic count: 1–2 early, 2–3 mid, 2–4 late.
+        int minBasics = tier == 0 ? 1 : 2;
+        int maxBasics = tier == 0 ? 2 : (tier == 1 ? 3 : 4);
+        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, GetRandomValue(minBasics, maxBasics));
+
+        // Cyclops: rare early, moderate mid, common late.
+        int cyclopsRoll = tier == 0 ? 4 : (tier == 1 ? 2 : 1);   // 1-in-N chance
+        if (GetRandomValue(0, cyclopsRoll) == 0)
             SpawnCyclops(GetPregenSpawnPos(cellW, cellH));
     }
 
@@ -6553,6 +6569,9 @@ void Engine::UpdatePregenTest(float dt)
                 _pregenRoomLayout    = _pregenScrollNextLayout;
                 _pregenViewedRoomIdx = _pregenScrollNextIdx;
                 _player.SetWorldPos(_pregenScrollSpawnPos);
+
+                // Clear previous room's enemies BEFORE spawning the new set.
+                ClearPregenEnemies();
 
                 // Rebuild nav grid and spawn enemies for the new room.
                 float cw = sw / (float)RoomLayout::kCols;

@@ -549,8 +549,8 @@ private:
 
     std::string _message = "Objective: Survive";
 
-    Biome _currentBiome = Biome::Dungeon;
-    Biome _pendingBiome = Biome::Dungeon;
+    Biome _currentBiome = Biome::Caverns;
+    Biome _pendingBiome = Biome::Caverns;
     bool  _biomeTransitionActive = false;
     bool  _biomeTransitionSwapped = false;
     float _biomeTransitionTimer = 0.f;

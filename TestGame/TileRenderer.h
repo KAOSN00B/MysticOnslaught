@@ -13,7 +13,8 @@
 class TileRenderer
 {
 public:
-    void Init(const char* tilesheetPath, const TileDefSet& defs);
+    // groundSheetPath: path to Ground TIles.png, always drawn for tiles flagged fromGround.
+    void Init(const char* tilesheetPath, const char* groundSheetPath, const TileDefSet& defs);
     void Unload();
 
     // Draw every tile in the layout.
@@ -38,5 +39,6 @@ private:
                           float scaleX, float scaleY) const;
 
     Texture2D  _sheet{};
+    Texture2D  _groundSheet{};
     TileDefSet _defs{};
 };

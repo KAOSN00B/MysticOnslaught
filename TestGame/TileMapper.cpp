@@ -46,10 +46,16 @@ void TileMapper::Init(const char* folderPath)
     _fileListScrollY  = 0.f;
     _assignments.clear();
 
-    if (_sheet.id != 0)
+    if (_sheet.id != 0) { UnloadTexture(_sheet); _sheet = {}; }
+
+    // Ground TIles.png is always loaded — shown alongside every biome sheet.
+    if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
+    std::string groundPath = std::string(folderPath) + "/Ground TIles.png";
+    _groundSheet = LoadTexture(groundPath.c_str());
+    if (_groundSheet.id != 0)
     {
-        UnloadTexture(_sheet);
-        _sheet = {};
+        _groundCols = _groundSheet.width  / kTileSize;
+        _groundRows = _groundSheet.height / kTileSize;
     }
 
     ScanFolder(folderPath);
@@ -57,11 +63,8 @@ void TileMapper::Init(const char* folderPath)
 
 void TileMapper::Unload()
 {
-    if (_sheet.id != 0)
-    {
-        UnloadTexture(_sheet);
-        _sheet = {};
-    }
+    if (_sheet.id != 0)       { UnloadTexture(_sheet);       _sheet       = {}; }
+    if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
 }
 
 void TileMapper::ScanFolder(const char* folderPath)
@@ -81,6 +84,7 @@ void TileMapper::ScanFolder(const char* folderPath)
             TilesetFile f;
             f.fullPath = entry.path().string();
             f.stem     = entry.path().stem().string();
+            if (f.stem == "Ground TIles") continue;  // always shown separately, not a biome
             f.biomeIdx = 0;
 
             // Check whether a save file exists for this tileset.
@@ -337,9 +341,12 @@ void TileMapper::OpenSelectedFile()
     _editingAnimPropIdx = -1;
     _collDragging   = false;
     _collHandle     = CollHandle::None;
-    _hasSelection  = false;
-    _isDragging    = false;
-    _hoveredTypeIdx = -1;
+    _hasSelection    = false;
+    _selFromGround   = false;
+    _dragFromGround  = false;
+    _isDragging      = false;
+    _hoveredTypeIdx  = -1;
+    _middleDragging  = false;
 
     LoadSheet(_files[_openFileIdx].fullPath);
     TryLoadSave();   // restore previous assignments if any
@@ -373,13 +380,19 @@ void TileMapper::LoadSheet(const std::string& path)
 
     float availW = _panelX - 20.f;
     float availH = sh - 30.f;
-    _scale = std::min(availW / (float)_sheet.width,
-                      availH / (float)_sheet.height);
 
-    float drawnW = _sheet.width  * _scale;
-    float drawnH = _sheet.height * _scale;
-    _offX = 10.f + (availW - drawnW) * 0.5f;
-    _offY = 10.f + (availH - drawnH) * 0.5f;
+    // Fit both sheets (main + ground) stacked with a gap.
+    int   maxCols   = std::max(_sheetCols,  _groundCols);
+    int   totalRows = _sheetRows + (_groundSheet.id != 0 ? kGroundGap / kTileSize + _groundRows : 0);
+    float fitScaleW = availW / (float)(maxCols  * kTileSize);
+    float fitScaleH = availH / (float)(totalRows * kTileSize);
+    _minScale = std::max(std::min(fitScaleW, fitScaleH), 0.25f);
+    _scale    = _minScale;
+
+    float combinedW = maxCols   * kTileSize * _scale;
+    float combinedH = totalRows * kTileSize * _scale;
+    _offX = 10.f + (availW - combinedW) * 0.5f;
+    _offY = 10.f + (availH - combinedH) * 0.5f;
 }
 
 void TileMapper::UpdateMapping()
@@ -425,25 +438,80 @@ void TileMapper::HandleMouseMapping()
     float sh      = (float)GetScreenHeight();
     float panelW  = sw - _panelX;
 
-    float sheetRight  = _offX + _sheet.width  * _scale;
-    float sheetBottom = _offY + _sheet.height * _scale;
-    bool inSheet = (mouse.x >= _offX && mouse.x < sheetRight &&
-                    mouse.y >= _offY && mouse.y < sheetBottom);
-
-    if (inSheet)
+    // ── Zoom (scroll wheel in sheet area) ─────────────────────────────────────
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0.f && mouse.x < _panelX)
     {
-        Vector2 g  = ScreenToGrid(mouse);
-        int gc = std::max(0, std::min((int)g.x, _sheetCols - 1));
-        int gr = std::max(0, std::min((int)g.y, _sheetRows - 1));
+        float factor   = (wheel > 0.f) ? 1.15f : (1.f / 1.15f);
+        float newScale = std::clamp(_scale * factor, _minScale, _minScale * 20.f);
+        if (newScale != _scale)
+        {
+            _offX  = mouse.x - (mouse.x - _offX) * (newScale / _scale);
+            _offY  = mouse.y - (mouse.y - _offY) * (newScale / _scale);
+            _scale = newScale;
+        }
+    }
+
+    // ── Pan (middle-mouse drag) ────────────────────────────────────────────────
+    if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) && mouse.x < _panelX)
+    {
+        _middleDragging        = true;
+        _middleDragStart       = mouse;
+        _middleDragOffsetStart = { _offX, _offY };
+    }
+    if (_middleDragging)
+    {
+        if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE))
+        {
+            _offX = _middleDragOffsetStart.x + (mouse.x - _middleDragStart.x);
+            _offY = _middleDragOffsetStart.y + (mouse.y - _middleDragStart.y);
+        }
+        else _middleDragging = false;
+    }
+
+    // ── Sheet drag-selection (left-mouse, both sheets) ────────────────────────
+    float cellPx      = kTileSize * _scale;
+    float mainRight   = _offX + _sheetCols * cellPx;
+    float mainBottom  = _offY + _sheetRows * cellPx;
+    float groundTop   = GroundSheetScreenY();
+    float groundRight = _offX + _groundCols * cellPx;
+    float groundBot   = groundTop + _groundRows * cellPx;
+
+    bool inMain   = (mouse.x >= _offX && mouse.x < mainRight &&
+                     mouse.y >= _offY && mouse.y < mainBottom);
+    bool inGround = (_groundSheet.id != 0 &&
+                     mouse.x >= _offX && mouse.x < groundRight &&
+                     mouse.y >= groundTop && mouse.y < groundBot);
+
+    if (inMain || inGround)
+    {
+        int gc, gr;
+        if (inMain)
+        {
+            Vector2 g = ScreenToGrid(mouse);
+            gc = std::max(0, std::min((int)g.x, _sheetCols - 1));
+            gr = std::max(0, std::min((int)g.y, _sheetRows - 1));
+        }
+        else
+        {
+            gc = std::max(0, std::min((int)((mouse.x - _offX)    / cellPx), _groundCols - 1));
+            gr = std::max(0, std::min((int)((mouse.y - groundTop) / cellPx), _groundRows - 1));
+        }
 
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-            { _isDragging = true; _dragC0 = _dragC1 = gc; _dragR0 = _dragR1 = gr; }
-        if (_isDragging && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        {
+            _isDragging     = true;
+            _dragFromGround = inGround;
+            _dragC0 = _dragC1 = gc;
+            _dragR0 = _dragR1 = gr;
+        }
+        if (_isDragging && IsMouseButtonDown(MOUSE_LEFT_BUTTON) && (_dragFromGround == inGround))
             { _dragC1 = gc; _dragR1 = gr; }
         if (_isDragging && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
         {
-            _isDragging   = false;
-            _hasSelection = true;
+            _isDragging    = false;
+            _hasSelection  = true;
+            _selFromGround = _dragFromGround;
             _selC0 = std::min(_dragC0, _dragC1); _selR0 = std::min(_dragR0, _dragR1);
             _selC1 = std::max(_dragC0, _dragC1); _selR1 = std::max(_dragR0, _dragR1);
         }
@@ -724,13 +792,15 @@ void TileMapper::ConfirmSelection(int typeIdx)
     if (!_hasSelection || typeIdx < 0 || typeIdx >= kTypeCount) return;
     _assignments.erase(
         std::remove_if(_assignments.begin(), _assignments.end(),
-            [this](const Assignment& a){ return a.col == _selC0 && a.row == _selR0; }),
+            [typeIdx](const Assignment& a){ return a.typeIdx == typeIdx; }),
         _assignments.end());
     Assignment a;
-    a.col = _selC0; a.row = _selR0;
-    a.spanCols = _selC1 - _selC0 + 1;
-    a.spanRows = _selR1 - _selR0 + 1;
-    a.typeIdx  = typeIdx;
+    a.col        = _selC0;
+    a.row        = _selR0;
+    a.spanCols   = _selC1 - _selC0 + 1;
+    a.spanRows   = _selR1 - _selR0 + 1;
+    a.typeIdx    = typeIdx;
+    a.fromGround = _selFromGround;
     _assignments.push_back(a);
     _hasSelection = false;
 }
@@ -807,7 +877,8 @@ void TileMapper::ExportAndSave() const
         for (const Assignment& a : _assignments)
         {
             if (a.typeIdx < 0 || a.typeIdx >= kTypeCount) continue;
-            fprintf(f, "TILE %d %d %d %d %d\n",
+            fprintf(f, "%s %d %d %d %d %d\n",
+                a.fromGround ? "GTILE" : "TILE",
                 a.col, a.row, a.spanCols, a.spanRows, a.typeIdx);
         }
         for (const PropDef& p : _propDefs)
@@ -864,12 +935,15 @@ void TileMapper::TryLoadSave()
     char tag[32]{};
     while (fscanf_s(f, "%31s", tag, (unsigned)sizeof(tag)) == 1)
     {
-        if (strcmp(tag, "TILE") == 0)
+        if (strcmp(tag, "TILE") == 0 || strcmp(tag, "GTILE") == 0)
         {
+            bool isGround = (strcmp(tag, "GTILE") == 0);
             int col, row, sc, sr, ti;
             if (fscanf_s(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &ti) != 5) continue;
             if (ti < 0 || ti >= kTypeCount) continue;
-            Assignment a; a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr; a.typeIdx = ti;
+            Assignment a;
+            a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr;
+            a.typeIdx = ti; a.fromGround = isGround;
             _assignments.push_back(a);
         }
         else if (strcmp(tag, "PROP") == 0)
@@ -960,33 +1034,69 @@ void TileMapper::DrawSheet() const
         { 0, 0, (float)_sheet.width, (float)_sheet.height },
         { _offX, _offY, _sheet.width * _scale, _sheet.height * _scale },
         {}, 0.f, WHITE);
+
+    // Ground TIles sheet — always shown below the main sheet.
+    if (_groundSheet.id != 0)
+    {
+        float gy = GroundSheetScreenY();
+        DrawText("Ground Tiles  (always available)",
+            (int)_offX, (int)(gy - 18.f * std::max(_scale / _minScale, 1.f)), 14, Fade(GOLD, 0.8f));
+        DrawTexturePro(_groundSheet,
+            { 0, 0, (float)_groundSheet.width, (float)_groundSheet.height },
+            { _offX, gy, _groundSheet.width * _scale, _groundSheet.height * _scale },
+            {}, 0.f, WHITE);
+    }
 }
 
 void TileMapper::DrawGrid() const
 {
     if (_sheet.id == 0) return;
-    float cellPx = kTileSize * _scale;
+    float cellPx  = kTileSize * _scale;
+    float groundY = GroundSheetScreenY();
+
+    // Main sheet grid
     for (int c = 0; c <= _sheetCols; c++)
         DrawLineV({ _offX + c * cellPx, _offY },
-                  { _offX + c * cellPx, _offY + _sheetRows * cellPx },
-                  Fade(WHITE, 0.14f));
+                  { _offX + c * cellPx, _offY + _sheetRows * cellPx }, Fade(WHITE, 0.14f));
     for (int r = 0; r <= _sheetRows; r++)
         DrawLineV({ _offX, _offY + r * cellPx },
-                  { _offX + _sheetCols * cellPx, _offY + r * cellPx },
-                  Fade(WHITE, 0.14f));
+                  { _offX + _sheetCols * cellPx, _offY + r * cellPx }, Fade(WHITE, 0.14f));
 
-    // Hovered cell highlight
+    // Ground sheet grid
+    if (_groundSheet.id != 0)
+    {
+        for (int c = 0; c <= _groundCols; c++)
+            DrawLineV({ _offX + c * cellPx, groundY },
+                      { _offX + c * cellPx, groundY + _groundRows * cellPx }, Fade(GOLD, 0.14f));
+        for (int r = 0; r <= _groundRows; r++)
+            DrawLineV({ _offX, groundY + r * cellPx },
+                      { _offX + _groundCols * cellPx, groundY + r * cellPx }, Fade(GOLD, 0.14f));
+    }
+
+    // Hover highlight (main or ground sheet)
     Vector2 mouse = GetMousePosition();
-    if (mouse.x >= _offX && mouse.x < _offX + _sheet.width  * _scale &&
-        mouse.y >= _offY && mouse.y < _offY + _sheet.height * _scale)
+    bool inMain   = (mouse.x >= _offX && mouse.x < _offX + _sheetCols  * cellPx &&
+                     mouse.y >= _offY  && mouse.y < _offY  + _sheetRows  * cellPx);
+    bool inGround = (_groundSheet.id != 0 &&
+                     mouse.x >= _offX && mouse.x < _offX + _groundCols * cellPx &&
+                     mouse.y >= groundY && mouse.y < groundY + _groundRows * cellPx);
+
+    if (inMain)
     {
         Vector2 g  = ScreenToGrid(mouse);
         int gc = std::max(0, std::min((int)g.x, _sheetCols - 1));
         int gr = std::max(0, std::min((int)g.y, _sheetRows - 1));
         DrawRectangleLinesEx(GridToScreen(gc, gr, 1, 1), 1.5f, Fade(YELLOW, 0.85f));
         DrawText(TextFormat("(%d, %d)", gc * kTileSize, gr * kTileSize),
-            (int)(_offX + gc * cellPx + 2.f), (int)(_offY + gr * cellPx - 15.f),
-            11, YELLOW);
+            (int)(_offX + gc * cellPx + 2.f), (int)(_offY + gr * cellPx - 14.f), 11, YELLOW);
+    }
+    else if (inGround)
+    {
+        int gc = std::max(0, std::min((int)((mouse.x - _offX)   / cellPx), _groundCols - 1));
+        int gr = std::max(0, std::min((int)((mouse.y - groundY) / cellPx), _groundRows - 1));
+        DrawRectangleLinesEx(GridToGroundScreen(gc, gr, 1, 1), 1.5f, Fade(GOLD, 0.85f));
+        DrawText(TextFormat("GT (%d, %d)", gc * kTileSize, gr * kTileSize),
+            (int)(_offX + gc * cellPx + 2.f), (int)(groundY + gr * cellPx - 14.f), 11, GOLD);
     }
 }
 
@@ -994,11 +1104,13 @@ void TileMapper::DrawAssignments() const
 {
     for (const Assignment& a : _assignments)
     {
-        Rectangle r = GridToScreen(a.col, a.row, a.spanCols, a.spanRows);
+        Rectangle r = a.fromGround
+            ? GridToGroundScreen(a.col, a.row, a.spanCols, a.spanRows)
+            : GridToScreen(a.col, a.row, a.spanCols, a.spanRows);
         Color c = (a.typeIdx >= 0 && a.typeIdx < kTypeCount)
             ? kTypeColors[a.typeIdx] : Fade(WHITE, 0.15f);
         DrawRectangleRec(r, c);
-        DrawRectangleLinesEx(r, 1.5f, Fade(WHITE, 0.5f));
+        DrawRectangleLinesEx(r, 1.5f, a.fromGround ? GOLD : Fade(WHITE, 0.5f));
         if (a.typeIdx >= 0 && a.typeIdx < kTypeCount)
         {
             int fs = 9;
@@ -1016,20 +1128,30 @@ void TileMapper::DrawSelection() const
 {
     if (!_hasSelection && !_isDragging) return;
     int c0, r0, c1, r1;
+    bool fromGround;
     if (_isDragging)
     {
         c0 = std::min(_dragC0, _dragC1); r0 = std::min(_dragR0, _dragR1);
         c1 = std::max(_dragC0, _dragC1); r1 = std::max(_dragR0, _dragR1);
+        fromGround = _dragFromGround;
     }
-    else { c0 = _selC0; r0 = _selR0; c1 = _selC1; r1 = _selR1; }
+    else
+    {
+        c0 = _selC0; r0 = _selR0; c1 = _selC1; r1 = _selR1;
+        fromGround = _selFromGround;
+    }
 
-    Rectangle r = GridToScreen(c0, r0, c1 - c0 + 1, r1 - r0 + 1);
-    DrawRectangleRec(r, Fade(SKYBLUE, 0.28f));
-    DrawRectangleLinesEx(r, 2.f, SKYBLUE);
-    DrawText(TextFormat("{ %d, %d, %d, %d }",
+    Rectangle r = fromGround
+        ? GridToGroundScreen(c0, r0, c1 - c0 + 1, r1 - r0 + 1)
+        : GridToScreen(c0, r0, c1 - c0 + 1, r1 - r0 + 1);
+    Color col = fromGround ? GOLD : SKYBLUE;
+    DrawRectangleRec(r, Fade(col, 0.28f));
+    DrawRectangleLinesEx(r, 2.f, col);
+    DrawText(TextFormat("%s{ %d, %d, %d, %d }",
+        fromGround ? "GT " : "",
         c0 * kTileSize, r0 * kTileSize,
         (c1 - c0 + 1) * kTileSize, (r1 - r0 + 1) * kTileSize),
-        (int)(r.x + 2.f), (int)(r.y - 16.f), 12, SKYBLUE);
+        (int)(r.x + 2.f), (int)(r.y - 16.f), 12, col);
 }
 
 void TileMapper::DrawPanel() const
@@ -1745,5 +1867,18 @@ Rectangle TileMapper::GridToScreen(int col, int row, int spanCols, int spanRows)
 {
     float cellPx = kTileSize * _scale;
     return { _offX + col * cellPx, _offY + row * cellPx,
+             spanCols * cellPx, spanRows * cellPx };
+}
+
+float TileMapper::GroundSheetScreenY() const
+{
+    return _offY + (_sheetRows * kTileSize + kGroundGap) * _scale;
+}
+
+Rectangle TileMapper::GridToGroundScreen(int col, int row, int spanCols, int spanRows) const
+{
+    float cellPx = kTileSize * _scale;
+    float gy     = GroundSheetScreenY();
+    return { _offX + col * cellPx, gy + row * cellPx,
              spanCols * cellPx, spanRows * cellPx };
 }

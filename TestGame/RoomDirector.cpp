@@ -17,7 +17,7 @@ void RoomDirector::ResetForNewRun(int totalActs)
     _roomClearTimer = 0.f;
 
     static constexpr Biome kAllBiomes[] = {
-        Biome::Dungeon, Biome::Forest
+        Biome::Caverns, Biome::Forest
     };
     static constexpr int kBiomeCount = (int)(sizeof(kAllBiomes) / sizeof(kAllBiomes[0]));
 
@@ -33,7 +33,7 @@ void RoomDirector::ResetForNewRun(int totalActs)
     }
 
     if (!_biomeSequence.empty())
-        _startBiomeDungeon = (_biomeSequence[0] == Biome::Dungeon);
+        _startBiomeDungeon = (_biomeSequence[0] == Biome::Caverns);
 }
 
 void RoomDirector::StartNextRoom(RoomType type, int& wave)
@@ -72,5 +72,5 @@ Biome RoomDirector::GetBiomeForAct(int act) const
         return _biomeSequence[idx];
 
     bool isDungeon = _startBiomeDungeon ? ((act % 2) == 1) : ((act % 2) == 0);
-    return isDungeon ? Biome::Dungeon : Biome::Forest;
+    return isDungeon ? Biome::Caverns : Biome::Forest;
 }
