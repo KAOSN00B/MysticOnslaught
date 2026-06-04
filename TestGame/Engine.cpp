@@ -2089,14 +2089,6 @@ void Engine::DrawHUD()
     {
     const HUDConfig& hc = _hudCfg;
 
-    // Icon height matches the old circle diameter (barH * 0.56 ≈ 27 px at barH=48).
-    const float kArmourIconH = hc.barH * 0.56f;
-    const float kArmourGapY  = 5.f;   // space between HP bar bottom and icon row top
-
-    const float hpBarY   = hc.barTopPad;
-    const float manaBarY = hpBarY + hc.barH + kArmourGapY + kArmourIconH + kArmourGapY;
-    const float barX     = (float)GetScreenWidth() / 2.f - hc.barW / 2.f;
-
     auto drawLabelBox = [&](const char* text, float x, float y, int fontSize, Color textColor)
     {
         int textW = MeasureText(text, fontSize);
@@ -2116,14 +2108,7 @@ void Engine::DrawHUD()
     {
         bool isBoss  = (_currentRoomType == RoomType::Boss);
         bool isElite = (_currentRoomType == RoomType::Elite);
-        const char* roomTypeSuffix =
-            isBoss    ? "  BOSS" :
-            isElite   ? "  ELITE" :
-            (_currentRoomType == RoomType::Rest)     ? "  REST" :
-            (_currentRoomType == RoomType::Treasure) ? "  TREASURE" :
-            (_currentRoomType == RoomType::Store)    ? "  SHOP" : "";
-        const char* roomLabel = TextFormat("Act %d  Room %d%s",
-            _currentAct, _currentRoom, roomTypeSuffix);
+        const char* roomLabel = TextFormat("%s Room", GetDebugRoomTypeName(_currentRoomType));
         int roomLabelW = MeasureText(roomLabel, (int)hc.actFs);
         Color labelColor = isBoss ? ORANGE : (isElite ? Color{255,140,0,255} : RAYWHITE);
         drawLabelBox(roomLabel,
@@ -2131,98 +2116,47 @@ void Engine::DrawHUD()
             hc.actY, (int)hc.actFs, labelColor);
     }
 
+    auto drawOrb = [&](Vector2 centre, float radius, float pct, Color fill, const char* label)
     {
+        pct = std::clamp(pct, 0.f, 1.f);
+        DrawCircleV(centre, radius + 8.f, Fade(BLACK, 0.55f));
+        DrawCircleV(centre, radius, Fade(BLACK, 0.82f));
+        float fillRadius = radius - 4.f;
+        float fillH = fillRadius * 2.f * pct;
+        BeginScissorMode(
+            (int)(centre.x - fillRadius),
+            (int)(centre.y + fillRadius - fillH),
+            (int)(fillRadius * 2.f),
+            (int)std::ceil(fillH));
+        DrawCircleV(centre, fillRadius, fill);
+        EndScissorMode();
+        DrawCircleLinesV(centre, radius, Fade(WHITE, 0.45f));
+        DrawCircleLinesV(centre, radius - 7.f, Fade(WHITE, 0.38f));
+
+        int fs = (int)hc.barLabelFs + 4;
+        int labelW = MeasureText(label, fs);
+        DrawText(label, (int)(centre.x - labelW * 0.5f), (int)(centre.y - fs * 0.5f), fs, RAYWHITE);
+    };
+
+    {        const float orbR = std::max(24.f, hc.statOrbR);
+
         float maxHp = _player.GetMaxHealthValue();
         float curHp = _player.GetHealthValue();
         float hpPct = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
-        Color fillColor = (hpPct > 0.70f) ? GREEN : (hpPct > 0.30f) ? YELLOW : RED;
-
+        Color hpFill = (hpPct > 0.30f) ? Color{190, 25, 30, 235} : Color{255, 45, 40, 245};
         if (hpPct <= 0.30f)
         {
-            float pulse    = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
-            float exps[]   = { 4.f, 9.f, 15.f };
-            float alphas[] = { 0.45f, 0.28f, 0.13f };
-            for (int i = 0; i < 3; i++)
-            {
-                float e = exps[i];
-                DrawRectangleRounded(
-                    { barX - e, hpBarY - e, hc.barW + e * 2.f, hc.barH + e * 2.f },
-                    0.35f, 6, Fade(RED, alphas[i] * pulse));
-            }
+            float pulse = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
+            DrawCircleV({ hc.hpOrbX, hc.hpOrbY }, orbR + 16.f, Fade(RED, 0.22f * pulse));
         }
+        drawOrb({ hc.hpOrbX, hc.hpOrbY }, orbR, hpPct,
+            hpFill, TextFormat("HP %.0f", curHp));
 
-        DrawRectangleRounded({ barX, hpBarY, hc.barW * hpPct, hc.barH }, 0.3f, 6, fillColor);
-        DrawRectangleRoundedLines({ barX, hpBarY, hc.barW, hc.barH }, 0.3f, 6, Fade(WHITE, 0.25f));
-
-        int lFs    = (int)hc.barLabelFs;
-        const char* hpLabel = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
-        int labelW = MeasureText(hpLabel, lFs);
-        DrawText(hpLabel,
-            (int)(barX + hc.barW / 2.f - labelW / 2.f),
-            (int)(hpBarY + hc.barH / 2.f - lFs / 2.f),
-            lFs, BLACK);
-
-    }
-
-    // ── Armour icons — Defense.png, small, centred below the HP bar ─────────
-    // Filled = full opacity. Empty = faded so the player can still count slots.
-    if (_upgradeDefenseTex.id != 0)
-    {
-        const int   armour   = _player.GetArmour();
-        const int   maxArmour = _player.GetMaxArmour();
-        const float scale    = kArmourIconH / (float)_upgradeDefenseTex.height;
-        const float iconW    = _upgradeDefenseTex.width * scale;
-        const float iconGap  = kArmourIconH * 0.35f;   // matches old circle spacing
-        const float totalW   = maxArmour * iconW + (maxArmour - 1) * iconGap;
-        float iconX = barX + hc.barW * 0.5f - totalW * 0.5f;
-        const float iconY = hpBarY + hc.barH + kArmourGapY;
-
-        for (int i = 0; i < maxArmour; i++)
-        {
-            Color tint = (i < armour) ? WHITE : Fade(WHITE, 0.18f);
-            DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, scale, tint);
-            iconX += iconW + iconGap;
-        }
-    }
-
-    {
-        int curMana  = _player.GetMana();
-        int maxMana  = _player.GetMaxMana();
+        int curMana = _player.GetMana();
+        int maxMana = _player.GetMaxMana();
         float manaPct = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
-        static const Color kManaFill = { 60, 120, 255, 230 };
-
-        DrawRectangleRounded({ barX, manaBarY, hc.barW * manaPct, hc.barH }, 0.3f, 6, kManaFill);
-        DrawRectangleRoundedLines({ barX, manaBarY, hc.barW, hc.barH }, 0.3f, 6, Fade(WHITE, 0.25f));
-
-        int lFs = (int)hc.barLabelFs;
-        const char* manaLabel = TextFormat("MP  %d / %d", curMana, maxMana);
-        int manaLabelW = MeasureText(manaLabel, lFs);
-        DrawText(manaLabel,
-            (int)(barX + hc.barW / 2.f - manaLabelW / 2.f),
-            (int)(manaBarY + hc.barH / 2.f - lFs / 2.f),
-            lFs, BLACK);
-    }
-
-    // ── EXP bar — sits below the mana bar ────────────────────────────────────
-    {
-        int   curExp = _player.GetExp();
-        int   maxExp = _player.GetExpToNext();
-        float expPct = (maxExp > 0) ? std::min((float)curExp / (float)maxExp, 1.f) : 0.f;
-        float expBarY = manaBarY + hc.barH + hc.expBarGap;
-        static const Color kExpFill = { 160, 60, 255, 220 };
-
-        DrawRectangleRounded({ barX, expBarY, hc.barW * expPct, hc.expBarH }, 0.3f, 4, kExpFill);
-        DrawRectangleRoundedLines({ barX, expBarY, hc.barW, hc.expBarH }, 0.3f, 4, Fade(WHITE, 0.22f));
-
-        int eFs = (int)hc.expLabelFs;
-        const char* expLabel = (_player.GetLevel() >= _player.GetMaxLevel())
-            ? TextFormat("LVL MAX")
-            : TextFormat("LVL %d   EXP  %d / %d", _player.GetLevel(), curExp, maxExp);
-        int eLW = MeasureText(expLabel, eFs);
-        DrawText(expLabel,
-            (int)(barX + hc.barW / 2.f - eLW / 2.f),
-            (int)(expBarY + hc.expBarH / 2.f - eFs / 2.f),
-            eFs, WHITE);
+        drawOrb({ hc.mpOrbX, hc.mpOrbY }, orbR, manaPct,
+            Color{245, 205, 45, 235}, TextFormat("MP %d", curMana));
     }
 
     if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
@@ -2294,7 +2228,7 @@ void Engine::DrawHUD()
 
     if (_hudEditorActive)
     {
-        constexpr int kN = 46;
+        constexpr int kN = 54;
         const char* varNames[kN] = {
             "0  Bar Width",       "1  Bar Height",      "2  Bar Gap",
             "3  Bar Top Pad",     "4  Bar Label Font",
@@ -2313,6 +2247,9 @@ void Engine::DrawHUD()
             "39 Touch Slot Size", "40 Touch Slot Gap",
             "41 Slot Right Pad",  "42 Slot Y Offset",
             "43 EXP Bar Height",  "44 EXP Bar Gap",      "45 EXP Label Font",
+            "46 HP Orb X",        "47 HP Orb Y",         "48 MP Orb X",
+            "49 MP Orb Y",        "50 HP/MP Orb Size",
+            "51 Armour X",        "52 Armour Y",        "53 Armour Size",
         };
         float* vars[kN] = {
             &_hudCfg.barW,        &_hudCfg.barH,        &_hudCfg.barGap,
@@ -2332,6 +2269,9 @@ void Engine::DrawHUD()
             &_hudCfg.touchSlotSz, &_hudCfg.touchSlotGap,
             &_hudCfg.touchSlotRightPad, &_hudCfg.touchSlotYOff,
             &_hudCfg.expBarH, &_hudCfg.expBarGap, &_hudCfg.expLabelFs,
+            &_hudCfg.hpOrbX, &_hudCfg.hpOrbY, &_hudCfg.mpOrbX,
+            &_hudCfg.mpOrbY, &_hudCfg.statOrbR,
+            &_hudCfg.armourX, &_hudCfg.armourY, &_hudCfg.armourSize,
         };
 
         if (IsKeyPressed(KEY_UP))
@@ -2362,6 +2302,10 @@ void Engine::DrawHUD()
                 hc.touchSlotSz, hc.touchSlotGap, hc.touchSlotRightPad, hc.touchSlotYOff);
             TraceLog(LOG_INFO, "expBarH=%g expBarGap=%g expLabelFs=%g",
                 hc.expBarH, hc.expBarGap, hc.expLabelFs);
+            TraceLog(LOG_INFO, "hpOrbX=%g hpOrbY=%g mpOrbX=%g mpOrbY=%g statOrbR=%g",
+                hc.hpOrbX, hc.hpOrbY, hc.mpOrbX, hc.mpOrbY, hc.statOrbR);
+            TraceLog(LOG_INFO, "armourX=%g armourY=%g armourSize=%g",
+                hc.armourX, hc.armourY, hc.armourSize);
             TraceLog(LOG_INFO, "touchSlotOffsets: [0]=(%.1f,%.1f) [1]=(%.1f,%.1f) [2]=(%.1f,%.1f) [3]=(%.1f,%.1f)",
                 _touchSlotOffset[0].x, _touchSlotOffset[0].y,
                 _touchSlotOffset[1].x, _touchSlotOffset[1].y,
@@ -2547,6 +2491,49 @@ void Engine::DrawAbilityBar()
     const int   keyFs      = (int)hc.slotKeyFs;
     const int   nameFs     = (int)hc.slotNameFs;
 
+
+    {
+        int curExp = _player.GetExp();
+        int maxExp = _player.GetExpToNext();
+        float expPct = (maxExp > 0) ? std::min((float)curExp / (float)maxExp, 1.f) : 0.f;
+        const float expBarW = totalW;
+        const float expBarX = startX;
+        const float expBarY = slotY - hc.expBarGap - hc.expBarH;
+        static const Color kExpFill = { 160, 60, 255, 220 };
+
+        DrawRectangleRounded({ expBarX, expBarY, expBarW, hc.expBarH }, 0.3f, 4, Fade(BLACK, 0.65f));
+        DrawRectangleRounded({ expBarX, expBarY, expBarW * expPct, hc.expBarH }, 0.3f, 4, kExpFill);
+        DrawRectangleRoundedLines({ expBarX, expBarY, expBarW, hc.expBarH }, 0.3f, 4, Fade(WHITE, 0.22f));
+
+        int eFs = (int)hc.expLabelFs;
+        const char* expLabel = (_player.GetLevel() >= _player.GetMaxLevel())
+            ? TextFormat("LVL MAX")
+            : TextFormat("LVL %d   EXP  %d / %d", _player.GetLevel(), curExp, maxExp);
+        int eLW = MeasureText(expLabel, eFs);
+        DrawText(expLabel,
+            (int)(expBarX + expBarW / 2.f - eLW / 2.f),
+            (int)(expBarY + hc.expBarH / 2.f - eFs / 2.f),
+            eFs, WHITE);
+
+        if (_upgradeDefenseTex.id != 0)
+        {
+            const int armour = _player.GetArmour();
+            const int maxArmour = _player.GetMaxArmour();
+            const float armourIconH = std::max(1.f, hc.armourSize);
+            const float scale = armourIconH / (float)_upgradeDefenseTex.height;
+            const float iconW = _upgradeDefenseTex.width * scale;
+            const float iconGap = armourIconH * 0.35f;
+            float iconX = hc.armourX;
+            const float iconY = hc.armourY;
+
+            for (int i = 0; i < maxArmour; i++)
+            {
+                Color tint = (i < armour) ? WHITE : Fade(WHITE, 0.38f);
+                DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, scale, tint);
+                iconX += iconW + iconGap;
+            }
+        }
+    }
     Vector2 mouse = GetMousePosition();
 
     for (int i = 0; i < totalSlots; i++)
@@ -2613,98 +2600,6 @@ void Engine::DrawAbilityBar()
         }
     }
 
-    }
-    return;
-
-    const int   totalSlots = _player.GetMaxAbilitySlots();  // always 4
-    const float slotSize   = 80.f;
-    const float slotGap    = 10.f;
-
-    // Position just above the HP bar — mirrors DrawHUD() bottom-bar layout.
-    static constexpr float kBarH   = 28.f;
-    static constexpr float kBarGap = 8.f;
-    static constexpr float kBotPad = 12.f;
-    const float expBarY  = (float)GetScreenHeight() - kBotPad - kBarH;
-    const float manaBarY = expBarY  - kBarGap - kBarH;
-    const float hpBarY   = manaBarY - kBarGap - kBarH;
-    const float slotY    = hpBarY   - 10.f - slotSize;
-    const float totalW = totalSlots * slotSize + (totalSlots - 1) * slotGap;
-    const float startX = GetScreenWidth() / 2.f - totalW / 2.f;
-
-    Vector2 mouse = GetMousePosition();
-
-    for (int i = 0; i < totalSlots; i++)
-    {
-        AbilityType ability = _player.GetLearnedAbility(i);
-        bool        isEmpty  = (ability == AbilityType::None);
-        bool        canCast  = !isEmpty && _player.CanCastAbility(ability);
-        float       x        = startX + i * (slotSize + slotGap);
-        Rectangle   slot     { x, slotY, slotSize, slotSize };
-        bool        hovered  = !isEmpty && CheckCollisionPointRec(mouse, slot);
-
-        // Background + border
-        Color bgColor     = isEmpty ? Fade(BLACK, 0.30f) : (hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
-        Color borderColor = isEmpty ? Fade(WHITE,  0.12f) :
-                            hovered ? Fade(GOLD,   0.70f) :
-                            canCast ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
-        DrawRectangleRounded(slot, 0.18f, 6, bgColor);
-        DrawRectangleRoundedLines(slot, 0.18f, 6, borderColor);
-
-        if (isEmpty)
-        {
-            // Show key label only so the player knows the slot exists
-            DrawText(GetKeyName(_player.GetAbilityKey(i)),
-                (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.25f));
-            continue;
-        }
-
-        // Key label
-        DrawText(GetKeyName(_player.GetAbilityKey(i)),
-            (int)(x + 6.f), (int)(slotY + 6.f), 14, Fade(WHITE, 0.6f));
-
-        // Click to cast
-        if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-            _player.TriggerAbilityCast(i);
-
-        // Icon
-        const Texture2D* iconTex = &_abilityIconFireTex;
-        if      (ability == AbilityType::IceSpread      ||
-                 ability == AbilityType::IceBolt        ||
-                 ability == AbilityType::IceUltimate)      iconTex = &_abilityIconIceTex;
-        else if (ability == AbilityType::ElectricSpread ||
-                 ability == AbilityType::ElectricBolt   ||
-                 ability == AbilityType::ElectricUltimate) iconTex = &_abilityIconElectricTex;
-
-        Color iconTint    = canCast ? WHITE : Fade(WHITE, 0.35f);
-        float maxIconSize = slotSize * 0.55f;
-        float iconScale   = std::min(maxIconSize / (float)iconTex->width,
-                                     maxIconSize / (float)iconTex->height);
-        float iw = iconTex->width  * iconScale;
-        float ih = iconTex->height * iconScale;
-        float cx = x + slotSize * 0.5f;
-        float cy = slotY + slotSize * 0.42f;
-        DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
-
-        // Ability name
-        const char* abilityName = GetAbilityName(ability);
-        int nameW = MeasureText(abilityName, 12);
-        DrawText(abilityName,
-            (int)(x + slotSize / 2.f - nameW / 2.f),
-            (int)(slotY + slotSize - 18.f),
-            12, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
-
-        // Level badge
-        int abilityLv = _player.GetAbilityLevel(ability);
-        if (abilityLv > 1)
-        {
-            const char* badge  = TextFormat("Lv%d", abilityLv);
-            int         badgeW = MeasureText(badge, 12);
-            Color       badgeColor = (abilityLv >= 3) ? GOLD : Fade(SKYBLUE, 0.9f);
-            DrawText(badge,
-                (int)(x + slotSize - badgeW - 4.f),
-                (int)(slotY + slotSize - 16.f),
-                12, badgeColor);
-        }
     }
 }
 
@@ -4146,7 +4041,6 @@ void Engine::DrawLevelUpChoice()
             lineIndex++;
         }
     };
-
     Vector2 mouse = GetMousePosition();
     bool ready = (_levelUpOpenTimer <= 0.f);
 
@@ -7625,8 +7519,7 @@ void Engine::UpdateHitboxEditor()
         auto toScreen = [&](Rectangle r) {
             return Rectangle{ r.x - camRef.x + sw / 2.f, r.y - camRef.y + sh / 2.f, r.width, r.height };
         };
-
-        Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetMousePosition();
         BaseCharacter* hit = nullptr;
 
         // Helper: check if mouse is inside a capsule (screen space)
@@ -8105,6 +7998,62 @@ void Engine::DrawTouchAbilityArc()
     const int screenW    = GetScreenWidth();
     const int screenH    = GetScreenHeight();
 
+    if (totalSlots > 0)
+    {
+        Rectangle firstSlot = TouchAbilityRect(0, screenW, screenH,
+            _touch.kBtnBotPad, _touch.kBtnRadius,
+            _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+            _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+            _touchSlotOffset[0]);
+        Rectangle lastSlot = TouchAbilityRect(totalSlots - 1, screenW, screenH,
+            _touch.kBtnBotPad, _touch.kBtnRadius,
+            _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+            _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+            _touchSlotOffset[totalSlots - 1]);
+
+        float expBarX = std::min(firstSlot.x, lastSlot.x);
+        float expBarRight = std::max(firstSlot.x + firstSlot.width, lastSlot.x + lastSlot.width);
+        float expBarW = expBarRight - expBarX;
+        float expBarY = std::min(firstSlot.y, lastSlot.y) - _hudCfg.expBarGap - _hudCfg.expBarH;
+
+        int curExp = _player.GetExp();
+        int maxExp = _player.GetExpToNext();
+        float expPct = (maxExp > 0) ? std::min((float)curExp / (float)maxExp, 1.f) : 0.f;
+        static const Color kExpFill = { 160, 60, 255, 220 };
+
+        DrawRectangleRounded({ expBarX, expBarY, expBarW, _hudCfg.expBarH }, 0.3f, 4, Fade(BLACK, 0.65f));
+        DrawRectangleRounded({ expBarX, expBarY, expBarW * expPct, _hudCfg.expBarH }, 0.3f, 4, kExpFill);
+        DrawRectangleRoundedLines({ expBarX, expBarY, expBarW, _hudCfg.expBarH }, 0.3f, 4, Fade(WHITE, 0.22f));
+
+        int eFs = (int)_hudCfg.expLabelFs;
+        const char* expLabel = (_player.GetLevel() >= _player.GetMaxLevel())
+            ? TextFormat("LVL MAX")
+            : TextFormat("LVL %d   EXP  %d / %d", _player.GetLevel(), curExp, maxExp);
+        int eLW = MeasureText(expLabel, eFs);
+        DrawText(expLabel,
+            (int)(expBarX + expBarW * 0.5f - eLW * 0.5f),
+            (int)(expBarY + _hudCfg.expBarH * 0.5f - eFs * 0.5f),
+            eFs, WHITE);
+
+        if (_upgradeDefenseTex.id != 0)
+        {
+            const int armour = _player.GetArmour();
+            const int maxArmour = _player.GetMaxArmour();
+            const float armourIconH = std::max(1.f, _hudCfg.armourSize);
+            const float scale = armourIconH / (float)_upgradeDefenseTex.height;
+            const float iconW = _upgradeDefenseTex.width * scale;
+            const float iconGap = armourIconH * 0.35f;
+            float iconX = _hudCfg.armourX;
+            const float iconY = _hudCfg.armourY;
+
+            for (int i = 0; i < maxArmour; i++)
+            {
+                Color tint = (i < armour) ? WHITE : Fade(WHITE, 0.38f);
+                DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, scale, tint);
+                iconX += iconW + iconGap;
+            }
+        }
+    }
     for (int slot = 0; slot < totalSlots; slot++)
     {
         AbilityType ability = _player.GetLearnedAbility(slot);

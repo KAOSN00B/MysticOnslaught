@@ -359,9 +359,9 @@ private:
         float miniDotPickup= 2.f;     // 21 pickup dot base radius
         float miniDotPlayer= 4.f;     // 22 player dot base radius
         // PC ability bar (23–27)
-        float slotSz       = 154.f;   // 23 ability slot size (square)
-        float slotGap      = 89.f;    // 24 gap between slots
-        float slotBotPad   = 76.f;    // 25 slot Y from bottom
+        float slotSz       = 103.f;   // 23 ability slot size (square)
+        float slotGap      = 108.f;    // 24 gap between slots
+        float slotBotPad   = 19.f;    // 25 slot Y from bottom
         float slotKeyFs    = 15.f;    // 26 keybind label font size
         float slotNameFs   = 21.f;    // 27 ability name font size
         // Touch buttons (28–38)
@@ -380,12 +380,22 @@ private:
         // Touch ability slots (39–42)
         float touchSlotSz      = 130.f;  // 39 ability slot square size
         float touchSlotGap     = 20.f;   // 40 gap between slots
-        float touchSlotRightPad= 30.f;   // 41 right-edge padding for slot row
-        float touchSlotYOff    = 20.f;   // 42 gap between slot bottom and ATK top
+        float touchSlotRightPad= 27.f;   // 41 right-edge padding for slot row
+        float touchSlotYOff    = 29.f;   // 42 gap between slot bottom and ATK top
         // EXP bar (43-45)
-        float expBarH    = 16.f;   // 43 height of the EXP bar
-        float expBarGap  = 12.f;   // 44 gap between MP bar bottom and EXP bar top
-        float expLabelFs = 13.f;   // 45 font size of the level / exp label
+        float expBarH    = 27.f;   // 43 height of the EXP bar
+        float expBarGap  = 19.f;   // 44 gap between MP bar bottom and EXP bar top
+        float expLabelFs = 16.f;   // 45 font size of the level / exp label
+        // HP / MP orbs (46-50)
+        float hpOrbX     = 513.f;  // 46 HP orb centre X
+        float hpOrbY     = 999.f;  // 47 HP orb centre Y
+        float mpOrbX     = 1408.f; // 48 MP orb centre X
+        float mpOrbY     = 992.f;  // 49 MP orb centre Y
+        float statOrbR   = 64.f;   // 50 shared HP/MP orb radius
+        // Armour icons (51-53)
+        float armourX    = 590.f;  // 51 first armour icon X
+        float armourY    = 853.f;  // 52 armour icon Y
+        float armourSize = 55.f;   // 53 armour icon height
     };
     HUDConfig _hudCfg;
     bool  _hudEditorActive  = false;
