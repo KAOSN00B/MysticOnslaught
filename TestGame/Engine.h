@@ -130,6 +130,7 @@ private:
     void DrawHUD();
     void DebugStartRun();
     void DebugRestartRoomAs(RoomType type);
+    void DebugRestartPregenRoomAs(RoomType type);
     void DebugSetEliteMechanic(int mechanic);
     void DrawHowToPlay();
     void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
@@ -159,7 +160,7 @@ private:
     void PopulatePropsForBiome(Biome biome);
     void UpdateBiomeTransition(float dt);
     float GetBiomeTransitionAlpha() const;
-    void DrawMiniMap();
+
     void DrawLevelUpChoice();
     void GenerateLevelUpOptions(LevelUpOfferContext context = LevelUpOfferContext::NormalLevel);
     void DrawAbilityChoice();
@@ -330,11 +331,11 @@ private:
     struct HUDConfig
     {
         // HP / MP bars (0–4)
-        float barW         = 528.f;   // 0  bar width
-        float barH         = 48.f;    // 1  bar height
-        float barGap       = 25.f;    // 2  gap between HP and MP bars
-        float barTopPad    = 23.f;    // 3  Y of HP bar from top
-        float barLabelFs   = 18.f;    // 4  font inside bars
+        float barW         = 534.f;   // 0  bar width
+        float barH         = 30.f;    // 1  bar height
+        float barGap       = 28.f;    // 2  gap between HP and MP bars
+        float barTopPad    = 16.f;    // 3  Y of HP bar from top
+        float barLabelFs   = 15.f;    // 4  font inside bars
         // Gold label (5–7)
         float goldX        = 21.f;    // 5  gold X
         float goldY        = 16.f;    // 6  gold Y
@@ -472,6 +473,7 @@ private:
     Sound _pickupSound{};
     Sound _fireballCastSound{};
     Sound _explosionSound{};
+    Sound _roomClearExplosionSound{};
     Sound _lavaBallImpactSound{};
     Sound _buttonPressSound{};
 
@@ -496,6 +498,7 @@ private:
     Texture2D _iceHitTex{};       // Ice_Shard_Hit.png — ice ability impact
     Texture2D _lightningCastTex{};
     Texture2D _healEffectTex{};
+    Texture2D _roomClearExplosionTex{};
 
     // Ability card icons for the level-up / starting ability panels
     Texture2D _abilityIconFireTex{};
@@ -586,6 +589,16 @@ private:
     int        _pregenViewedRoomIdx = -1;
     RoomLayout _pregenRoomLayout{};
 
+    enum class PregenDoorSide { None = -1, North, South, West, East };
+    PregenDoorSide _pregenEntryDoorSide = PregenDoorSide::None;
+
+    struct PregenClearEffect
+    {
+        Vector2 worldPos{};
+        float   timer = 0.f;
+    };
+    std::vector<PregenClearEffect> _pregenClearEffects;
+
     std::unordered_map<int, PregenRoomState> _pregenRoomStates;
     bool _pregenEnemiesSpawned = false;
 
@@ -596,6 +609,7 @@ private:
     RoomLayout _pregenScrollNextLayout{};
     int        _pregenScrollNextIdx  = -1;
     Vector2    _pregenScrollSpawnPos = {};
+    PregenDoorSide _pregenScrollNextEntryDoorSide = PregenDoorSide::None;
     static constexpr float kPregenScrollDur = 0.40f;
 
     // Folder scanned by the TileMapper debug tool for PNG tilesets.
@@ -623,7 +637,15 @@ private:
     void      SpawnPregenRoomEnemies();
     void      ClearPregenEnemies();
 
-    // Boss room exit door — sets tiles in _pregenRoomLayout and returns the trigger rect.
+    // Door state helpers for tile-dungeon rooms.
+    void ApplyPregenRoomDoorState(RoomLayout& layout, int roomIdx, PregenDoorSide entryDoorSide) const;
+    bool IsPregenDoorOpen(PregenDoorSide side) const;
+    PregenDoorSide OppositePregenDoorSide(int dr, int dc) const;
+    void SpawnPregenDoorOpenEffects();
+    void UpdatePregenClearEffects(float dt);
+    void DrawPregenClearEffects() const;
+
+    // Boss room exit door - sets tiles in _pregenRoomLayout and returns the trigger rect.
     void      ApplyPregenBossExitTiles(TileType doorType);
     Rectangle GetPregenBossExitTrigger() const;
 

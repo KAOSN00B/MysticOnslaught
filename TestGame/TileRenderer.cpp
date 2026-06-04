@@ -33,7 +33,7 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
             if (type == TileType::Void || type == TileType::None)
                 DrawRectangle((int)sx, (int)sy, (int)cellW, (int)cellH, Color{ 8, 6, 10, 255 });
             else if (type == TileType::DoorOpen)
-                DrawRectangle((int)sx, (int)sy, (int)cellW, (int)cellH, Color{ 12, 10, 14, 255 });
+                DrawTile(TileType::Floor, sx, sy, scaleX, scaleY);
             else if (type == TileType::DoorLocked)
                 DrawRectangle((int)sx, (int)sy, (int)cellW, (int)cellH, Color{ 60, 10, 10, 255 });
             else

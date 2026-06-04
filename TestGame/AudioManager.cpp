@@ -158,6 +158,9 @@ MusicCue AudioManager::GetDesiredLoopMusicCue(const AudioContext& ctx) const
     case GameState::Map:
         return GetBiomeMusicCue(ctx.actBiome);
 
+    case GameState::PregenTest:
+        return MusicCue::Dungeon;
+
     case GameState::GameOver:
         return MusicCue::None;
 

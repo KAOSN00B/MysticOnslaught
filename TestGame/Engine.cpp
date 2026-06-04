@@ -126,6 +126,7 @@ Engine::~Engine()
         UnloadSound(_pickupSound);
         UnloadSound(_fireballCastSound);
         UnloadSound(_explosionSound);
+        UnloadSound(_roomClearExplosionSound);
         UnloadSound(_lavaBallImpactSound);
         UnloadSound(_buttonPressSound);
         _audio.Shutdown();
@@ -144,6 +145,7 @@ Engine::~Engine()
     UnloadTexture(_iceHitTex);
     UnloadTexture(_lightningCastTex);
     UnloadTexture(_healEffectTex);
+    UnloadTexture(_roomClearExplosionTex);
     UnloadTexture(_abilityIconFireTex);
     UnloadTexture(_abilityIconIceTex);
     UnloadTexture(_abilityIconElectricTex);
@@ -203,6 +205,7 @@ void Engine::Init()
     _iceHitTex       = LoadTexture(AssetPath("PowerUps/Ice_Shard_Hit.png").c_str());
     _lightningCastTex = LoadTexture(AssetPath("PowerUps/LightningCast.png").c_str());
     _healEffectTex = LoadTexture(AssetPath("PowerUps/Health_Up.png").c_str());
+    _roomClearExplosionTex = LoadTexture(AssetPath("PowerUps/Flame_Explosion.png").c_str());
     _vfx.Init(&_fireballCastTex, &_fireballHitTex, &_genericHitTex,
               &_iceHitTex, &_lightningCastTex, &_healEffectTex);
     _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
@@ -262,6 +265,7 @@ void Engine::EnsureAudioInitialized()
     _pickupSound       = LoadSound(AssetPath("Sounds/PickupSound.ogg").c_str());
     _fireballCastSound = LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
     _explosionSound    = LoadSound(AssetPath("Sounds/GS1_Spell_Explode.ogg").c_str());
+    _roomClearExplosionSound = LoadSound(AssetPath("Sounds/Explosion.ogg").c_str());
     {
         // Lavaball impact should only play for the first second of the clip.
         // Cropping the wave at load time keeps playback simple and lets each
@@ -282,6 +286,7 @@ void Engine::EnsureAudioInitialized()
     SetSoundPitch(_pickupSound, 1.35f);
     SetSoundVolume(_pickupSound, 0.45f);
     SetSoundVolume(_lavaBallImpactSound, 0.45f);
+    SetSoundVolume(_roomClearExplosionSound, 0.60f);
 
     // Reload player sounds that failed to load during Engine::Init() because
     // the audio device didn't exist yet (web deferred-init path).
@@ -381,9 +386,46 @@ void Engine::DebugStartRun()
     ResetRunState();
     _debug.Activate();
     _awaitingStartingAbility = false;
-    _levelUpReturnState = GameState::Play;
-    _message = "Debug Arena";
-    DebugRestartRoomAs(RoomType::Standard);
+    _levelUpReturnState = GameState::PregenTest;
+    _message = "Debug Dungeon";
+
+    _dungeonGen.Generate();
+    _tileDefs = {};
+    _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
+    {
+        std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
+        std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
+        _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
+    }
+
+    const auto& rooms = _dungeonGen.GetRooms();
+    int startIdx = _dungeonGen.GetStartIndex();
+    _pregenViewedRoomIdx = startIdx;
+    const DungeonRoom& startRoom = rooms[startIdx];
+    _pregenRoomLayout = RoomLayout::Generate(
+        startRoom.hasNorth, startRoom.hasSouth,
+        startRoom.hasEast,  startRoom.hasWest, startRoom.type,
+        (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
+        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+    _pregenRoomStates.clear();
+    _pregenEntryDoorSide = PregenDoorSide::None;
+    ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+    _pregenEnemiesSpawned = false;
+    _pregenScrolling      = false;
+    _pregenView           = PregenView::Play;
+    _gameState            = GameState::PregenTest;
+
+    float hw = (float)GetScreenWidth()  * 0.5f;
+    float hh = (float)GetScreenHeight() * 0.5f;
+    _player.SetWorldPos({ hw, hh });
+    _player.Revive();
+    _cameraPos = { hw, hh };
+
+    RebuildPregenNav();
+    DebugRestartPregenRoomAs(RoomType::Standard);
+
+    _fadeInTimer = 1.0f;
+    _fadeInDuration = 1.0f;
 }
 
 void Engine::DebugSetEliteMechanic(int mechanic)
@@ -392,8 +434,120 @@ void Engine::DebugSetEliteMechanic(int mechanic)
     DebugRestartRoomAs(RoomType::Elite);
 }
 
+
+void Engine::DebugRestartPregenRoomAs(RoomType type)
+{
+    if (_pregenViewedRoomIdx < 0) return;
+
+    ClearPregenEnemies();
+    _roomClearPending = false;
+    _pendingExp = 0.f;
+    _expTallyAccum = 0.f;
+    _expTallyDone = false;
+    _tallyChoiceChaining = false;
+    _eliteRewardGranted = false;
+    _eliteMechanic = -1;
+    _eliteMinibossPtr = nullptr;
+    _eliteCageRadius = 0.f;
+    _eliteEnrageWarningTimer = 0.f;
+    _eliteHazardSpawnTimer = 0.f;
+    _eliteIsLeaping = false;
+    _eliteLeapCooldown = 0.f;
+    _eliteLeapTimer = 0.f;
+    _pregenClearEffects.clear();
+
+    const auto& rooms = _dungeonGen.GetRooms();
+    bool hasNorth = true;
+    bool hasSouth = true;
+    bool hasEast = true;
+    bool hasWest = true;
+    if (_pregenViewedRoomIdx >= 0 && _pregenViewedRoomIdx < (int)rooms.size())
+    {
+        const DungeonRoom& room = rooms[_pregenViewedRoomIdx];
+        hasNorth = room.hasNorth;
+        hasSouth = room.hasSouth;
+        hasEast  = room.hasEast;
+        hasWest  = room.hasWest;
+    }
+
+    _currentRoomType = type;
+    _currentRoom = (_currentRoom % 5) + 1;
+    if (type == RoomType::Boss)
+        _currentRoom = 6;
+    _message = std::string("Debug - ") + GetDebugRoomTypeName(type) + " Tile Room";
+
+    _pregenRoomLayout = RoomLayout::Generate(
+        hasNorth, hasSouth, hasEast, hasWest, type,
+        (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
+        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+    _pregenRoomStates[_pregenViewedRoomIdx].cleared = false;
+    ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float cellW = sw / (float)RoomLayout::kCols;
+    float cellH = sh / (float)RoomLayout::kRows;
+    _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
+    _player.Revive();
+    _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
+    _cameraPos = { sw * 0.5f, sh * 0.5f };
+
+    RebuildPregenNav();
+
+    auto spawnAt = [&](auto spawnFn, int count = 1) {
+        for (int n = 0; n < count; n++)
+            spawnFn(GetPregenSpawnPos(cellW, cellH));
+    };
+
+    if (type == RoomType::Boss)
+    {
+        SpawnMolarbeast({ sw * 0.5f, sh * 0.28f });
+        ApplyPregenBossExitTiles(TileType::DoorLocked);
+        _pregenEnemiesSpawned = true;
+    }
+    else if (type == RoomType::Elite)
+    {
+        SpawnOgre(GetPregenSpawnPos(cellW, cellH));
+        spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
+        _pregenEnemiesSpawned = true;
+    }
+    else if (type == RoomType::Standard)
+    {
+        spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
+        SpawnCyclops(GetPregenSpawnPos(cellW, cellH));
+        _pregenEnemiesSpawned = true;
+    }
+    else if (type == RoomType::Treasure)
+    {
+        _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
+        ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+        auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
+        {
+            auto g = std::make_unique<GoldPickup>();
+            g->Init(Vector2{ sw * 0.5f + ox, sh * 0.5f + oy }, denom);
+            _pickups.push_back(std::move(g));
+        };
+        spawnGold(GoldDenomination::Ten, 0.f, 0.f);
+        spawnGold(GoldDenomination::Five, -60.f, 24.f);
+        spawnGold(GoldDenomination::Five, 60.f, 24.f);
+    }
+    else
+    {
+        _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
+        ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+    }
+
+    _pregenScrolling = false;
+    _pregenView = PregenView::Play;
+    _gameState = GameState::PregenTest;
+}
 void Engine::DebugRestartRoomAs(RoomType type)
 {
+    if (_gameState == GameState::PregenTest)
+    {
+        DebugRestartPregenRoomAs(type);
+        return;
+    }
     for (auto& enemy : _enemies)
     {
         enemy->SetActive(false);
@@ -926,6 +1080,8 @@ void Engine::Update(float dt)
                 (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
                 (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
             _pregenRoomStates.clear();
+            _pregenEntryDoorSide = PregenDoorSide::None;
+            ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
             _pregenEnemiesSpawned = false;
             _pregenScrolling      = false;
             _pregenView           = PregenView::Play;
@@ -1011,12 +1167,6 @@ void Engine::Update(float dt)
         // Navigation handled in the Draw case (Back/Save/Default buttons)
         break;
 
-    case GameState::Play:
-    {
-        UpdateGamePlay(dt);
-        break;
-    }
-
     case GameState::Pause:
     {
         if (IsKeyPressed(KEY_ESCAPE))
@@ -1057,10 +1207,6 @@ void Engine::Update(float dt)
             _abilityChoiceOpenTimer -= dt;
         break;
 
-    case GameState::ExpTally:
-        UpdateExpTally(dt);
-        break;
-
     case GameState::Shop:
         if (_shop.Update(_player, _debug.IsActive()))
         {
@@ -1070,47 +1216,6 @@ void Engine::Update(float dt)
         }
         break;
 
-    case GameState::Map:
-        if (_mapOpenTimer > 0.f)
-        {
-            _mapOpenTimer -= dt;
-        }
-        else
-        {
-            // Collect available (clickable) node indices in left-to-right order.
-            std::vector<int> avail;
-            for (int i = 0; i < (int)_actMap.size(); i++)
-                if (_actMap[i].available && !_actMap[i].completed)
-                    avail.push_back(i);
-
-            // Sort by horizontal draw position so Left/Right feel spatial.
-            std::sort(avail.begin(), avail.end(), [this](int a, int b){
-                return _actMap[a].drawPos.x < _actMap[b].drawPos.x;
-            });
-
-            if (!avail.empty())
-            {
-                // Auto-select the first node if nothing is selected yet.
-                auto it = std::find(avail.begin(), avail.end(), _mapKeySelectedIdx);
-                if (it == avail.end())
-                {
-                    _mapKeySelectedIdx = avail[0];
-                    it = avail.begin();
-                }
-
-                int pos = (int)(it - avail.begin());
-                int n   = (int)avail.size();
-
-                if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D))
-                    _mapKeySelectedIdx = avail[(pos + 1) % n];
-                if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A))
-                    _mapKeySelectedIdx = avail[(pos + n - 1) % n];
-
-                if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE))
-                    EnterMapRoom(_mapKeySelectedIdx);
-            }
-        }
-        break;
     }
 }
 
@@ -1432,6 +1537,7 @@ void Engine::UpdateGamePlay(float dt)
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         _vfx.Update(dt);
+        UpdatePregenClearEffects(dt);
         UpdateEnemyCount(dt);
         UpdateBossSupportRespawns(dt);
         UpdateCyclopsLasers(dt);
@@ -1498,123 +1604,55 @@ void Engine::Draw()
         break;
     }
 
-    case GameState::Play:
-    {
-        DrawWorld();
-        DrawUltimateSequence();
-        DrawHUD();
-        if (_debug.IsActive())
-            _debug.Draw(_currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
-
-        // ── "Continue" button — shown after all enemies are defeated ─────────
-          if (_roomClearPending)
-          {
-              const float sw = (float)GetScreenWidth();
-              const float sh = (float)GetScreenHeight();
-
-              const char* btnTxt = _touchModeActive ? "Continue" : "Continue  [M]";
-            int btnTxtSz = _touchModeActive ? 36 : 28;
-            const float btnScale = _touchModeActive ? 1.3f : 1.f;
-            const float btnW = 220.f * btnScale, btnH = 58.f * btnScale;
-            float btnX = sw / 2.f - btnW / 2.f;
-            float btnY = sh * 0.82f;
-            Rectangle btn{ btnX, btnY, btnW, btnH };
-
-            Vector2 mouse = GetMousePosition();
-            bool hov = CheckCollisionPointRec(mouse, btn);
-
-            DrawRectangleRounded(btn, 0.35f, 8,
-                hov ? Color{50, 160, 80, 235} : Color{25, 90, 45, 210});
-            DrawRectangleRoundedLines(btn, 0.35f, 8,
-                hov ? Color{120, 255, 150, 255} : Color{60, 180, 90, 180});
-              DrawText(btnTxt,
-                  (int)(btnX + btnW / 2.f - MeasureText(btnTxt, btnTxtSz) / 2.f),
-                  (int)(btnY + btnH / 2.f - btnTxtSz / 2.f),
-                  btnTxtSz, hov ? Color{210, 255, 220, 255} : RAYWHITE);
-
-              if (_currentRoomType == RoomType::Boss && _bossesDefeated < 2)
-              {
-                  std::string nextBiomeText = std::string("Next Biome: ") + GetBiomeName(GetBiomeForAct(_currentAct + 1));
-                  int infoSz = 24;
-                  DrawText(nextBiomeText.c_str(),
-                      (int)(sw * 0.5f - MeasureText(nextBiomeText.c_str(), infoSz) * 0.5f),
-                      (int)(btnY - 42.f),
-                      infoSz,
-                      Color{255, 214, 102, 240});
-              }
-
-              bool pressed = hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
-            if (!pressed)
-            {
-                int tc = GetTouchPointCount();
-                for (int i = 0; i < tc; ++i)
-                {
-                    if (CheckCollisionPointRec(GetTouchPosition(i), btn))
-                    {
-                        pressed = true;
-                        break;
-                    }
-                }
-            }
-
-            if (pressed)
-            {
-                StopSound(_buttonPressSound);
-                PlaySound(_buttonPressSound);
-                HandleRoomContinueAction();
-            }
-        }
-
-        if (_isHitboxEditorActive)
-            DrawHitboxEditor();
-
-        if (_fadeInTimer > 0.f)
-        {
-            float alpha = (_fadeInDuration > 0.f) ? (_fadeInTimer / _fadeInDuration) : 0.f;
-            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, alpha));
-        }
-        if (_biomeTransitionActive)
-            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, GetBiomeTransitionAlpha()));
-        break;
-    }
-
     case GameState::Pause:
     {
-        Vector2 shakenMapPos = Vector2Add(_mapPos, _shakeOffset);
-        Vector2 cameraRef    = Vector2Subtract(_cameraPos, _shakeOffset);
-        Vector2 worldOffset  = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
-
-        DrawTextureEx(_map, shakenMapPos, 0.0f, _mapScale, WHITE);
-
-        for (auto& prop : _props)
-            prop.Render(cameraRef);
-
-        for (auto& pickup : _pickups)
-            pickup->Draw(worldOffset);
-
-        for (const auto& projectile : _spreadProjectiles)
-            projectile.Draw(worldOffset);
-
-        for (const auto& projectile : _lavaBalls)
-            projectile.Draw(worldOffset);
-
-        DrawCyclopsLasers(worldOffset);
-
-        _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
-
-        for (auto& enemy : _enemies)
+        if (_stateBeforePause == GameState::PregenTest)
         {
-            if (!enemy->IsActive())
-                continue;
-            enemy->DrawEnemy(cameraRef);
+            // Paused from the dungeon — show the tile room as the frozen background.
+            ClearBackground(Color{ 8, 6, 10, 255 });
+            float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
+            float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+            if (_tileRenderer.IsLoaded())
+                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         }
+        else
+        {
+            Vector2 shakenMapPos = Vector2Add(_mapPos, _shakeOffset);
+            Vector2 cameraRef    = Vector2Subtract(_cameraPos, _shakeOffset);
+            Vector2 worldOffset  = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
 
-        _player.DrawPlayer(cameraRef);
+            DrawTextureEx(_map, shakenMapPos, 0.0f, _mapScale, WHITE);
+
+            for (auto& prop : _props)
+                prop.Render(cameraRef);
+
+            for (auto& pickup : _pickups)
+                pickup->Draw(worldOffset);
+
+            for (const auto& projectile : _spreadProjectiles)
+                projectile.Draw(worldOffset);
+
+            for (const auto& projectile : _lavaBalls)
+                projectile.Draw(worldOffset);
+
+            DrawCyclopsLasers(worldOffset);
+
+            _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
+
+            for (auto& enemy : _enemies)
+            {
+                if (!enemy->IsActive())
+                    continue;
+                enemy->DrawEnemy(cameraRef);
+            }
+
+            _player.DrawPlayer(cameraRef);
+        }
 
         int pauseResult = _pauseUI.DrawPause();
         if (pauseResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
         if (pauseResult == 1)
-            _gameState = GameState::Play;
+            _gameState = _stateBeforePause;
         else if (pauseResult == 2)
         {
             _runState.OpenHowToPlay(GameState::Pause, _touchModeActive);
@@ -1736,23 +1774,20 @@ void Engine::Draw()
 
     case GameState::AbilityChoice:
     {
-        DrawWorld();
+        if (_levelUpReturnState == GameState::PregenTest)
+        {
+            ClearBackground(Color{ 8, 6, 10, 255 });
+            float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
+            float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+            if (_tileRenderer.IsLoaded())
+                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+        }
+        else
+        {
+            DrawWorld();
+        }
         DrawHUD();
         DrawAbilityChoice();
-        break;
-    }
-
-    case GameState::ExpTally:
-    {
-        DrawWorld();
-        DrawHUD();
-        DrawExpTally();
-        break;
-    }
-
-    case GameState::Map:
-    {
-        DrawMap();
         break;
     }
 
@@ -2252,7 +2287,6 @@ void Engine::DrawHUD()
     {
         DrawAbilityBar();
     }
-    DrawMiniMap();
 
     // ── HUD debug editor ──────────────────────────────────────────────────
     if (IsKeyPressed(KEY_NINE))
@@ -2486,7 +2520,6 @@ void Engine::DrawHUD()
     }
 
     DrawAbilityBar();
-    DrawMiniMap();
 
     if (_bossWarningTimer > 0.f)
     {
@@ -5436,64 +5469,6 @@ void Engine::DrawHowToPlay()
     }
 }
 
-void Engine::DrawMiniMap()
-{
-    const HUDConfig& hc = _hudCfg;
-    const float mapW = _map.width  * _mapScale;
-    const float mapH = _map.height * _mapScale;
-
-    const float miniW   = hc.miniW;
-    const float miniH   = miniW * (mapH / mapW);
-    const float originX = hc.miniX;
-    const float originY = hc.miniY;
-
-    // Dots auto-scale with miniW so circles stay proportional when map is resized
-    const float dotScale = miniW / 160.f;
-
-    DrawRectangleRounded(Rectangle{ originX - 2.f, originY - 2.f, miniW + 4.f, miniH + 4.f },
-        0.08f, 4, Fade(BLACK, 0.85f));
-    DrawRectangle((int)originX, (int)originY, (int)miniW, (int)miniH, Fade(DARKGRAY, 0.5f));
-
-    auto toMini = [&](Vector2 worldPos) -> Vector2 {
-        return Vector2{
-            originX + (worldPos.x / mapW) * miniW,
-            originY + (worldPos.y / mapH) * miniH
-        };
-    };
-
-    for (const auto& enemy : _enemies)
-    {
-        if (!enemy->IsActive() || !enemy->IsAlive()) continue;
-        Vector2 dot = toMini(enemy->GetWorldPos());
-        if (enemy->AsMolarbeast() != nullptr)
-            DrawCircleV(dot, hc.miniDotBoss * dotScale, Fade(MAROON, 0.95f));
-        else if (enemy->AsCyclops() != nullptr)
-            DrawCircleV(dot, hc.miniDotElite * dotScale, Fade(ORANGE, 0.9f));
-        else if (enemy->AsOgre() != nullptr)
-            DrawCircleV(dot, hc.miniDotElite * dotScale, Fade(BROWN, 0.9f));
-        else
-            DrawCircleV(dot, hc.miniDotEnemy * dotScale, Fade(RED, 0.9f));
-    }
-
-    for (const auto& prop : _props)
-    {
-        Vector2 dot = toMini(prop.GetWorldPos());
-        DrawCircleV(dot, hc.miniDotProp * dotScale, Fade(SKYBLUE, 0.55f));
-    }
-
-    for (const auto& pickup : _pickups)
-    {
-        if (!pickup->IsActive()) continue;
-        Vector2 dot = toMini(pickup->GetWorldPos());
-        DrawCircleV(dot, hc.miniDotPickup * dotScale,
-            pickup->GetType() == PickupType::Gold ? Fade(GOLD, 0.95f) : Fade(GREEN, 0.9f));
-    }
-
-    Vector2 playerDot = toMini(_player.GetWorldPos());
-    DrawCircleV(playerDot, hc.miniDotPlayer * dotScale, Fade(YELLOW, 1.0f));
-
-    DrawRectangleLinesEx(Rectangle{ originX, originY, miniW, miniH }, 1.f, Fade(LIGHTGRAY, 0.6f));
-}
 
 Vector2 Engine::GetRandomPropPosition()
 {
@@ -5906,7 +5881,6 @@ void Engine::ResetRunState()
     _pickupSpawnTimer = kDefaultTimedPickupInterval;
 
     _nav.RefreshSync(_player.GetFeetWorldPos());
-    GenerateActMap();  // builds the full act 1 node map; player clicks to start
 }
 
 int Engine::GetActiveEnemyCount() const
@@ -6551,9 +6525,13 @@ void Engine::SpawnPregenRoomEnemies()
 
     if (i == bossIdx)
     {
-        SpawnMolarbeast(GetPregenSpawnPos(cellW, cellH));
+        // Spawn the boss at the centre-top of the room so it's always in bounds
+        // regardless of player entry point. Avoids wall-clip from random placement.
+        float bossX = sw * 0.5f;
+        float bossY = sh * 0.28f;
+        SpawnMolarbeast({ bossX, bossY });
         if (tier >= 1)
-            spawnAt([&](Vector2 p){ SpawnCyclops(p); }, 1);   // support adds scale with tier
+            spawnAt([&](Vector2 p){ SpawnCyclops(p); }, 1);
     }
     else if (type == RoomType::Elite)
     {
@@ -6592,6 +6570,163 @@ void Engine::ClearPregenEnemies()
     _pregenEnemiesSpawned = false;
 }
 
+
+Engine::PregenDoorSide Engine::OppositePregenDoorSide(int dr, int dc) const
+{
+    if (dr < 0) return PregenDoorSide::South;
+    if (dr > 0) return PregenDoorSide::North;
+    if (dc < 0) return PregenDoorSide::East;
+    if (dc > 0) return PregenDoorSide::West;
+    return PregenDoorSide::None;
+}
+
+void Engine::ApplyPregenRoomDoorState(RoomLayout& layout, int roomIdx, PregenDoorSide entryDoorSide) const
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (roomIdx < 0 || roomIdx >= (int)rooms.size()) return;
+
+    const DungeonRoom& room = rooms[roomIdx];
+    auto stateIt = _pregenRoomStates.find(roomIdx);
+    bool cleared = (stateIt != _pregenRoomStates.end() && stateIt->second.cleared);
+    bool alwaysOpen = cleared
+        || roomIdx == _dungeonGen.GetStartIndex()
+        || room.type == RoomType::Rest
+        || room.type == RoomType::Treasure
+        || room.type == RoomType::Store;
+
+    int doorStartC = RoomLayout::kCols / 2 - 1;
+    int doorStartR = RoomLayout::kRows / 2 - 1;
+
+    auto shouldOpen = [&](PregenDoorSide side) {
+        return alwaysOpen || side == entryDoorSide;
+    };
+
+    auto setNorth = [&](bool open) {
+        for (int dc = 0; dc < 3; dc++)
+            layout.tiles[0][doorStartC + dc] = open ? TileType::Floor : TileType::WallTopFace;
+    };
+    auto setSouth = [&](bool open) {
+        for (int dc = 0; dc < 3; dc++)
+            layout.tiles[RoomLayout::kRows - 1][doorStartC + dc] = open ? TileType::Floor : TileType::WallBottom;
+    };
+    auto setWest = [&](bool open) {
+        for (int dr = 0; dr < 2; dr++)
+            layout.tiles[doorStartR + dr][0] = open ? TileType::Floor : TileType::WallLeft;
+    };
+    auto setEast = [&](bool open) {
+        for (int dr = 0; dr < 2; dr++)
+            layout.tiles[doorStartR + dr][RoomLayout::kCols - 1] = open ? TileType::Floor : TileType::WallRight;
+    };
+
+    if (room.hasNorth) setNorth(shouldOpen(PregenDoorSide::North));
+    if (room.hasSouth) setSouth(shouldOpen(PregenDoorSide::South));
+    if (room.hasWest)  setWest(shouldOpen(PregenDoorSide::West));
+    if (room.hasEast)  setEast(shouldOpen(PregenDoorSide::East));
+}
+
+bool Engine::IsPregenDoorOpen(PregenDoorSide side) const
+{
+    int doorStartC = RoomLayout::kCols / 2 - 1;
+    int doorStartR = RoomLayout::kRows / 2 - 1;
+    TileType t = TileType::None;
+
+    switch (side)
+    {
+    case PregenDoorSide::North: t = _pregenRoomLayout.tiles[0][doorStartC + 1]; break;
+    case PregenDoorSide::South: t = _pregenRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + 1]; break;
+    case PregenDoorSide::West:  t = _pregenRoomLayout.tiles[doorStartR][0]; break;
+    case PregenDoorSide::East:  t = _pregenRoomLayout.tiles[doorStartR][RoomLayout::kCols - 1]; break;
+    default: return false;
+    }
+
+    return t == TileType::Floor || t == TileType::FloorVariant || t == TileType::DoorOpen;
+}
+
+void Engine::SpawnPregenDoorOpenEffects()
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (_pregenViewedRoomIdx < 0 || _pregenViewedRoomIdx >= (int)rooms.size()) return;
+
+    const DungeonRoom& room = rooms[_pregenViewedRoomIdx];
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float cellW = sw / (float)RoomLayout::kCols;
+    float cellH = sh / (float)RoomLayout::kRows;
+    int doorStartC = RoomLayout::kCols / 2 - 1;
+    int doorStartR = RoomLayout::kRows / 2 - 1;
+    size_t effectStartCount = _pregenClearEffects.size();
+
+    auto addDoorEffect = [&](PregenDoorSide side, bool exists) {
+        if (!exists || side == _pregenEntryDoorSide) return;
+        Vector2 pos{};
+        switch (side)
+        {
+        case PregenDoorSide::North: pos = { (doorStartC + 1.5f) * cellW, 0.65f * cellH }; break;
+        case PregenDoorSide::South: pos = { (doorStartC + 1.5f) * cellW, (RoomLayout::kRows - 0.65f) * cellH }; break;
+        case PregenDoorSide::West:  pos = { 0.65f * cellW, (doorStartR + 1.f) * cellH }; break;
+        case PregenDoorSide::East:  pos = { (RoomLayout::kCols - 0.65f) * cellW, (doorStartR + 1.f) * cellH }; break;
+        default: return;
+        }
+        _pregenClearEffects.push_back({ pos, 0.f });
+    };
+
+    addDoorEffect(PregenDoorSide::North, room.hasNorth);
+    addDoorEffect(PregenDoorSide::South, room.hasSouth);
+    addDoorEffect(PregenDoorSide::West,  room.hasWest);
+    addDoorEffect(PregenDoorSide::East,  room.hasEast);
+
+    if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
+    {
+        Rectangle exit = GetPregenBossExitTrigger();
+        if (exit.width > 0.f && exit.height > 0.f)
+            _pregenClearEffects.push_back({ { exit.x + exit.width * 0.5f, exit.y + exit.height * 0.5f }, 0.f });
+    }
+    if (_pregenClearEffects.size() == effectStartCount)
+        _pregenClearEffects.push_back({ { sw * 0.5f, sh * 0.5f }, 0.f });
+
+    if (_roomClearExplosionSound.frameCount > 0)
+    {
+        StopSound(_roomClearExplosionSound);
+        PlaySound(_roomClearExplosionSound);
+    }
+}
+
+void Engine::UpdatePregenClearEffects(float dt)
+{
+    static constexpr float kDuration = 1.75f;
+    for (auto& effect : _pregenClearEffects)
+        effect.timer += dt;
+    _pregenClearEffects.erase(
+        std::remove_if(_pregenClearEffects.begin(), _pregenClearEffects.end(),
+            [](const PregenClearEffect& effect) { return effect.timer >= kDuration; }),
+        _pregenClearEffects.end());
+}
+
+void Engine::DrawPregenClearEffects() const
+{
+    if (_roomClearExplosionTex.id == 0) return;
+
+    static constexpr int kFrameW = 64;
+    static constexpr int kFrameH = 64;
+    static constexpr int kFrameCount = 24;
+    static constexpr float kDuration = 1.75f;
+    static constexpr float kScale = 2.0f;
+
+    for (const PregenClearEffect& effect : _pregenClearEffects)
+    {
+        float pct = std::clamp(effect.timer / kDuration, 0.f, 0.999f);
+        int frame = std::min((int)(pct * kFrameCount), kFrameCount - 1);
+        Rectangle src = GetAnimationFrameRect(_roomClearExplosionTex, kFrameW, kFrameH, frame);
+        Rectangle dst{
+            effect.worldPos.x,
+            effect.worldPos.y,
+            kFrameW * kScale,
+            kFrameH * kScale
+        };
+        DrawTexturePro(_roomClearExplosionTex, src, dst,
+            { dst.width * 0.5f, dst.height * 0.5f }, 0.f, WHITE);
+    }
+}
 void Engine::ApplyPregenBossExitTiles(TileType doorType)
 {
     int bossIdx = _dungeonGen.GetBossIndex();
@@ -6816,6 +6951,8 @@ void Engine::UpdatePregenTest(float dt)
                 _pregenScrolling     = false;
                 _pregenRoomLayout    = _pregenScrollNextLayout;
                 _pregenViewedRoomIdx = _pregenScrollNextIdx;
+                _pregenEntryDoorSide = _pregenScrollNextEntryDoorSide;
+                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
                 _player.SetWorldPos(_pregenScrollSpawnPos);
                 _player.Revive();
 
@@ -6832,6 +6969,96 @@ void Engine::UpdatePregenTest(float dt)
             return;
         }
 
+        
+        if (_debug.IsActive())
+        {
+            if (HandleDebugToggleTabInput())
+                return;
+
+            if (_debug.IsGodMode())
+                _player.GrantInvulnerability(0.2f);
+
+            DebugCommand cmd = _debug.Update();
+            if (cmd.issued)
+            {
+                Vector2 spawnBase = _player.GetWorldPos();
+                switch (cmd.action)
+                {
+                case DebugActionKind::GrantInvuln:
+                    _player.GrantInvulnerability(5.f); break;
+                case DebugActionKind::ClearEnemiesContinue:
+                    for (auto& e : _enemies) { e->SetActive(false); e->Teleport(Vector2{ -5000.f, -5000.f }); }
+                    _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
+                    _pregenEnemiesSpawned = false;
+                    ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+                    if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
+                        ApplyPregenBossExitTiles(TileType::DoorOpen);
+                    SpawnPregenDoorOpenEffects();
+                    RebuildPregenNav();
+                    break;
+                case DebugActionKind::RestartRoom:
+                    DebugRestartPregenRoomAs((RoomType)cmd.value); break;
+                case DebugActionKind::SetEliteMechanic:
+                    _debug.SetForcedEliteMechanic(cmd.value);
+                    DebugRestartPregenRoomAs(RoomType::Elite); break;
+                case DebugActionKind::SpawnGrunt:
+                    SpawnBasicEnemy(Vector2Add(spawnBase, Vector2{ 220.f, 40.f }));
+                    _pregenEnemiesSpawned = true; break;
+                case DebugActionKind::SpawnCyclops:
+                    SpawnCyclops(Vector2Add(spawnBase, Vector2{ 260.f, -60.f }));
+                    _pregenEnemiesSpawned = true; break;
+                case DebugActionKind::SpawnOgre:
+                    SpawnOgre(Vector2Add(spawnBase, Vector2{ -240.f, 50.f }));
+                    _pregenEnemiesSpawned = true; break;
+                case DebugActionKind::SpawnBoss:
+                    SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f }));
+                    _pregenEnemiesSpawned = true; break;
+                case DebugActionKind::Heal:
+                    _player.Heal(cmd.value); break;
+                case DebugActionKind::RestoreMana:
+                    _player.RestoreMana(cmd.value); break;
+                case DebugActionKind::AddGold:
+                    _player.AddGold(cmd.value); break;
+                case DebugActionKind::AddExp:
+                    _player.AddExp(cmd.value); break;
+                case DebugActionKind::TreasureCards:
+                    GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
+                    _levelUpReturnState = GameState::PregenTest; _levelUpOpenTimer = 0.1f;
+                    _gameState = GameState::LevelUpChoice; break;
+                case DebugActionKind::EliteReward:
+                    GenerateLevelUpOptions(LevelUpOfferContext::EliteReward);
+                    _levelUpReturnState = GameState::PregenTest; _levelUpOpenTimer = 0.1f;
+                    _gameState = GameState::LevelUpChoice; break;
+                case DebugActionKind::AbilityReward:
+                    GenerateAbilityChoiceOptions(); _abilityChoiceOpenTimer = 0.1f;
+                    _levelUpReturnState = GameState::PregenTest; _pendingRoomChoice = false;
+                    _gameState = GameState::AbilityChoice; break;
+                case DebugActionKind::ApplyUpgrade:
+                    _player.ApplyUpgrade((UpgradeType)cmd.value); break;
+                default: break;
+                }
+            }
+        }
+
+        if (_debug.IsActive() && IsKeyPressed(KEY_ZERO))
+        {
+            _isHitboxEditorActive = !_isHitboxEditorActive;
+            _hitboxSelectedEntity = nullptr;
+            _hitboxEditAttack     = false;
+            _hitboxNudgeAccum     = -kHitboxNudgeInitDelay;
+            if (_isHitboxEditorActive)
+                _debug.SetOpen(false);
+        }
+        if (_isHitboxEditorActive && !_debug.IsActive())
+        {
+            _isHitboxEditorActive = false;
+            _hitboxSelectedEntity = nullptr;
+        }
+        if (_isHitboxEditorActive)
+        {
+            UpdateHitboxEditor();
+            return;
+        }
         // ── Normal player update ──────────────────────────────────────────────
         if (_player.GetHealthValue() <= 0.f && !_playerDying)
         {
@@ -6871,10 +7098,10 @@ void Engine::UpdatePregenTest(float dt)
         float doorBot     = (doorCentreR + 1) * cellH;
 
         // Which walls have open doorways the player can walk through?
-        bool canPassNorth = cur.hasNorth && pos.x > doorLeft && pos.x < doorRight;
-        bool canPassSouth = cur.hasSouth && pos.x > doorLeft && pos.x < doorRight;
-        bool canPassWest  = cur.hasWest  && pos.y > doorTop  && pos.y < doorBot;
-        bool canPassEast  = cur.hasEast  && pos.y > doorTop  && pos.y < doorBot;
+        bool canPassNorth = cur.hasNorth && IsPregenDoorOpen(PregenDoorSide::North) && pos.x > doorLeft && pos.x < doorRight;
+        bool canPassSouth = cur.hasSouth && IsPregenDoorOpen(PregenDoorSide::South) && pos.x > doorLeft && pos.x < doorRight;
+        bool canPassWest  = cur.hasWest  && IsPregenDoorOpen(PregenDoorSide::West)  && pos.y > doorTop  && pos.y < doorBot;
+        bool canPassEast  = cur.hasEast  && IsPregenDoorOpen(PregenDoorSide::East)  && pos.y > doorTop  && pos.y < doorBot;
 
         // Helper: begin a Zelda-style scroll into an adjacent room.
         // scrollVec describes which direction the CURRENT room slides offscreen.
@@ -6887,6 +7114,8 @@ void Engine::UpdatePregenTest(float dt)
                 next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
                 (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
                 (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+            _pregenScrollNextEntryDoorSide = OppositePregenDoorSide(dr, dc);
+            ApplyPregenRoomDoorState(_pregenScrollNextLayout, nextIdx, _pregenScrollNextEntryDoorSide);
             _pregenScrollNextIdx     = nextIdx;
             _pregenScrollSpawnPos    = spawnPos;
             _pregenScrollVec         = scrollVec;
@@ -6969,10 +7198,49 @@ void Engine::UpdatePregenTest(float dt)
 
         HandlePlayerMeleeDamage();
         ResolvePregenEnemyCollisions();
+
+        // Player-enemy capsule separation — gives enemies physical presence.
+        // Dash passes through enemies; on landing inside one, the player is ejected.
+        if (!_player.IsDashing())
+        {
+            for (auto& enemy : _enemies)
+            {
+                if (!enemy->IsActive() || !enemy->IsAlive()) continue;
+                Vector2 mtv{};
+                if (!CheckCapsuleCapsule(_player.GetCapsule(), enemy->GetCapsule(), mtv)) continue;
+                if (_player.IsBeingForcedPushed()) continue;
+                Vector2 ppos = _player.GetWorldPos();
+                _player.SetWorldPos({ ppos.x + mtv.x, ppos.y + mtv.y });
+            }
+        }
+
+        // Keep all enemies within the tile room bounds (one cell margin from edges).
+        {
+            float roomRight  = (float)GetScreenWidth()  - cellW;
+            float roomBottom = (float)GetScreenHeight() - cellH;
+            for (auto& enemy : _enemies)
+            {
+                if (!enemy->IsActive() || enemy->IsDying()) continue;
+                Vector2 epos = enemy->GetWorldPos();
+                bool clamped = false;
+                if (epos.x < cellW)              { epos.x = cellW;        clamped = true; }
+                if (epos.x > roomRight)          { epos.x = roomRight;    clamped = true; }
+                if (epos.y < cellH)              { epos.y = cellH;        clamped = true; }
+                if (epos.y > roomBottom)         { epos.y = roomBottom;   clamped = true; }
+                if (clamped)
+                {
+                    if (Molarbeast* mb = enemy->AsMolarbeast()) { if (mb->IsDashing()) mb->OnDashBlocked(); }
+                    else if (Ogre*  og = enemy->AsOgre())       { if (og->IsRushing()) og->OnRushBlocked(); }
+                    enemy->Teleport(epos);
+                }
+            }
+        }
+
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         UpdateCyclopsLasers(dt);
         _vfx.Update(dt);
+        UpdatePregenClearEffects(dt);
         UpdateEnemyCount(dt);
         // Drain pending EXP slowly (50/sec) so the HUD bar animates, then trigger
         // a LevelUpChoice screen for each level the player gains — same as the
@@ -7019,11 +7287,11 @@ void Engine::UpdatePregenTest(float dt)
             {
                 _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
                 _pregenEnemiesSpawned = false;
+                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
                 if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
-                {
                     ApplyPregenBossExitTiles(TileType::DoorOpen);
-                    RebuildPregenNav();  // door tile changed — update nav so enemies don't block it
-                }
+                SpawnPregenDoorOpenEffects();
+                RebuildPregenNav();
             }
         }
 
@@ -7047,6 +7315,8 @@ void Engine::UpdatePregenTest(float dt)
                     (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
                     (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
                 _pregenRoomStates.clear();
+                _pregenEntryDoorSide = PregenDoorSide::None;
+                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
                 _pregenEnemiesSpawned = false;
                 _pregenScrolling      = false;
                 _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
@@ -7117,6 +7387,8 @@ void Engine::UpdatePregenTest(float dt)
                     (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
                     (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
                 _pregenViewedRoomIdx = i;
+                _pregenEntryDoorSide = PregenDoorSide::None;
+                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
                 _pregenView          = PregenView::Room;
                 break;
             }
@@ -7176,6 +7448,7 @@ void Engine::DrawPregenTest()
             else
             {
                 _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+                DrawPregenClearEffects();
 
                 // Enemies, projectiles, VFX — world == screen in pregen mode.
                 Vector2 worldOffset{ -_cameraPos.x, -_cameraPos.y };
@@ -7201,6 +7474,14 @@ void Engine::DrawPregenTest()
         {
             DrawHUD();
             drawRoomLabel();
+            if (_debug.IsActive())
+            {
+                DrawDebugToggleTab();
+                if (_debug.IsOpen())
+                    _debug.Draw(_currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
+            }
+            if (_isHitboxEditorActive)
+                DrawHitboxEditor();
         }
         return;
     }
