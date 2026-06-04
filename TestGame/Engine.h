@@ -614,7 +614,17 @@ private:
     Rectangle GetPregenRoomRect(int roomIdx) const;
 
     // Pregen combat helpers
-    Vector2 GetPregenSpawnPos(float cellW, float cellH) const;
-    void    SpawnPregenRoomEnemies();
-    void    ClearPregenEnemies();
+    Vector2   GetPregenSpawnPos(float cellW, float cellH) const;
+    void      SpawnPregenRoomEnemies();
+    void      ClearPregenEnemies();
+
+    // Boss room exit door — sets tiles in _pregenRoomLayout and returns the trigger rect.
+    void      ApplyPregenBossExitTiles(TileType doorType);
+    Rectangle GetPregenBossExitTrigger() const;
+
+    // Rebuilds the nav grid for the current pregen room layout, including wall tiles.
+    void RebuildPregenNav();
+
+    // Resolves all active enemies out of tile walls and props. Ends forced pushes on impact.
+    void ResolvePregenEnemyCollisions();
 };

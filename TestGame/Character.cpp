@@ -587,6 +587,22 @@ void Character::Death()
     _velocity = Vector2Zero();
 }
 
+void Character::Revive()
+{
+    _health      = _maxHealth;
+    _dying       = false;
+    _takingDamage = false;
+    _hitTimer    = 0.f;
+    _deathTimer  = 0.4f;
+    _velocity    = Vector2Zero();
+    _forcedPushActive    = false;
+    _forcedPushDirection = Vector2Zero();
+    _forcedPushSpeed     = 0.f;
+    _forcedPushStunTimer = 0.f;
+    _pendingBurnTicks.clear();
+    GrantInvulnerability(1.5f);  // brief i-frames so respawn isn't immediately punished
+}
+
 void Character::TakeDamage(int damage, Vector2 attackerPos)
 {
     if (_hasIFrames || _dashInvincible || _forcedPushActive)

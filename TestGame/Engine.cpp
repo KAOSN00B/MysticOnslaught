@@ -6519,6 +6519,181 @@ void Engine::ClearPregenEnemies()
     _pregenEnemiesSpawned = false;
 }
 
+void Engine::ApplyPregenBossExitTiles(TileType doorType)
+{
+    int bossIdx = _dungeonGen.GetBossIndex();
+    if (bossIdx < 0) return;
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (bossIdx >= (int)rooms.size()) return;
+    const DungeonRoom& boss = rooms[bossIdx];
+
+    int doorStartC = RoomLayout::kCols / 2 - 1;
+    int doorStartR = RoomLayout::kRows / 2 - 1;
+
+    // Place the exit on the first wall that has no existing dungeon connection.
+    if (!boss.hasSouth)
+    {
+        for (int dc = 0; dc < 3; dc++)
+            _pregenRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + dc] = doorType;
+    }
+    else if (!boss.hasNorth)
+    {
+        for (int dc = 0; dc < 3; dc++)
+            _pregenRoomLayout.tiles[0][doorStartC + dc] = doorType;
+    }
+    else if (!boss.hasEast)
+    {
+        for (int dr = 0; dr < 2; dr++)
+            _pregenRoomLayout.tiles[doorStartR + dr][RoomLayout::kCols - 1] = doorType;
+    }
+    else
+    {
+        for (int dr = 0; dr < 2; dr++)
+            _pregenRoomLayout.tiles[doorStartR + dr][0] = doorType;
+    }
+}
+
+Rectangle Engine::GetPregenBossExitTrigger() const
+{
+    int bossIdx = _dungeonGen.GetBossIndex();
+    if (bossIdx < 0) return {};
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (bossIdx >= (int)rooms.size()) return {};
+    const DungeonRoom& boss = rooms[bossIdx];
+
+    float sw    = (float)GetScreenWidth();
+    float sh    = (float)GetScreenHeight();
+    float cellW = sw / (float)RoomLayout::kCols;
+    float cellH = sh / (float)RoomLayout::kRows;
+    int doorStartC = RoomLayout::kCols / 2 - 1;
+    int doorStartR = RoomLayout::kRows / 2 - 1;
+
+    if (!boss.hasSouth)
+        return { doorStartC * cellW, (RoomLayout::kRows - 1) * cellH, 3.f * cellW, cellH };
+    if (!boss.hasNorth)
+        return { doorStartC * cellW, 0.f, 3.f * cellW, cellH };
+    if (!boss.hasEast)
+        return { (RoomLayout::kCols - 1) * cellW, doorStartR * cellH, cellW, 2.f * cellH };
+    return { 0.f, doorStartR * cellH, cellW, 2.f * cellH };
+}
+
+void Engine::RebuildPregenNav()
+{
+    float sw    = (float)GetScreenWidth();
+    float sh    = (float)GetScreenHeight();
+    float cellW = sw / (float)RoomLayout::kCols;
+    float cellH = sh / (float)RoomLayout::kRows;
+
+    std::vector<Rectangle> solids;
+
+    // Wall tiles — every non-floor, non-void tile blocks a full cell.
+    for (int r = 0; r < RoomLayout::kRows; r++)
+    {
+        for (int c = 0; c < RoomLayout::kCols; c++)
+        {
+            TileType t = _pregenRoomLayout.tiles[r][c];
+            if (t == TileType::Floor        || t == TileType::FloorVariant ||
+                t == TileType::DoorOpen     || t == TileType::Void         ||
+                t == TileType::None)
+                continue;
+            solids.push_back({ c * cellW, r * cellH, cellW, cellH });
+        }
+    }
+
+    // Props (full cell approximation is accurate enough for nav pathfinding).
+    for (const SpritePlacement& p : _pregenRoomLayout.props)
+        solids.push_back({ p.col * cellW, p.row * cellH, cellW, cellH });
+
+    _nav.CancelAndReset();
+    _nav.Rebuild(sw, sh, solids);
+    _nav.RefreshSync(_player.GetFeetWorldPos());
+}
+
+void Engine::ResolvePregenEnemyCollisions()
+{
+    float sw    = (float)GetScreenWidth();
+    float sh    = (float)GetScreenHeight();
+    float cellW = sw / (float)RoomLayout::kCols;
+    float cellH = sh / (float)RoomLayout::kRows;
+    float pxSX  = cellW / 16.f;
+    float pxSY  = cellH / 16.f;
+
+    for (auto& e : _enemies)
+    {
+        if (!e->IsActive()) continue;
+
+        // ── Wall tiles — only check the 5×5 neighbourhood around the enemy ────
+        Vector2 ePos = e->GetWorldPos();
+        int ec = std::max(0, std::min((int)(ePos.x / cellW), RoomLayout::kCols - 1));
+        int er = std::max(0, std::min((int)(ePos.y / cellH), RoomLayout::kRows - 1));
+
+        for (int r = std::max(0, er - 2); r <= std::min(RoomLayout::kRows - 1, er + 2); r++)
+        {
+            for (int c = std::max(0, ec - 2); c <= std::min(RoomLayout::kCols - 1, ec + 2); c++)
+            {
+                TileType t = _pregenRoomLayout.tiles[r][c];
+                if (t == TileType::Floor        || t == TileType::FloorVariant ||
+                    t == TileType::DoorOpen     || t == TileType::Void         ||
+                    t == TileType::None)
+                    continue;
+
+                Rectangle wallRect{ c * cellW, r * cellH, cellW, cellH };
+                Rectangle eRect = e->GetCollisionRec();
+                if (!CheckCollisionRecs(eRect, wallRect)) continue;
+
+                if (e->IsBeingForcedPushed())
+                {
+                    e->OnForcedPushCollision();
+                }
+                else
+                {
+                    float oL = (eRect.x + eRect.width)  - wallRect.x;
+                    float oR = (wallRect.x + wallRect.width) - eRect.x;
+                    float oT = (eRect.y + eRect.height) - wallRect.y;
+                    float oB = (wallRect.y + wallRect.height) - eRect.y;
+                    float rX = (oL < oR) ? -oL : oR;
+                    float rY = (oT < oB) ? -oT : oB;
+                    Vector2 p = e->GetWorldPos();
+                    if (std::abs(rX) < std::abs(rY)) p.x += rX; else p.y += rY;
+                    e->Teleport(p);
+                }
+            }
+        }
+
+        // ── Props — precise collision rect ────────────────────────────────────
+        for (const SpritePlacement& prop : _pregenRoomLayout.props)
+        {
+            if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
+            const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+            Rectangle propRect{
+                prop.col * cellW + coll.x * pxSX,
+                prop.row * cellH + coll.y * pxSY,
+                coll.width  * pxSX,
+                coll.height * pxSY
+            };
+            Rectangle eRect = e->GetCollisionRec();
+            if (!CheckCollisionRecs(eRect, propRect)) continue;
+
+            if (e->IsBeingForcedPushed())
+            {
+                e->OnForcedPushCollision();
+            }
+            else
+            {
+                float oL = (eRect.x + eRect.width)  - propRect.x;
+                float oR = (propRect.x + propRect.width)  - eRect.x;
+                float oT = (eRect.y + eRect.height) - propRect.y;
+                float oB = (propRect.y + propRect.height) - eRect.y;
+                float rX = (oL < oR) ? -oL : oR;
+                float rY = (oT < oB) ? -oT : oB;
+                Vector2 p = e->GetWorldPos();
+                if (std::abs(rX) < std::abs(rY)) p.x += rX; else p.y += rY;
+                e->Teleport(p);
+            }
+        }
+    }
+}
+
 Rectangle Engine::GetPregenRoomRect(int roomIdx) const
 {
     const auto& rooms = _dungeonGen.GetRooms();
@@ -6569,26 +6744,29 @@ void Engine::UpdatePregenTest(float dt)
                 _pregenRoomLayout    = _pregenScrollNextLayout;
                 _pregenViewedRoomIdx = _pregenScrollNextIdx;
                 _player.SetWorldPos(_pregenScrollSpawnPos);
+                _player.Revive();
 
                 // Clear previous room's enemies BEFORE spawning the new set.
                 ClearPregenEnemies();
 
-                // Rebuild nav grid and spawn enemies for the new room.
-                float cw = sw / (float)RoomLayout::kCols;
-                float ch = sh / (float)RoomLayout::kRows;
-                std::vector<Rectangle> propRects;
-                for (const SpritePlacement& p : _pregenRoomLayout.props)
-                    propRects.push_back({ p.col * cw, p.row * ch, cw, ch });
-                _nav.CancelAndReset();
-                _nav.Rebuild(sw, sh, propRects);
-                _nav.RefreshSync(_player.GetFeetWorldPos());
+                // Rebuild nav grid (walls + props) and spawn enemies for the new room.
+                RebuildPregenNav();
                 SpawnPregenRoomEnemies();
+                if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
+                    ApplyPregenBossExitTiles(TileType::DoorLocked);
             }
             _cameraPos = { sw * 0.5f, sh * 0.5f };
             return;
         }
 
         // ── Normal player update ──────────────────────────────────────────────
+        // If the player died, respawn at room centre rather than freezing.
+        if (_player.GetHealthValue() <= 0.f)
+        {
+            _player.Revive();
+            _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
+        }
+
         _player.SetCombatLocked(false);
         _player.SetTouchModeEnabled(false);
         _player.Update(dt);
@@ -6646,14 +6824,17 @@ void Engine::UpdatePregenTest(float dt)
         // Wall collision: solid walls clamp, door openings let the player through.
         if (!_pregenScrolling)
         {
+            Vector2 posBefore = pos;
             if (!canPassNorth) pos.y = std::max(pos.y, cellH);
             if (!canPassSouth) pos.y = std::min(pos.y, (RoomLayout::kRows - 2) * cellH);
             if (!canPassWest)  pos.x = std::max(pos.x, cellW);
             if (!canPassEast)  pos.x = std::min(pos.x, (RoomLayout::kCols - 1) * cellW);
             _player.SetWorldPos(pos);
+            // End any forced push the moment the player touches a wall.
+            if ((pos.x != posBefore.x || pos.y != posBefore.y) && _player.IsBeingForcedPushed())
+                _player.OnForcedPushCollision();
 
             // Prop collision — resolve player out of each prop's stored collision rect.
-            // Convert from source pixels to world/screen pixels using per-pixel scale.
             float pxScaleX = cellW / 16.f;
             float pxScaleY = cellH / 16.f;
             for (const SpritePlacement& prop : _pregenRoomLayout.props)
@@ -6669,6 +6850,7 @@ void Engine::UpdatePregenTest(float dt)
                 Rectangle playerRect = _player.GetCollisionRec();
                 if (!CheckCollisionRecs(playerRect, propRect)) continue;
 
+                bool wasPushed = _player.IsBeingForcedPushed();
                 float overlapL = (playerRect.x + playerRect.width)  - propRect.x;
                 float overlapR = (propRect.x   + propRect.width)    - playerRect.x;
                 float overlapT = (playerRect.y + playerRect.height) - propRect.y;
@@ -6682,6 +6864,9 @@ void Engine::UpdatePregenTest(float dt)
                 else
                     p.y += resolveY;
                 _player.SetWorldPos(p);
+                // End forced push on prop impact, same as in the main game.
+                if (wasPushed)
+                    _player.OnForcedPushCollision();
             }
         }
 
@@ -6700,6 +6885,7 @@ void Engine::UpdatePregenTest(float dt)
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
         HandlePlayerMeleeDamage();
+        ResolvePregenEnemyCollisions();
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         UpdateCyclopsLasers(dt);
@@ -6717,6 +6903,24 @@ void Engine::UpdatePregenTest(float dt)
             {
                 _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
                 _pregenEnemiesSpawned = false;
+                if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
+                {
+                    ApplyPregenBossExitTiles(TileType::DoorOpen);
+                    RebuildPregenNav();  // door tile changed — update nav so enemies don't block it
+                }
+            }
+        }
+
+        // ── Boss exit trigger ──────────────────────────────────────────────────
+        int bossIdx = _dungeonGen.GetBossIndex();
+        if (_pregenViewedRoomIdx == bossIdx && _pregenRoomStates[bossIdx].cleared)
+        {
+            Rectangle exitRect = GetPregenBossExitTrigger();
+            if (CheckCollisionPointRec(_player.GetWorldPos(), exitRect))
+            {
+                ClearPregenEnemies();
+                _pregenView = PregenView::Graph;
+                return;
             }
         }
 
@@ -6740,22 +6944,16 @@ void Engine::UpdatePregenTest(float dt)
             float hw = GetScreenWidth()  * 0.5f;
             float hh = GetScreenHeight() * 0.5f;
             _player.SetWorldPos({ hw, hh });
+            _player.Revive();
             _cameraPos = { hw, hh };
             _pregenView = PregenView::Play;
 
-            // Build nav grid and spawn room enemies.
-            float sw2 = (float)GetScreenWidth();
-            float sh2 = (float)GetScreenHeight();
-            float cw  = sw2 / (float)RoomLayout::kCols;
-            float ch  = sh2 / (float)RoomLayout::kRows;
-            std::vector<Rectangle> propRects;
-            for (const SpritePlacement& p : _pregenRoomLayout.props)
-                propRects.push_back({ p.col * cw, p.row * ch, cw, ch });
-            _nav.CancelAndReset();
-            _nav.Rebuild(sw2, sh2, propRects);
-            _nav.RefreshSync(_player.GetFeetWorldPos());
+            // Build nav grid (walls + props) and spawn room enemies.
+            RebuildPregenNav();
             ClearPregenEnemies();
             SpawnPregenRoomEnemies();
+            if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
+                ApplyPregenBossExitTiles(TileType::DoorLocked);
         }
         return;
     }
