@@ -102,8 +102,11 @@ protected:
 
     void HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
         const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters);
-    void HandleAttack();
+    void HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies);
     void PickApproachOffset();
+    bool CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies) const;
+    bool UpdateEliteLunge(float dt);
+    void UpdateBurnPanic(float dt);
     void UpdateBurns(float dt);
     void UpdateElectricCharge(float dt);
     void UpdateLaunchVisual(float dt);
@@ -139,6 +142,24 @@ protected:
 
     bool  _attacking    = false;
     bool  _damageApplied = false;
+
+    enum class LungeState { None, Windup, Lunging, Recovery };
+    LungeState _lungeState = LungeState::None;
+    float   _lungeTimer = 0.f;
+    float   _lungeCooldown = 0.f;
+    Vector2 _lungeDir = {};
+    bool    _lungeDamageApplied = false;
+    static constexpr float kEliteLungeWindup = 0.42f;
+    static constexpr float kEliteLungeDuration = 0.18f;
+    static constexpr float kEliteLungeRecovery = 0.35f;
+    static constexpr float kEliteLungeCooldown = 2.4f;
+    static constexpr float kEliteLungeSpeed = 720.f;
+    static constexpr float kEliteLungeMinRange = 145.f;
+    static constexpr float kEliteLungeMaxRange = 430.f;
+
+    Vector2 _burnPanicDir = {};
+    float   _burnPanicTurnTimer = 0.f;
+    float   _burnSoundTimer = 0.f;
 
     float   _freezeTimer        = 0.f;
 

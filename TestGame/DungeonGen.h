@@ -17,7 +17,7 @@ struct DungeonRoom
 
 // Generates a branching dungeon layout on a small grid.
 // The result is a list of rooms with their grid positions and door directions.
-// No tile data yet — this is purely the room graph used by the pregen visualiser.
+// No tile data yet — this is purely the room graph used by the dungeon graph.
 class DungeonGen
 {
 public:

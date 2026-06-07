@@ -133,6 +133,9 @@
   <ItemGroup>
     <ClCompile Include="AudioManager.cpp" />
     <ClCompile Include="BaseCharacter.cpp" />
+    <ClCompile Include="CutsceneManager.cpp" />
+    <ClCompile Include="DialogueBox.cpp" />
+    <ClCompile Include="NineSliceEditor.cpp" />
     <ClCompile Include="Cyclops.cpp" />
     <ClCompile Include="CyclopsLaserProjectile.cpp" />
     <ClCompile Include="CombatDirector.cpp" />
@@ -154,7 +157,6 @@
     <ClCompile Include="LavaBallProjectile.cpp" />
     <ClCompile Include="Leaderboard.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="ManaGemPickup.cpp" />
     <ClCompile Include="Molarbeast.cpp" />
     <ClCompile Include="Ogre.cpp" />
     <ClCompile Include="OverlayRenderer.cpp" />
@@ -173,6 +175,10 @@
   <ItemGroup>
     <ClInclude Include="AbilityType.h" />
     <ClInclude Include="AudioManager.h" />
+    <ClInclude Include="CutsceneAction.h" />
+    <ClInclude Include="CutsceneManager.h" />
+    <ClInclude Include="DialogueBox.h" />
+    <ClInclude Include="NineSliceEditor.h" />
     <ClInclude Include="AnimationUtils.h" />
     <ClInclude Include="AssetPaths.h" />
     <ClInclude Include="BaseCharacter.h" />
@@ -180,7 +186,6 @@
     <ClInclude Include="CombatDirector.h" />
     <ClInclude Include="Cyclops.h" />
     <ClInclude Include="CyclopsLaserProjectile.h" />
-    <ClInclude Include="CyclopsProjectile.h" />
     <ClInclude Include="DebugPanel.h" />
     <ClInclude Include="Enemy.h" />
     <ClInclude Include="Engine.h" />
@@ -196,7 +201,6 @@
     <ClInclude Include="LavaBallProjectile.h" />
     <ClInclude Include="Leaderboard.h" />
     <ClInclude Include="MainMenu.h" />
-    <ClInclude Include="ManaGemPickup.h" />
     <ClInclude Include="Molarbeast.h" />
     <ClInclude Include="NineSlice.h" />
     <ClInclude Include="Ogre.h" />

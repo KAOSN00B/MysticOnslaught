@@ -13,12 +13,7 @@
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
 #include "Pickup.h"
-// FireBallPickup / SwordBeamPickup / FreezePickup / SwordBeamProjectile /
-// FreezeProjectile / FireballProjectile — removed from vcxproj.
-// These were the old ammo-pickup combat system, replaced by the mana economy.
-// The .cpp/.h source files are still on disk but no longer compiled.
 #include "HealPickup.h"
-#include "ManaGemPickup.h"
 #include "GoldPickup.h"
 #include "SpreadProjectile.h"
 #include "CyclopsLaserProjectile.h"
@@ -33,7 +28,9 @@
 #include "RunStateController.h"
 #include "CombatDirector.h"
 #include "OverlayRenderer.h"
+#include "CutsceneManager.h"
 #include "TileMapper.h"
+#include "NineSliceEditor.h"
 #include "DungeonGen.h"
 #include "TileDefs.h"
 #include "RoomLayout.h"
@@ -44,58 +41,6 @@
 #include <memory>
 #include <unordered_map>
 
-#if 0
-enum class Biome { Dungeon, Forest, Swamp, Volcano, Tundra, Crypt, Desert, Ruins };
-
-// ── Room type — drives encounter, reward, and biome logic ─────────────────────
-enum class RoomType
-{
-    Standard,   // mixed enemy wave, EXP reward
-    Elite,      // harder curated wave, better reward
-    Rest,       // no combat — spawns heal pickups, rest timer
-    Treasure,   // no combat — grants a free level-up card pick
-    Store,      // no combat — placeholder for future shop
-    Boss,       // Molarbeast + support adds — ends the act
-};
-
-enum class LevelUpOfferContext
-{
-    NormalLevel,
-    TreasureBasic,
-    EliteReward,
-    StoreStock,
-};
-
-enum class GameState
-{
-    Menu,
-    Play,
-    GameOver,
-    Pause,
-    HowToPlay,
-    Keybindings,
-    LevelUpChoice,
-    AbilityChoice,
-    ExpTally,       // post-battle EXP tally screen — bar fills, level-ups interrupt
-    Map,            // Slay-the-Spire–style act map — player clicks a node to enter the next room
-    Shop,           // Zeph's shop — full-screen UI entered from a Store room
-    DemoEnd,        // "Thanks for playing" screen shown after 2 boss kills
-};
-
-enum class MusicCue
-{
-    None,
-    Title,
-    Pause,
-    Dungeon,
-    Forest,
-    BossBattle,
-    Shop,
-    BattleVictory,
-    BossVictory,
-    GameOver,
-};
-#endif
 
 class Engine
 {
@@ -107,6 +52,7 @@ public:
     void RunFrame();
 
 private:
+    enum class DungeonDoorSide;
 
     void Init();
 
@@ -126,16 +72,16 @@ private:
     void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
     void DrawCyclopsLasers(Vector2 worldOffset);
-    void DrawWorld();
     void DrawHUD();
     void DebugStartRun();
     void DebugRestartRoomAs(RoomType type);
-    void DebugRestartPregenRoomAs(RoomType type);
+    void DebugRestartDungeonRoomAs(RoomType type);
     void DebugSetEliteMechanic(int mechanic);
     void DrawHowToPlay();
     void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
     void DrawWaveIntro();
     void HandlePlayerMeleeDamage();
+    void HandlePlayerCastRequest();
     void SpawnSpreadBurst(AbilityType element);
     void SpawnBolt(AbilityType element);
     void SpawnUltimateBurst(AbilityType element);
@@ -148,13 +94,16 @@ private:
     void DrawUltimateSequence();
     void ApplyUltimateImpact();
     void GenerateStartingAbilityOptions();
+    void DrawStartingAbilityChoice();
+    void EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates);
+    Vector2 GetDungeonBottomSpawnPos() const;
+    void EnterDungeonShopIfNeeded(const DungeonRoom& room);
     void UpdateSpreadProjectiles(float dt);
     void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);
     void SpawnTimedPickup();
     void SpawnBossSupportAdds();
     void UpdateBossSupportRespawns(float dt);
     void ClearBossSupportAdds();
-    Biome GetBiomeForWave(int wave) const;
     const char* GetBiomeName(Biome biome) const;
     void ApplyBiome(Biome biome);
     void PopulatePropsForBiome(Biome biome);
@@ -190,7 +139,7 @@ private:
     void StartVictoryMusic(MusicCue cue);
     void ResetMusicState();
 
-    Biome GetBiomeForAct(int act) const;  // replaces GetBiomeForWave()
+    Biome GetBiomeForAct(int act) const;
 
     // Touch-mode helpers
     void UpdateTouchControls();
@@ -435,6 +384,13 @@ private:
     bool        _ultimateRowPicked   = false;
     bool        _regularRowPicked    = false;
     bool        _eliteRewardGranted  = false;
+    UpgradeType _startingAbilityOptions[6] = {
+        UpgradeType::LearnFireSpread, UpgradeType::LearnIceSpread, UpgradeType::LearnElectricSpread,
+        UpgradeType::LearnFireBolt,   UpgradeType::LearnIceBolt,   UpgradeType::LearnElectricBolt
+    };
+    bool        _startingAbilitySelected[6] = {};
+    int         _startingAbilityPickCount = 0;
+    bool        _starterAbilityGiftClaimed = false;
 
     // ── Elite-room state (all reset in StartNextRoom) ─────────────────────
     // Active mechanic index: 0=Cage, 1=Bodyguard, 2=Enrage, 3=Leap, 4=Hazards; -1=none
@@ -517,6 +473,7 @@ private:
 
     Texture2D _shopBorderTex{};
     Texture2D _shopZephTex{};
+    Texture2D _htpBorderTex{};   // HowToPlayBorder.png — used for the How To Play content panel
 
     // Map node icons (TileSet/MapIcons/)
     Texture2D _mapIconNormal{};
@@ -585,48 +542,53 @@ private:
     std::vector<int> _abilityTapSeenIds;
 
     DebugPanel   _debug;
-    TileMapper   _tileMapper;
+    TileMapper      _tileMapper;
+    NineSliceEditor _nineSliceEditor;
     DungeonGen   _dungeonGen;
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;
 
-    // Per-room persistent state tracked during a pregen playtest session.
-    struct PregenRoomState { bool cleared = false; };
+    // Per-room persistent state tracked during a dungeon run session.
+    struct DungeonRoomState { bool cleared = false; };
 
-    // Pregen test sub-state
-    enum class PregenView { Graph, Room, Play };
-    PregenView _pregenView          = PregenView::Graph;
-    int        _pregenViewedRoomIdx = -1;
-    RoomLayout _pregenRoomLayout{};
+    // Dungeon run sub-state
+    enum class DungeonView { Graph, Room, Play };
+    DungeonView _dungeonView          = DungeonView::Graph;
+    int        _dungeonRoomIdx = -1;
+    RoomLayout _dungeonRoomLayout{};
 
-    enum class PregenDoorSide { None = -1, North, South, West, East };
-    PregenDoorSide _pregenEntryDoorSide = PregenDoorSide::None;
+    enum class DungeonDoorSide { None = -1, North, South, West, East };
+    DungeonDoorSide _dungeonEntryDoorSide = DungeonDoorSide::None;
 
-    struct PregenClearEffect
+    struct DungeonClearEffect
     {
         Vector2 worldPos{};
         float   timer = 0.f;
         Rectangle glowRect{};
         bool hasGlow = false;
     };
-    std::vector<PregenClearEffect> _pregenClearEffects;
+    std::vector<DungeonClearEffect> _dungeonClearEffects;
 
-    std::unordered_map<int, PregenRoomState> _pregenRoomStates;
-    bool _pregenEnemiesSpawned = false;
+    std::unordered_map<int, DungeonRoomState> _dungeonRoomStates;
+    bool _dungeonEnemiesSpawned = false;
 
     // Zelda-style room scroll transition
-    bool       _pregenScrolling      = false;
-    float      _pregenScrollT        = 0.f;
-    Vector2    _pregenScrollVec      = {};         // direction current room slides (unit, applied to sw/sh)
-    RoomLayout _pregenScrollNextLayout{};
-    int        _pregenScrollNextIdx  = -1;
-    Vector2    _pregenScrollSpawnPos = {};
-    PregenDoorSide _pregenScrollNextEntryDoorSide = PregenDoorSide::None;
-    static constexpr float kPregenScrollDur = 0.40f;
+    bool       _dungeonScrolling      = false;
+    float      _dungeonScrollT        = 0.f;
+    Vector2    _dungeonScrollVec      = {};         // direction current room slides (unit, applied to sw/sh)
+    RoomLayout _dungeonScrollNextLayout{};
+    int        _dungeonScrollNextIdx  = -1;
+    Vector2    _dungeonScrollSpawnPos = {};
+    DungeonDoorSide _dungeonScrollNextEntryDoorSide = DungeonDoorSide::None;
+    static constexpr float kDungeonScrollDur = 0.40f;
 
     // Folder scanned by the TileMapper debug tool for PNG tilesets.
     static constexpr const char* kTilesheetFolder =
         "C:/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/MapTilesets";
+
+    // Folder scanned by the 9-Slice Editor — top-level PNGs in UI/ only, no subfolders.
+    static constexpr const char* kUIFolder =
+        "C:/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/UI";
 
     // ── Hitbox debug editor (F12 while debug active) ─────────────────────────
     bool           _isHitboxEditorActive = false;
@@ -639,31 +601,63 @@ private:
     void UpdateHitboxEditor();
     void DrawHitboxEditor();
 
-    // Pregen test — dungeon map visualiser + tile room preview
-    void UpdatePregenTest(float dt);
-    void DrawPregenTest();
-    Rectangle GetPregenRoomRect(int roomIdx) const;
+    // ── Dialogue box designer (F11 while debug active) ───────────────────────
+    // Lets you drag and resize the dialogue panel and text sizes live
+    // so you can tweak layout without recompiling.
+    bool  _isDlgEditorActive   = false;
+    int   _dlgEditorHandle     = -1;   // panel handle being dragged (0-4), -1 = none
 
-    // Pregen combat helpers
-    Vector2   GetPregenSpawnPos(float cellW, float cellH) const;
-    void      SpawnPregenRoomEnemies();
-    void      ClearPregenEnemies();
+    // Font-size drag state (drag the label left/right to shrink/grow)
+    bool  _dlgSpeakerFsDrag    = false;
+    float _dlgSpeakerFsDragX   = 0.f;
+    int   _dlgSpeakerFsDragVal = 0;
+    bool  _dlgBodyFsDrag       = false;
+    float _dlgBodyFsDragX      = 0.f;
+    int   _dlgBodyFsDragVal    = 0;
+
+    // Text-inset drag state (horizontal and vertical padding inside the panel)
+    bool  _dlgInsetLeftDrag    = false;
+    float _dlgInsetLeftDragX   = 0.f;
+    float _dlgInsetLeftDragVal = 0.f;
+    bool  _dlgInsetTopDrag     = false;
+    float _dlgInsetTopDragX    = 0.f;
+    float _dlgInsetTopDragVal  = 0.f;
+
+    void UpdateDialogueBoxEditor();
+    void DrawDialogueBoxEditor();
+
+    // ── Cutscene system ───────────────────────────────────────────────────────
+    CutsceneManager _cutscene;
+    bool            _cutsceneIntroPlayed = false; // stays true after first-ever intro
+
+    // Lock / unlock the Store room's north exit door tile directly.
+    void SetStoreDoorTiles(TileType doorType);
+
+    // Dungeon run
+    void UpdateDungeonRun(float dt);
+    void DrawDungeonRun();
+    Rectangle GetDungeonRoomRect(int roomIdx) const;
+
+    // Dungeon run combat helpers
+    Vector2   GetDungeonSpawnPos(float cellW, float cellH) const;
+    void      SpawnDungeonRoomEnemies();
+    void      ClearDungeonEnemies();
 
     // Door state helpers for tile-dungeon rooms.
-    void ApplyPregenRoomDoorState(RoomLayout& layout, int roomIdx, PregenDoorSide entryDoorSide) const;
-    bool IsPregenDoorOpen(PregenDoorSide side) const;
-    PregenDoorSide OppositePregenDoorSide(int dr, int dc) const;
-    void SpawnPregenDoorOpenEffects();
-    void UpdatePregenClearEffects(float dt);
-    void DrawPregenClearEffects() const;
+    void ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonDoorSide entryDoorSide) const;
+    bool IsDungeonDoorOpen(DungeonDoorSide side) const;
+    DungeonDoorSide OppositeDungeonDoorSide(int dr, int dc) const;
+    void SpawnDungeonDoorOpenEffects();
+    void UpdateDungeonClearEffects(float dt);
+    void DrawDungeonClearEffects() const;
 
-    // Boss room exit door - sets tiles in _pregenRoomLayout and returns the trigger rect.
-    void      ApplyPregenBossExitTiles(TileType doorType);
-    Rectangle GetPregenBossExitTrigger() const;
+    // Boss room exit door - sets tiles in _dungeonRoomLayout and returns the trigger rect.
+    void      ApplyDungeonBossExitTiles(TileType doorType);
+    Rectangle GetDungeonBossExitTrigger() const;
 
-    // Rebuilds the nav grid for the current pregen room layout, including wall tiles.
-    void RebuildPregenNav();
+    // Rebuilds the nav grid for the current dungeon room layout, including wall tiles.
+    void RebuildDungeonNav();
 
     // Resolves all active enemies out of tile walls and props. Ends forced pushes on impact.
-    void ResolvePregenEnemyCollisions();
+    void ResolveDungeonEnemyCollisions();
 };

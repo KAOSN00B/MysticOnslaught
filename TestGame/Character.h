@@ -63,7 +63,7 @@ public:
     virtual void Death() override;
 
     // Lightweight revive — resets HP, dying/hit state, and push state without reloading assets.
-    // Used by PregenTest on room entry and on death so the player never freezes.
+    // Used by DungeonRun on room entry and on death so the player never freezes.
     void Revive();
 
     void DrawPlayer(Vector2 cameraPos);

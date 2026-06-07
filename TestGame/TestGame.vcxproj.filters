@@ -33,6 +33,15 @@
     <ClCompile Include="BaseCharacter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="CutsceneManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="DialogueBox.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="NineSliceEditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Engine.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -64,9 +73,6 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Leaderboard.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="ManaGemPickup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="SpreadProjectile.cpp">
@@ -170,9 +176,6 @@
     <ClInclude Include="CyclopsLaserProjectile.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="CyclopsProjectile.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="AssetPaths.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -180,9 +183,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="KeyBindings.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="ManaGemPickup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="NineSlice.h">
@@ -240,6 +240,18 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="HUDRenderer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CutsceneAction.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CutsceneManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DialogueBox.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="NineSliceEditor.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

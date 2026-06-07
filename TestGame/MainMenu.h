@@ -18,8 +18,9 @@ public:
     bool QuitPressed()           const;
     bool HowToPressed()          const;
     bool DebugPressed()          const;
-    bool PregenTestPressed()     const;
+    bool DungeonRunPressed()     const;
     bool TileMapperPressed()     const;
+    bool NineSliceEditorPressed() const;
     void SetDebugUnlocked(bool unlocked);
 
 private:
@@ -41,7 +42,8 @@ private:
     bool _quitPressed          = false;
     bool _howToPressed         = false;
     bool _debugPressed         = false;
-    bool _pregenTestPressed    = false;
-    bool _tileMapperPressed    = false;
-    bool _debugUnlocked        = false;
+    bool _dungeonRunPressed      = false;
+    bool _tileMapperPressed      = false;
+    bool _nineSliceEditorPressed = false;
+    bool _debugUnlocked          = false;
 };

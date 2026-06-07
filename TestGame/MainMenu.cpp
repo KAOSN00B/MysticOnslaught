@@ -4,13 +4,11 @@
 #include <cmath>
 
 // ── 9-slice corner sizes ──────────────────────────────────────────────────────
-// srcCorner: how many pixels from each edge of the texture form a corner.
-// dstCorner: how large that corner appears on screen.
-// Tune these to match your art (open the PNG and measure the corner detail).
-static constexpr float BORDER_SRC_CORNER = 16.f;   // px in source texture
-static constexpr float BORDER_DST_CORNER = 32.f;   // px on screen
+// Border values tuned via 9-Slice Editor (MainMenuBorder.png).
+static constexpr float BORDER_SRC_CORNER = 1.f;
+static constexpr float BORDER_DST_CORNER = 16.f;
 static constexpr float BTN_SRC_CORNER    = 8.f;
-static constexpr float BTN_DST_CORNER    = 12.f;
+static constexpr float BTN_DST_CORNER    = 16.f;
 
 MainMenu::~MainMenu()
 {
@@ -46,15 +44,17 @@ void MainMenu::Init()
     float lbGap = sh * 0.008f;
 
     // Bottom-left dev tools — always visible so you can test without finishing the demo
-    _buttons.push_back({ "Pregen Mode", { cornerPad, sh - lbH * 2.f - lbGap - sh * 0.018f, lbW, lbH } });
-    _buttons.push_back({ "Tile Mapper", { cornerPad, sh - lbH             - sh * 0.018f,   lbW, lbH } });
+    _buttons.push_back({ "Dungeon Run",   { cornerPad, sh - lbH * 3.f - lbGap * 2.f - sh * 0.018f, lbW, lbH } });
+    _buttons.push_back({ "Tile Editor",   { cornerPad, sh - lbH * 2.f - lbGap       - sh * 0.018f, lbW, lbH } });
+    _buttons.push_back({ "9-Slice Editor",{ cornerPad, sh - lbH                     - sh * 0.018f, lbW, lbH } });
 
-    _startPressed      = false;
-    _quitPressed       = false;
-    _howToPressed      = false;
-    _debugPressed      = false;
-    _pregenTestPressed = false;
-    _tileMapperPressed = false;
+    _startPressed          = false;
+    _quitPressed           = false;
+    _howToPressed          = false;
+    _debugPressed          = false;
+    _dungeonRunPressed     = false;
+    _tileMapperPressed     = false;
+    _nineSliceEditorPressed = false;
 
     if (_borderTex.id == 0)
         _borderTex  = LoadTexture(AssetPath("UI/MainMenuBorder.png").c_str());
@@ -83,8 +83,9 @@ void MainMenu::Update()
             if (button.text == "Quit")         _quitPressed       = true;
             if (button.text == "How To Play")  _howToPressed      = true;
             if (button.text == "Debug Mode")   _debugPressed      = true;
-            if (button.text == "Pregen Mode")  _pregenTestPressed = true;
-            if (button.text == "Tile Mapper")  _tileMapperPressed = true;
+            if (button.text == "Dungeon Run")    _dungeonRunPressed      = true;
+            if (button.text == "Tile Editor")   _tileMapperPressed      = true;
+            if (button.text == "9-Slice Editor") _nineSliceEditorPressed = true;
         }
     }
 }
@@ -127,8 +128,8 @@ void MainMenu::Draw()
     float borderY = sh * 0.35f;
 
     if (_borderTex.id != 0)
-        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
-            { borderX, borderY, borderW, borderH }, WHITE);
+        DrawNineSliceEx(_borderTex, BORDER_SRC_TOP, BORDER_SRC_BOT, BORDER_SRC_LEFT, BORDER_SRC_RIGHT,
+            BORDER_DST_CORNER, { borderX, borderY, borderW, borderH }, WHITE);
 
     // ── Title banner ─────────────────────────────────────────────────────────
     float bannerW = sw * 0.42f;
@@ -179,8 +180,8 @@ void MainMenu::Draw()
             continue;
         }
 
-        // Pregen Mode button — teal
-        if (button.text == "Pregen Mode")
+        // Dungeon Run button — teal
+        if (button.text == "Dungeon Run")
         {
             Color fill = button.hovered ? Color{ 40, 160, 160, 245 } : Color{ 25, 100, 100, 220 };
             Color edge = button.hovered ? Color{ 100, 230, 230, 255 } : Color{ 60, 170, 170, 200 };
@@ -247,5 +248,6 @@ void MainMenu::SetDebugUnlocked(bool unlocked)
     if (unlocked) _debugUnlocked = true;
 }
 
-bool MainMenu::PregenTestPressed()  const { return _pregenTestPressed;  }
-bool MainMenu::TileMapperPressed()  const { return _tileMapperPressed;  }
+bool MainMenu::DungeonRunPressed()       const { return _dungeonRunPressed;       }
+bool MainMenu::TileMapperPressed()       const { return _tileMapperPressed;       }
+bool MainMenu::NineSliceEditorPressed()  const { return _nineSliceEditorPressed;  }

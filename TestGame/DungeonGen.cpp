@@ -19,24 +19,25 @@ void DungeonGen::Generate()
 
 void DungeonGen::GrowRooms()
 {
-    // Place starting room on a random outer edge of the grid so the player
-    // always enters the dungeon from the perimeter, not the middle.
-    int startRow, startCol;
-    switch (GetRandomValue(0, 3))
-    {
-    case 0: startRow = 0;             startCol = GetRandomValue(0, kGridSize - 1); break; // top
-    case 1: startRow = kGridSize - 1; startCol = GetRandomValue(0, kGridSize - 1); break; // bottom
-    case 2: startRow = GetRandomValue(0, kGridSize - 1); startCol = 0;             break; // left
-    default:startRow = GetRandomValue(0, kGridSize - 1); startCol = kGridSize - 1; break; // right
-    }
+    // The run always begins in Zeph's shop on the bottom edge. The first real
+    // dungeon path is directly north, so "up" is always forward from spawn.
+    int startRow = kGridSize - 1;
+    int startCol = kGridSize / 2;
 
     DungeonRoom start;
     start.col  = startCol;
     start.row  = startRow;
-    start.type = RoomType::Standard;
+    start.type = RoomType::Store;
     _grid[startRow][startCol] = 0;
     _rooms.push_back(start);
     _startIdx = 0;
+
+    DungeonRoom firstRoom;
+    firstRoom.col  = startCol;
+    firstRoom.row  = startRow - 1;
+    firstRoom.type = RoomType::Standard;
+    _grid[firstRoom.row][firstRoom.col] = 1;
+    _rooms.push_back(firstRoom);
 
     // Cardinal direction offsets: N, S, E, W
     static const int dc[] = {  0,  0, 1, -1 };
@@ -117,6 +118,18 @@ void DungeonGen::AssignSpecialRooms()
     if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Rest;     }
     if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Treasure; }
     // All remaining rooms stay Standard.
+
+    // Store room only ever exits north — random growth can attach rooms east/west/south
+    // of the start cell, so strip those connections after the fact.
+    _rooms[_startIdx].hasSouth = false;
+    _rooms[_startIdx].hasEast  = false;
+    _rooms[_startIdx].hasWest  = false;
+
+    // The room directly north of the Store has no south door — once the player
+    // exits the Store they can never walk back in from above.
+    int northOfStart = _grid[_rooms[_startIdx].row - 1][_rooms[_startIdx].col];
+    if (northOfStart >= 0)
+        _rooms[northOfStart].hasSouth = false;
 }
 
 int DungeonGen::FindFurthest(int fromIdx) const

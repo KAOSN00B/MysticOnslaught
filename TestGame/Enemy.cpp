@@ -63,7 +63,7 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _maxHealth = 3.f;
     _attackPower = 1.f;
 
-    _maxFrames = _texture.width / _width;
+    _maxFrames = (int)(_texture.width / _width);
     _frame = GetRandomValue(0, _maxFrames - 1);
     _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
     _hitTimer = 0.f;
@@ -74,6 +74,14 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _electricChargeTotalTimer = 0.f;
     _attacking = false;
     _damageApplied = false;
+    _lungeState = LungeState::None;
+    _lungeTimer = 0.f;
+    _lungeCooldown = (float)GetRandomValue(80, 180) / 100.f;
+    _lungeDir = Vector2Zero();
+    _lungeDamageApplied = false;
+    _burnPanicDir = Vector2Zero();
+    _burnPanicTurnTimer = 0.f;
+    _burnSoundTimer = 0.f;
     _takingDamage = false;
     _dying = false;
     _pendingBurns.clear();
@@ -232,9 +240,17 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
             return;
 
         _attackCooldown -= dt;
+        if (_lungeCooldown > 0.f)
+            _lungeCooldown -= dt;
+
+        if (UpdateEliteLunge(dt))
+        {
+            HandleAnimation(dt);
+            return;
+        }
 
         HandleMovement(dt, navigationTarget, hasNavigationTarget, enemies, propCenters);
-        HandleAttack();
+        HandleAttack(enemies);
     }
 
     HandleAnimation(dt);
@@ -269,6 +285,20 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         return;
 
     Vector2 playerCenter = _target->GetFeetWorldPos();
+
+    if (!_pendingBurns.empty() && !IsFrozen() && !_takingDamage)
+    {
+        UpdateBurnPanic(dt);
+        Vector2 oldPos = _worldPos;
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(_burnPanicDir, _speed * 1.18f * dt));
+        if (Vector2Length(Vector2Subtract(_worldPos, oldPos)) > 0.01f)
+        {
+            _texture = _walkAnim;
+            if (_burnPanicDir.x < 0.f) _rightLeft = -1;
+            if (_burnPanicDir.x > 0.f) _rightLeft = 1;
+        }
+        return;
+    }
 
     // ── Waypoint path management ──────────────────────────────────────────────
     // Tick down this enemy's personal refresh timer.
@@ -322,30 +352,6 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         Vector2 toSlot = Vector2Subtract(slotTarget, _worldPos);
         if (Vector2Length(toSlot) > 0.01f)
             moveDir = Vector2Add(moveDir, Vector2Scale(Vector2Normalize(toSlot), 0.3f));
-    }
-
-    // Once a regular enemy gets into the player's local space, it blends part
-    // of its movement into a personal side lane. That creates a loose flanking
-    // ring and reduces the "everyone crowds one pixel" behavior.
-    if (!hasNavigationTarget)
-    {
-        float directDistance = Vector2Length(toPlayer);
-        if (directDistance < _flankStartDistance && directDistance > _attackRange * 0.85f)
-        {
-            Vector2 forward = Vector2Normalize(toPlayer);
-            Vector2 lateral = { -forward.y * _flankSide, forward.x * _flankSide };
-            Vector2 flankTarget = Vector2Add(targetPos, Vector2Scale(lateral, _flankDistance));
-            Vector2 flankDir = Vector2Subtract(flankTarget, _worldPos);
-
-            if (Vector2Length(flankDir) > 0.01f)
-            {
-                flankDir = Vector2Normalize(flankDir);
-
-                float closeBlend = 1.f - (directDistance / _flankStartDistance);
-                float blend = closeBlend * _flankBlendStrength;
-                moveDir = Vector2Add(Vector2Scale(moveDir, 1.f - blend), Vector2Scale(flankDir, blend));
-            }
-        }
     }
 
     Vector2 separation = Vector2Zero();
@@ -407,7 +413,23 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         moveDir = Vector2Normalize(moveDir);
 
     Vector2 oldPos = _worldPos;
-    bool inAttackRange = _inAttackRange;
+    bool slotAvailable = CanTakeAttackSlot(enemies);
+    bool shouldFlank = _inAttackRange && !slotAvailable;
+    bool inAttackRange = _inAttackRange && !shouldFlank;
+
+    if (shouldFlank)
+    {
+        Vector2 toPlayerNow = Vector2Subtract(playerCenter, _worldPos);
+        if (Vector2Length(toPlayerNow) > 0.01f)
+        {
+            Vector2 forward = Vector2Normalize(toPlayerNow);
+            Vector2 lateral = { -forward.y * _flankSide, forward.x * _flankSide };
+            Vector2 desired = Vector2Add(Vector2Add(playerCenter, _approachOffset), Vector2Scale(lateral, _flankDistance));
+            Vector2 flankDir = Vector2Subtract(desired, _worldPos);
+            if (Vector2Length(flankDir) > 0.01f)
+                moveDir = Vector2Normalize(flankDir);
+        }
+    }
 
     bool intentionalMove = false;
     if (!_takingDamage && !IsFrozen() && !inAttackRange)
@@ -494,23 +516,164 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     }
 }
 
-void Enemy::HandleAttack()
+bool Enemy::CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies) const
 {
-    if (_dying || _target == nullptr || IsFrozen() || _takingDamage)
+    int committed = 0;
+    constexpr int kMaxCommittedGrunts = 2;
+    constexpr float kSlotRadius = 260.f;
+
+    for (const auto& enemy : enemies)
+    {
+        const Enemy* other = enemy.get();
+        if (other == this)
+            continue;
+        if (!other->IsActive() || other->IsDying() || !other->IsAlive())
+            continue;
+        if (Vector2Distance(_worldPos, other->_worldPos) > kSlotRadius)
+            continue;
+        if (other->_attacking || other->_lungeState == LungeState::Windup || other->_lungeState == LungeState::Lunging)
+            committed++;
+    }
+
+    return committed < kMaxCommittedGrunts;
+}
+
+bool Enemy::UpdateEliteLunge(float dt)
+{
+    if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
+        return false;
+    if (IsFrozen() || _takingDamage || !_pendingBurns.empty() || _attacking)
+    {
+        if (_lungeState != LungeState::None)
+        {
+            _lungeState = LungeState::Recovery;
+            _lungeTimer = 0.f;
+        }
+        return _lungeState != LungeState::None;
+    }
+
+    Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+    float dist = Vector2Length(toPlayer);
+
+    if (_lungeState == LungeState::None)
+    {
+        if (_lungeCooldown <= 0.f && dist >= kEliteLungeMinRange && dist <= kEliteLungeMaxRange)
+        {
+            _lungeState = LungeState::Windup;
+            _lungeTimer = 0.f;
+            _lungeDamageApplied = false;
+            _velocity = Vector2Zero();
+            _texture = _idleAnim;
+            _frame = 0;
+            _runningTime = 0.f;
+            _maxFrames = (int)(_texture.width / _width);
+            _updateTime = 1.f / 10.f;
+        }
+        return false;
+    }
+
+    if (dist > 0.01f)
+    {
+        if (toPlayer.x < 0.f) _rightLeft = -1;
+        else if (toPlayer.x > 0.f) _rightLeft = 1;
+    }
+
+    if (_lungeState == LungeState::Windup)
+    {
+        _velocity = Vector2Zero();
+        _texture = _idleAnim;
+        _lungeTimer += dt;
+        if (_lungeTimer >= kEliteLungeWindup)
+        {
+            _lungeDir = (dist > 0.01f) ? Vector2Normalize(toPlayer) : Vector2{ (float)_rightLeft, 0.f };
+            _lungeState = LungeState::Lunging;
+            _lungeTimer = 0.f;
+            _lungeDamageApplied = false;
+            _texture = _attackAnim;
+            _frame = 0;
+            _runningTime = 0.f;
+            _maxFrames = (int)(_texture.width / _width);
+            _updateTime = kEliteLungeDuration / std::max(1, _maxFrames);
+            PlayAttackSound();
+        }
+        return true;
+    }
+
+    if (_lungeState == LungeState::Lunging)
+    {
+        _texture = _attackAnim;
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(_lungeDir, kEliteLungeSpeed * dt));
+        if (!_lungeDamageApplied && CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
+        {
+            _target->TakeDamage((int)_attackPower, _worldPos);
+            _lungeDamageApplied = true;
+        }
+        _lungeTimer += dt;
+        if (_lungeTimer >= kEliteLungeDuration)
+        {
+            _lungeState = LungeState::Recovery;
+            _lungeTimer = 0.f;
+            _lungeCooldown = kEliteLungeCooldown;
+            _texture = _idleAnim;
+            _frame = 0;
+            _runningTime = 0.f;
+            _maxFrames = (int)(_texture.width / _width);
+            _updateTime = 1.f / 10.f;
+        }
+        return true;
+    }
+
+    if (_lungeState == LungeState::Recovery)
+    {
+        _velocity = Vector2Zero();
+        _texture = _idleAnim;
+        _lungeTimer += dt;
+        if (_lungeTimer >= kEliteLungeRecovery)
+        {
+            _lungeState = LungeState::None;
+            _lungeTimer = 0.f;
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void Enemy::UpdateBurnPanic(float dt)
+{
+    _burnPanicTurnTimer -= dt;
+    _burnSoundTimer -= dt;
+
+    if (_burnPanicTurnTimer <= 0.f || Vector2Length(_burnPanicDir) < 0.01f)
+    {
+        float angle = (float)GetRandomValue(0, 359) * DEG2RAD;
+        _burnPanicDir = { cosf(angle), sinf(angle) };
+        _burnPanicTurnTimer = (float)GetRandomValue(18, 45) / 100.f;
+    }
+
+    if (_burnSoundTimer <= 0.f && _deathSound.frameCount > 0)
+    {
+        float pitch = (float)GetRandomValue(150, 210) / 100.f;
+        SetSoundPitch(_deathSound, pitch);
+        SetSoundVolume(_deathSound, 0.18f);
+        PlaySound(_deathSound);
+        _burnSoundTimer = (float)GetRandomValue(55, 110) / 100.f;
+    }
+}
+
+void Enemy::HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies)
+{
+    if (_dying || _target == nullptr || IsFrozen() || _takingDamage || !_pendingBurns.empty() || _lungeState != LungeState::None)
         return;
 
     float distance = Vector2Length(Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
 
-    // Sensor circle: swing whenever the player enters attack range regardless
-    // of which direction the enemy is facing. The hurtbox placement at frame 2
-    // reads the actual player position and picks the correct direction then.
-    if (distance <= _attackRange && !_attacking && _attackCooldown <= 0.f)
+    if (distance <= _attackRange && !_attacking && _attackCooldown <= 0.f && CanTakeAttackSlot(enemies))
     {
         _attacking = true;
         _damageApplied = false;
-        _velocity = Vector2Zero();   // prevent residual velocity from sliding during swing
+        _velocity = Vector2Zero();
 
-        // Face the player so the attack box extends the correct way
         Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
         if (toPlayer.x < 0.f) _rightLeft = -1;
         else if (toPlayer.x > 0.f) _rightLeft = 1;
@@ -521,7 +684,7 @@ void Enemy::HandleAttack()
         _frame = 0;
         _runningTime = 0.f;
 
-        _maxFrames = _texture.width / _width;
+        _maxFrames = (int)(_texture.width / _width);
         _updateTime = _attackUpdateTime;
 
         PlayAttackSound();
@@ -542,13 +705,12 @@ void Enemy::HandleAttack()
         _attacking = false;
         _texture = _idleAnim;
         _updateTime = 1.f / 8.f;
-        _maxFrames = _texture.width / _width;
+        _maxFrames = (int)(_texture.width / _width);
         _frame = 0;
         _runningTime = 0.f;
         _speed = 0.f;
     }
 }
-
 void Enemy::DrawEnemy(Vector2 heroWorldPos)
 {
     if (!_isActive)
@@ -644,7 +806,7 @@ void Enemy::HandleAnimation(float dt)
                 _takingDamage = false;
                 _texture = _idleAnim;
                 _updateTime = 1.f / 10.f;
-                _maxFrames = _texture.width / _width;
+                _maxFrames = (int)(_texture.width / _width);
                 _frame = 0;
                 return;
             }
@@ -654,7 +816,7 @@ void Enemy::HandleAnimation(float dt)
                 _attacking = false;
                 _texture = _idleAnim;
                 _updateTime = 1.f / 10.f;
-                _maxFrames = _texture.width / _width;
+                _maxFrames = (int)(_texture.width / _width);
             }
 
             _frame = 0;
@@ -795,7 +957,7 @@ void Enemy::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
     _frame = 1;
     _runningTime = 0.f;
     _updateTime = 1.f / 12.f;
-    _maxFrames = _texture.width / _width;
+    _maxFrames = (int)(_texture.width / _width);
 
     if (cancelLockedAnimation)
     {
@@ -820,7 +982,7 @@ void Enemy::UpdateLaunchVisual(float dt)
         _frame = 0;
         _runningTime = 0.f;
         _updateTime = 1.f / 10.f;
-        _maxFrames = _texture.width / _width;
+        _maxFrames = (int)(_texture.width / _width);
     }
 }
 

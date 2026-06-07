@@ -8,7 +8,9 @@
 #include "AnimationUtils.h"
 #include "AssetPaths.h"
 #include "CapsuleCollision.h"
+#include "CutsceneAction.h"
 #include "NineSlice.h"
+#include "RoomLayout.h"
 #include "raymath.h"
 
 #include <algorithm>
@@ -115,9 +117,7 @@ Engine::~Engine()
     Cyclops::UnloadSharedResources();
     Ogre::UnloadSharedResources();
     Molarbeast::UnloadSharedResources();
-    // [SHELVED] FireBallPickup/SwordBeamPickup/FreezePickup unload calls removed
     HealPickup::UnloadSharedResources();
-    ManaGemPickup::UnloadSharedResources();
     GoldPickup::UnloadSharedResources();
     SpreadProjectile::UnloadSharedResources();
     LavaBallProjectile::UnloadSharedResources();
@@ -163,11 +163,46 @@ Engine::~Engine()
     UnloadTexture(_upgradeMoveSpeedTex);
     UnloadTexture(_shopBorderTex);
     UnloadTexture(_shopZephTex);
+    UnloadTexture(_htpBorderTex);
     _pauseUI.Unload();
     if (_audioInitialised)
         CloseAudioDevice();
     CloseWindow();
 }
+
+// ── Cutscene definitions ──────────────────────────────────────────────────────
+// To add a new cutscene: define a new static array here and call
+// _cutscene.Play(array, count) from wherever the scene should start.
+
+// Played once per session, the first time the player enters the shop.
+static const CutsceneAction kIntroCutscene[] =
+{
+    FadeIn(2.0f),
+    Wait(0.5f),
+    Dialogue("Zeph", "Ah... you're awake."),
+    Dialogue("Zeph", "You were out cold when I found you. Three hours, give or take."),
+    Dialogue("Zeph", "I don't know what brought you here. But I can sense it."),
+    Dialogue("Zeph", "You're a Mystic."),
+    Wait(0.4f),
+    Dialogue("Zeph", "I can't do much for you. But I can offer this."),
+    Dialogue("Zeph", "Take the sword. And choose one of these — first spell's on me."),
+    OpenAbilitySelect(),
+    Dialogue("Zeph", "Good choice."),
+    Wait(0.3f),
+    Dialogue("Zeph", "Why am I here? Same reason as you — trying to stop whatever's out there."),
+    Dialogue("Zeph", "Now go. And be careful. The Onslaught doesn't wait."),
+    UnlockDoor(),
+    EndCutscene()
+};
+
+// Played when the player dies and respawns back in the shop.
+static const CutsceneAction kRespawnCutscene[] =
+{
+    FadeIn(1.0f),
+    Dialogue("Zeph", "You're back. I was starting to worry."),
+    Dialogue("Zeph", "Take a breath. The dungeon will still be there."),
+    EndCutscene()
+};
 
 void Engine::Init()
 {
@@ -213,6 +248,7 @@ void Engine::Init()
     _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
     _shopBorderTex          = LoadTexture(AssetPath("UI/PauseBoarder.png").c_str());
     _shopZephTex            = LoadTexture(AssetPath("UI/Zeph.png").c_str());
+    _htpBorderTex           = LoadTexture(AssetPath("UI/HowToPlayBorder.png").c_str());
     _shop.Init(ShopTextures{
         &_shopBorderTex,
         &_shopZephTex,
@@ -386,7 +422,11 @@ void Engine::DebugStartRun()
     ResetRunState();
     _debug.Activate();
     _awaitingStartingAbility = false;
-    _levelUpReturnState = GameState::PregenTest;
+    _starterAbilityGiftClaimed = false;
+    _startingAbilityPickCount = 0;
+    for (int i = 0; i < 6; i++)
+        _startingAbilitySelected[i] = false;
+    _levelUpReturnState = GameState::DungeonRun;
     _message = "Debug Dungeon";
 
     _dungeonGen.Generate();
@@ -398,34 +438,94 @@ void Engine::DebugStartRun()
         _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
     }
 
-    const auto& rooms = _dungeonGen.GetRooms();
     int startIdx = _dungeonGen.GetStartIndex();
-    _pregenViewedRoomIdx = startIdx;
-    const DungeonRoom& startRoom = rooms[startIdx];
-    _pregenRoomLayout = RoomLayout::Generate(
-        startRoom.hasNorth, startRoom.hasSouth,
-        startRoom.hasEast,  startRoom.hasWest, startRoom.type,
-        (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
-        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
-    _pregenRoomStates.clear();
-    _pregenEntryDoorSide = PregenDoorSide::None;
-    ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
-    _pregenEnemiesSpawned = false;
-    _pregenScrolling      = false;
-    _pregenView           = PregenView::Play;
-    _gameState            = GameState::PregenTest;
-
-    float hw = (float)GetScreenWidth()  * 0.5f;
-    float hh = (float)GetScreenHeight() * 0.5f;
-    _player.SetWorldPos({ hw, hh });
-    _player.Revive();
-    _cameraPos = { hw, hh };
-
-    RebuildPregenNav();
-    DebugRestartPregenRoomAs(RoomType::Standard);
+    EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
 
     _fadeInTimer = 1.0f;
     _fadeInDuration = 1.0f;
+}
+
+
+Vector2 Engine::GetDungeonBottomSpawnPos() const
+{
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float cellH = sh / (float)RoomLayout::kRows;
+    return { sw * 0.5f, sh - cellH * 2.2f };
+}
+
+void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
+{
+    if (room.type != RoomType::Store)
+        return;
+
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    _shop.Enter({ sw * 0.5f, sh * 0.42f }, _player, _currentAct);
+}
+
+void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates)
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (roomIdx < 0 || roomIdx >= (int)rooms.size())
+        return;
+
+    const DungeonRoom& room = rooms[roomIdx];
+    _dungeonRoomIdx = roomIdx;
+    _dungeonEntryDoorSide = entryDoorSide;
+    _dungeonRoomLayout = RoomLayout::Generate(
+        room.hasNorth, room.hasSouth,
+        room.hasEast,  room.hasWest, room.type,
+        (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
+        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+
+    if (resetRoomStates)
+        _dungeonRoomStates.clear();
+
+    _currentRoomType = room.type;
+    _currentRoom = (_currentRoomType == RoomType::Boss) ? 6 : std::max(1, _currentRoom + 1);
+    if (resetRoomStates)
+        _currentRoom = 1;
+
+    _dungeonEnemiesSpawned = false;
+    _dungeonScrolling = false;
+    _dungeonView = DungeonView::Play;
+    _gameState = GameState::DungeonRun;
+    _roomClearPending = false;
+
+    ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+    if (room.type == RoomType::Rest || room.type == RoomType::Treasure || room.type == RoomType::Store)
+        _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
+
+    _player.SetWorldPos(playerSpawnPos);
+    _player.Revive();
+    _cameraPos = { (float)GetScreenWidth() * 0.5f, (float)GetScreenHeight() * 0.5f };
+    _props.clear();
+
+    RebuildDungeonNav();
+    ClearDungeonEnemies();
+    EnterDungeonShopIfNeeded(room);
+    SpawnDungeonRoomEnemies();
+
+    if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
+        ApplyDungeonBossExitTiles(TileType::DoorLocked);
+
+    // ── Cutscene triggers ─────────────────────────────────────────────────────
+    if (room.type == RoomType::Store)
+    {
+        if (!_cutsceneIntroPlayed)
+        {
+            // First time ever entering the shop — play the full intro.
+            _cutsceneIntroPlayed = true;
+            SetStoreDoorTiles(TileType::DoorLocked);   // lock until ability is chosen
+            _cutscene.Play(kIntroCutscene, (int)(sizeof(kIntroCutscene) / sizeof(kIntroCutscene[0])));
+        }
+        else
+        {
+            // Returning after death — short respawn scene.
+            _cutscene.Play(kRespawnCutscene, (int)(sizeof(kRespawnCutscene) / sizeof(kRespawnCutscene[0])));
+        }
+    }
 }
 
 void Engine::DebugSetEliteMechanic(int mechanic)
@@ -435,11 +535,11 @@ void Engine::DebugSetEliteMechanic(int mechanic)
 }
 
 
-void Engine::DebugRestartPregenRoomAs(RoomType type)
+void Engine::DebugRestartDungeonRoomAs(RoomType type)
 {
-    if (_pregenViewedRoomIdx < 0) return;
+    if (_dungeonRoomIdx < 0) return;
 
-    ClearPregenEnemies();
+    ClearDungeonEnemies();
     _roomClearPending = false;
     _pendingExp = 0.f;
     _expTallyAccum = 0.f;
@@ -454,16 +554,16 @@ void Engine::DebugRestartPregenRoomAs(RoomType type)
     _eliteIsLeaping = false;
     _eliteLeapCooldown = 0.f;
     _eliteLeapTimer = 0.f;
-    _pregenClearEffects.clear();
+    _dungeonClearEffects.clear();
 
     const auto& rooms = _dungeonGen.GetRooms();
     bool hasNorth = true;
     bool hasSouth = true;
     bool hasEast = true;
     bool hasWest = true;
-    if (_pregenViewedRoomIdx >= 0 && _pregenViewedRoomIdx < (int)rooms.size())
+    if (_dungeonRoomIdx >= 0 && _dungeonRoomIdx < (int)rooms.size())
     {
-        const DungeonRoom& room = rooms[_pregenViewedRoomIdx];
+        const DungeonRoom& room = rooms[_dungeonRoomIdx];
         hasNorth = room.hasNorth;
         hasSouth = room.hasSouth;
         hasEast  = room.hasEast;
@@ -476,12 +576,12 @@ void Engine::DebugRestartPregenRoomAs(RoomType type)
         _currentRoom = 6;
     _message = std::string("Debug - ") + GetDebugRoomTypeName(type) + " Tile Room";
 
-    _pregenRoomLayout = RoomLayout::Generate(
+    _dungeonRoomLayout = RoomLayout::Generate(
         hasNorth, hasSouth, hasEast, hasWest, type,
         (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
         (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
-    _pregenRoomStates[_pregenViewedRoomIdx].cleared = false;
-    ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+    _dungeonRoomStates[_dungeonRoomIdx].cleared = false;
+    ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
 
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
@@ -492,35 +592,35 @@ void Engine::DebugRestartPregenRoomAs(RoomType type)
     _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
     _cameraPos = { sw * 0.5f, sh * 0.5f };
 
-    RebuildPregenNav();
+    RebuildDungeonNav();
 
     auto spawnAt = [&](auto spawnFn, int count = 1) {
         for (int n = 0; n < count; n++)
-            spawnFn(GetPregenSpawnPos(cellW, cellH));
+            spawnFn(GetDungeonSpawnPos(cellW, cellH));
     };
 
     if (type == RoomType::Boss)
     {
         SpawnMolarbeast({ sw * 0.5f, sh * 0.28f });
-        ApplyPregenBossExitTiles(TileType::DoorLocked);
-        _pregenEnemiesSpawned = true;
+        ApplyDungeonBossExitTiles(TileType::DoorLocked);
+        _dungeonEnemiesSpawned = true;
     }
     else if (type == RoomType::Elite)
     {
-        SpawnOgre(GetPregenSpawnPos(cellW, cellH));
+        SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
         spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
-        _pregenEnemiesSpawned = true;
+        _dungeonEnemiesSpawned = true;
     }
     else if (type == RoomType::Standard)
     {
         spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
-        SpawnCyclops(GetPregenSpawnPos(cellW, cellH));
-        _pregenEnemiesSpawned = true;
+        SpawnCyclops(GetDungeonSpawnPos(cellW, cellH));
+        _dungeonEnemiesSpawned = true;
     }
     else if (type == RoomType::Treasure)
     {
-        _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
-        ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+        _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
+        ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
         auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
         {
             auto g = std::make_unique<GoldPickup>();
@@ -533,19 +633,19 @@ void Engine::DebugRestartPregenRoomAs(RoomType type)
     }
     else
     {
-        _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
-        ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
+        _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
+        ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
     }
 
-    _pregenScrolling = false;
-    _pregenView = PregenView::Play;
-    _gameState = GameState::PregenTest;
+    _dungeonScrolling = false;
+    _dungeonView = DungeonView::Play;
+    _gameState = GameState::DungeonRun;
 }
 void Engine::DebugRestartRoomAs(RoomType type)
 {
-    if (_gameState == GameState::PregenTest)
+    if (_gameState == GameState::DungeonRun)
     {
-        DebugRestartPregenRoomAs(type);
+        DebugRestartDungeonRoomAs(type);
         return;
     }
     for (auto& enemy : _enemies)
@@ -1070,37 +1170,11 @@ void Engine::Update(float dt)
                 _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
             }
 
-            const auto& rooms2 = _dungeonGen.GetRooms();
             int startIdx2 = _dungeonGen.GetStartIndex();
-            _pregenViewedRoomIdx = startIdx2;
-            const DungeonRoom& startRoom2 = rooms2[startIdx2];
-            _pregenRoomLayout = RoomLayout::Generate(
-                startRoom2.hasNorth, startRoom2.hasSouth,
-                startRoom2.hasEast,  startRoom2.hasWest, startRoom2.type,
-                (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
-                (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
-            _pregenRoomStates.clear();
-            _pregenEntryDoorSide = PregenDoorSide::None;
-            ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
-            _pregenEnemiesSpawned = false;
-            _pregenScrolling      = false;
-            _pregenView           = PregenView::Play;
-
-            float hw2 = (float)GetScreenWidth()  * 0.5f;
-            float hh2 = (float)GetScreenHeight() * 0.5f;
-            _player.SetWorldPos({ hw2, hh2 });
-            _player.Revive();
-            _cameraPos = { hw2, hh2 };
-
-            RebuildPregenNav();
-            ClearPregenEnemies();
-            SpawnPregenRoomEnemies();
-            if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
-                ApplyPregenBossExitTiles(TileType::DoorLocked);
+            EnterDungeonRoom(startIdx2, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
 
             _fadeInTimer = 1.0f;
             _fadeInDuration = 1.0f;
-            _gameState = GameState::PregenTest;
         }
         if (_menu.DebugPressed() && _demoCompleted)
         {
@@ -1112,11 +1186,11 @@ void Engine::Update(float dt)
         {
             _runState.OpenHowToPlay(GameState::Menu, _touchModeActive);
         }
-        if (_menu.PregenTestPressed())
+        if (_menu.DungeonRunPressed())
         {
             _dungeonGen.Generate();
-            _pregenView          = PregenView::Graph;
-            _pregenViewedRoomIdx = -1;
+            _dungeonView          = DungeonView::Graph;
+            _dungeonRoomIdx = -1;
 
             // Load tile definitions from the Caverns tileset save file.
             _tileDefs = {};
@@ -1127,18 +1201,23 @@ void Engine::Update(float dt)
             std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
             _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
 
-            _gameState = GameState::PregenTest;
+            _gameState = GameState::DungeonRun;
         }
         if (_menu.TileMapperPressed())
         {
             _tileMapper.Init(kTilesheetFolder);
             _gameState = GameState::TileMapper;
         }
+        if (_menu.NineSliceEditorPressed())
+        {
+            _nineSliceEditor.Init(kUIFolder);
+            _gameState = GameState::NineSliceEditor;
+        }
         break;
     }
 
-    case GameState::PregenTest:
-        UpdatePregenTest(dt);
+    case GameState::DungeonRun:
+        UpdateDungeonRun(dt);
         break;
 
     case GameState::TileMapper:
@@ -1146,6 +1225,16 @@ void Engine::Update(float dt)
         if (_tileMapper.WantsToExit())
         {
             _tileMapper.Unload();
+            _menu.Init();
+            _gameState = GameState::Menu;
+        }
+        break;
+
+    case GameState::NineSliceEditor:
+        _nineSliceEditor.Update();
+        if (_nineSliceEditor.WantsToExit())
+        {
+            _nineSliceEditor.Unload();
             _menu.Init();
             _gameState = GameState::Menu;
         }
@@ -1210,8 +1299,8 @@ void Engine::Update(float dt)
     case GameState::Shop:
         if (_shop.Update(_player, _debug.IsActive()))
         {
-            _gameState = GameState::Play;
-            if (_currentRoomType == RoomType::Store)
+            _gameState = (_levelUpReturnState == GameState::DungeonRun) ? GameState::DungeonRun : GameState::Play;
+            if (_currentRoomType == RoomType::Store && _gameState == GameState::Play)
                 _roomClearPending = true;
         }
         break;
@@ -1350,49 +1439,7 @@ void Engine::UpdateGamePlay(float dt)
         return;
     }
 
-    Character::CastType castType = _player.ConsumeCastRequest();
-
-    if (castType == Character::CastType::FireSpread ||
-        castType == Character::CastType::IceSpread  ||
-        castType == Character::CastType::ElectricSpread)
-    {
-        AbilityType element =
-            (castType == Character::CastType::FireSpread)     ? AbilityType::FireSpread :
-            (castType == Character::CastType::IceSpread)      ? AbilityType::IceSpread  :
-                                                                 AbilityType::ElectricSpread;
-        _vfx.SpawnCastEffect(castType, _player.GetCastOrigin(), _player.GetFacingDirection());
-        StopSound(_fireballCastSound);
-        PlaySound(_fireballCastSound);
-        SpawnSpreadBurst(element);
-    }
-    else if (castType == Character::CastType::FireUltimate  ||
-             castType == Character::CastType::IceUltimate   ||
-             castType == Character::CastType::ElectricUltimate)
-    {
-        AbilityType element =
-            (castType == Character::CastType::FireUltimate)     ? AbilityType::FireUltimate  :
-            (castType == Character::CastType::IceUltimate)      ? AbilityType::IceUltimate   :
-                                                                   AbilityType::ElectricUltimate;
-        TriggerUltimateSequence(element);
-    }
-    else if (castType == Character::CastType::FireBolt  ||
-             castType == Character::CastType::IceBolt   ||
-             castType == Character::CastType::ElectricBolt)
-    {
-        AbilityType element =
-            (castType == Character::CastType::FireBolt)     ? AbilityType::FireBolt  :
-            (castType == Character::CastType::IceBolt)      ? AbilityType::IceBolt   :
-                                                               AbilityType::ElectricBolt;
-        // Reuse the matching spread cast effect for visual feedback
-        Character::CastType effectType =
-            (element == AbilityType::FireBolt)     ? Character::CastType::FireSpread :
-            (element == AbilityType::IceBolt)      ? Character::CastType::IceSpread  :
-                                                     Character::CastType::ElectricSpread;
-        _vfx.SpawnCastEffect(effectType, _player.GetCastOrigin(), _player.GetFacingDirection());
-        StopSound(_fireballCastSound);
-        PlaySound(_fireballCastSound);
-        SpawnBolt(element);
-    }
+    HandlePlayerCastRequest();
 
     if (_player.GetHealthValue() <= 0.f && !_playerDying)
     {
@@ -1485,7 +1532,7 @@ void Engine::UpdateGamePlay(float dt)
         if (_currentRoomType == RoomType::Store)
         {
             Vector2 shopWorldOffset = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
-            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive)) _gameState = GameState::Shop;
+            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive)) { _levelUpReturnState = GameState::Play; _gameState = GameState::Shop; }
         }
         else if (!_roomClearPending && GetActiveEnemyCount() == 0 && !_debug.IsActive())
         {
@@ -1537,7 +1584,7 @@ void Engine::UpdateGamePlay(float dt)
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         _vfx.Update(dt);
-        UpdatePregenClearEffects(dt);
+        UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
         UpdateBossSupportRespawns(dt);
         UpdateCyclopsLasers(dt);
@@ -1606,47 +1653,12 @@ void Engine::Draw()
 
     case GameState::Pause:
     {
-        if (_stateBeforePause == GameState::PregenTest)
         {
-            // Paused from the dungeon — show the tile room as the frozen background.
             ClearBackground(Color{ 8, 6, 10, 255 });
             float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
             float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
             if (_tileRenderer.IsLoaded())
-                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
-        }
-        else
-        {
-            Vector2 shakenMapPos = Vector2Add(_mapPos, _shakeOffset);
-            Vector2 cameraRef    = Vector2Subtract(_cameraPos, _shakeOffset);
-            Vector2 worldOffset  = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
-
-            DrawTextureEx(_map, shakenMapPos, 0.0f, _mapScale, WHITE);
-
-            for (auto& prop : _props)
-                prop.Render(cameraRef);
-
-            for (auto& pickup : _pickups)
-                pickup->Draw(worldOffset);
-
-            for (const auto& projectile : _spreadProjectiles)
-                projectile.Draw(worldOffset);
-
-            for (const auto& projectile : _lavaBalls)
-                projectile.Draw(worldOffset);
-
-            DrawCyclopsLasers(worldOffset);
-
-            _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
-
-            for (auto& enemy : _enemies)
-            {
-                if (!enemy->IsActive())
-                    continue;
-                enemy->DrawEnemy(cameraRef);
-            }
-
-            _player.DrawPlayer(cameraRef);
+                _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         }
 
         int pauseResult = _pauseUI.DrawPause();
@@ -1685,19 +1697,41 @@ void Engine::Draw()
         DrawDemoEnd();
         break;
 
-    case GameState::PregenTest:
-        DrawPregenTest();
+    case GameState::DungeonRun:
+        DrawDungeonRun();
         break;
 
     case GameState::TileMapper:
         _tileMapper.Draw();
         break;
 
+    case GameState::NineSliceEditor:
+        _nineSliceEditor.Draw();
+        break;
+
     case GameState::GameOver:
     {
         int goResult = _pauseUI.DrawGameOver();
         if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-        if (goResult == 1) { ResetRunState(); _fadeInTimer = 2.0f; _fadeInDuration = 2.0f; GenerateStartingAbilityOptions(); _awaitingStartingAbility = true; _levelUpReturnState = GameState::Map; _levelUpOpenTimer = 0.8f; _gameState = GameState::LevelUpChoice; }
+        if (goResult == 1)
+        {
+            ResetRunState();
+
+            // Re-initialize the dungeon exactly like the Start button does.
+            _dungeonGen.Generate();
+            _tileDefs = {};
+            _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
+            {
+                std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
+                std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
+                _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
+            }
+            int retryStartIdx = _dungeonGen.GetStartIndex();
+            EnterDungeonRoom(retryStartIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
+
+            _fadeInTimer    = 2.0f;
+            _fadeInDuration = 2.0f;
+        }
         else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
         else if (goResult == 3) _shouldClose = true;
         break;
@@ -1754,19 +1788,11 @@ void Engine::Draw()
 
     case GameState::LevelUpChoice:
     {
-        if (_levelUpReturnState == GameState::PregenTest)
-        {
-            // Draw the dungeon room as background instead of the wave-based world.
-            ClearBackground(Color{ 8, 6, 10, 255 });
-            float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
-            float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
-            if (_tileRenderer.IsLoaded())
-                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
-        }
-        else
-        {
-            DrawWorld();
-        }
+        ClearBackground(Color{ 8, 6, 10, 255 });
+        float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
+        float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+        if (_tileRenderer.IsLoaded())
+            _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         DrawHUD();
         DrawLevelUpChoice();
         break;
@@ -1774,18 +1800,11 @@ void Engine::Draw()
 
     case GameState::AbilityChoice:
     {
-        if (_levelUpReturnState == GameState::PregenTest)
-        {
-            ClearBackground(Color{ 8, 6, 10, 255 });
-            float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
-            float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
-            if (_tileRenderer.IsLoaded())
-                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
-        }
-        else
-        {
-            DrawWorld();
-        }
+        ClearBackground(Color{ 8, 6, 10, 255 });
+        float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
+        float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+        if (_tileRenderer.IsLoaded())
+            _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         DrawHUD();
         DrawAbilityChoice();
         break;
@@ -1957,131 +1976,6 @@ void Engine::TriggerScreenShake(float strength, float duration)
 {
     _shakeStrength = strength;
     _shakeTimer = duration;
-}
-
-void Engine::DrawWorld()
-{
-    // Map: top-left is _mapPos + shake
-    Vector2 shakenMapPos = Vector2Add(_mapPos, _shakeOffset);
-
-    // Props / enemies / player: worldPos - cameraRef + screenCenter
-    Vector2 cameraRef = Vector2Subtract(_cameraPos, _shakeOffset);
-
-    // Pickups / projectiles / effects: worldPos + worldOffset + screenCenter
-    Vector2 worldOffset = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
-
-    DrawTextureEx(_map, shakenMapPos, 0.0f, _mapScale, WHITE);
-
-    for (auto& pickup : _pickups)
-        pickup->Draw(worldOffset);
-
-    for (const auto& projectile : _spreadProjectiles)
-        projectile.Draw(worldOffset);
-
-    DrawUltimateBlasts(worldOffset);
-
-    for (const auto& projectile : _lavaBalls)
-        projectile.Draw(worldOffset);
-
-    DrawCyclopsLasers(worldOffset);
-
-    _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
-
-    // Depth sort: props whose midpoint is above the player's feet are drawn
-    // after the player (player walks behind their top half / canopy).
-    // Props whose midpoint is below the player's feet are drawn before
-    // (player walks in front of their trunk / base).
-    float playerFeetY = _player.GetFeetWorldPos().y;
-
-    for (auto& prop : _props)
-        if (prop.GetSortY() < playerFeetY)
-            prop.Render(cameraRef);
-
-    for (auto& enemy : _enemies)
-    {
-        if (!enemy->IsActive())
-            continue;
-        enemy->DrawEnemy(cameraRef);
-    }
-
-    _player.DrawPlayer(cameraRef);
-
-    for (auto& prop : _props)
-        if (prop.GetSortY() >= playerFeetY)
-            prop.Render(cameraRef);
-
-    // ── Elite-room visuals ────────────────────────────────────────────────
-    if (_currentRoomType == RoomType::Elite)
-    {
-        const float sw2 = GetScreenWidth()  / 2.f;
-        const float sh2 = GetScreenHeight() / 2.f;
-
-        // 0. Cage ring
-        if (_eliteMechanic == 0 && _eliteCageRadius > 0.f)
-        {
-            float cx = _eliteCageCenter.x + worldOffset.x + sw2;
-            float cy = _eliteCageCenter.y + worldOffset.y + sh2;
-            float pulse = 0.45f + 0.20f * sinf((float)GetTime() * 2.5f);
-            DrawCircleLines((int)cx, (int)cy, _eliteCageRadius,
-                Fade(Color{220, 40, 200, 255}, pulse));
-            DrawCircleLines((int)cx, (int)cy, _eliteCageRadius - 5.f,
-                Fade(Color{140, 0, 255, 255}, pulse * 0.5f));
-        }
-
-        // 1. Bodyguard tethers + shield aura
-        if (_eliteMechanic == 1
-            && _eliteMinibossPtr && _eliteMinibossPtr->IsActive()
-            && _eliteMinibossPtr->IsInvulnerable())
-        {
-            Vector2 bossScreen = {
-                _eliteMinibossPtr->GetWorldPos().x + worldOffset.x + sw2,
-                _eliteMinibossPtr->GetWorldPos().y + worldOffset.y + sh2
-            };
-            float auraPulse = 0.25f + 0.15f * sinf((float)GetTime() * 5.f);
-            DrawCircleV(bossScreen, 90.f, Fade(Color{180, 100, 255, 255}, auraPulse));
-
-            for (const auto& e : _enemies)
-            {
-                if (e.get() == _eliteMinibossPtr) continue;
-                if (!e->IsActive() || !e->IsAlive() || e->IsDying()) continue;
-                Vector2 gs = {
-                    e->GetWorldPos().x + worldOffset.x + sw2,
-                    e->GetWorldPos().y + worldOffset.y + sh2
-                };
-                float ta = 0.35f + 0.20f * sinf((float)GetTime() * 4.f);
-                DrawLineEx(gs, bossScreen, 2.f, Fade(Color{200, 140, 255, 255}, ta));
-                DrawCircleV(gs, 7.f, Fade(Color{220, 160, 255, 255}, ta * 0.7f));
-            }
-        }
-
-        // 3. Leap shadow — pulsing ellipse at the targeted landing spot
-        if (_eliteMechanic == 3 && _eliteIsLeaping)
-        {
-            Vector2 ss = {
-                _eliteLeapTarget.x + worldOffset.x + sw2,
-                _eliteLeapTarget.y + worldOffset.y + sh2
-            };
-            float lp = 0.5f + 0.30f * sinf((float)GetTime() * 8.f);
-            DrawEllipse((int)ss.x, (int)ss.y, 68, 32,
-                Fade(Color{60, 0, 160, 255}, lp * 0.7f));
-            DrawEllipseLines((int)ss.x, (int)ss.y, 68, 32,
-                Fade(Color{220, 140, 255, 255}, lp));
-            const char* wt = "INCOMING!";
-            int wSz = 22;
-            DrawText(wt, (int)(ss.x - MeasureText(wt, wSz) / 2.f),
-                (int)(ss.y - 52.f), wSz,
-                Fade(Color{255, 60, 60, 255}, lp + 0.1f));
-        }
-
-        // 4. Room hazards now use live lavaball chaos, so there is no extra
-        // floor-marker overlay here. The projectile draw path carries the read.
-    }
-
-    // ── Shop NPC (Zeph) ──────────────────────────────────────────────────────
-    if (_currentRoomType == RoomType::Store)
-        _shop.DrawNpc(worldOffset);
-
-    _vfx.DrawFloatingTexts(worldOffset);
 }
 
 void Engine::DrawHUD()
@@ -2682,24 +2576,22 @@ void Engine::DrawWaveIntro()
 
 void Engine::GenerateStartingAbilityOptions()
 {
-    // Pool of all 6 abilities (3 spread + 3 bolt). Shuffle and show 3 so the
-    // player always sees a varied starting choice.
-    UpgradeType pool[6] = {
-        UpgradeType::LearnFireSpread,
-        UpgradeType::LearnIceSpread,
-        UpgradeType::LearnElectricSpread,
-        UpgradeType::LearnFireBolt,
-        UpgradeType::LearnIceBolt,
-        UpgradeType::LearnElectricBolt,
-    };
+    _startingAbilityOptions[0] = UpgradeType::LearnFireSpread;
+    _startingAbilityOptions[1] = UpgradeType::LearnIceSpread;
+    _startingAbilityOptions[2] = UpgradeType::LearnElectricSpread;
+    _startingAbilityOptions[3] = UpgradeType::LearnFireBolt;
+    _startingAbilityOptions[4] = UpgradeType::LearnIceBolt;
+    _startingAbilityOptions[5] = UpgradeType::LearnElectricBolt;
+
     for (int i = 0; i < 6; i++)
     {
         int j = GetRandomValue(i, 5);
-        UpgradeType tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+        UpgradeType tmp = _startingAbilityOptions[i];
+        _startingAbilityOptions[i] = _startingAbilityOptions[j];
+        _startingAbilityOptions[j] = tmp;
+        _startingAbilitySelected[i] = false;
     }
-    _levelUpOptions[0] = pool[0];
-    _levelUpOptions[1] = pool[1];
-    _levelUpOptions[2] = pool[2];
+    _startingAbilityPickCount = 0;
 }
 
 void Engine::GenerateLevelUpOptions(LevelUpOfferContext context)
@@ -3774,8 +3666,164 @@ void Engine::DrawMap()
     }
 }
 
+void Engine::DrawStartingAbilityChoice()
+{
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.68f));
+
+    const char* title = "Zeph: Choose your starting ability";
+    int titleSz = 44;
+    DrawText(title, (int)(sw * 0.5f - MeasureText(title, titleSz) * 0.5f), (int)(sh * 0.055f), titleSz, GOLD);
+
+    const char* quote = "The dungeon is unforgiving. Choose the magic that suits you best.";
+    int quoteSz = 24;
+    DrawText(quote, (int)(sw * 0.5f - MeasureText(quote, quoteSz) * 0.5f), (int)(sh * 0.115f), quoteSz, Fade(RAYWHITE, 0.70f));
+
+    auto abilityInfo = [&](UpgradeType type, const char*& name, const char*& desc, Texture2D*& icon, Color& elementColor)
+    {
+        switch (type)
+        {
+        case UpgradeType::LearnFireSpread:
+            name = "Fire Spread"; desc = "8 fireballs\nburn on hit"; icon = &_abilityIconFireTex; elementColor = Color{255, 110, 20, 255}; break;
+        case UpgradeType::LearnIceSpread:
+            name = "Ice Spread"; desc = "8 ice shards\nfreeze on hit"; icon = &_abilityIconIceTex; elementColor = Color{100, 210, 255, 255}; break;
+        case UpgradeType::LearnElectricSpread:
+            name = "Electric Spread"; desc = "8 bolts\nstun randomly"; icon = &_abilityIconElectricTex; elementColor = Color{255, 220, 30, 255}; break;
+        case UpgradeType::LearnFireBolt:
+            name = "Fire Bolt"; desc = "Aimed fireball\nhigh damage + burn"; icon = &_abilityIconFireTex; elementColor = Color{255, 110, 20, 255}; break;
+        case UpgradeType::LearnIceBolt:
+            name = "Ice Bolt"; desc = "Aimed shard\nhigh damage + freeze"; icon = &_abilityIconIceTex; elementColor = Color{100, 210, 255, 255}; break;
+        case UpgradeType::LearnElectricBolt:
+            name = "Electric Bolt"; desc = "Aimed bolt\nhigh damage + stun"; icon = &_abilityIconElectricTex; elementColor = Color{255, 220, 30, 255}; break;
+        default:
+            name = "Ability"; desc = ""; icon = nullptr; elementColor = WHITE; break;
+        }
+    };
+
+    auto drawMultilineCentered = [](const char* text, float centerX, float startY, int fontSize, Color color)
+    {
+        std::string s = text;
+        std::size_t start = 0;
+        int line = 0;
+        while (start <= s.size())
+        {
+            std::size_t end = s.find('\n', start);
+            std::string part = (end == std::string::npos) ? s.substr(start) : s.substr(start, end - start);
+            int w = MeasureText(part.c_str(), fontSize);
+            DrawText(part.c_str(), (int)(centerX - w * 0.5f), (int)(startY + line * (fontSize + 5)), fontSize, color);
+            if (end == std::string::npos) break;
+            start = end + 1;
+            line++;
+        }
+    };
+
+    Vector2 mouse = GetMousePosition();
+    bool ready = (_levelUpOpenTimer <= 0.f);
+    const float cardW = 260.f;
+    const float cardH = 275.f;
+    const float gapX = 34.f;
+    const float gapY = 26.f;
+    const float startX = sw * 0.5f - (cardW * 3.f + gapX * 2.f) * 0.5f;
+    const float startY = sh * 0.18f;
+
+    for (int i = 0; i < 3; i++)
+    {
+        Rectangle card{ startX + i * (cardW + gapX), startY, cardW, cardH };
+        bool selected = _startingAbilitySelected[i];
+        bool hovered = ready && CheckCollisionPointRec(mouse, card);
+
+        Color bg = selected ? Color{45, 36, 10, 235} : (hovered ? Color{42, 42, 50, 230} : Color{22, 22, 25, 218});
+        Color border = selected ? GOLD : (hovered ? Color{200, 200, 200, 220} : Color{120, 120, 120, 130});
+        DrawRectangleRounded(card, 0.12f, 8, bg);
+        DrawRectangleRoundedLines(card, 0.12f, 8, border);
+
+        const char* name = "";
+        const char* desc = "";
+        Texture2D* icon = nullptr;
+        Color elementColor = WHITE;
+        abilityInfo(_startingAbilityOptions[i], name, desc, icon, elementColor);
+
+        Vector2 center{ card.x + card.width * 0.5f, card.y + 78.f };
+        bool isBolt = _startingAbilityOptions[i] == UpgradeType::LearnFireBolt ||
+                      _startingAbilityOptions[i] == UpgradeType::LearnIceBolt ||
+                      _startingAbilityOptions[i] == UpgradeType::LearnElectricBolt;
+        if (isBolt)
+        {
+            DrawLineEx({ center.x - 50.f, center.y }, { center.x + 48.f, center.y }, 4.f, elementColor);
+            DrawTriangle({ center.x + 62.f, center.y }, { center.x + 42.f, center.y - 14.f }, { center.x + 42.f, center.y + 14.f }, elementColor);
+        }
+        else
+        {
+            const float angles[8] = { 0.f, 45.f, 90.f, 135.f, 180.f, 225.f, 270.f, 315.f };
+            for (float deg : angles)
+            {
+                float r = deg * DEG2RAD;
+                Vector2 a{ center.x + cosf(r) * 20.f, center.y + sinf(r) * 20.f };
+                Vector2 b{ center.x + cosf(r) * 58.f, center.y + sinf(r) * 58.f };
+                DrawLineEx(a, b, 2.2f, elementColor);
+            }
+        }
+        if (icon && icon->id != 0)
+        {
+            float target = (icon == &_abilityIconFireTex) ? 42.f : 62.f;
+            float scale = std::min(target / (float)icon->width, target / (float)icon->height);
+            DrawTextureEx(*icon, { center.x - icon->width * scale * 0.5f, center.y - icon->height * scale * 0.5f }, 0.f, scale, WHITE);
+        }
+
+        int nameSz = 25;
+        DrawText(name, (int)(card.x + card.width * 0.5f - MeasureText(name, nameSz) * 0.5f), (int)(card.y + 150.f), nameSz, selected ? GOLD : RAYWHITE);
+        drawMultilineCentered(desc, card.x + card.width * 0.5f, card.y + 192.f, 19, LIGHTGRAY);
+
+        if (selected)
+        {
+            const char* mark = "SELECTED";
+            int fs = 17;
+            DrawText(mark, (int)(card.x + card.width * 0.5f - MeasureText(mark, fs) * 0.5f), (int)(card.y + card.height - 30.f), fs, GOLD);
+        }
+
+        if (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            if (_startingAbilitySelected[i])
+            {
+                _startingAbilitySelected[i] = false;
+                _startingAbilityPickCount--;
+            }
+            else if (_startingAbilityPickCount < 1)
+            {
+                _startingAbilitySelected[i] = true;
+                _startingAbilityPickCount++;
+            }
+        }
+    }
+
+    Rectangle confirm{ sw * 0.5f - 150.f, sh - 104.f, 300.f, 58.f };
+    bool canConfirm = (_startingAbilityPickCount == 1);
+    bool confirmHover = canConfirm && ready && CheckCollisionPointRec(mouse, confirm);
+    DrawRectangleRounded(confirm, 0.25f, 8, canConfirm ? (confirmHover ? Color{210, 165, 45, 255} : GOLD) : Color{80, 80, 80, 210});
+    const char* cText = canConfirm ? "Start with this ability" : "Choose 1 ability";
+    int cFs = 26;
+    DrawText(cText, (int)(confirm.x + confirm.width * 0.5f - MeasureText(cText, cFs) * 0.5f), (int)(confirm.y + confirm.height * 0.5f - cFs * 0.5f), cFs, canConfirm ? BLACK : LIGHTGRAY);
+
+    if (canConfirm && ready && confirmHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        for (int i = 0; i < 3; i++)
+            if (_startingAbilitySelected[i])
+                _player.ApplyUpgrade(_startingAbilityOptions[i]);
+
+        _starterAbilityGiftClaimed = true;
+        _awaitingStartingAbility = false;
+        _startingAbilityPickCount = 0;
+        _gameState = _levelUpReturnState;
+    }
+}
 void Engine::DrawLevelUpChoice()
 {
+    if (_awaitingStartingAbility)
+    {
+        DrawStartingAbilityChoice();
+        return;
+    }
     const float sw = (float)GetScreenWidth();
     const float sh = (float)GetScreenHeight();
 
@@ -4373,6 +4421,51 @@ void Engine::HandlePlayerMeleeDamage()
         TriggerScreenShake(6.f, 0.07f);
 }
 
+void Engine::HandlePlayerCastRequest()
+{
+    Character::CastType castType = _player.ConsumeCastRequest();
+
+    if (castType == Character::CastType::FireSpread ||
+        castType == Character::CastType::IceSpread  ||
+        castType == Character::CastType::ElectricSpread)
+    {
+        AbilityType element =
+            (castType == Character::CastType::FireSpread)     ? AbilityType::FireSpread :
+            (castType == Character::CastType::IceSpread)      ? AbilityType::IceSpread  :
+                                                                 AbilityType::ElectricSpread;
+        _vfx.SpawnCastEffect(castType, _player.GetCastOrigin(), _player.GetFacingDirection());
+        StopSound(_fireballCastSound);
+        PlaySound(_fireballCastSound);
+        SpawnSpreadBurst(element);
+    }
+    else if (castType == Character::CastType::FireUltimate  ||
+             castType == Character::CastType::IceUltimate   ||
+             castType == Character::CastType::ElectricUltimate)
+    {
+        AbilityType element =
+            (castType == Character::CastType::FireUltimate)     ? AbilityType::FireUltimate  :
+            (castType == Character::CastType::IceUltimate)      ? AbilityType::IceUltimate   :
+                                                                   AbilityType::ElectricUltimate;
+        TriggerUltimateSequence(element);
+    }
+    else if (castType == Character::CastType::FireBolt  ||
+             castType == Character::CastType::IceBolt   ||
+             castType == Character::CastType::ElectricBolt)
+    {
+        AbilityType element =
+            (castType == Character::CastType::FireBolt)     ? AbilityType::FireBolt  :
+            (castType == Character::CastType::IceBolt)      ? AbilityType::IceBolt   :
+                                                               AbilityType::ElectricBolt;
+        Character::CastType effectType =
+            (element == AbilityType::FireBolt)     ? Character::CastType::FireSpread :
+            (element == AbilityType::IceBolt)      ? Character::CastType::IceSpread  :
+                                                     Character::CastType::ElectricSpread;
+        _vfx.SpawnCastEffect(effectType, _player.GetCastOrigin(), _player.GetFacingDirection());
+        StopSound(_fireballCastSound);
+        PlaySound(_fireballCastSound);
+        SpawnBolt(element);
+    }
+}
 void Engine::SpawnSpreadBurst(AbilityType element)
 {
     static const std::array<Vector2, 8> directions{
@@ -4695,8 +4788,65 @@ void Engine::UpdateSpreadProjectiles(float dt)
             return Character::CastType::FireSpread;
         };
 
-        // Map-boundary wall check — same margins as player collision
+        if (_gameState == GameState::DungeonRun)
         {
+            Rectangle projRec = projectile.GetCollisionRec();
+            bool blocked = false;
+
+            float cellW = (float)GetScreenWidth() / (float)RoomLayout::kCols;
+            float cellH = (float)GetScreenHeight() / (float)RoomLayout::kRows;
+
+            for (int r = 0; r < RoomLayout::kRows && !blocked; r++)
+            {
+                for (int c = 0; c < RoomLayout::kCols; c++)
+                {
+                    TileType t = _dungeonRoomLayout.tiles[r][c];
+                    if (t == TileType::Floor || t == TileType::FloorVariant ||
+                        t == TileType::DoorOpen || t == TileType::Void ||
+                        t == TileType::None)
+                    {
+                        continue;
+                    }
+
+                    Rectangle wallRect{ c * cellW, r * cellH, cellW, cellH };
+                    if (CheckCollisionRecs(projRec, wallRect))
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+            }
+
+            float pxScaleX = cellW / 16.f;
+            float pxScaleY = cellH / 16.f;
+            for (const SpritePlacement& prop : _dungeonRoomLayout.props)
+            {
+                if (blocked) break;
+                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
+
+                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+                Rectangle propRect{
+                    prop.col * cellW + coll.x * pxScaleX,
+                    prop.row * cellH + coll.y * pxScaleY,
+                    coll.width  * pxScaleX,
+                    coll.height * pxScaleY
+                };
+
+                if (CheckCollisionRecs(projRec, propRect))
+                    blocked = true;
+            }
+
+            if (blocked)
+            {
+                _vfx.SpawnHitEffect(elementToCastType(projectile.GetElement()),
+                                    projectile.GetWorldPos(), projectile.GetDirection());
+                projectile.Destroy();
+                continue;
+            }
+        }
+        else
+        {
+            // Map-boundary wall check - same margins as player collision.
             float mapW = _map.width  * _mapScale;
             float mapH = _map.height * _mapScale;
             Vector2 p  = projectile.GetWorldPos();
@@ -4708,21 +4858,21 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 projectile.Destroy();
                 continue;
             }
-        }
 
-        for (auto& prop : _props)
-        {
-            if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
+            for (auto& prop : _props)
             {
-                _vfx.SpawnHitEffect(elementToCastType(projectile.GetElement()),
-                                    projectile.GetWorldPos(), projectile.GetDirection());
-                projectile.Destroy();
-                break;
+                if (CheckCollisionRecs(projectile.GetCollisionRec(), prop.GetCollisionRec()))
+                {
+                    _vfx.SpawnHitEffect(elementToCastType(projectile.GetElement()),
+                                        projectile.GetWorldPos(), projectile.GetDirection());
+                    projectile.Destroy();
+                    break;
+                }
             }
-        }
 
-        if (!projectile.IsActive())
-            continue;
+            if (!projectile.IsActive())
+                continue;
+        }
 
         for (auto& enemy : _enemies)
         {
@@ -5003,8 +5153,8 @@ void Engine::DrawHowToPlay()
     const float panelH = sh * 0.755f;
     Rectangle panelRect = { panelX, panelY, panelW, panelH };
 
-    if (_shopBorderTex.id != 0)
-        DrawNineSlice(_shopBorderTex, 16.f, 28.f, panelRect, Fade(WHITE, 0.88f));
+    if (_htpBorderTex.id != 0)
+        DrawNineSliceEx(_htpBorderTex, 62.8f, 15.3f, 19.5f, 18.1f, 16.f, panelRect, Fade(WHITE, 0.88f));
     else
         DrawRectangleRounded(panelRect, 0.04f, 8, Fade(Color{ 45, 12, 52, 255 }, 0.88f));
 
@@ -5418,14 +5568,6 @@ Vector2 Engine::GetRandomPropPosition()
     return fallback;
 }
 
-Biome Engine::GetBiomeForWave(int wave) const
-{
-    // Legacy — superseded by GetBiomeForAct(). Kept to avoid linker errors
-    // if any call sites remain outside the main progression path.
-    (void)wave;
-    return GetBiomeForAct(_currentAct);
-}
-
 const char* Engine::GetBiomeName(Biome biome) const
 {
     switch (biome)
@@ -5697,6 +5839,10 @@ void Engine::ResetRunState()
     _gameTimer = 0.f;
     _playerDying = false;
     _awaitingStartingAbility = false;
+    _starterAbilityGiftClaimed = false;
+    _startingAbilityPickCount = 0;
+    for (int i = 0; i < 6; i++)
+        _startingAbilitySelected[i] = false;
     _waveStarting        = true;
     _wave1LevelUpDone    = false;
     _bossWarningTimer    = 0.f;
@@ -6344,9 +6490,9 @@ bool Engine::HandleDebugToggleTabInput()
 
 // ── Hitbox debug editor ───────────────────────────────────────────────────────
 
-// ── Pregen combat helpers ──────────────────────────────────────────────────────
+// ── Dungeon run combat helpers ──────────────────────────────────────────────────────
 
-Vector2 Engine::GetPregenSpawnPos(float cellW, float cellH) const
+Vector2 Engine::GetDungeonSpawnPos(float cellW, float cellH) const
 {
     Vector2 playerPos = _player.GetWorldPos();
     float minDist = cellW * 4.f;   // stay at least 4 cells from the player
@@ -6356,13 +6502,13 @@ Vector2 Engine::GetPregenSpawnPos(float cellW, float cellH) const
         int col = GetRandomValue(2, RoomLayout::kCols - 3);
         int row = GetRandomValue(2, RoomLayout::kRows - 3);
 
-        TileType t = _pregenRoomLayout.tiles[row][col];
+        TileType t = _dungeonRoomLayout.tiles[row][col];
         if (t != TileType::Floor && t != TileType::FloorVariant)
             continue;
 
         // Don't spawn on a prop cell.
         bool onProp = false;
-        for (const SpritePlacement& p : _pregenRoomLayout.props)
+        for (const SpritePlacement& p : _dungeonRoomLayout.props)
             if (p.col == col && p.row == row) { onProp = true; break; }
         if (onProp) continue;
 
@@ -6379,12 +6525,12 @@ Vector2 Engine::GetPregenSpawnPos(float cellW, float cellH) const
     return { (float)GetScreenWidth() * 0.75f, (float)GetScreenHeight() * 0.5f };
 }
 
-void Engine::SpawnPregenRoomEnemies()
+void Engine::SpawnDungeonRoomEnemies()
 {
-    if (_pregenViewedRoomIdx < 0) return;
+    if (_dungeonRoomIdx < 0) return;
 
     // Rooms that have already been cleared don't respawn.
-    if (_pregenRoomStates[_pregenViewedRoomIdx].cleared) return;
+    if (_dungeonRoomStates[_dungeonRoomIdx].cleared) return;
 
     float sw    = (float)GetScreenWidth();
     float sh    = (float)GetScreenHeight();
@@ -6392,9 +6538,9 @@ void Engine::SpawnPregenRoomEnemies()
     float cellH = sh / (float)RoomLayout::kRows;
 
     const auto& rooms = _dungeonGen.GetRooms();
-    if (_pregenViewedRoomIdx >= (int)rooms.size()) return;
+    if (_dungeonRoomIdx >= (int)rooms.size()) return;
 
-    int i       = _pregenViewedRoomIdx;
+    int i       = _dungeonRoomIdx;
     int startIdx = _dungeonGen.GetStartIndex();
     int bossIdx  = _dungeonGen.GetBossIndex();
     RoomType type = rooms[i].type;
@@ -6402,18 +6548,18 @@ void Engine::SpawnPregenRoomEnemies()
     // Non-combat rooms — pre-clear so we never try to spawn here again.
     if (i == startIdx || type == RoomType::Rest || type == RoomType::Treasure)
     {
-        _pregenRoomStates[i].cleared = true;
+        _dungeonRoomStates[i].cleared = true;
         return;
     }
 
     auto spawnAt = [&](auto spawnFn, int count = 1) {
         for (int n = 0; n < count; n++)
-            spawnFn(GetPregenSpawnPos(cellW, cellH));
+            spawnFn(GetDungeonSpawnPos(cellW, cellH));
     };
 
     // Count cleared rooms as a progression tier (0 = early, 1 = mid, 2 = late).
     int clearedRooms = 0;
-    for (const auto& [idx, state] : _pregenRoomStates)
+    for (const auto& [idx, state] : _dungeonRoomStates)
         if (state.cleared) clearedRooms++;
     int tier = (clearedRooms <= 2) ? 0 : (clearedRooms <= 5) ? 1 : 2;
 
@@ -6429,7 +6575,7 @@ void Engine::SpawnPregenRoomEnemies()
     }
     else if (type == RoomType::Elite)
     {
-        SpawnOgre(GetPregenSpawnPos(cellW, cellH));
+        SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
         spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, tier == 0 ? 1 : 2);
     }
     else  // Standard
@@ -6442,13 +6588,13 @@ void Engine::SpawnPregenRoomEnemies()
         // Cyclops: rare early, moderate mid, common late.
         int cyclopsRoll = tier == 0 ? 4 : (tier == 1 ? 2 : 1);   // 1-in-N chance
         if (GetRandomValue(0, cyclopsRoll) == 0)
-            SpawnCyclops(GetPregenSpawnPos(cellW, cellH));
+            SpawnCyclops(GetDungeonSpawnPos(cellW, cellH));
     }
 
-    _pregenEnemiesSpawned = true;
+    _dungeonEnemiesSpawned = true;
 }
 
-void Engine::ClearPregenEnemies()
+void Engine::ClearDungeonEnemies()
 {
     for (auto& e : _enemies)
     {
@@ -6461,27 +6607,27 @@ void Engine::ClearPregenEnemies()
     _pickups.clear();
     _vfx.Clear();
     _pendingExp    = 0.f;
-    _pregenEnemiesSpawned = false;
+    _dungeonEnemiesSpawned = false;
 }
 
 
-Engine::PregenDoorSide Engine::OppositePregenDoorSide(int dr, int dc) const
+Engine::DungeonDoorSide Engine::OppositeDungeonDoorSide(int dr, int dc) const
 {
-    if (dr < 0) return PregenDoorSide::South;
-    if (dr > 0) return PregenDoorSide::North;
-    if (dc < 0) return PregenDoorSide::East;
-    if (dc > 0) return PregenDoorSide::West;
-    return PregenDoorSide::None;
+    if (dr < 0) return DungeonDoorSide::South;
+    if (dr > 0) return DungeonDoorSide::North;
+    if (dc < 0) return DungeonDoorSide::East;
+    if (dc > 0) return DungeonDoorSide::West;
+    return DungeonDoorSide::None;
 }
 
-void Engine::ApplyPregenRoomDoorState(RoomLayout& layout, int roomIdx, PregenDoorSide entryDoorSide) const
+void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonDoorSide entryDoorSide) const
 {
     const auto& rooms = _dungeonGen.GetRooms();
     if (roomIdx < 0 || roomIdx >= (int)rooms.size()) return;
 
     const DungeonRoom& room = rooms[roomIdx];
-    auto stateIt = _pregenRoomStates.find(roomIdx);
-    bool cleared = (stateIt != _pregenRoomStates.end() && stateIt->second.cleared);
+    auto stateIt = _dungeonRoomStates.find(roomIdx);
+    bool cleared = (stateIt != _dungeonRoomStates.end() && stateIt->second.cleared);
     bool alwaysOpen = cleared
         || roomIdx == _dungeonGen.GetStartIndex()
         || room.type == RoomType::Rest
@@ -6491,7 +6637,7 @@ void Engine::ApplyPregenRoomDoorState(RoomLayout& layout, int roomIdx, PregenDoo
     int doorStartC = RoomLayout::kCols / 2 - 1;
     int doorStartR = RoomLayout::kRows / 2 - 1;
 
-    auto shouldOpen = [&](PregenDoorSide side) {
+    auto shouldOpen = [&](DungeonDoorSide side) {
         return alwaysOpen || side == entryDoorSide;
     };
 
@@ -6512,13 +6658,13 @@ void Engine::ApplyPregenRoomDoorState(RoomLayout& layout, int roomIdx, PregenDoo
             layout.tiles[doorStartR + dr][RoomLayout::kCols - 1] = open ? TileType::Floor : TileType::WallRight;
     };
 
-    if (room.hasNorth) setNorth(shouldOpen(PregenDoorSide::North));
-    if (room.hasSouth) setSouth(shouldOpen(PregenDoorSide::South));
-    if (room.hasWest)  setWest(shouldOpen(PregenDoorSide::West));
-    if (room.hasEast)  setEast(shouldOpen(PregenDoorSide::East));
+    if (room.hasNorth) setNorth(shouldOpen(DungeonDoorSide::North));
+    if (room.hasSouth) setSouth(shouldOpen(DungeonDoorSide::South));
+    if (room.hasWest)  setWest(shouldOpen(DungeonDoorSide::West));
+    if (room.hasEast)  setEast(shouldOpen(DungeonDoorSide::East));
 }
 
-bool Engine::IsPregenDoorOpen(PregenDoorSide side) const
+bool Engine::IsDungeonDoorOpen(DungeonDoorSide side) const
 {
     int doorStartC = RoomLayout::kCols / 2 - 1;
     int doorStartR = RoomLayout::kRows / 2 - 1;
@@ -6526,70 +6672,70 @@ bool Engine::IsPregenDoorOpen(PregenDoorSide side) const
 
     switch (side)
     {
-    case PregenDoorSide::North: t = _pregenRoomLayout.tiles[0][doorStartC + 1]; break;
-    case PregenDoorSide::South: t = _pregenRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + 1]; break;
-    case PregenDoorSide::West:  t = _pregenRoomLayout.tiles[doorStartR][0]; break;
-    case PregenDoorSide::East:  t = _pregenRoomLayout.tiles[doorStartR][RoomLayout::kCols - 1]; break;
+    case DungeonDoorSide::North: t = _dungeonRoomLayout.tiles[0][doorStartC + 1]; break;
+    case DungeonDoorSide::South: t = _dungeonRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + 1]; break;
+    case DungeonDoorSide::West:  t = _dungeonRoomLayout.tiles[doorStartR][0]; break;
+    case DungeonDoorSide::East:  t = _dungeonRoomLayout.tiles[doorStartR][RoomLayout::kCols - 1]; break;
     default: return false;
     }
 
     return t == TileType::Floor || t == TileType::FloorVariant || t == TileType::DoorOpen;
 }
 
-void Engine::SpawnPregenDoorOpenEffects()
+void Engine::SpawnDungeonDoorOpenEffects()
 {
     const auto& rooms = _dungeonGen.GetRooms();
-    if (_pregenViewedRoomIdx < 0 || _pregenViewedRoomIdx >= (int)rooms.size()) return;
+    if (_dungeonRoomIdx < 0 || _dungeonRoomIdx >= (int)rooms.size()) return;
 
-    const DungeonRoom& room = rooms[_pregenViewedRoomIdx];
+    const DungeonRoom& room = rooms[_dungeonRoomIdx];
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
     int doorStartC = RoomLayout::kCols / 2 - 1;
     int doorStartR = RoomLayout::kRows / 2 - 1;
-    size_t effectStartCount = _pregenClearEffects.size();
+    size_t effectStartCount = _dungeonClearEffects.size();
 
-    auto addDoorEffect = [&](PregenDoorSide side, bool exists) {
-        if (!exists || side == _pregenEntryDoorSide) return;
+    auto addDoorEffect = [&](DungeonDoorSide side, bool exists) {
+        if (!exists || side == _dungeonEntryDoorSide) return;
         Vector2 pos{};
         Rectangle glow{};
         switch (side)
         {
-        case PregenDoorSide::North:
+        case DungeonDoorSide::North:
             pos = { (doorStartC + 1.5f) * cellW, 0.65f * cellH };
             glow = { doorStartC * cellW, 0.f, 3.f * cellW, 0.85f * cellH };
             break;
-        case PregenDoorSide::South:
+        case DungeonDoorSide::South:
             pos = { (doorStartC + 1.5f) * cellW, (RoomLayout::kRows - 0.65f) * cellH };
             glow = { doorStartC * cellW, (RoomLayout::kRows - 0.85f) * cellH, 3.f * cellW, 0.85f * cellH };
             break;
-        case PregenDoorSide::West:
+        case DungeonDoorSide::West:
             pos = { 0.65f * cellW, (doorStartR + 1.f) * cellH };
             glow = { 0.f, doorStartR * cellH, 0.85f * cellW, 2.f * cellH };
             break;
-        case PregenDoorSide::East:
+        case DungeonDoorSide::East:
             pos = { (RoomLayout::kCols - 0.65f) * cellW, (doorStartR + 1.f) * cellH };
             glow = { (RoomLayout::kCols - 0.85f) * cellW, doorStartR * cellH, 0.85f * cellW, 2.f * cellH };
             break;
         default: return;
         }
-        _pregenClearEffects.push_back({ pos, 0.f, glow, true });
+        _dungeonClearEffects.push_back({ pos, 0.f, glow, true });
     };
 
-    addDoorEffect(PregenDoorSide::North, room.hasNorth);
-    addDoorEffect(PregenDoorSide::South, room.hasSouth);
-    addDoorEffect(PregenDoorSide::West,  room.hasWest);
-    addDoorEffect(PregenDoorSide::East,  room.hasEast);
+    addDoorEffect(DungeonDoorSide::North, room.hasNorth);
+    addDoorEffect(DungeonDoorSide::South, room.hasSouth);
+    addDoorEffect(DungeonDoorSide::West,  room.hasWest);
+    addDoorEffect(DungeonDoorSide::East,  room.hasEast);
 
-    if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
+    if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
     {
-        Rectangle exit = GetPregenBossExitTrigger();
+        Rectangle exit = GetDungeonBossExitTrigger();
         if (exit.width > 0.f && exit.height > 0.f)
-            _pregenClearEffects.push_back({ { exit.x + exit.width * 0.5f, exit.y + exit.height * 0.5f }, 0.f, exit, true });
+            _dungeonClearEffects.push_back({ { exit.x + exit.width * 0.5f, exit.y + exit.height * 0.5f }, 0.f, exit, true });
     }
-    if (_pregenClearEffects.size() == effectStartCount)
-        _pregenClearEffects.push_back({ { sw * 0.5f, sh * 0.5f }, 0.f, {}, false });
+    if (_dungeonClearEffects.size() == effectStartCount)
+        _dungeonClearEffects.push_back({ { sw * 0.5f, sh * 0.5f }, 0.f, {}, false });
 
     if (_roomClearExplosionSound.frameCount > 0)
     {
@@ -6598,18 +6744,18 @@ void Engine::SpawnPregenDoorOpenEffects()
     }
 }
 
-void Engine::UpdatePregenClearEffects(float dt)
+void Engine::UpdateDungeonClearEffects(float dt)
 {
     static constexpr float kDuration = 1.75f;
-    for (auto& effect : _pregenClearEffects)
+    for (auto& effect : _dungeonClearEffects)
         effect.timer += dt;
-    _pregenClearEffects.erase(
-        std::remove_if(_pregenClearEffects.begin(), _pregenClearEffects.end(),
-            [](const PregenClearEffect& effect) { return effect.timer >= kDuration; }),
-        _pregenClearEffects.end());
+    _dungeonClearEffects.erase(
+        std::remove_if(_dungeonClearEffects.begin(), _dungeonClearEffects.end(),
+            [](const DungeonClearEffect& effect) { return effect.timer >= kDuration; }),
+        _dungeonClearEffects.end());
 }
 
-void Engine::DrawPregenClearEffects() const
+void Engine::DrawDungeonClearEffects() const
 {
     static constexpr int kFrameW = 64;
     static constexpr int kFrameH = 64;
@@ -6617,7 +6763,7 @@ void Engine::DrawPregenClearEffects() const
     static constexpr float kDuration = 1.75f;
     static constexpr float kScale = 4.0f;
 
-    for (const PregenClearEffect& effect : _pregenClearEffects)
+    for (const DungeonClearEffect& effect : _dungeonClearEffects)
     {
         float pct = std::clamp(effect.timer / kDuration, 0.f, 0.999f);
         if (effect.hasGlow)
@@ -6651,7 +6797,18 @@ void Engine::DrawPregenClearEffects() const
             { dst.width * 0.5f, dst.height * 0.5f }, 0.f, WHITE);
     }
 }
-void Engine::ApplyPregenBossExitTiles(TileType doorType)
+// Set the 3 north door tiles of the Store room to doorType.
+// Used to lock the door at cutscene start and unlock it after ability selection.
+void Engine::SetStoreDoorTiles(TileType doorType)
+{
+    if (_currentRoomType != RoomType::Store) return;
+    int midC = RoomLayout::kCols / 2;
+    // North door is 3 tiles wide, centred on column midC, at row 0.
+    for (int dc = -1; dc <= 1; dc++)
+        _dungeonRoomLayout.tiles[0][midC + dc] = doorType;
+}
+
+void Engine::ApplyDungeonBossExitTiles(TileType doorType)
 {
     int bossIdx = _dungeonGen.GetBossIndex();
     if (bossIdx < 0) return;
@@ -6666,26 +6823,26 @@ void Engine::ApplyPregenBossExitTiles(TileType doorType)
     if (!boss.hasSouth)
     {
         for (int dc = 0; dc < 3; dc++)
-            _pregenRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + dc] = doorType;
+            _dungeonRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + dc] = doorType;
     }
     else if (!boss.hasNorth)
     {
         for (int dc = 0; dc < 3; dc++)
-            _pregenRoomLayout.tiles[0][doorStartC + dc] = doorType;
+            _dungeonRoomLayout.tiles[0][doorStartC + dc] = doorType;
     }
     else if (!boss.hasEast)
     {
         for (int dr = 0; dr < 2; dr++)
-            _pregenRoomLayout.tiles[doorStartR + dr][RoomLayout::kCols - 1] = doorType;
+            _dungeonRoomLayout.tiles[doorStartR + dr][RoomLayout::kCols - 1] = doorType;
     }
     else
     {
         for (int dr = 0; dr < 2; dr++)
-            _pregenRoomLayout.tiles[doorStartR + dr][0] = doorType;
+            _dungeonRoomLayout.tiles[doorStartR + dr][0] = doorType;
     }
 }
 
-Rectangle Engine::GetPregenBossExitTrigger() const
+Rectangle Engine::GetDungeonBossExitTrigger() const
 {
     int bossIdx = _dungeonGen.GetBossIndex();
     if (bossIdx < 0) return {};
@@ -6709,7 +6866,7 @@ Rectangle Engine::GetPregenBossExitTrigger() const
     return { 0.f, doorStartR * cellH, cellW, 2.f * cellH };
 }
 
-void Engine::RebuildPregenNav()
+void Engine::RebuildDungeonNav()
 {
     float sw    = (float)GetScreenWidth();
     float sh    = (float)GetScreenHeight();
@@ -6723,7 +6880,7 @@ void Engine::RebuildPregenNav()
     {
         for (int c = 0; c < RoomLayout::kCols; c++)
         {
-            TileType t = _pregenRoomLayout.tiles[r][c];
+            TileType t = _dungeonRoomLayout.tiles[r][c];
             if (t == TileType::Floor        || t == TileType::FloorVariant ||
                 t == TileType::DoorOpen     || t == TileType::Void         ||
                 t == TileType::None)
@@ -6733,7 +6890,7 @@ void Engine::RebuildPregenNav()
     }
 
     // Props (full cell approximation is accurate enough for nav pathfinding).
-    for (const SpritePlacement& p : _pregenRoomLayout.props)
+    for (const SpritePlacement& p : _dungeonRoomLayout.props)
         solids.push_back({ p.col * cellW, p.row * cellH, cellW, cellH });
 
     _nav.CancelAndReset();
@@ -6741,7 +6898,7 @@ void Engine::RebuildPregenNav()
     _nav.RefreshSync(_player.GetFeetWorldPos());
 }
 
-void Engine::ResolvePregenEnemyCollisions()
+void Engine::ResolveDungeonEnemyCollisions()
 {
     float sw    = (float)GetScreenWidth();
     float sh    = (float)GetScreenHeight();
@@ -6763,7 +6920,7 @@ void Engine::ResolvePregenEnemyCollisions()
         {
             for (int c = std::max(0, ec - 2); c <= std::min(RoomLayout::kCols - 1, ec + 2); c++)
             {
-                TileType t = _pregenRoomLayout.tiles[r][c];
+                TileType t = _dungeonRoomLayout.tiles[r][c];
                 if (t == TileType::Floor        || t == TileType::FloorVariant ||
                     t == TileType::DoorOpen     || t == TileType::Void         ||
                     t == TileType::None)
@@ -6793,7 +6950,7 @@ void Engine::ResolvePregenEnemyCollisions()
         }
 
         // ── Props — precise collision rect ────────────────────────────────────
-        for (const SpritePlacement& prop : _pregenRoomLayout.props)
+        for (const SpritePlacement& prop : _dungeonRoomLayout.props)
         {
             if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
             const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
@@ -6826,7 +6983,7 @@ void Engine::ResolvePregenEnemyCollisions()
     }
 }
 
-Rectangle Engine::GetPregenRoomRect(int roomIdx) const
+Rectangle Engine::GetDungeonRoomRect(int roomIdx) const
 {
     const auto& rooms = _dungeonGen.GetRooms();
     if (roomIdx < 0 || roomIdx >= (int)rooms.size())
@@ -6850,14 +7007,14 @@ Rectangle Engine::GetPregenRoomRect(int roomIdx) const
     };
 }
 
-void Engine::UpdatePregenTest(float dt)
+void Engine::UpdateDungeonRun(float dt)
 {
     // ── Play view — player walks around the room ──────────────────────────────
-    if (_pregenView == PregenView::Play)
+    if (_dungeonView == DungeonView::Play)
     {
-        if (!_pregenScrolling && IsKeyPressed(KEY_ESCAPE))
+        if (!_dungeonScrolling && IsKeyPressed(KEY_ESCAPE))
         {
-            _stateBeforePause = GameState::PregenTest;
+            _stateBeforePause = GameState::DungeonRun;
             _gameState = GameState::Pause;
             return;
         }
@@ -6866,34 +7023,76 @@ void Engine::UpdatePregenTest(float dt)
         float sh = (float)GetScreenHeight();
 
         // ── Scroll animation ─────────────────────────────────────────────────
-        if (_pregenScrolling)
+        if (_dungeonScrolling)
         {
-            _pregenScrollT += dt / kPregenScrollDur;
-            if (_pregenScrollT >= 1.f)
+            _dungeonScrollT += dt / kDungeonScrollDur;
+            if (_dungeonScrollT >= 1.f)
             {
-                _pregenScrollT       = 1.f;
-                _pregenScrolling     = false;
-                _pregenRoomLayout    = _pregenScrollNextLayout;
-                _pregenViewedRoomIdx = _pregenScrollNextIdx;
-                _pregenEntryDoorSide = _pregenScrollNextEntryDoorSide;
-                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
-                _player.SetWorldPos(_pregenScrollSpawnPos);
-                _player.Revive();
-
-                // Clear previous room's enemies BEFORE spawning the new set.
-                ClearPregenEnemies();
-
-                // Rebuild nav grid (walls + props) and spawn enemies for the new room.
-                RebuildPregenNav();
-                SpawnPregenRoomEnemies();
-                if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
-                    ApplyPregenBossExitTiles(TileType::DoorLocked);
+                _dungeonScrollT = 1.f;
+                EnterDungeonRoom(_dungeonScrollNextIdx, _dungeonScrollNextEntryDoorSide, _dungeonScrollSpawnPos, false);
             }
             _cameraPos = { sw * 0.5f, sh * 0.5f };
             return;
         }
 
-        
+        // ── Cutscene ─────────────────────────────────────────────────────────
+        if (_cutscene.IsActive())
+        {
+            // F11 — toggle dialogue box designer even while a cutscene is running
+            if (_debug.IsActive() && IsKeyPressed(KEY_F11))
+            {
+                _isDlgEditorActive = !_isDlgEditorActive;
+                _dlgEditorHandle   = -1;
+                _dlgSpeakerFsDrag  = false;
+                _dlgBodyFsDrag     = false;
+                _dlgInsetLeftDrag  = false;
+                _dlgInsetTopDrag   = false;
+                if (_isDlgEditorActive)
+                    _debug.SetOpen(false);
+            }
+
+            if (_isDlgEditorActive)
+            {
+                // Editor active — handle mouse drag but don't consume E/click for dialogue
+                UpdateDialogueBoxEditor();
+                return;
+            }
+
+            // Move player position via cutscene (MoveActor index 0)
+            Vector2 playerPos = _player.GetWorldPos();
+            _cutscene.Update(dt, &playerPos, nullptr);
+            _player.SetWorldPos(playerPos);
+
+            // Signal: open ability selection screen
+            if (_cutscene.WantsAbilitySelect()
+                && !_awaitingStartingAbility
+                && !_starterAbilityGiftClaimed)
+            {
+                GenerateStartingAbilityOptions();
+                _awaitingStartingAbility  = true;
+                _levelUpReturnState       = GameState::DungeonRun;
+                _levelUpOpenTimer         = 0.3f;
+                _gameState                = GameState::LevelUpChoice;
+            }
+
+            // Signal: player just chose an ability — resume cutscene
+            if (_cutscene.WantsAbilitySelect() && _starterAbilityGiftClaimed)
+                _cutscene.OnAbilitySelected();
+
+            // Signal: unlock north door
+            if (_cutscene.WantsDoorUnlock())
+            {
+                _cutscene.ConsumeDoorUnlock();
+                SetStoreDoorTiles(TileType::DoorOpen);
+            }
+
+            // Player advances dialogue with E or left-click
+            if (IsKeyPressed(KEY_E) || IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+                _cutscene.AdvanceOnInput();
+
+            return;   // skip all normal dungeon input while cutscene is active
+        }
+
         if (_debug.IsActive())
         {
             if (HandleDebugToggleTabInput())
@@ -6912,31 +7111,31 @@ void Engine::UpdatePregenTest(float dt)
                     _player.GrantInvulnerability(5.f); break;
                 case DebugActionKind::ClearEnemiesContinue:
                     for (auto& e : _enemies) { e->SetActive(false); e->Teleport(Vector2{ -5000.f, -5000.f }); }
-                    _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
-                    _pregenEnemiesSpawned = false;
-                    ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
-                    if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
-                        ApplyPregenBossExitTiles(TileType::DoorOpen);
-                    SpawnPregenDoorOpenEffects();
-                    RebuildPregenNav();
+                    _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
+                    _dungeonEnemiesSpawned = false;
+                    ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+                    if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
+                        ApplyDungeonBossExitTiles(TileType::DoorOpen);
+                    SpawnDungeonDoorOpenEffects();
+                    RebuildDungeonNav();
                     break;
                 case DebugActionKind::RestartRoom:
-                    DebugRestartPregenRoomAs((RoomType)cmd.value); break;
+                    DebugRestartDungeonRoomAs((RoomType)cmd.value); break;
                 case DebugActionKind::SetEliteMechanic:
                     _debug.SetForcedEliteMechanic(cmd.value);
-                    DebugRestartPregenRoomAs(RoomType::Elite); break;
+                    DebugRestartDungeonRoomAs(RoomType::Elite); break;
                 case DebugActionKind::SpawnGrunt:
                     SpawnBasicEnemy(Vector2Add(spawnBase, Vector2{ 220.f, 40.f }));
-                    _pregenEnemiesSpawned = true; break;
+                    _dungeonEnemiesSpawned = true; break;
                 case DebugActionKind::SpawnCyclops:
                     SpawnCyclops(Vector2Add(spawnBase, Vector2{ 260.f, -60.f }));
-                    _pregenEnemiesSpawned = true; break;
+                    _dungeonEnemiesSpawned = true; break;
                 case DebugActionKind::SpawnOgre:
                     SpawnOgre(Vector2Add(spawnBase, Vector2{ -240.f, 50.f }));
-                    _pregenEnemiesSpawned = true; break;
+                    _dungeonEnemiesSpawned = true; break;
                 case DebugActionKind::SpawnBoss:
                     SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f }));
-                    _pregenEnemiesSpawned = true; break;
+                    _dungeonEnemiesSpawned = true; break;
                 case DebugActionKind::Heal:
                     _player.Heal(cmd.value); break;
                 case DebugActionKind::RestoreMana:
@@ -6947,15 +7146,15 @@ void Engine::UpdatePregenTest(float dt)
                     _player.AddExp(cmd.value); break;
                 case DebugActionKind::TreasureCards:
                     GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
-                    _levelUpReturnState = GameState::PregenTest; _levelUpOpenTimer = 0.1f;
+                    _levelUpReturnState = GameState::DungeonRun; _levelUpOpenTimer = 0.1f;
                     _gameState = GameState::LevelUpChoice; break;
                 case DebugActionKind::EliteReward:
                     GenerateLevelUpOptions(LevelUpOfferContext::EliteReward);
-                    _levelUpReturnState = GameState::PregenTest; _levelUpOpenTimer = 0.1f;
+                    _levelUpReturnState = GameState::DungeonRun; _levelUpOpenTimer = 0.1f;
                     _gameState = GameState::LevelUpChoice; break;
                 case DebugActionKind::AbilityReward:
                     GenerateAbilityChoiceOptions(); _abilityChoiceOpenTimer = 0.1f;
-                    _levelUpReturnState = GameState::PregenTest; _pendingRoomChoice = false;
+                    _levelUpReturnState = GameState::DungeonRun; _pendingRoomChoice = false;
                     _gameState = GameState::AbilityChoice; break;
                 case DebugActionKind::ApplyUpgrade:
                     _player.ApplyUpgrade((UpgradeType)cmd.value); break;
@@ -6983,6 +7182,30 @@ void Engine::UpdatePregenTest(float dt)
             UpdateHitboxEditor();
             return;
         }
+
+        // F11 — toggle dialogue box designer (debug only)
+        if (_debug.IsActive() && IsKeyPressed(KEY_F11))
+        {
+            _isDlgEditorActive = !_isDlgEditorActive;
+            _dlgEditorHandle   = -1;
+            _dlgSpeakerFsDrag  = false;
+            _dlgBodyFsDrag     = false;
+            _dlgInsetLeftDrag  = false;
+            _dlgInsetTopDrag   = false;
+            if (_isDlgEditorActive)
+            {
+                _cutscene.GetLayout().ApplyScreenDefaults();
+                _debug.SetOpen(false);
+            }
+        }
+        if (_isDlgEditorActive && !_debug.IsActive())
+            _isDlgEditorActive = false;
+
+        if (_isDlgEditorActive)
+        {
+            UpdateDialogueBoxEditor();
+            return;
+        }
         // ── Normal player update ──────────────────────────────────────────────
         if (_player.GetHealthValue() <= 0.f && !_playerDying)
         {
@@ -7004,14 +7227,14 @@ void Engine::UpdatePregenTest(float dt)
         _player.SetCombatLocked(false);
         _player.SetTouchModeEnabled(false);
         _player.Update(dt);
-        _player.ConsumeCastRequest();
+        HandlePlayerCastRequest();
 
         float cellW = sw / (float)RoomLayout::kCols;
         float cellH = sh / (float)RoomLayout::kRows;
 
         Vector2 pos = _player.GetWorldPos();
         const auto& rooms = _dungeonGen.GetRooms();
-        const DungeonRoom& cur = rooms[_pregenViewedRoomIdx];
+        const DungeonRoom& cur = rooms[_dungeonRoomIdx];
 
         // Door ranges in world (= screen) coords.
         int   doorCentreC = RoomLayout::kCols / 2;
@@ -7022,43 +7245,64 @@ void Engine::UpdatePregenTest(float dt)
         float doorBot     = (doorCentreR + 1) * cellH;
 
         // Which walls have open doorways the player can walk through?
-        bool canPassNorth = cur.hasNorth && IsPregenDoorOpen(PregenDoorSide::North) && pos.x > doorLeft && pos.x < doorRight;
-        bool canPassSouth = cur.hasSouth && IsPregenDoorOpen(PregenDoorSide::South) && pos.x > doorLeft && pos.x < doorRight;
-        bool canPassWest  = cur.hasWest  && IsPregenDoorOpen(PregenDoorSide::West)  && pos.y > doorTop  && pos.y < doorBot;
-        bool canPassEast  = cur.hasEast  && IsPregenDoorOpen(PregenDoorSide::East)  && pos.y > doorTop  && pos.y < doorBot;
+        bool canPassNorth = cur.hasNorth && IsDungeonDoorOpen(DungeonDoorSide::North) && pos.x > doorLeft && pos.x < doorRight;
+        bool canPassSouth = cur.hasSouth && IsDungeonDoorOpen(DungeonDoorSide::South) && pos.x > doorLeft && pos.x < doorRight;
+        bool canPassWest  = cur.hasWest  && IsDungeonDoorOpen(DungeonDoorSide::West)  && pos.y > doorTop  && pos.y < doorBot;
+        bool canPassEast  = cur.hasEast  && IsDungeonDoorOpen(DungeonDoorSide::East)  && pos.y > doorTop  && pos.y < doorBot;
 
         // Helper: begin a Zelda-style scroll into an adjacent room.
         // scrollVec describes which direction the CURRENT room slides offscreen.
         auto startScroll = [&](int dr, int dc, Vector2 scrollVec, Vector2 spawnPos)
         {
-            int nextIdx = _dungeonGen.GetNeighborIndex(_pregenViewedRoomIdx, dr, dc);
+            int nextIdx = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx, dr, dc);
             if (nextIdx < 0) return;
             const DungeonRoom& next = rooms[nextIdx];
-            _pregenScrollNextLayout  = RoomLayout::Generate(
+            _dungeonScrollNextLayout  = RoomLayout::Generate(
                 next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
                 (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
                 (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
-            _pregenScrollNextEntryDoorSide = OppositePregenDoorSide(dr, dc);
-            ApplyPregenRoomDoorState(_pregenScrollNextLayout, nextIdx, _pregenScrollNextEntryDoorSide);
-            _pregenScrollNextIdx     = nextIdx;
-            _pregenScrollSpawnPos    = spawnPos;
-            _pregenScrollVec         = scrollVec;
-            _pregenScrollT           = 0.f;
-            _pregenScrolling         = true;
+            _dungeonScrollNextEntryDoorSide = OppositeDungeonDoorSide(dr, dc);
+            ApplyDungeonRoomDoorState(_dungeonScrollNextLayout, nextIdx, _dungeonScrollNextEntryDoorSide);
+            _dungeonScrollNextIdx     = nextIdx;
+            _dungeonScrollSpawnPos    = spawnPos;
+            _dungeonScrollVec         = scrollVec;
+            _dungeonScrollT           = 0.f;
+            _dungeonScrolling         = true;
         };
 
         // Check door thresholds and trigger scroll.
-        if      (canPassNorth && pos.y < cellH)
-            startScroll(-1,  0, { 0.f,  1.f }, { pos.x, (RoomLayout::kRows - 2) * cellH });
+        if (canPassNorth && pos.y < cellH)
+        {
+            // Safety net: player dashed or walked out of the Store before picking a starting ability.
+            // Block the transition and force the choice screen instead.
+            if (_currentRoomType == RoomType::Store && !_starterAbilityGiftClaimed)
+            {
+                GenerateStartingAbilityOptions();
+                _awaitingStartingAbility = true;
+                _levelUpReturnState = GameState::DungeonRun;
+                _levelUpOpenTimer = 0.2f;
+                _gameState = GameState::LevelUpChoice;
+                Vector2 playerPos = _player.GetWorldPos();
+                playerPos.y = cellH + 4.f;
+                _player.SetWorldPos(playerPos);
+            }
+            else
+                startScroll(-1, 0, { 0.f, 1.f }, { pos.x, (RoomLayout::kRows - 2) * cellH });
+        }
         else if (canPassSouth && pos.y > (RoomLayout::kRows - 1) * cellH)
-            startScroll(+1,  0, { 0.f, -1.f }, { pos.x, cellH * 2.f });
+        {
+            // Never allow walking back south into the Store room once the player has left.
+            int southNeighborIdx = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx, +1, 0);
+            if (southNeighborIdx != _dungeonGen.GetStartIndex())
+                startScroll(+1, 0, { 0.f, -1.f }, { pos.x, cellH * 2.f });
+        }
         else if (canPassWest  && pos.x < cellW)
             startScroll( 0, -1, { 1.f,  0.f }, { (RoomLayout::kCols - 2) * cellW, pos.y });
         else if (canPassEast  && pos.x > (RoomLayout::kCols - 1) * cellW)
             startScroll( 0, +1, {-1.f,  0.f }, { cellW * 2.f, pos.y });
 
         // Wall collision: solid walls clamp, door openings let the player through.
-        if (!_pregenScrolling)
+        if (!_dungeonScrolling)
         {
             Vector2 posBefore = pos;
             if (!canPassNorth) pos.y = std::max(pos.y, cellH);
@@ -7073,7 +7317,7 @@ void Engine::UpdatePregenTest(float dt)
             // Prop collision — resolve player out of each prop's stored collision rect.
             float pxScaleX = cellW / 16.f;
             float pxScaleY = cellH / 16.f;
-            for (const SpritePlacement& prop : _pregenRoomLayout.props)
+            for (const SpritePlacement& prop : _dungeonRoomLayout.props)
             {
                 if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
                 const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
@@ -7107,13 +7351,33 @@ void Engine::UpdatePregenTest(float dt)
         }
 
         // ── Combat update ─────────────────────────────────────────────────────
+        if (_currentRoomType == RoomType::Store)
+        {
+            Vector2 shopWorldOffset{ -_cameraPos.x, -_cameraPos.y };
+            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive))
+            {
+                _levelUpReturnState = GameState::DungeonRun;
+                if (!_starterAbilityGiftClaimed)
+                {
+                    GenerateStartingAbilityOptions();
+                    _awaitingStartingAbility = true;
+                    _levelUpOpenTimer = 0.3f;
+                    _gameState = GameState::LevelUpChoice;
+                }
+                else
+                {
+                    _gameState = GameState::Shop;
+                }
+                return;
+            }
+        }
         _nav.TickRefresh(dt, _player.GetFeetWorldPos());
         _nav.ApplyPendingRefresh();
 
         EnemyRuntimeContext eCtx{};
         eCtx.player             = &_player;
         eCtx.nav                = &_nav;
-        eCtx.props              = &_props;   // empty in pregen mode
+        eCtx.props              = &_props;   // empty in dungeon run mode
         eCtx.enemies            = &_enemies;
         eCtx.cyclopsLasers      = &_cyclopsLasers;
         eCtx.lavaBalls          = &_lavaBalls;
@@ -7121,7 +7385,7 @@ void Engine::UpdatePregenTest(float dt)
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
         HandlePlayerMeleeDamage();
-        ResolvePregenEnemyCollisions();
+        ResolveDungeonEnemyCollisions();
 
         // Player-enemy capsule separation — gives enemies physical presence.
         // Dash passes through enemies; on landing inside one, the player is ejected.
@@ -7164,12 +7428,12 @@ void Engine::UpdatePregenTest(float dt)
         UpdateLavaBallProjectiles(dt);
         UpdateCyclopsLasers(dt);
         _vfx.Update(dt);
-        UpdatePregenClearEffects(dt);
+        UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
         // Drain pending EXP slowly (50/sec) so the HUD bar animates, then trigger
         // a LevelUpChoice screen for each level the player gains — same as the
         // wave-based ExpTally flow but without the full overlay screen.
-        if (!_pregenScrolling && _pendingExp > 0.f)
+        if (!_dungeonScrolling && _pendingExp > 0.f)
         {
             static constexpr float kExpDrainRate = 50.f;
             float drain        = std::min(kExpDrainRate * dt, _pendingExp);
@@ -7192,62 +7456,46 @@ void Engine::UpdatePregenTest(float dt)
         }
 
         // Show a LevelUpChoice card screen for every level gained once the EXP drain finishes.
-        if (!_pregenScrolling && _pendingExp <= 0.f && _tallyLevelUpsRemaining > 0)
+        if (!_dungeonScrolling && _pendingExp <= 0.f && _tallyLevelUpsRemaining > 0)
         {
             _tallyLevelUpsRemaining--;
             GenerateLevelUpOptions(LevelUpOfferContext::NormalLevel);
-            _levelUpReturnState = GameState::PregenTest;
+            _levelUpReturnState = GameState::DungeonRun;
             _levelUpOpenTimer   = 0.25f;
             _gameState          = GameState::LevelUpChoice;
         }
 
         // ── Room clear detection ───────────────────────────────────────────────
-        if (_pregenEnemiesSpawned)
+        if (_dungeonEnemiesSpawned)
         {
             bool allDead = true;
             for (const auto& e : _enemies)
                 if (e->IsActive()) { allDead = false; break; }
             if (allDead)
             {
-                _pregenRoomStates[_pregenViewedRoomIdx].cleared = true;
-                _pregenEnemiesSpawned = false;
-                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
-                if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
-                    ApplyPregenBossExitTiles(TileType::DoorOpen);
-                SpawnPregenDoorOpenEffects();
-                RebuildPregenNav();
+                _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
+                _dungeonEnemiesSpawned = false;
+                ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+                if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
+                    ApplyDungeonBossExitTiles(TileType::DoorOpen);
+                SpawnDungeonDoorOpenEffects();
+                RebuildDungeonNav();
             }
         }
 
         // ── Boss exit trigger ──────────────────────────────────────────────────
         int bossIdx = _dungeonGen.GetBossIndex();
-        if (_pregenViewedRoomIdx == bossIdx && _pregenRoomStates[bossIdx].cleared)
+        if (_dungeonRoomIdx == bossIdx && _dungeonRoomStates[bossIdx].cleared)
         {
-            Rectangle exitRect = GetPregenBossExitTrigger();
+            Rectangle exitRect = GetDungeonBossExitTrigger();
             if (CheckCollisionPointRec(_player.GetWorldPos(), exitRect))
             {
                 // Boss cleared — generate a fresh dungeon.
                 // (Biome/map selection will go here when ready.)
-                ClearPregenEnemies();
+                ClearDungeonEnemies();
                 _dungeonGen.Generate();
-                const auto& freshRooms = _dungeonGen.GetRooms();
                 int freshStart = _dungeonGen.GetStartIndex();
-                _pregenViewedRoomIdx = freshStart;
-                const DungeonRoom& fr = freshRooms[freshStart];
-                _pregenRoomLayout = RoomLayout::Generate(
-                    fr.hasNorth, fr.hasSouth, fr.hasEast, fr.hasWest, fr.type,
-                    (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
-                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
-                _pregenRoomStates.clear();
-                _pregenEntryDoorSide = PregenDoorSide::None;
-                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
-                _pregenEnemiesSpawned = false;
-                _pregenScrolling      = false;
-                _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
-                _player.Revive();
-                _cameraPos = { sw * 0.5f, sh * 0.5f };
-                RebuildPregenNav();
-                SpawnPregenRoomEnemies();
+                EnterDungeonRoom(freshStart, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
                 return;
             }
         }
@@ -7258,12 +7506,12 @@ void Engine::UpdatePregenTest(float dt)
     }
 
     // ── Room view — static tile preview ──────────────────────────────────────
-    if (_pregenView == PregenView::Room)
+    if (_dungeonView == DungeonView::Room)
     {
         if (IsKeyPressed(KEY_ESCAPE))
         {
-            _pregenView          = PregenView::Graph;
-            _pregenViewedRoomIdx = -1;
+            _dungeonView          = DungeonView::Graph;
+            _dungeonRoomIdx = -1;
         }
 
         // [Enter] enters the room with the player for walking around.
@@ -7274,14 +7522,14 @@ void Engine::UpdatePregenTest(float dt)
             _player.SetWorldPos({ hw, hh });
             _player.Revive();
             _cameraPos = { hw, hh };
-            _pregenView = PregenView::Play;
+            _dungeonView = DungeonView::Play;
 
             // Build nav grid (walls + props) and spawn room enemies.
-            RebuildPregenNav();
-            ClearPregenEnemies();
-            SpawnPregenRoomEnemies();
-            if (_pregenViewedRoomIdx == _dungeonGen.GetBossIndex())
-                ApplyPregenBossExitTiles(TileType::DoorLocked);
+            RebuildDungeonNav();
+            ClearDungeonEnemies();
+            SpawnDungeonRoomEnemies();
+            if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
+                ApplyDungeonBossExitTiles(TileType::DoorLocked);
         }
         return;
     }
@@ -7303,24 +7551,24 @@ void Engine::UpdatePregenTest(float dt)
         const auto& rooms = _dungeonGen.GetRooms();
         for (int i = 0; i < (int)rooms.size(); i++)
         {
-            if (CheckCollisionPointRec(GetMousePosition(), GetPregenRoomRect(i)))
+            if (CheckCollisionPointRec(GetMousePosition(), GetDungeonRoomRect(i)))
             {
                 const DungeonRoom& room = rooms[i];
-                _pregenRoomLayout    = RoomLayout::Generate(
+                _dungeonRoomLayout    = RoomLayout::Generate(
                     room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
                     (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
                     (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
-                _pregenViewedRoomIdx = i;
-                _pregenEntryDoorSide = PregenDoorSide::None;
-                ApplyPregenRoomDoorState(_pregenRoomLayout, _pregenViewedRoomIdx, _pregenEntryDoorSide);
-                _pregenView          = PregenView::Room;
+                _dungeonRoomIdx = i;
+                _dungeonEntryDoorSide = DungeonDoorSide::None;
+                ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+                _dungeonView          = DungeonView::Room;
                 break;
             }
         }
     }
 }
 
-void Engine::DrawPregenTest()
+void Engine::DrawDungeonRun()
 {
     const float sw = (float)GetScreenWidth();
     const float sh = (float)GetScreenHeight();
@@ -7333,8 +7581,8 @@ void Engine::DrawPregenTest()
     auto drawRoomLabel = [&]()
     {
         const auto& rooms = _dungeonGen.GetRooms();
-        if (_pregenViewedRoomIdx < 0 || _pregenViewedRoomIdx >= (int)rooms.size()) return;
-        int i = _pregenViewedRoomIdx;
+        if (_dungeonRoomIdx < 0 || _dungeonRoomIdx >= (int)rooms.size()) return;
+        int i = _dungeonRoomIdx;
         const char* label =
             i == _dungeonGen.GetStartIndex() ? "START ROOM" :
             i == _dungeonGen.GetBossIndex()  ? "BOSS ROOM"  :
@@ -7352,29 +7600,29 @@ void Engine::DrawPregenTest()
     };
 
     // ── Play view — tile room with live player ────────────────────────────────
-    if (_pregenView == PregenView::Play)
+    if (_dungeonView == DungeonView::Play)
     {
         ClearBackground(Color{ 8, 6, 10, 255 });
 
         if (_tileRenderer.IsLoaded())
         {
-            if (_pregenScrolling)
+            if (_dungeonScrolling)
             {
-                float t    = _pregenScrollT;
+                float t    = _dungeonScrollT;
                 float ease = t * t * (3.f - 2.f * t);
-                Vector2 curOff{  _pregenScrollVec.x * ease * sw,
-                                 _pregenScrollVec.y * ease * sh };
-                Vector2 nextOff{ curOff.x - _pregenScrollVec.x * sw,
-                                 curOff.y - _pregenScrollVec.y * sh };
-                _tileRenderer.DrawRoom(_pregenRoomLayout,       scaleX, scaleY, curOff);
-                _tileRenderer.DrawRoom(_pregenScrollNextLayout, scaleX, scaleY, nextOff);
+                Vector2 curOff{  _dungeonScrollVec.x * ease * sw,
+                                 _dungeonScrollVec.y * ease * sh };
+                Vector2 nextOff{ curOff.x - _dungeonScrollVec.x * sw,
+                                 curOff.y - _dungeonScrollVec.y * sh };
+                _tileRenderer.DrawRoom(_dungeonRoomLayout,       scaleX, scaleY, curOff);
+                _tileRenderer.DrawRoom(_dungeonScrollNextLayout, scaleX, scaleY, nextOff);
             }
             else
             {
-                _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
-                DrawPregenClearEffects();
+                _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+                DrawDungeonClearEffects();
 
-                // Enemies, projectiles, VFX — world == screen in pregen mode.
+                // Enemies, projectiles, VFX — world == screen in dungeon run mode.
                 Vector2 worldOffset{ -_cameraPos.x, -_cameraPos.y };
                 for (const auto& proj : _spreadProjectiles)
                     proj.Draw(worldOffset);
@@ -7386,6 +7634,9 @@ void Engine::DrawPregenTest()
                     enemy->DrawEnemy(_cameraPos);
                 }
 
+                if (_currentRoomType == RoomType::Store)
+                    _shop.DrawNpc({ -_cameraPos.x, -_cameraPos.y });
+
                 _player.DrawPlayer(_cameraPos);
             }
         }
@@ -7394,10 +7645,15 @@ void Engine::DrawPregenTest()
             DrawText("Tilesheet not loaded.", 20, 20, 22, RED);
         }
 
-        if (!_pregenScrolling)
+        if (!_dungeonScrolling)
         {
             DrawHUD();
             drawRoomLabel();
+
+            // Draw cutscene overlay (dialogue box, fade, etc.) on top of the game.
+            if (_cutscene.IsActive())
+                _cutscene.Draw(_shopBorderTex, _shopZephTex);
+
             if (_debug.IsActive())
             {
                 DrawDebugToggleTab();
@@ -7406,17 +7662,19 @@ void Engine::DrawPregenTest()
             }
             if (_isHitboxEditorActive)
                 DrawHitboxEditor();
+            if (_isDlgEditorActive)
+                DrawDialogueBoxEditor();
         }
         return;
     }
 
     // ── Room view — static tile preview ──────────────────────────────────────
-    if (_pregenView == PregenView::Room)
+    if (_dungeonView == DungeonView::Room)
     {
         ClearBackground(Color{ 8, 6, 10, 255 });
 
         if (_tileRenderer.IsLoaded())
-            _tileRenderer.DrawRoom(_pregenRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+            _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         else
             DrawText("Tilesheet not loaded. Check the path in Engine.cpp.",
                 20, 20, 22, RED);
@@ -8241,7 +8499,11 @@ int Engine::DrawTouchButtonMapping()
     const int sw = GetScreenWidth();
     const int sh = GetScreenHeight();
 
-    DrawWorld();
+    ClearBackground(Color{ 8, 6, 10, 255 });
+    float scaleX = sw / (RoomLayout::kCols * 16.f);
+    float scaleY = sh / (RoomLayout::kRows * 16.f);
+    if (_tileRenderer.IsLoaded())
+        _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
     DrawHUD();
     DrawRectangle(0, 0, sw, sh, Fade(BLACK, 0.54f));
 
@@ -8391,3 +8653,283 @@ int Engine::DrawTouchButtonMapping()
     return result;
 }
 
+// ── Dialogue Box Designer (F11 in debug mode) ─────────────────────────────────
+// Eight drag handles: four panel corners + portrait centre + portrait scale knob.
+// Handle IDs:
+//   0-3  = panel corners (TL, TR, BL, BR)
+//   4    = panel body (drag to move whole panel)
+//   5    = portrait centre
+//   6    = portrait scale knob (drag right to grow)
+
+static const float kDlgHandleRadius = 8.f;
+
+// Returns true if the mouse just grabbed handle 'id' at position 'pos'.
+static bool DlgHandleHit(Vector2 pos, int id, int& activeHandle)
+{
+    if (activeHandle != -1 && activeHandle != id) return false;
+    Vector2 mouse = GetMousePosition();
+    bool over = (CheckCollisionPointCircle(mouse, pos, kDlgHandleRadius + 4.f));
+    if (over && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) { activeHandle = id; return true; }
+    return activeHandle == id;
+}
+
+void Engine::UpdateDialogueBoxEditor()
+{
+    DialogueBox& box = _cutscene.GetLayout();
+
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+        _isDlgEditorActive  = false;
+        _dlgEditorHandle    = -1;
+        _dlgSpeakerFsDrag   = false;
+        _dlgBodyFsDrag      = false;
+        _dlgInsetLeftDrag   = false;
+        _dlgInsetTopDrag    = false;
+        return;
+    }
+
+    // S — print all current values to the VS output console in paste-ready format.
+    if (IsKeyPressed(KEY_S))
+    {
+        const Rectangle& p = box.panelRect;
+        printf("\n===== Dialogue Box Layout (paste to Claude) =====\n");
+        printf("panelRect       = { %.1ff, %.1ff, %.1ff, %.1ff };\n",
+               p.x, p.y, p.width, p.height);
+        printf("speakerFontSize = %d;\n", box.speakerFontSize);
+        printf("bodyFontSize    = %d;\n", box.bodyFontSize);
+        printf("textInsetLeft   = %.1ff;\n", box.textInsetLeft);
+        printf("textInsetTop    = %.1ff;\n", box.textInsetTop);
+        printf("srcCorner       = %.1ff;   dstCorner = %.1ff;\n",
+               box.srcCorner, box.dstCorner);
+        printf("=================================================\n\n");
+        fflush(stdout);
+    }
+
+    Vector2 mouse = GetMousePosition();
+    Vector2 delta = GetMouseDelta();
+    Rectangle& p  = box.panelRect;
+
+    // ── Panel handles (release on mouse-up) ───────────────────────────────────
+    if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+        _dlgEditorHandle = -1;
+
+    Vector2 cornerTL = { p.x,            p.y             };
+    Vector2 cornerTR = { p.x + p.width,  p.y             };
+    Vector2 cornerBL = { p.x,            p.y + p.height  };
+    Vector2 cornerBR = { p.x + p.width,  p.y + p.height  };
+    Vector2 centre   = { p.x + p.width * 0.5f, p.y + p.height * 0.5f };
+
+    if (DlgHandleHit(cornerTL, 0, _dlgEditorHandle) && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+    { p.x += delta.x; p.width -= delta.x; p.y += delta.y; p.height -= delta.y; }
+    if (DlgHandleHit(cornerTR, 1, _dlgEditorHandle) && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+    { p.width += delta.x; p.y += delta.y; p.height -= delta.y; }
+    if (DlgHandleHit(cornerBL, 2, _dlgEditorHandle) && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+    { p.x += delta.x; p.width -= delta.x; p.height += delta.y; }
+    if (DlgHandleHit(cornerBR, 3, _dlgEditorHandle) && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+    { p.width += delta.x; p.height += delta.y; }
+    if (DlgHandleHit(centre, 4, _dlgEditorHandle) && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+    { p.x += delta.x; p.y += delta.y; }
+
+    if (p.width  < 80.f) p.width  = 80.f;
+    if (p.height < 40.f) p.height = 40.f;
+
+    // ── Font-size drag controls ────────────────────────────────────────────────
+    // These hit rects match the positions drawn in DrawDialogueBoxEditor's readout.
+    // Drag left = smaller, drag right = larger (0.15 px per font-size unit).
+    const float kFontDragSpeed = 0.15f;
+
+    // Speaker font size — readout row 5 (after Panel X/Y/W/H)
+    Rectangle speakerHit{ 0.f, 88.f, 260.f, 22.f };
+    if (!_dlgSpeakerFsDrag && CheckCollisionPointRec(mouse, speakerHit)
+        && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        _dlgSpeakerFsDrag    = true;
+        _dlgSpeakerFsDragX   = mouse.x;
+        _dlgSpeakerFsDragVal = box.speakerFontSize;
+    }
+    if (_dlgSpeakerFsDrag)
+    {
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        {
+            int newVal = _dlgSpeakerFsDragVal + (int)((mouse.x - _dlgSpeakerFsDragX) * kFontDragSpeed);
+            box.speakerFontSize = std::max(8, std::min(72, newVal));
+        }
+        else { _dlgSpeakerFsDrag = false; }
+    }
+
+    // Body font size — readout row 6
+    Rectangle bodyHit{ 0.f, 112.f, 260.f, 22.f };
+    if (!_dlgBodyFsDrag && CheckCollisionPointRec(mouse, bodyHit)
+        && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        _dlgBodyFsDrag    = true;
+        _dlgBodyFsDragX   = mouse.x;
+        _dlgBodyFsDragVal = box.bodyFontSize;
+    }
+    if (_dlgBodyFsDrag)
+    {
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        {
+            int newVal = _dlgBodyFsDragVal + (int)((mouse.x - _dlgBodyFsDragX) * kFontDragSpeed);
+            box.bodyFontSize = std::max(8, std::min(64, newVal));
+        }
+        else { _dlgBodyFsDrag = false; }
+    }
+
+    // Text left inset — how far from left edge text starts (row 7)
+    const float kInsetDragSpeed = 0.5f;
+    Rectangle insetLeftHit{ 0.f, 132.f, 260.f, 22.f };
+    if (!_dlgInsetLeftDrag && CheckCollisionPointRec(mouse, insetLeftHit)
+        && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        _dlgInsetLeftDrag    = true;
+        _dlgInsetLeftDragX   = mouse.x;
+        _dlgInsetLeftDragVal = box.textInsetLeft;
+    }
+    if (_dlgInsetLeftDrag)
+    {
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        {
+            float newVal = _dlgInsetLeftDragVal + (mouse.x - _dlgInsetLeftDragX) * kInsetDragSpeed;
+            box.textInsetLeft = std::max(0.f, std::min(500.f, newVal));
+        }
+        else { _dlgInsetLeftDrag = false; }
+    }
+
+    // Text top inset — vertical gap from panel top to first text row (row 8)
+    Rectangle insetTopHit{ 0.f, 154.f, 260.f, 22.f };
+    if (!_dlgInsetTopDrag && CheckCollisionPointRec(mouse, insetTopHit)
+        && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        _dlgInsetTopDrag    = true;
+        _dlgInsetTopDragX   = mouse.x;
+        _dlgInsetTopDragVal = box.textInsetTop;
+    }
+    if (_dlgInsetTopDrag)
+    {
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        {
+            float newVal = _dlgInsetTopDragVal + (mouse.x - _dlgInsetTopDragX) * kInsetDragSpeed;
+            box.textInsetTop = std::max(0.f, std::min(200.f, newVal));
+        }
+        else { _dlgInsetTopDrag = false; }
+    }
+}
+
+void Engine::DrawDialogueBoxEditor()
+{
+    const DialogueBox& box = _cutscene.GetLayout();
+
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+
+    // ── Background: dungeon tiles for context ─────────────────────────────────
+    ClearBackground(Color{ 8, 6, 10, 255 });
+    if (_tileRenderer.IsLoaded())
+    {
+        float scaleX = sw / (RoomLayout::kCols * 16.f);
+        float scaleY = sh / (RoomLayout::kRows * 16.f);
+        _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+    }
+
+    // ── Live dialogue box preview (no portrait) ───────────────────────────────
+    {
+        std::string previewText = "The dungeon will still be there. Take a breath.";
+        box.Draw(_shopBorderTex, {}, "Zeph", previewText, true);
+    }
+
+    // ── Panel drag handles ────────────────────────────────────────────────────
+    const Rectangle& p = box.panelRect;
+
+    auto drawHandle = [&](Vector2 pos, Color col, int id)
+    {
+        Color c = (_dlgEditorHandle == id) ? WHITE : col;
+        DrawCircleV(pos, kDlgHandleRadius, c);
+        DrawCircleLines((int)pos.x, (int)pos.y, kDlgHandleRadius, Fade(BLACK, 0.6f));
+    };
+
+    drawHandle({ p.x,                          p.y            }, YELLOW,  0);
+    drawHandle({ p.x + p.width,                p.y            }, YELLOW,  1);
+    drawHandle({ p.x,                          p.y + p.height }, YELLOW,  2);
+    drawHandle({ p.x + p.width,                p.y + p.height }, YELLOW,  3);
+    drawHandle({ p.x + p.width * 0.5f, p.y + p.height * 0.5f }, SKYBLUE, 4);
+
+    // ── Value readout panel ───────────────────────────────────────────────────
+    const int readoutFs = 18;
+    const int rowH      = readoutFs + 4;
+    DrawRectangle(0, 0, 262, 184, Fade(BLACK, 0.60f));
+
+    int ry = 6;
+    auto staticLine = [&](const char* label, float val)
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s: %.1f", label, val);
+        DrawText(buf, 8, ry, readoutFs, LIME);
+        ry += rowH;
+    };
+
+    staticLine("Panel X", p.x);
+    staticLine("Panel Y", p.y);
+    staticLine("Panel W", p.width);
+    staticLine("Panel H", p.height);
+
+    // Speaker font size — draggable (highlighted when active)
+    {
+        bool active = _dlgSpeakerFsDrag;
+        Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        else         DrawRectangleRec(hit, Fade(YELLOW, 0.18f));
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Speaker Size: %d", box.speakerFontSize);
+        DrawText(buf, 8, ry, readoutFs, active ? YELLOW : LIME);
+        DrawText("< drag >", 180, ry, 12, Fade(WHITE, 0.4f));
+        ry += rowH;
+    }
+
+    // Body font size — draggable
+    {
+        bool active = _dlgBodyFsDrag;
+        Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        else         DrawRectangleRec(hit, Fade(SKYBLUE, 0.18f));
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Body Size: %d", box.bodyFontSize);
+        DrawText(buf, 8, ry, readoutFs, active ? SKYBLUE : LIME);
+        DrawText("< drag >", 180, ry, 12, Fade(WHITE, 0.4f));
+        ry += rowH;
+    }
+
+    // Text left inset — draggable
+    {
+        bool active = _dlgInsetLeftDrag;
+        Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        else         DrawRectangleRec(hit, Fade(ORANGE, 0.18f));
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Text Left: %.0f", box.textInsetLeft);
+        DrawText(buf, 8, ry, readoutFs, active ? ORANGE : LIME);
+        DrawText("< drag >", 180, ry, 12, Fade(WHITE, 0.4f));
+        ry += rowH;
+    }
+
+    // Text top inset — draggable
+    {
+        bool active = _dlgInsetTopDrag;
+        Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        else         DrawRectangleRec(hit, Fade(ORANGE, 0.18f));
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Text Top: %.0f", box.textInsetTop);
+        DrawText(buf, 8, ry, readoutFs, active ? ORANGE : LIME);
+        DrawText("< drag >", 180, ry, 12, Fade(WHITE, 0.4f));
+        ry += rowH;
+    }
+
+    // ── Instructions banner ───────────────────────────────────────────────────
+    const char* banner = "Drag handles to resize panel  |  Drag rows to change font/inset  |  [S] Print values  |  ESC close";
+    int bfs = 18;
+    DrawRectangle(0, (int)sh - bfs - 10, (int)sw, bfs + 10, Fade(BLACK, 0.65f));
+    DrawText(banner,
+        (int)(sw * 0.5f - MeasureText(banner, bfs) * 0.5f),
+        (int)sh - bfs - 5, bfs, Fade(WHITE, 0.85f));
+}

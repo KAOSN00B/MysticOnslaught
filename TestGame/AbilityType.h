@@ -24,15 +24,10 @@
 //   4. Engine spawns the matching projectile(s) or triggers the cinematic.
 //
 // RESOURCE FLOW:
-//   Mana   — restored by ManaGemPickup (+18 mana).
-//   Health — restored by HealPickup    (+1 HP).
-//   Both drop at ~22% chance per enemy kill, 50/50 between heal and mana.
+//   Mana   — restored passively (0.2/sec regen) and via shop purchases.
+//   Health — restored by HealPickup (+1 HP).
+//   Both drop at ~22% chance per enemy kill.
 //   Timed pickups also spawn on a fixed interval (faster during boss waves).
-//
-// REMOVED SYSTEMS:
-//   FireBallPickup / SwordBeamPickup / FreezePickup / SwordBeamProjectile /
-//   FreezeProjectile / FireballProjectile — old ammo-pickup combat model.
-//   Replaced by the mana economy. Source files kept on disk, removed from build.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // All learnable ability types. New abilities are added here first.

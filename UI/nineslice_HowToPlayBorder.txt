@@ -1,0 +1,5 @@
+srcTop=62.7895
+srcBot=15.3016
+srcLeft=19.4918
+srcRight=18.0951
+dstCorner=16.0000
