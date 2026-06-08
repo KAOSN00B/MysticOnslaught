@@ -112,10 +112,10 @@ void DungeonGen::AssignSpecialRooms()
         std::swap(pool[i], pool[GetRandomValue(0, i)]);
 
     // Assign exactly one of each special type from the shuffled pool.
-    // No Shop rooms — the shop is a post-boss reward handled separately.
+    // No Rest rooms in DungeonRun — healing is handled by the Store on entry.
+    // No Shop rooms — the shop is always the start room.
     int idx = 0;
     if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Elite;    }
-    if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Rest;     }
     if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Treasure; }
     // All remaining rooms stay Standard.
 

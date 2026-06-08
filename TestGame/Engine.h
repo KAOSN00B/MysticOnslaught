@@ -82,6 +82,8 @@ private:
     void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
     void DrawWaveIntro();
     void HandlePlayerMeleeDamage();
+    Rectangle GetTreasureChestRect() const;
+    void OpenTreasureChest();
     void HandlePlayerCastRequest();
     void SpawnSpreadBurst(AbilityType element);
     void SpawnBolt(AbilityType element);
@@ -475,7 +477,9 @@ private:
 
     Texture2D _shopBorderTex{};
     Texture2D _shopZephTex{};
-    Texture2D _htpBorderTex{};   // HowToPlayBorder.png — used for the How To Play content panel
+    Texture2D _htpBorderTex{};   // HowToPlayBorder.png - used for the How To Play content panel
+    Texture2D _magicGemTex{};
+    Texture2D _bossBarrierTex{};
 
     // Map node icons (TileSet/MapIcons/)
     Texture2D _mapIconNormal{};
@@ -574,6 +578,15 @@ private:
     std::unordered_map<int, DungeonRoomState> _dungeonRoomStates;
     bool _dungeonEnemiesSpawned = false;
 
+    bool _hasMagicGem = false;
+    bool _magicGemSpawned = false;
+    bool _magicGemCollected = false;
+    bool _bossBarrierUnlocked = false;
+    float _magicGemAnimTimer = 0.f;
+    int   _magicGemFrame = 0;
+    float _bossBarrierAnimTimer = 0.f;
+    int   _bossBarrierFrame = 0;
+    float _bossBarrierMessageTimer = 0.f;
     // Zelda-style room scroll transition
     bool       _dungeonScrolling      = false;
     float      _dungeonScrollT        = 0.f;
@@ -591,6 +604,10 @@ private:
     float                 _dungeonFadeTimer  = 0.f;
     std::function<void()> _dungeonFadePendingAction;
     static constexpr float kDungeonFadeDuration = 0.40f;
+
+    // Treasure room chest — spawns at screen centre after all enemies die.
+    bool _treasureChestSpawned = false;
+    bool _treasureChestBroken  = false;
 
     // Folder scanned by the TileMapper debug tool for PNG tilesets.
     static constexpr const char* kTilesheetFolder =
@@ -647,6 +664,12 @@ private:
     void UpdateDungeonRun(float dt);
     void DrawDungeonRun();
     Rectangle GetDungeonRoomRect(int roomIdx) const;
+    DungeonDoorSide GetBossBarrierSide() const;
+    Rectangle GetBossBarrierRect(DungeonDoorSide side) const;
+    Vector2 GetMagicGemWorldPos() const;
+    void UpdateDungeonMagicGemAndBarrier(float dt);
+    void DrawDungeonMagicGemAndBarrier() const;
+    void DrawMagicGemHudIcon() const;
 
     // Dungeon run combat helpers
     Vector2   GetDungeonSpawnPos(float cellW, float cellH) const;

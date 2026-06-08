@@ -174,6 +174,8 @@ Engine::~Engine()
     UnloadTexture(_shopBorderTex);
     UnloadTexture(_shopZephTex);
     UnloadTexture(_htpBorderTex);
+    UnloadTexture(_magicGemTex);
+    UnloadTexture(_bossBarrierTex);
     _pauseUI.Unload();
     if (_audioInitialised)
         CloseAudioDevice();
@@ -259,6 +261,8 @@ void Engine::Init()
     _shopBorderTex          = LoadTexture(AssetPath("UI/PauseBoarder.png").c_str());
     _shopZephTex            = LoadTexture(AssetPath("UI/Zeph.png").c_str());
     _htpBorderTex           = LoadTexture(AssetPath("UI/HowToPlayBorder.png").c_str());
+    _magicGemTex            = LoadTexture(AssetPath("TileSet/Key.png").c_str());
+    _bossBarrierTex         = LoadTexture(AssetPath("TileSet/Barrier.png").c_str());
     _shop.Init(ShopTextures{
         &_shopBorderTex,
         &_shopZephTex,
@@ -468,6 +472,9 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
     _shop.Enter({ sw * 0.5f, sh * 0.42f }, _player, _currentAct);
+
+    // Zeph heals the player fully when they arrive at the store.
+    _player.Heal(_player.GetMaxHealthValue());
 }
 
 void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates)
@@ -486,7 +493,14 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
 
     if (resetRoomStates)
+    {
         _dungeonRoomStates.clear();
+        _hasMagicGem = false;
+        _magicGemSpawned = false;
+        _magicGemCollected = false;
+        _bossBarrierUnlocked = false;
+        _bossBarrierMessageTimer = 0.f;
+    }
 
     _currentRoomType = room.type;
     _currentRoom = (_currentRoomType == RoomType::Boss) ? 6 : std::max(1, _currentRoom + 1);
@@ -500,7 +514,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _roomClearPending = false;
 
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
-    if (room.type == RoomType::Rest || room.type == RoomType::Treasure || room.type == RoomType::Store)
+    if (room.type == RoomType::Rest || room.type == RoomType::Store)
         _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
 
     _player.SetWorldPos(playerSpawnPos);
@@ -613,7 +627,19 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     }
     else if (type == RoomType::Elite)
     {
-        SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
+        Enemy* miniboss = SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
+        _eliteMinibossPtr = miniboss;
+        _eliteMechanic    = GetRandomValue(0, 4);
+        if (_eliteMechanic == 0)
+        {
+            _eliteCageCenter      = { sw * 0.5f, sh * 0.5f };
+            _eliteCageRadius      = kEliteCageRadius;
+            _eliteCageDamageTimer = kEliteCageDamageInterval;
+        }
+        else if (_eliteMechanic == 1) { if (miniboss) miniboss->SetInvulnerable(true); }
+        else if (_eliteMechanic == 2) { if (miniboss) miniboss->ApplyEnrage(); _eliteEnrageWarningTimer = kEliteEnrageWarningDuration; }
+        else if (_eliteMechanic == 3) { _eliteLeapCooldown = kLeapInterval; }
+        else if (_eliteMechanic == 4) { _eliteHazardSpawnTimer = (float)GetRandomValue((int)(kHazardVolleyMinInterval * 100.f), (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f; }
         spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
         _dungeonEnemiesSpawned = true;
     }
@@ -625,17 +651,9 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     }
     else if (type == RoomType::Treasure)
     {
-        _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
-        ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
-        auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
-        {
-            auto g = std::make_unique<GoldPickup>();
-            g->Init(Vector2{ sw * 0.5f + ox, sh * 0.5f + oy }, denom);
-            _pickups.push_back(std::move(g));
-        };
-        spawnGold(GoldDenomination::Ten, 0.f, 0.f);
-        spawnGold(GoldDenomination::Five, -60.f, 24.f);
-        spawnGold(GoldDenomination::Five, 60.f, 24.f);
+        spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
+        SpawnCyclops(GetDungeonSpawnPos(cellW, cellH));
+        _dungeonEnemiesSpawned = true;
     }
     else
     {
@@ -3808,6 +3826,10 @@ void Engine::DrawStartingAbilityChoice()
         _starterAbilityGiftClaimed = true;
         _awaitingStartingAbility = false;
         _startingAbilityPickCount = 0;
+
+        if (_cutscene.IsActive() && _cutscene.WantsAbilitySelect())
+            _cutscene.OnAbilitySelected();
+
         _gameState = _levelUpReturnState;
     }
 }
@@ -4409,10 +4431,65 @@ void Engine::HandlePlayerMeleeDamage()
         }
     }
 
+    // Treasure chest hit (DungeonRun only).
+    if (_gameState == GameState::DungeonRun && _treasureChestSpawned && !_treasureChestBroken)
+    {
+        if (CheckCollisionRecs(attackRec, GetTreasureChestRect()))
+        {
+            _treasureChestBroken = true;
+            hitAny = true;
+            OpenTreasureChest();
+        }
+    }
+
     _player.ConsumeMeleeDamageFrame();
 
     if (hitAny)
         TriggerScreenShake(6.f, 0.07f);
+}
+
+Rectangle Engine::GetTreasureChestRect() const
+{
+    float cx = (float)GetScreenWidth()  * 0.5f;
+    float cy = (float)GetScreenHeight() * 0.5f;
+    return { cx - 36.f, cy - 36.f, 72.f, 72.f };
+}
+
+void Engine::OpenTreasureChest()
+{
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+
+    _vfx.SpawnHitEffect(Character::CastType::None, { sw * 0.5f, sh * 0.5f }, _player.GetFacingDirection());
+    TriggerScreenShake(5.f, 0.12f);
+    StopSound(_pickupSound);
+    PlaySound(_pickupSound);
+
+    if (GetRandomValue(0, 1) == 0)
+    {
+        // Gold reward — scatter coins around screen centre.
+        auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
+        {
+            auto g = std::make_unique<GoldPickup>();
+            g->Init({ sw * 0.5f + ox, sh * 0.5f + oy }, denom);
+            _pickups.push_back(std::move(g));
+        };
+        spawnGold(GoldDenomination::Ten,      0.f,    0.f);
+        spawnGold(GoldDenomination::Ten,    -75.f,  -35.f);
+        spawnGold(GoldDenomination::Five,    65.f,  -45.f);
+        spawnGold(GoldDenomination::Five,   -55.f,   55.f);
+        spawnGold(GoldDenomination::Five,    60.f,   45.f);
+        spawnGold(GoldDenomination::Single, -85.f,   10.f);
+        spawnGold(GoldDenomination::Single,  80.f,   20.f);
+    }
+    else
+    {
+        // Buff card — pick one free upgrade.
+        GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
+        _levelUpReturnState = GameState::DungeonRun;
+        _levelUpOpenTimer   = 0.3f;
+        _gameState          = GameState::LevelUpChoice;
+    }
 }
 
 void Engine::HandlePlayerCastRequest()
@@ -6560,8 +6637,8 @@ void Engine::SpawnDungeonRoomEnemies()
     int bossIdx  = _dungeonGen.GetBossIndex();
     RoomType type = rooms[i].type;
 
-    // Non-combat rooms — pre-clear so we never try to spawn here again.
-    if (i == startIdx || type == RoomType::Rest || type == RoomType::Treasure)
+    // Non-combat start room — pre-clear so we never try to spawn here again.
+    if (i == startIdx || type == RoomType::Rest)
     {
         _dungeonRoomStates[i].cleared = true;
         return;
@@ -6588,9 +6665,51 @@ void Engine::SpawnDungeonRoomEnemies()
         if (tier >= 1)
             spawnAt([&](Vector2 p){ SpawnCyclops(p); }, 1);
     }
+    else if (type == RoomType::Treasure)
+    {
+        // Small combat encounter — players must fight before the chest appears.
+        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, GetRandomValue(1, tier == 0 ? 2 : 3));
+        if (tier >= 1 || GetRandomValue(0, 1) == 0)
+            SpawnCyclops(GetDungeonSpawnPos(cellW, cellH));
+    }
     else if (type == RoomType::Elite)
     {
-        SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
+        // Spawn the miniboss and initialize the elite mechanic for this room.
+        Enemy* miniboss = SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
+        _eliteMinibossPtr = miniboss;
+        _eliteMechanic    = GetRandomValue(0, 4);
+        _eliteCageRadius         = 0.f;
+        _eliteCageDamageTimer    = 0.f;
+        _eliteEnrageWarningTimer = 0.f;
+        _eliteIsLeaping          = false;
+        _eliteLeapCooldown       = 0.f;
+        _eliteLeapTimer          = 0.f;
+        _eliteHazardSpawnTimer   = 0.f;
+
+        switch (_eliteMechanic)
+        {
+        case 0:  // Cage — centred on screen
+            _eliteCageCenter     = { sw * 0.5f, sh * 0.5f };
+            _eliteCageRadius     = kEliteCageRadius;
+            _eliteCageDamageTimer = kEliteCageDamageInterval;
+            break;
+        case 1:  // Bodyguard — miniboss immune until fodder die
+            if (miniboss) miniboss->SetInvulnerable(true);
+            break;
+        case 2:  // Enrage — miniboss powered up immediately
+            if (miniboss) miniboss->ApplyEnrage();
+            _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
+            break;
+        case 3:  // Leap — miniboss leaps at the player periodically
+            _eliteLeapCooldown = kLeapInterval;
+            break;
+        case 4:  // Hazards — periodic lava volley
+            _eliteHazardSpawnTimer = (float)GetRandomValue(
+                (int)(kHazardVolleyMinInterval * 100.f),
+                (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
+            break;
+        }
+
         spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, tier == 0 ? 1 : 2);
     }
     else  // Standard
@@ -6623,6 +6742,15 @@ void Engine::ClearDungeonEnemies()
     _vfx.Clear();
     _pendingExp    = 0.f;
     _dungeonEnemiesSpawned = false;
+    _treasureChestSpawned  = false;
+    _treasureChestBroken   = false;
+    _eliteRewardGranted    = false;
+    _eliteMechanic         = -1;
+    _eliteMinibossPtr      = nullptr;
+    _eliteCageRadius       = 0.f;
+    _eliteIsLeaping        = false;
+    _eliteEnrageWarningTimer = 0.f;
+    _eliteHazardSpawnTimer   = 0.f;
 }
 
 
@@ -6817,10 +6945,14 @@ void Engine::DrawDungeonClearEffects() const
 void Engine::SetStoreDoorTiles(TileType doorType)
 {
     if (_currentRoomType != RoomType::Store) return;
+
+    TileType placedType = (doorType == TileType::DoorOpen) ? TileType::Floor : doorType;
     int midC = RoomLayout::kCols / 2;
     // North door is 3 tiles wide, centred on column midC, at row 0.
     for (int dc = -1; dc <= 1; dc++)
-        _dungeonRoomLayout.tiles[0][midC + dc] = doorType;
+        _dungeonRoomLayout.tiles[0][midC + dc] = placedType;
+
+    RebuildDungeonNav();
 }
 
 void Engine::ApplyDungeonBossExitTiles(TileType doorType)
@@ -7022,6 +7154,156 @@ Rectangle Engine::GetDungeonRoomRect(int roomIdx) const
     };
 }
 
+Engine::DungeonDoorSide Engine::GetBossBarrierSide() const
+{
+    if (_bossBarrierUnlocked || _dungeonRoomIdx < 0)
+        return DungeonDoorSide::None;
+
+    int bossIdx = _dungeonGen.GetBossIndex();
+    if (bossIdx < 0)
+        return DungeonDoorSide::None;
+
+    if (_dungeonGen.GetNeighborIndex(_dungeonRoomIdx, -1, 0) == bossIdx) return DungeonDoorSide::North;
+    if (_dungeonGen.GetNeighborIndex(_dungeonRoomIdx, +1, 0) == bossIdx) return DungeonDoorSide::South;
+    if (_dungeonGen.GetNeighborIndex(_dungeonRoomIdx, 0, -1) == bossIdx) return DungeonDoorSide::West;
+    if (_dungeonGen.GetNeighborIndex(_dungeonRoomIdx, 0, +1) == bossIdx) return DungeonDoorSide::East;
+    return DungeonDoorSide::None;
+}
+
+Rectangle Engine::GetBossBarrierRect(DungeonDoorSide side) const
+{
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    float cellW = sw / (float)RoomLayout::kCols;
+    float cellH = sh / (float)RoomLayout::kRows;
+    int doorStartC = RoomLayout::kCols / 2 - 1;
+    int doorStartR = RoomLayout::kRows / 2 - 1;
+
+    switch (side)
+    {
+    case DungeonDoorSide::North: return { doorStartC * cellW, 0.f, 3.f * cellW, cellH };
+    case DungeonDoorSide::South: return { doorStartC * cellW, (RoomLayout::kRows - 1) * cellH, 3.f * cellW, cellH };
+    case DungeonDoorSide::West:  return { 0.f, doorStartR * cellH, cellW, 2.f * cellH };
+    case DungeonDoorSide::East:  return { (RoomLayout::kCols - 1) * cellW, doorStartR * cellH, cellW, 2.f * cellH };
+    default: return {};
+    }
+}
+
+Vector2 Engine::GetMagicGemWorldPos() const
+{
+    return { (float)GetScreenWidth() * 0.5f, (float)GetScreenHeight() * 0.5f };
+}
+
+void Engine::UpdateDungeonMagicGemAndBarrier(float dt)
+{
+    _magicGemAnimTimer += dt;
+    while (_magicGemAnimTimer >= 0.10f)
+    {
+        _magicGemAnimTimer -= 0.10f;
+        _magicGemFrame = (_magicGemFrame + 1) % 8;
+    }
+
+    _bossBarrierAnimTimer += dt;
+    while (_bossBarrierAnimTimer >= 0.08f)
+    {
+        _bossBarrierAnimTimer -= 0.08f;
+        _bossBarrierFrame = (_bossBarrierFrame + 1) % 24;
+    }
+
+    if (_bossBarrierMessageTimer > 0.f)
+        _bossBarrierMessageTimer = std::max(0.f, _bossBarrierMessageTimer - dt);
+
+    int keyIdx = _dungeonGen.GetKeyIndex();
+    if (_dungeonRoomIdx == keyIdx && _magicGemSpawned && !_magicGemCollected)
+    {
+        Vector2 gemPos = GetMagicGemWorldPos();
+        Rectangle gemRec{ gemPos.x - 28.f, gemPos.y - 28.f, 56.f, 56.f };
+        if (CheckCollisionRecs(_player.GetCollisionRec(), gemRec))
+        {
+            _magicGemCollected = true;
+            _magicGemSpawned = false;
+            _hasMagicGem = true;
+            _message = "Magic gem collected";
+        }
+    }
+
+    DungeonDoorSide barrierSide = GetBossBarrierSide();
+    if (barrierSide != DungeonDoorSide::None)
+    {
+        Rectangle barrierRec = GetBossBarrierRect(barrierSide);
+        Rectangle playerRec = _player.GetCollisionRec();
+        if (CheckCollisionRecs(playerRec, barrierRec))
+        {
+            if (_hasMagicGem)
+            {
+                _hasMagicGem = false;
+                _bossBarrierUnlocked = true;
+                _bossBarrierMessageTimer = 0.f;
+                _message = "The magic gem shattered the barrier";
+            }
+            else
+            {
+                _bossBarrierMessageTimer = 2.2f;
+                _message = "you need a a magic gem to get past the barrier";
+
+                Vector2 p = _player.GetWorldPos();
+                switch (barrierSide)
+                {
+                case DungeonDoorSide::North:
+                    p.y = barrierRec.y + barrierRec.height + playerRec.height * 0.5f + 2.f;
+                    break;
+                case DungeonDoorSide::South:
+                    p.y = barrierRec.y - playerRec.height * 0.5f - 2.f;
+                    break;
+                case DungeonDoorSide::West:
+                    p.x = barrierRec.x + barrierRec.width + playerRec.width * 0.5f + 2.f;
+                    break;
+                case DungeonDoorSide::East:
+                    p.x = barrierRec.x - playerRec.width * 0.5f - 2.f;
+                    break;
+                default:
+                    break;
+                }
+                _player.SetWorldPos(p);
+                if (_player.IsBeingForcedPushed())
+                    _player.OnForcedPushCollision();
+            }
+        }
+    }
+}
+void Engine::DrawDungeonMagicGemAndBarrier() const
+{
+    if (_magicGemTex.id > 0 && _dungeonRoomIdx == _dungeonGen.GetKeyIndex() && _magicGemSpawned && !_magicGemCollected)
+    {
+        Vector2 gemPos = GetMagicGemWorldPos();
+        Rectangle src{ (float)(_magicGemFrame * 16), 0.f, 16.f, 16.f };
+        Rectangle dst{ gemPos.x - 32.f, gemPos.y - 32.f, 64.f, 64.f };
+        DrawTexturePro(_magicGemTex, src, dst, {}, 0.f, WHITE);
+    }
+
+    DungeonDoorSide side = GetBossBarrierSide();
+    if (_bossBarrierTex.id > 0 && side != DungeonDoorSide::None)
+    {
+        int frame = _bossBarrierFrame % 24;
+        int col = frame % 6;
+        int row = frame / 6;
+        Rectangle src{ (float)(col * 32), (float)(row * 32), 32.f, 32.f };
+        Rectangle dst = GetBossBarrierRect(side);
+        DrawTexturePro(_bossBarrierTex, src, dst, {}, 0.f, WHITE);
+    }
+}
+
+void Engine::DrawMagicGemHudIcon() const
+{
+    if (!_hasMagicGem || _magicGemTex.id == 0)
+        return;
+
+    float sw = (float)GetScreenWidth();
+    Rectangle src{ 0.f, 0.f, 16.f, 16.f };
+    Rectangle dst{ sw - 76.f, 22.f, 48.f, 48.f };
+    DrawTexturePro(_magicGemTex, src, dst, {}, 0.f, WHITE);
+    DrawText("x1", (int)(dst.x + dst.width + 4.f), (int)(dst.y + 18.f), 18, GOLD);
+}
 void Engine::UpdateDungeonRun(float dt)
 {
     // ── Dungeon fade transition (Store enter / boss clear) ────────────────────
@@ -7277,6 +7559,7 @@ void Engine::UpdateDungeonRun(float dt)
         _player.SetTouchModeEnabled(false);
         _player.Update(dt);
         HandlePlayerCastRequest();
+        UpdateDungeonMagicGemAndBarrier(dt);
 
         float cellW = sw / (float)RoomLayout::kCols;
         float cellH = sh / (float)RoomLayout::kRows;
@@ -7305,6 +7588,29 @@ void Engine::UpdateDungeonRun(float dt)
         {
             int nextIdx = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx, dr, dc);
             if (nextIdx < 0) return;
+
+            if (nextIdx == _dungeonGen.GetBossIndex() && !_bossBarrierUnlocked)
+            {
+                if (_hasMagicGem)
+                {
+                    _hasMagicGem = false;
+                    _bossBarrierUnlocked = true;
+                    _message = "The magic gem shattered the barrier";
+                }
+                else
+                {
+                    _bossBarrierMessageTimer = 2.2f;
+                    _message = "you need a a magic gem to get past the barrier";
+                    Vector2 blocked = _player.GetWorldPos();
+                    if (dr < 0) blocked.y = cellH + 4.f;
+                    if (dr > 0) blocked.y = (RoomLayout::kRows - 2) * cellH - 4.f;
+                    if (dc < 0) blocked.x = cellW + 4.f;
+                    if (dc > 0) blocked.x = (RoomLayout::kCols - 1) * cellW - 4.f;
+                    _player.SetWorldPos(blocked);
+                    return;
+                }
+            }
+
             const DungeonRoom& next = rooms[nextIdx];
             _dungeonScrollNextLayout  = RoomLayout::Generate(
                 next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
@@ -7495,6 +7801,52 @@ void Engine::UpdateDungeonRun(float dt)
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
+
+        // Collect gold coins and health pickups dropped by enemies.
+        for (auto& pickup : _pickups)
+        {
+            if (!pickup->IsActive()) continue;
+            if (CheckCollisionRecs(_player.GetCollisionRec(), pickup->GetCollisionRec()))
+            {
+                StopSound(_pickupSound);
+                PlaySound(_pickupSound);
+                pickup->OnCollect(_player);
+            }
+        }
+        _pickups.erase(
+            std::remove_if(_pickups.begin(), _pickups.end(),
+                [](const std::unique_ptr<Pickup>& pickup) { return !pickup->IsActive(); }),
+            _pickups.end());
+
+        // Elite-room mechanics (cage damage, bodyguard invuln, enrage, leap, hazards).
+        if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
+        {
+            EliteMechanicsContext eliteCtx{};
+            eliteCtx.currentRoomType        = _currentRoomType;
+            eliteCtx.map                    = &_map;
+            eliteCtx.mapScale               = _mapScale;
+            eliteCtx.worldBoundsW           = sw;
+            eliteCtx.worldBoundsH           = sh;
+            eliteCtx.player                 = &_player;
+            eliteCtx.enemies                = &_enemies;
+            eliteCtx.lavaBalls              = &_lavaBalls;
+            eliteCtx.eliteMechanic          = &_eliteMechanic;
+            eliteCtx.eliteMinibossPtr       = &_eliteMinibossPtr;
+            eliteCtx.eliteCageCenter        = &_eliteCageCenter;
+            eliteCtx.eliteCageRadius        = &_eliteCageRadius;
+            eliteCtx.eliteCageDamageTimer   = &_eliteCageDamageTimer;
+            eliteCtx.eliteEnrageWarningTimer = &_eliteEnrageWarningTimer;
+            eliteCtx.eliteIsLeaping         = &_eliteIsLeaping;
+            eliteCtx.eliteLeapStartPos      = &_eliteLeapStartPos;
+            eliteCtx.eliteLeapTarget        = &_eliteLeapTarget;
+            eliteCtx.eliteLeapCooldown      = &_eliteLeapCooldown;
+            eliteCtx.eliteLeapTimer         = &_eliteLeapTimer;
+            eliteCtx.eliteHazardSpawnTimer  = &_eliteHazardSpawnTimer;
+            eliteCtx.isSpawnPositionValid   = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
+            eliteCtx.triggerScreenShake     = [&](float s, float d){ TriggerScreenShake(s, d); };
+            _combatDirector.UpdateEliteMechanics(eliteCtx, dt);
+        }
+
         // Drain pending EXP slowly (50/sec) so the HUD bar animates, then trigger
         // a LevelUpChoice screen for each level the player gains — same as the
         // wave-based ExpTally flow but without the full overlay screen.
@@ -7541,10 +7893,41 @@ void Engine::UpdateDungeonRun(float dt)
                 _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
                 _dungeonEnemiesSpawned = false;
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+                if (_dungeonRoomIdx == _dungeonGen.GetKeyIndex() && !_magicGemCollected)
+                {
+                    _magicGemSpawned = true;
+                    _message = "A magic gem appeared";
+                }
                 if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
                     ApplyDungeonBossExitTiles(TileType::DoorOpen);
                 SpawnDungeonDoorOpenEffects();
                 RebuildDungeonNav();
+
+                // Treasure room: chest appears after all enemies die.
+                if (_currentRoomType == RoomType::Treasure)
+                {
+                    _treasureChestSpawned = true;
+                    _treasureChestBroken  = false;
+                }
+                // Elite room: scatter gold and offer an upgrade card.
+                else if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
+                {
+                    _eliteRewardGranted = true;
+                    Vector2 dropAnchor = _player.GetWorldPos();
+                    auto dropGold = [&](GoldDenomination denom, float ox, float oy)
+                    {
+                        auto g = std::make_unique<GoldPickup>();
+                        g->Init({ dropAnchor.x + ox, dropAnchor.y + oy }, denom);
+                        _pickups.push_back(std::move(g));
+                    };
+                    dropGold(GoldDenomination::Ten,    0.f,  -50.f);
+                    dropGold(GoldDenomination::Five,  -55.f,  20.f);
+                    dropGold(GoldDenomination::Five,   55.f,  20.f);
+                    GenerateLevelUpOptions(LevelUpOfferContext::EliteReward);
+                    _levelUpReturnState = GameState::DungeonRun;
+                    _levelUpOpenTimer   = 0.5f;
+                    _gameState          = GameState::LevelUpChoice;
+                }
             }
         }
 
@@ -7691,6 +8074,7 @@ void Engine::DrawDungeonRun()
             {
                 _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
                 DrawDungeonClearEffects();
+                DrawDungeonMagicGemAndBarrier();
 
                 // Enemies, projectiles, VFX — world == screen in dungeon run mode.
                 Vector2 worldOffset{ -_cameraPos.x, -_cameraPos.y };
@@ -7698,6 +8082,27 @@ void Engine::DrawDungeonRun()
                     proj.Draw(worldOffset);
                 DrawCyclopsLasers(worldOffset);
                 _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
+                for (auto& pickup : _pickups)
+                    pickup->Draw(worldOffset);
+                // Treasure chest appears at screen centre after combat is cleared.
+                if (_treasureChestSpawned && !_treasureChestBroken)
+                {
+                    float cx = sw * 0.5f;
+                    float cy = sh * 0.5f;
+                    if (_mapIconTreasure.id != 0)
+                    {
+                        float chestSize = 72.f;
+                        float scale = chestSize / (float)_mapIconTreasure.width;
+                        DrawTextureEx(_mapIconTreasure,
+                            { cx - chestSize * 0.5f, cy - chestSize * 0.5f },
+                            0.f, scale, WHITE);
+                    }
+                    else
+                    {
+                        DrawRectangleLines((int)(cx - 36), (int)(cy - 36), 72, 72, YELLOW);
+                        DrawText("CHEST", (int)(cx - 28), (int)(cy - 8), 18, YELLOW);
+                    }
+                }
                 for (auto& enemy : _enemies)
                 {
                     if (!enemy->IsActive()) continue;
@@ -7718,7 +8123,14 @@ void Engine::DrawDungeonRun()
         if (!_dungeonScrolling)
         {
             DrawHUD();
+            DrawMagicGemHudIcon();
             drawRoomLabel();
+            if (_bossBarrierMessageTimer > 0.f)
+            {
+                const char* msg = "you need a a magic gem to get past the barrier";
+                int mw = MeasureText(msg, 24);
+                DrawText(msg, (int)(sw * 0.5f - mw * 0.5f), 52, 24, Color{ 190, 130, 255, 255 });
+            }
 
             // Draw cutscene overlay (dialogue box, fade, etc.) on top of the game.
             if (_cutscene.IsActive())
@@ -9010,3 +9422,6 @@ void Engine::DrawDialogueBoxEditor()
         (int)(sw * 0.5f - MeasureText(banner, bfs) * 0.5f),
         (int)sh - bfs - 5, bfs, Fade(WHITE, 0.85f));
 }
+
+
+

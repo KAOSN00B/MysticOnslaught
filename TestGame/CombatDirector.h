@@ -57,6 +57,9 @@ struct EliteMechanicsContext
     RoomType currentRoomType = RoomType::Standard;
     Texture2D* map = nullptr;
     float mapScale = 1.f;
+    // Override for map->width/height * mapScale (used in DungeonRun where no map exists).
+    float worldBoundsW = 0.f;
+    float worldBoundsH = 0.f;
     Character* player = nullptr;
     std::vector<std::unique_ptr<Enemy>>* enemies = nullptr;
     std::vector<LavaBallProjectile>* lavaBalls = nullptr;

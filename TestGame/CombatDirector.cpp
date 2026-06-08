@@ -283,8 +283,8 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
         *ctx.eliteHazardSpawnTimer -= dt;
         if (*ctx.eliteHazardSpawnTimer <= 0.f)
         {
-            const float mapW = ctx.map->width * ctx.mapScale;
-            const float mapH = ctx.map->height * ctx.mapScale;
+            const float mapW = (ctx.worldBoundsW > 0.f) ? ctx.worldBoundsW : ctx.map->width  * ctx.mapScale;
+            const float mapH = (ctx.worldBoundsH > 0.f) ? ctx.worldBoundsH : ctx.map->height * ctx.mapScale;
             const float marginLeft = 120.f;
             const float marginRight = 120.f;
             const float marginTop = 90.f;
