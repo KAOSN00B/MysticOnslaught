@@ -29,6 +29,7 @@
 #include "CombatDirector.h"
 #include "OverlayRenderer.h"
 #include "CutsceneManager.h"
+#include "WorldMapManager.h"
 #include "TileMapper.h"
 #include "NineSliceEditor.h"
 #include "DungeonGen.h"
@@ -256,6 +257,12 @@ private:
     bool  _startBiomeDungeon  = true;       // fallback only; sequence takes precedence
     static constexpr int kTotalActs = 5;
     std::vector<Biome> _biomeSequence;      // 5 randomly chosen biomes per run
+
+    // ── World map (biome selection) ───────────────────────────────────────
+    WorldMapManager       _worldMap;
+    int                   _worldZone = 0;          // 0=Caverns, 1-4=picked zones, 5=DemonsInsides
+    std::vector<Biome>    _worldCompletedBiomes;   // biomes played, in order (after Caverns)
+    std::vector<int>      _worldChosenNodeIndices; // 0/1/2 tierIdx chosen at each completed tier
 
     // ── Map screen right-panel debug editor ───────────────────────────────
     bool  _mapEditorActive  = false;
@@ -547,7 +554,7 @@ private:
     // Cleared each frame when the touch lifts; prevents repeat casts on hold.
     std::vector<int> _abilityTapSeenIds;
 
-    DebugPanel   _debug;
+    DebugPanel      _debug;
     TileMapper      _tileMapper;
     NineSliceEditor _nineSliceEditor;
     DungeonGen   _dungeonGen;
@@ -659,6 +666,11 @@ private:
 
     // Lock / unlock the Store room's north exit door tile directly.
     void SetStoreDoorTiles(TileType doorType);
+
+    // World map (biome selection after each boss clear)
+    void UpdateWorldMap(float dt);
+    void DrawWorldMap();
+    void OpenWorldMap();   // generates the map and switches state
 
     // Dungeon run
     void UpdateDungeonRun(float dt);

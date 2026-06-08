@@ -48,7 +48,7 @@ namespace
     // -- Resource economy constants --------------------------------------------
     // Mana is now primarily passive-regen (see Character::kManaRegenPerSecond).
     // Pickups are supplemental / precious, not the main resource source.
-    // Boss fights suppress all timed and drop pickups � they should be won on
+    // Boss fights suppress all timed and drop pickups � they should be won on
     // build and execution, not on floor loot.
     //
     // Store hook: when a store is added between key waves, these intervals can
@@ -57,7 +57,7 @@ namespace
     // Seconds between timed heal drops during normal waves.
     constexpr float kDefaultTimedPickupInterval = 45.f;
 
-    // Drop chance per enemy kill (normal waves only � boss fight suppresses drops).
+    // Drop chance per enemy kill (normal waves only � boss fight suppresses drops).
     constexpr int kEnemyDropChancePercent = 8;
 
     constexpr float kBiomeFadeOutDuration = 3.f;
@@ -101,7 +101,7 @@ namespace
 
 // Biomes that have a saved TileMapper export and a tilesheet PNG.
 // Add new entries here as tilesets are created and verified.
-// DreamRealm: txt file contains Forest data (wrong biome selected at export) � needs re-export.
+// DreamRealm: txt file contains Forest data (wrong biome selected at export) � needs re-export.
 static constexpr Biome kTilesetBiomes[]  = { Biome::Caverns, Biome::AncientCastle,
                                              Biome::DemonsInsides, Biome::Graveyard,
                                              Biome::Jungle, Biome::DreamRealm,
@@ -196,11 +196,11 @@ static const CutsceneAction kIntroCutscene[] =
     Dialogue("Zeph", "You're a Mystic."),
     Wait(0.4f),
     Dialogue("Zeph", "I can't do much for you. But I can offer this."),
-    Dialogue("Zeph", "Take the sword. And choose one of these � first spell's on me."),
+    Dialogue("Zeph", "Take the sword. And choose one of these � first spell's on me."),
     OpenAbilitySelect(),
     Dialogue("Zeph", "Good choice."),
     Wait(0.3f),
-    Dialogue("Zeph", "Why am I here? Same reason as you � trying to stop whatever's out there."),
+    Dialogue("Zeph", "Why am I here? Same reason as you � trying to stop whatever's out there."),
     Dialogue("Zeph", "Now go. And be careful. The Onslaught doesn't wait."),
     UnlockDoor(),
     EndCutscene()
@@ -212,6 +212,39 @@ static const CutsceneAction kRespawnCutscene[] =
     FadeIn(1.0f),
     Dialogue("Zeph", "You're back. I was starting to worry."),
     Dialogue("Zeph", "Take a breath. The dungeon will still be there."),
+    EndCutscene()
+};
+
+// Played when arriving at Zeph in zones 2-5 (after the first intro).
+static const CutsceneAction kZone2ArrivalCutscene[] =
+{
+    FadeIn(1.0f),
+    Dialogue("Zeph", "Oh, great to see you again. I was worried about you."),
+    Dialogue("Zeph", "You're pushing deeper than most. That takes guts."),
+    EndCutscene()
+};
+
+static const CutsceneAction kZone3ArrivalCutscene[] =
+{
+    FadeIn(1.0f),
+    Dialogue("Zeph", "Back again. You're tougher than I gave you credit for."),
+    Dialogue("Zeph", "I can feel it now — something ancient is stirring ahead."),
+    EndCutscene()
+};
+
+static const CutsceneAction kZone4ArrivalCutscene[] =
+{
+    FadeIn(1.0f),
+    Dialogue("Zeph", "You made it this far. I won't pretend I'm not impressed."),
+    Dialogue("Zeph", "Whatever's ahead... you'll need everything you've got."),
+    EndCutscene()
+};
+
+static const CutsceneAction kZone5ArrivalCutscene[] =
+{
+    FadeIn(1.0f),
+    Dialogue("Zeph", "I can't follow you any further."),
+    Dialogue("Zeph", "Whatever's waiting in the Demon's Insides... only you can end this. Good luck."),
     EndCutscene()
 };
 
@@ -373,7 +406,7 @@ void Engine::UpdateMusicSystem()
     _audio.Update(ctx);
 }
 
-// -- Room progression � replaces the old SpawnWave() system -------------------
+// -- Room progression � replaces the old SpawnWave() system -------------------
 // Called whenever the player is about to enter a specific room type.
 // Handles act advancement, biome transitions, and encounter setup.
 void Engine::StartNextRoom(RoomType type)
@@ -384,7 +417,7 @@ void Engine::StartNextRoom(RoomType type)
         _currentRoom = 1;
         _currentAct++;
     }
-    _wave++;  // _wave = total rooms entered � feeds GetEnemyPowerLevelForWave()
+    _wave++;  // _wave = total rooms entered � feeds GetEnemyPowerLevelForWave()
     _currentRoomType = type;
 
     // Non-combat rooms get a rest timer before the choice screen appears.
@@ -405,7 +438,7 @@ void Engine::StartNextRoom(RoomType type)
     _eliteEnrageWarningTimer = 0.f;
     _eliteHazardSpawnTimer   = 0.f;
 
-    // Store room � place Zeph at map centre and stock the shop
+    // Store room � place Zeph at map centre and stock the shop
     if (type == RoomType::Store)
     {
         float mapW = _map.width  * _mapScale;
@@ -534,14 +567,30 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     {
         if (!_cutsceneIntroPlayed)
         {
-            // First time ever entering the shop � play the full intro.
+            // First time ever entering the shop � play the full intro.
             _cutsceneIntroPlayed = true;
             SetStoreDoorTiles(TileType::DoorLocked);   // lock until ability is chosen
             _cutscene.Play(kIntroCutscene, (int)(sizeof(kIntroCutscene) / sizeof(kIntroCutscene[0])));
         }
+        else if (resetRoomStates)
+        {
+            // Arriving at Zeph in a new zone (not a respawn) — zone-aware greeting.
+            const CutsceneAction* seq = nullptr;
+            int cnt = 0;
+            switch (_worldZone)
+            {
+            case 2: seq = kZone2ArrivalCutscene; cnt = (int)(sizeof(kZone2ArrivalCutscene)/sizeof(*kZone2ArrivalCutscene)); break;
+            case 3: seq = kZone3ArrivalCutscene; cnt = (int)(sizeof(kZone3ArrivalCutscene)/sizeof(*kZone3ArrivalCutscene)); break;
+            case 4: seq = kZone4ArrivalCutscene; cnt = (int)(sizeof(kZone4ArrivalCutscene)/sizeof(*kZone4ArrivalCutscene)); break;
+            case 5: seq = kZone5ArrivalCutscene; cnt = (int)(sizeof(kZone5ArrivalCutscene)/sizeof(*kZone5ArrivalCutscene)); break;
+            default: break;
+            }
+            if (seq && cnt > 0)
+                _cutscene.Play(seq, cnt);
+        }
         else
         {
-            // Returning after death � short respawn scene.
+            // Returning after death — short respawn scene.
             _cutscene.Play(kRespawnCutscene, (int)(sizeof(kRespawnCutscene) / sizeof(kRespawnCutscene[0])));
         }
     }
@@ -777,7 +826,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _gameState = GameState::Play;
 }
 
-// (ShowRoomChoiceScreen / GenerateRoomChoices removed � replaced by map system)
+// (ShowRoomChoiceScreen / GenerateRoomChoices removed � replaced by map system)
 
 Biome Engine::GetBiomeForAct(int act) const
 {
@@ -803,7 +852,7 @@ Biome Engine::GetBiomeForAct(int act) const
 //   so the rewarded lanes shift each run and force different routing decisions.
 //
 //   A path visits exactly one node per row ? at most 2 specials per run.
-//   Rows 1 and 4 are all Standard (2�4 nodes) for additional branching variety.
+//   Rows 1 and 4 are all Standard (2�4 nodes) for additional branching variety.
 void Engine::GenerateActMap()
 {
     _actMap.clear();
@@ -811,8 +860,8 @@ void Engine::GenerateActMap()
     _mapOpenTimer = 0.f;
 
     // -- 1. Assign specials to rows by type -------------------------------
-    // Row 2 (early) always gets Elite + Treasure � combat/reward specials.
-    // Row 3 (late, after 3 rows of combat) always gets Shop + Rest �
+    // Row 2 (early) always gets Elite + Treasure � combat/reward specials.
+    // Row 3 (late, after 3 rows of combat) always gets Shop + Rest �
     //   utility/recovery specials that only make sense once the player has
     //   earned gold and taken some damage.
     // Each pair is randomly swapped so which side of the row each appears on
@@ -867,7 +916,7 @@ void Engine::GenerateActMap()
         {
             MapNode n;
             n.row   = r;
-            // normX: single-node rows centre at 0.5; multi-node rows spread 0.2�0.8
+            // normX: single-node rows centre at 0.5; multi-node rows spread 0.2�0.8
             n.normX = (rowCounts[r] == 1) ? 0.5f
                     : 0.2f + (float)i / (rowCounts[r] - 1) * 0.6f;
 
@@ -986,7 +1035,7 @@ void Engine::EnterMapRoom(int idx)
     else
         _roomClearTimer = 0.f;
 
-    // Store room � place Zeph at map centre and stock the shop
+    // Store room � place Zeph at map centre and stock the shop
     if (_currentRoomType == RoomType::Store)
     {
         float mapW = _map.width  * _mapScale;
@@ -1009,7 +1058,7 @@ void Engine::EnterMapRoom(int idx)
     }
     else
     {
-        // Same biome � re-randomise prop layout so every room feels distinct.
+        // Same biome � re-randomise prop layout so every room feels distinct.
         PopulatePropsForBiome(_currentBiome);
         {
             std::vector<Rectangle> propRects;
@@ -1235,6 +1284,9 @@ void Engine::Update(float dt)
         UpdateDungeonRun(dt);
         break;
 
+    case GameState::WorldMap:
+        UpdateWorldMap(dt);
+        break;
 
     case GameState::TileMapper:
         _tileMapper.Update();
@@ -1670,11 +1722,19 @@ void Engine::Draw()
     case GameState::Pause:
     {
         {
-            ClearBackground(Color{ 8, 6, 10, 255 });
-            float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
-            float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
-            if (_tileRenderer.IsLoaded())
-                _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+            if (_stateBeforePause == GameState::WorldMap)
+            {
+                // Show the map dimmed behind the pause menu.
+                _worldMap.Draw(_player);
+            }
+            else
+            {
+                ClearBackground(Color{ 8, 6, 10, 255 });
+                float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
+                float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+                if (_tileRenderer.IsLoaded())
+                    _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+            }
         }
 
         int pauseResult = _pauseUI.DrawPause();
@@ -1717,7 +1777,11 @@ void Engine::Draw()
         DrawDungeonRun();
         break;
 
-case GameState::TileMapper:
+    case GameState::WorldMap:
+        DrawWorldMap();
+        break;
+
+    case GameState::TileMapper:
         _tileMapper.Draw();
         break;
 
@@ -3122,8 +3186,8 @@ void Engine::DrawMap()
     }
     DrawScrollingCheckerboard(sw, sh, bgDark, bgLight, 18.f, 10.f);
 
-    // -- Header � centred over the node graph area -------------------------
-    // Graph spans 30�76% of the screen; journey panel occupies 78�97%.
+    // -- Header � centred over the node graph area -------------------------
+    // Graph spans 30�76% of the screen; journey panel occupies 78�97%.
     const float mapCentreX = sw * _mapHeaderX;
     std::string header = "Act " + std::to_string(_currentAct)
                        + "  -  " + GetBiomeName(actBiome);
@@ -3325,7 +3389,7 @@ void Engine::DrawMap()
             Fade(Color{130, 235, 255, 255}, 0.55f));
         cy += 14.f;
 
-        // Visited-room tiles � one per completed node, stamped with the room
+        // Visited-room tiles � one per completed node, stamped with the room
         // icon and crossed with a red diagonal slash.
         int drawn = 0;
         for (const auto& node : _actMap)
@@ -3397,7 +3461,7 @@ void Engine::DrawMap()
         DrawText(TextFormat("Gold:  %d", _player.GetGold()),
             (int)(jX + pad), (int)cy, (int)_mapRoomsFs, Color{255, 214, 102, 220});
 
-        // -- Biome progress diamonds � size-aware zone that lifts upward as
+        // -- Biome progress diamonds � size-aware zone that lifts upward as
         // the diamonds get larger so the divider and label make room ---------
         {
             const float minDivY = cy + _mapRoomsFs + 20.f;
@@ -5975,6 +6039,12 @@ void Engine::ResetRunState()
     _mapOpenTimer       = 0.f;
     _actMap.clear();
 
+    // World map run state
+    _worldZone = 0;
+    _worldCompletedBiomes.clear();
+    _worldChosenNodeIndices.clear();
+    _worldMap.Reset();
+
     // Generate a random sequence of kTotalActs biomes, no two consecutive duplicates.
     {
         static constexpr Biome kAllBiomes[] = {
@@ -7316,6 +7386,89 @@ void Engine::DrawMagicGemHudIcon() const
     DrawTexturePro(_magicGemTex, src, dst, {}, 0.f, WHITE);
     DrawText("x1", (int)(dst.x + dst.width + 4.f), (int)(dst.y + 18.f), 18, GOLD);
 }
+// ── World Map ──────────────────────────────────────────────────────────────────
+
+void Engine::OpenWorldMap()
+{
+    // Zone 4 boss just cleared → skip map, go straight to DemonsInsides.
+    if (_worldZone >= 4)
+    {
+        _worldZone = 5;
+        _currentBiome = Biome::DemonsInsides;
+        LoadTilesetForBiome(_currentBiome);
+        _dungeonGen.Generate();
+        int startIdx = _dungeonGen.GetStartIndex();
+        EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
+        // FadingIn was already set by the fade handler — just reset the timer/alpha.
+        _dungeonFadeState = DungeonFadeState::FadingIn;
+        _dungeonFadeTimer = kDungeonFadeDuration;
+        _dungeonFadeAlpha = 255.f;
+        return;
+    }
+
+    // Generate the map for the next zone choice and switch state.
+    _worldMap.Generate(
+        _worldCompletedBiomes,
+        _worldChosenNodeIndices,
+        _worldZone + 1,
+        GetScreenWidth(), GetScreenHeight());
+
+    _gameState = GameState::WorldMap;
+}
+
+void Engine::UpdateWorldMap(float dt)
+{
+    // Allow pausing while on the map.
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+        _stateBeforePause = GameState::WorldMap;
+        _gameState = GameState::Pause;
+        return;
+    }
+
+    // Debug editor toggle (KEY_NINE, same as the act-map editor).
+    if (_debug.IsActive() && IsKeyPressed(KEY_NINE))
+        _worldMap.ToggleEditor();
+
+    if (_worldMap.IsEditorActive())
+    {
+        _worldMap.UpdateEditor();
+        return;
+    }
+
+    bool done = _worldMap.Update(dt);
+    if (!done) return;
+
+    // Player confirmed a biome — advance zone and load the new dungeon.
+    Biome selectedBiome   = _worldMap.GetSelectedBiome();
+    int   selectedTierIdx = _worldMap.GetSelectedTierIdx();
+
+    _worldZone++;
+    _worldCompletedBiomes.push_back(selectedBiome);
+    _worldChosenNodeIndices.push_back(selectedTierIdx);
+
+    _currentBiome = selectedBiome;
+    LoadTilesetForBiome(_currentBiome);
+
+    _dungeonGen.Generate();
+    int startIdx   = _dungeonGen.GetStartIndex();
+    Vector2 spawnPos = GetDungeonBottomSpawnPos();
+    EnterDungeonRoom(startIdx, DungeonDoorSide::None, spawnPos, true);
+
+    // Fade in to Zeph's store.
+    _dungeonFadeState = DungeonFadeState::FadingIn;
+    _dungeonFadeTimer = kDungeonFadeDuration;
+    _dungeonFadeAlpha = 255.f;
+}
+
+void Engine::DrawWorldMap()
+{
+    _worldMap.Draw(_player);
+
+    if (_worldMap.IsEditorActive())
+        _worldMap.DrawEditor();
+}
+
 void Engine::UpdateDungeonRun(float dt)
 {
     // ── Dungeon fade transition (Store enter / boss clear) ────────────────────
@@ -7549,6 +7702,14 @@ void Engine::UpdateDungeonRun(float dt)
             UpdateDialogueBoxEditor();
             return;
         }
+        // KEY_NINE — jump to world map with editor open (debug shortcut)
+        if (_debug.IsActive() && IsKeyPressed(KEY_NINE))
+        {
+            OpenWorldMap();
+            if (!_worldMap.IsEditorActive())
+                _worldMap.ToggleEditor();
+        }
+
         // ── Normal player update ──────────────────────────────────────────────
         if (_player.GetHealthValue() <= 0.f && !_playerDying)
         {
@@ -7937,15 +8098,11 @@ void Engine::UpdateDungeonRun(float dt)
             Rectangle exitRect = GetDungeonBossExitTrigger();
             if (CheckCollisionPointRec(_player.GetWorldPos(), exitRect))
             {
-                // Boss cleared - fade out, regenerate dungeon, then fade back in.
+                // Boss cleared — fade to black, then show the world map so player picks next biome.
+                // Note: the fade handler sets FadingIn after the action fires; that stale state
+                // is overwritten when UpdateWorldMap later calls EnterDungeonRoom.
                 ClearDungeonEnemies();
-                _dungeonGen.Generate();
-                int freshStart = _dungeonGen.GetStartIndex();
-                Vector2 spawnPos = GetDungeonBottomSpawnPos();
-                _dungeonFadePendingAction = [this, freshStart, spawnPos]()
-                {
-                    EnterDungeonRoom(freshStart, DungeonDoorSide::None, spawnPos, true);
-                };
+                _dungeonFadePendingAction = [this]() { OpenWorldMap(); };
                 _dungeonFadeState = DungeonFadeState::FadingOut;
                 _dungeonFadeTimer = kDungeonFadeDuration;
                 return;

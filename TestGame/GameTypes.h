@@ -40,6 +40,7 @@ enum class GameState
     DemoEnd,
     TouchButtonMapping,   // drag-to-place touch button layout editor
     DungeonRun,           // active procedural dungeon run
+    WorldMap,             // biome selection map shown after each boss clear
     TileMapper,           // interactive tilesheet assignment tool (debug)
     NineSliceEditor,      // visual srcCorner/dstCorner editor for any PNG asset
 };

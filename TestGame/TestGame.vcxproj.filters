@@ -108,6 +108,9 @@
     <ClCompile Include="MapDirector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="WorldMapManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="HUDRenderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -222,6 +225,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="MapDirector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="WorldMapManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="GameTypes.h">
