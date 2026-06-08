@@ -1,6 +1,8 @@
-#include "HUDRenderer.h"
+﻿#include "HUDRenderer.h"
+#include "VirtualCanvas.h"
 
 #include "Character.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -79,7 +81,7 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
 
     const float hpBarY   = kNewTopPad;
     const float manaBarY = hpBarY + kNewBarH + kNewBarGap;
-    const float barX     = (float)GetScreenWidth() / 2.f - kNewBarW / 2.f;
+    const float barX     = (float)kVirtualWidth / 2.f - kNewBarW / 2.f;
 
     auto drawLabelBox = [&](const char* text, float x, float y, int fontSize, Color textColor)
     {
@@ -108,7 +110,7 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
             ctx.currentAct, ctx.currentRoom, roomTypeSuffix);
         int roomLabelW = MeasureText(roomLabel, 32);
         Color labelColor = isBoss ? ORANGE : (isElite ? Color{255,140,0,255} : RAYWHITE);
-        drawLabelBox(roomLabel, (float)(GetScreenWidth() - roomLabelW - 130), 18.f, 32, labelColor);
+        drawLabelBox(roomLabel, (float)(kVirtualWidth - roomLabelW - 130), 18.f, 32, labelColor);
     }
 
     {
@@ -178,13 +180,13 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
         const char* mechLabel = kMechanicNames[ctx.eliteMechanic];
         Color mechColor = kMechanicColors[ctx.eliteMechanic];
         int mw = MeasureText(mechLabel, 20);
-        drawLabelBox(mechLabel, (float)(GetScreenWidth() - mw - 130), 58.f, 20, mechColor);
+        drawLabelBox(mechLabel, (float)(kVirtualWidth - mw - 130), 58.f, 20, mechColor);
     }
 
     if (ctx.currentRoomType == RoomType::Elite && ctx.eliteEnrageWarningTimer > 0.f)
     {
-        const float sw = (float)GetScreenWidth();
-        const float sh = (float)GetScreenHeight();
+        const float sw = (float)kVirtualWidth;
+        const float sh = (float)kVirtualHeight;
 
         float alpha = 1.f;
         if (ctx.eliteEnrageWarningTimer > kEliteEnrageWarningDuration - 0.5f)
@@ -220,7 +222,7 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
         const int hintW = MeasureText(debugHint, hintSz);
         const float boxW = (float)hintW + 24.f;
         const float boxH = 34.f;
-        const float boxX = (float)GetScreenWidth() - boxW - 14.f;
+        const float boxX = (float)kVirtualWidth - boxW - 14.f;
         const float boxY = 14.f;
 
         DrawRectangleRounded({ boxX, boxY, boxW, boxH }, 0.22f, 6, Fade(BLACK, 0.58f));
@@ -274,6 +276,6 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
         const char* warning = "DON'T GET TOO CLOSE";
         int warningSize = 34;
         int warningWidth = MeasureText(warning, warningSize);
-        drawLabelBox(warning, (float)(GetScreenWidth() / 2 - warningWidth / 2), 96.f, warningSize, ORANGE);
+        drawLabelBox(warning, (float)(kVirtualWidth / 2 - warningWidth / 2), 96.f, warningSize, ORANGE);
     }
 }

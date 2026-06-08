@@ -1,7 +1,10 @@
-#include "Ogre.h"
+﻿#include "Ogre.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 
@@ -187,8 +190,8 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
     float drawHeight = _visualFrameHeight * _scale;
 
     Vector2 screenPos = Vector2Subtract(_worldPos, cameraRef);
-    screenPos.x += GetScreenWidth() / 2.f;
-    screenPos.y += GetScreenHeight() / 2.f;
+    screenPos.x += kVirtualWidth / 2.f;
+    screenPos.y += kVirtualHeight / 2.f;
 
     Color tint = IsElectroStunned() ? Color{ 255, 255,  60, 255 } :
                  IsFrozen()         ? Color{ 140, 200, 255, 255 } :

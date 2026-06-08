@@ -1,5 +1,7 @@
-#include "TouchControls.h"
+﻿#include "TouchControls.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <cmath>
 #include <algorithm>
 
@@ -82,7 +84,7 @@ void TouchControls::Update(int screenW, int screenH)
         static constexpr int kMouseFakeId = 9999;
         const bool mouseHeld    = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
         const bool mousePressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
-        const Vector2 mousePos  = GetMousePosition();
+        const Vector2 mousePos  = GetVirtualMousePos();
 
         // Release everything when mouse button lifts
         if (!mouseHeld)
@@ -156,7 +158,7 @@ void TouchControls::Update(int screenW, int screenH)
         int idx = FindTouchIndex(_joyTouchId, tc);
         if (idx >= 0)
         {
-            Vector2 pos   = GetTouchPosition(idx);
+            Vector2 pos   = GetVirtualTouchPos(idx);
             Vector2 delta = Vector2Subtract(pos, joystickAnchor);
             float   dist  = Vector2Length(delta);
             float   clamped = std::min(dist, kJoyRadius);
@@ -182,7 +184,7 @@ void TouchControls::Update(int screenW, int screenH)
         int id = GetTouchPointId(i);
         if (id == _joyTouchId || id == _atkTouchId || id == _dashTouchId) continue;
 
-        Vector2 pos = GetTouchPosition(i);
+        Vector2 pos = GetVirtualTouchPos(i);
 
         // ATK button (1.25× radius for a generous touch target)
         if (Vector2Distance(pos, atkCenter) <= kBtnRadius * 1.25f)

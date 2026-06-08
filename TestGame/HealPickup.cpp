@@ -1,7 +1,10 @@
-#include "HealPickup.h"
+﻿#include "HealPickup.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 
 #include "Character.h"
+#include "VirtualCanvas.h"
 
 Texture2D HealPickup::_sharedTexture{};
 bool HealPickup::_textureLoaded = false;
@@ -25,8 +28,8 @@ void HealPickup::Draw(Vector2 worldOffset)
 
     EnsureTextureLoaded();
     Vector2 screenPos{ _worldPos.x + worldOffset.x, _worldPos.y + worldOffset.y };
-    screenPos.x += GetScreenWidth() / 2.f;
-    screenPos.y += GetScreenHeight() / 2.f;
+    screenPos.x += kVirtualWidth / 2.f;
+    screenPos.y += kVirtualHeight / 2.f;
 
     Rectangle source{ 0.f, 0.f, (float)_sharedTexture.width, (float)_sharedTexture.height };
     float scale = 6.0f;

@@ -1,7 +1,10 @@
-#include "LavaBallProjectile.h"
+﻿#include "LavaBallProjectile.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 #include <cmath>
 
@@ -158,8 +161,8 @@ void LavaBallProjectile::DrawFlyingSheet(Vector2 worldOffset, float rotation) co
     Rectangle source = GetSheetFrame(_sharedLavaBallTex, _flyingColumns, _flyingRows, _frame);
 
     Vector2 screenPos{
-        _worldPos.x + worldOffset.x + GetScreenWidth() * 0.5f,
-        _worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f
+        _worldPos.x + worldOffset.x + kVirtualWidth * 0.5f,
+        _worldPos.y + worldOffset.y + kVirtualHeight * 0.5f
     };
 
     Rectangle dest{
@@ -177,8 +180,8 @@ void LavaBallProjectile::DrawHitSheet(Vector2 worldOffset) const
     Rectangle source = GetSheetFrame(_sharedLavaBallHitTex, _hitColumns, _hitRows, _frame);
 
     Vector2 screenPos{
-        _worldPos.x + worldOffset.x + GetScreenWidth() * 0.5f,
-        _worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f
+        _worldPos.x + worldOffset.x + kVirtualWidth * 0.5f,
+        _worldPos.y + worldOffset.y + kVirtualHeight * 0.5f
     };
 
     Rectangle dest{

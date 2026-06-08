@@ -1,6 +1,9 @@
-#include "NineSliceEditor.h"
+﻿#include "NineSliceEditor.h"
+#include "VirtualCanvas.h"
 #include "NineSlice.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -82,9 +85,9 @@ void NineSliceEditor::UpdateFileSelect()
 {
     if (IsKeyPressed(KEY_ESCAPE)) { _wantsToExit = true; return; }
 
-    float sw  = (float)GetScreenWidth();
-    float sh  = (float)GetScreenHeight();
-    Vector2 m = GetMousePosition();
+    float sw  = (float)kVirtualWidth;
+    float sh  = (float)kVirtualHeight;
+    Vector2 m = GetVirtualMousePos();
 
     if (IsKeyPressed(KEY_BACKSPACE) && _filterBuf[0] != '\0')
         _filterBuf[strlen(_filterBuf) - 1] = '\0';
@@ -142,8 +145,8 @@ void NineSliceEditor::UpdateFileSelect()
 
 void NineSliceEditor::DrawFileSelect() const
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     ClearBackground(Color{ 12, 12, 18, 255 });
     DrawText("9-SLICE EDITOR  —  Select a PNG", 36, 16, 28, GOLD);
@@ -221,7 +224,7 @@ void NineSliceEditor::DrawFileSelect() const
     if (_selectedIdx >= 0 && _selectedIdx < (int)_files.size())
     {
         Rectangle openBtn{ sw * 0.5f - 130.f, sh - 66.f, 260.f, 48.f };
-        Vector2 m = GetMousePosition();
+        Vector2 m = GetVirtualMousePos();
         bool hov  = CheckCollisionPointRec(m, openBtn);
         DrawRectangleRec(openBtn, hov ? Color{ 70, 130, 200, 255 } : Color{ 40, 90, 160, 255 });
         DrawRectangleLinesEx(openBtn, 1.5f, Fade(WHITE, 0.5f));
@@ -249,8 +252,8 @@ void NineSliceEditor::OpenSelected()
     _srcRight  = f.srcRight;
     _dstCorner = f.dstCorner;
 
-    float sw     = (float)GetScreenWidth();
-    float sh     = (float)GetScreenHeight();
+    float sw     = (float)kVirtualWidth;
+    float sh     = (float)kVirtualHeight;
     float panelW = sw * kTexFrac - 20.f;
     float panelH = sh - kTopBarH - kBotBarH - 20.f;
     float scaleX = panelW / _tex.width;
@@ -272,7 +275,7 @@ bool NineSliceEditor::DragFloat(float& val, float minV, float maxV,
                                 float speed, Rectangle hitRect,
                                 bool& dragging, float& dragStartX, float& dragStartVal)
 {
-    Vector2 m    = GetMousePosition();
+    Vector2 m    = GetVirtualMousePos();
     bool changed = false;
 
     if (!dragging && CheckCollisionPointRec(m, hitRect) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -303,18 +306,18 @@ void NineSliceEditor::UpdateEditor()
         return;
     }
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     Rectangle texArea{ 0.f, kTopBarH, sw * kTexFrac, sh - kTopBarH - kBotBarH };
 
     // ── Scroll-wheel zoom ─────────────────────────────────────────────────────
     float wheel = GetMouseWheelMove();
-    if (wheel != 0.f && CheckCollisionPointRec(GetMousePosition(), texArea))
+    if (wheel != 0.f && CheckCollisionPointRec(GetVirtualMousePos(), texArea))
     {
         float zoomFactor = (wheel > 0.f) ? 1.12f : (1.f / 1.12f);
-        float mx = GetMousePosition().x;
-        float my = GetMousePosition().y;
+        float mx = GetVirtualMousePos().x;
+        float my = GetVirtualMousePos().y;
         _texOffX = mx - (mx - _texOffX) * zoomFactor;
         _texOffY = my - (my - _texOffY) * zoomFactor;
         _texScale *= zoomFactor;
@@ -323,16 +326,16 @@ void NineSliceEditor::UpdateEditor()
 
     // ── Middle-mouse pan ──────────────────────────────────────────────────────
     if (IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON) &&
-        CheckCollisionPointRec(GetMousePosition(), texArea))
+        CheckCollisionPointRec(GetVirtualMousePos(), texArea))
     {
         _midDrag      = true;
-        _midDragStart = GetMousePosition();
+        _midDragStart = GetVirtualMousePos();
         _midDragOff   = { _texOffX, _texOffY };
     }
     if (!IsMouseButtonDown(MOUSE_MIDDLE_BUTTON)) _midDrag = false;
     if (_midDrag)
     {
-        Vector2 delta = Vector2Subtract(GetMousePosition(), _midDragStart);
+        Vector2 delta = Vector2Subtract(GetVirtualMousePos(), _midDragStart);
         _texOffX = _midDragOff.x + delta.x;
         _texOffY = _midDragOff.y + delta.y;
     }
@@ -348,7 +351,7 @@ void NineSliceEditor::UpdateEditor()
         float lineLeft  = _texOffX + _srcLeft  * _texScale;
         float lineRight = _texOffX + texW - _srcRight * _texScale;
 
-        Vector2 m = GetMousePosition();
+        Vector2 m = GetVirtualMousePos();
         const float kSnap = 7.f;
 
         // Determine which line the mouse is closest to and within snap distance
@@ -384,7 +387,7 @@ void NineSliceEditor::UpdateEditor()
     {
         if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
         {
-            Vector2 m    = GetMousePosition();
+            Vector2 m    = GetVirtualMousePos();
             float maxT   = (float)_tex.height * 0.5f - 1.f;
             float maxL   = (float)_tex.width  * 0.5f - 1.f;
 
@@ -449,7 +452,7 @@ void NineSliceEditor::UpdateEditor()
     }
 
     // ── Top-bar buttons ───────────────────────────────────────────────────────
-    Vector2 m = GetMousePosition();
+    Vector2 m = GetVirtualMousePos();
 
     Rectangle saveBtn{ sw - 130.f, 8.f, 110.f, kTopBarH - 16.f };
     if (CheckCollisionPointRec(m, saveBtn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -465,8 +468,8 @@ void NineSliceEditor::UpdateEditor()
 
 void NineSliceEditor::DrawEditor() const
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     ClearBackground(Color{ 10, 10, 16, 255 });
 
@@ -484,7 +487,7 @@ void NineSliceEditor::DrawEditor() const
     DrawLine(0, (int)kTopBarH, (int)sw, (int)kTopBarH, Fade(WHITE, 0.2f));
 
     Rectangle backBtn{ 8.f, 8.f, 90.f, kTopBarH - 16.f };
-    bool backHov = CheckCollisionPointRec(GetMousePosition(), backBtn);
+    bool backHov = CheckCollisionPointRec(GetVirtualMousePos(), backBtn);
     DrawRectangleRec(backBtn, backHov ? Color{ 60, 60, 80, 255 } : Color{ 40, 40, 55, 255 });
     DrawRectangleLinesEx(backBtn, 1.f, Fade(WHITE, 0.3f));
     DrawText("< Back", (int)backBtn.x + 8, (int)backBtn.y + 6, 16, WHITE);
@@ -498,7 +501,7 @@ void NineSliceEditor::DrawEditor() const
     }
 
     Rectangle saveBtn{ sw - 130.f, 8.f, 110.f, kTopBarH - 16.f };
-    bool saveHov = CheckCollisionPointRec(GetMousePosition(), saveBtn);
+    bool saveHov = CheckCollisionPointRec(GetVirtualMousePos(), saveBtn);
     DrawRectangleRec(saveBtn, saveHov ? Color{ 40, 160, 80, 255 } : Color{ 30, 120, 60, 255 });
     DrawRectangleLinesEx(saveBtn, 1.5f, Fade(WHITE, 0.4f));
     const char* saveTxt = "Save";
@@ -640,7 +643,7 @@ void NineSliceEditor::DrawBottomBar(Rectangle area) const
     DrawRectangleRec(area, Color{ 20, 20, 30, 255 });
     DrawLine((int)area.x, (int)area.y, (int)(area.x + area.width), (int)area.y, Fade(WHITE, 0.2f));
 
-    float sw   = (float)GetScreenWidth();
+    float sw   = (float)kVirtualWidth;
     float boxW = (sw - 40.f) / 5.f;
 
     const char* labels[5] = { "srcTop", "srcBot", "srcLeft", "srcRight", "dstCorner" };
@@ -651,7 +654,7 @@ void NineSliceEditor::DrawBottomBar(Rectangle area) const
     {
         float bx = 20.f + i * boxW;
         Rectangle hit{ bx, area.y + 24.f, boxW - 10.f, area.height - 34.f };
-        bool hov = CheckCollisionPointRec(GetMousePosition(), hit) || _barDrag[i];
+        bool hov = CheckCollisionPointRec(GetVirtualMousePos(), hit) || _barDrag[i];
 
         DrawRectangleRec(hit, hov ? Color{ 50, 50, 70, 255 } : Color{ 30, 30, 45, 255 });
         DrawRectangleLinesEx(hit, 1.f, Fade(WHITE, hov ? 0.5f : 0.2f));

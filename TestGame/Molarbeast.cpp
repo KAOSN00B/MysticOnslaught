@@ -1,8 +1,12 @@
-#include "Molarbeast.h"
+﻿#include "Molarbeast.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 
 #include "Character.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 #include <cmath>
 
@@ -173,8 +177,8 @@ void Molarbeast::DrawEnemy(Vector2 cameraRef)
         return;
 
     Vector2 screenPos = Vector2Subtract(_worldPos, cameraRef);
-    screenPos.x += GetScreenWidth() * 0.5f;
-    screenPos.y += GetScreenHeight() * 0.5f;
+    screenPos.x += kVirtualWidth * 0.5f;
+    screenPos.y += kVirtualHeight * 0.5f;
 
     // The boss uses the same bottom-centred draw anchor across every state so
     // its oversized sheets still feel planted in one world position.
@@ -237,8 +241,8 @@ void Molarbeast::DrawEnemy(Vector2 cameraRef)
 
         Vector2 spawnWorld = GetLavaBallSpawnPos();
         Vector2 spawnScreen = Vector2Subtract(spawnWorld, cameraRef);
-        spawnScreen.x += GetScreenWidth() * 0.5f;
-        spawnScreen.y += GetScreenHeight() * 0.5f;
+        spawnScreen.x += kVirtualWidth * 0.5f;
+        spawnScreen.y += kVirtualHeight * 0.5f;
 
         const float spawnScale = 1.6f;
         Rectangle spawnDest{

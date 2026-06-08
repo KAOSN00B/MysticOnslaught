@@ -1,7 +1,10 @@
-#include "ProjectileSystem.h"
+﻿#include "ProjectileSystem.h"
+#include "VirtualCanvas.h"
 
 #include "AnimationUtils.h"
+#include "VirtualCanvas.h"
 #include "Character.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,8 +50,8 @@ void ProjectileSystem::DrawUltimateBlasts(const std::vector<UltimateBlast>& blas
         float size = maxSize * pulse;
 
         Vector2 screenPos = {
-            blast.worldPos.x + worldOffset.x + GetScreenWidth()  * 0.5f,
-            blast.worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f
+            blast.worldPos.x + worldOffset.x + kVirtualWidth  * 0.5f,
+            blast.worldPos.y + worldOffset.y + kVirtualHeight * 0.5f
         };
 
         Rectangle dest = { screenPos.x, screenPos.y, size, size };

@@ -1,5 +1,7 @@
-#include "Prop.h"
+﻿#include "Prop.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <algorithm>
 
 Prop::Prop(Vector2 pos, Texture2D tex)
@@ -18,8 +20,8 @@ Prop::Prop(Vector2 pos, Texture2D tex, int frameCount, int frameWidth, int frame
 void Prop::Render(Vector2 heroWorldPos)
 {
     Vector2 screenPos = Vector2Subtract(_worldPos, heroWorldPos);
-    screenPos.x += GetScreenWidth() / 2.0f;
-    screenPos.y += GetScreenHeight() / 2.0f;
+    screenPos.x += kVirtualWidth / 2.0f;
+    screenPos.y += kVirtualHeight / 2.0f;
 
     if (_frameCount > 1)
     {

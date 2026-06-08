@@ -1,7 +1,11 @@
-#include "WorldMapManager.h"
+﻿#include "WorldMapManager.h"
+#include "VirtualCanvas.h"
 #include "Character.h"
+#include "VirtualCanvas.h"
 #include "AbilityType.h"
+#include "VirtualCanvas.h"
 #include "raylib.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -304,8 +308,8 @@ bool WorldMapManager::Update(float dt)
     // ── Confirmation popup input ───────────────────────────────────────────────
     if (_confirmActive && _confirmIdx >= 0)
     {
-        float sw = (float)GetScreenWidth();
-        float sh = (float)GetScreenHeight();
+        float sw = (float)kVirtualWidth;
+        float sh = (float)kVirtualHeight;
         float cx = sw * 0.5f;
         float cy = sh * 0.5f;
 
@@ -321,7 +325,7 @@ bool WorldMapManager::Update(float dt)
 
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
-            clickPos = GetMousePosition();
+            clickPos = GetVirtualMousePos();
             didClick = true;
         }
         else if (GetTouchPointCount() > 0)
@@ -329,7 +333,7 @@ bool WorldMapManager::Update(float dt)
             int nowCount = GetTouchPointCount();
             if (nowCount > _lastTouchCount)
             {
-                clickPos = GetTouchPosition(0);
+                clickPos = GetVirtualTouchPos(0);
                 didClick = true;
             }
             _lastTouchCount = nowCount;
@@ -370,9 +374,9 @@ bool WorldMapManager::Update(float dt)
     }
 
     // ── Node hover and click ───────────────────────────────────────────────────
-    Vector2 cursorPos = GetMousePosition();
+    Vector2 cursorPos = GetVirtualMousePos();
     if (GetTouchPointCount() > 0)
-        cursorPos = GetTouchPosition(0);
+        cursorPos = GetVirtualTouchPos(0);
 
     _hoveredIdx = -1;
 
@@ -438,8 +442,8 @@ static void DrawScrollingCheckerboardGreen(float sw, float sh)
 // ── DrawLeftPanel ──────────────────────────────────────────────────────────────
 void WorldMapManager::DrawLeftPanel(const Character& player) const
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     (void)sw;
 
     const float pX  = _panelX;
@@ -528,8 +532,8 @@ void WorldMapManager::DrawLeftPanel(const Character& player) const
 // ── DrawRightPanel ─────────────────────────────────────────────────────────────
 void WorldMapManager::DrawRightPanel() const
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
 
     const float jX  = sw * _journeyX;
     const float jY  = _panelY;
@@ -641,8 +645,8 @@ void WorldMapManager::DrawConfirmPopup(float sw, float sh) const
     Rectangle yesBtn = { popupRect.x + 20.f, btnY, btnW, _btnH };
     Rectangle noBtn  = { popupRect.x + _confirmW * 0.5f + 10.f, btnY, btnW, _btnH };
 
-    Vector2 mouse = GetMousePosition();
-    if (GetTouchPointCount() > 0) mouse = GetTouchPosition(0);
+    Vector2 mouse = GetVirtualMousePos();
+    if (GetTouchPointCount() > 0) mouse = GetVirtualTouchPos(0);
 
     bool yesHov = CheckCollisionPointRec(mouse, yesBtn);
     bool noHov  = CheckCollisionPointRec(mouse, noBtn);
@@ -670,8 +674,8 @@ void WorldMapManager::DrawConfirmPopup(float sw, float sh) const
 // ── Draw ───────────────────────────────────────────────────────────────────────
 void WorldMapManager::Draw(const Character& player) const
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
 
     // Scrolling green squares background
     DrawScrollingCheckerboardGreen(sw, sh);
@@ -740,8 +744,8 @@ void WorldMapManager::Draw(const Character& player) const
 
     // ── Nodes ──────────────────────────────────────────────────────────────────
     bool ready = (_openTimer <= 0.f && _fadeAlpha <= 0.f && !_confirmActive);
-    Vector2 cursorPos = GetMousePosition();
-    if (GetTouchPointCount() > 0) cursorPos = GetTouchPosition(0);
+    Vector2 cursorPos = GetVirtualMousePos();
+    if (GetTouchPointCount() > 0) cursorPos = GetVirtualTouchPos(0);
 
     for (int i = 0; i < (int)_nodes.size(); ++i)
     {

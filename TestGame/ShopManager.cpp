@@ -1,6 +1,9 @@
-#include "ShopManager.h"
+﻿#include "ShopManager.h"
+#include "VirtualCanvas.h"
 #include "NineSlice.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -220,8 +223,8 @@ bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMo
     float dist = Vector2Distance(player.GetWorldPos(), _npcPos);
     _nearNpc   = (dist < 155.f);
 
-    const float sw2 = GetScreenWidth()  * 0.5f;
-    const float sh2 = GetScreenHeight() * 0.5f;
+    const float sw2 = kVirtualWidth  * 0.5f;
+    const float sh2 = kVirtualHeight * 0.5f;
     float sx = _npcPos.x + worldOffset.x + sw2;
     float sy = _npcPos.y + worldOffset.y + sh2;
     Rectangle promptRect = GetZephPromptRect(sx, sy, touchMode);
@@ -241,8 +244,8 @@ bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMo
         else if (touchMode && touchTap)
         {
             Vector2 tapPos = GetTouchPointCount() > 0
-                             ? GetTouchPosition(0)
-                             : GetMousePosition();
+                             ? GetVirtualTouchPos(0)
+                             : GetVirtualMousePos();
             Rectangle btnRect = GetNpcTouchBtnRect(sx, sy);
             openPressed = CheckCollisionPointRec(tapPos, btnRect);
         }
@@ -259,8 +262,8 @@ bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMo
 
 void ShopManager::DrawNpc(Vector2 worldOffset) const
 {
-    const float sw2 = GetScreenWidth()  * 0.5f;
-    const float sh2 = GetScreenHeight() * 0.5f;
+    const float sw2 = kVirtualWidth  * 0.5f;
+    const float sh2 = kVirtualHeight * 0.5f;
     float sx = _npcPos.x + worldOffset.x + sw2;
     float sy = _npcPos.y + worldOffset.y + sh2;
     const float nW = 40.f, nH = 60.f;
@@ -503,11 +506,11 @@ bool ShopManager::Update(Character& player, bool debugActive)
         _isUIEditorActive = false;
     }
 
-    const float sw  = (float)GetScreenWidth();
-    const float sh  = (float)GetScreenHeight();
+    const float sw  = (float)kVirtualWidth;
+    const float sh  = (float)kVirtualHeight;
     const float pad = _uiPad;
 
-    Vector2 mouse   = GetMousePosition();
+    Vector2 mouse   = GetVirtualMousePos();
     bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
 
     // ── Layout (must match Draw exactly) ─────────────────────────────────
@@ -761,8 +764,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
 
 void ShopManager::Draw(const Character& player, bool debugActive) const
 {
-    const float sw  = (float)GetScreenWidth();
-    const float sh  = (float)GetScreenHeight();
+    const float sw  = (float)kVirtualWidth;
+    const float sh  = (float)kVirtualHeight;
     const float pad = _uiPad;
     const float introYOff = _introPanelYOff;
 
@@ -897,7 +900,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
         float slotFs = _uiSlotFs;
         const float btnW = (cw - 8.f) * 0.5f;
-        Vector2 mpLeft = GetMousePosition();
+        Vector2 mpLeft = GetVirtualMousePos();
 
         for (int i = 0; i < slotCount; i++)
         {
@@ -1057,7 +1060,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
         auto drawTab = [&](Rectangle r, const char* label, bool active)
         {
-            Vector2 mTab = GetMousePosition();
+            Vector2 mTab = GetVirtualMousePos();
             bool hov = CheckCollisionPointRec(mTab, r);
             Color bg = active ? Color{40,60,110,240} : (hov ? Color{30,38,65,220} : Color{20,25,40,180});
             Color bo = active ? Color{100,150,255,255} : (hov ? Color{120,150,220,240} : Color{80,100,140,180});
@@ -1151,7 +1154,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 Color cardBg    = { (uint8_t)(rarCol.r / 3), (uint8_t)(rarCol.g / 3), (uint8_t)(rarCol.b / 3), 220 };
                 Color cardBgHov = { (uint8_t)(rarCol.r / 2), (uint8_t)(rarCol.g / 2), (uint8_t)(rarCol.b / 2), 240 };
                 Color cardBo    = Fade(rarCol, 0.55f);
-                Vector2 mouse = GetMousePosition();
+                Vector2 mouse = GetVirtualMousePos();
                 bool    hov   = CheckCollisionPointRec(mouse, { ix, iy, itemW, itemH });
                 if (hov) { cardBo = Fade(rarCol, 0.90f); }
                 smallBox({ ix, iy, itemW, itemH }, hov ? cardBgHov : cardBg, cardBo);
@@ -1275,7 +1278,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
                 Color cardBg = Color{18, 20, 32, 220};
                 Color cardBo = Color{80, 60, 140, 140};
-                Vector2 mpos = GetMousePosition();
+                Vector2 mpos = GetVirtualMousePos();
                 bool    hov  = CheckCollisionPointRec(mpos, { ix, iy, itemW, itemH });
                 if (hov && !slotsFull) { cardBg = Color{28,24,52,240}; cardBo = Color{120,80,200,220}; }
                 smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
@@ -1393,7 +1396,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     {
         const float potBtnW  = (shopW - 8.f) * 0.5f;
         bool canAffordPot    = (player.GetGold() >= kPotionPriceDraw);
-        Vector2 mpos2        = GetMousePosition();
+        Vector2 mpos2        = GetVirtualMousePos();
 
         auto drawPotBtn = [&](Rectangle r, const char* label, Color baseBg, Color hovBg, Color border)
         {
@@ -1426,7 +1429,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     Rectangle leaveBtn  = { leaveX,  leaveY, leaveW,  leaveH };
     Rectangle rerollBtn = { rerollX, leaveY, rerollW, leaveH };
 
-    Vector2 mpos = GetMousePosition();
+    Vector2 mpos = GetVirtualMousePos();
     bool leaveHov  = CheckCollisionPointRec(mpos, leaveBtn);
     bool rerollHov = CheckCollisionPointRec(mpos, rerollBtn);
     bool canReroll = (player.GetGold() >= _rerollCost);

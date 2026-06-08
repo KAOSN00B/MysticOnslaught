@@ -1,6 +1,9 @@
-#include "VFXManager.h"
+﻿#include "VFXManager.h"
+#include "VirtualCanvas.h"
 #include "AnimationUtils.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -58,8 +61,8 @@ void VFXManager::Draw(Vector2 worldOffset, Vector2 playerWorldPos, Vector2 playe
             : effect.worldPos;
 
         Vector2 screenPos = Vector2Add(worldPos, worldOffset);
-        screenPos.x += GetScreenWidth()  / 2.f;
-        screenPos.y += GetScreenHeight() / 2.f;
+        screenPos.x += kVirtualWidth  / 2.f;
+        screenPos.y += kVirtualHeight / 2.f;
 
         float rotation = atan2f(effect.direction.y, effect.direction.x) * RAD2DEG;
         Rectangle source = GetAnimationFrameRect(*effect.texture,
@@ -85,8 +88,8 @@ void VFXManager::DrawFloatingTexts(Vector2 worldOffset)
             { return now - ft.spawnTime >= FloatingText::kLifetime; }),
         _floatingTexts.end());
 
-    const float sw2 = GetScreenWidth()  / 2.f;
-    const float sh2 = GetScreenHeight() / 2.f;
+    const float sw2 = kVirtualWidth  / 2.f;
+    const float sh2 = kVirtualHeight / 2.f;
     for (const auto& ft : _floatingTexts)
     {
         float t      = (now - ft.spawnTime) / FloatingText::kLifetime;

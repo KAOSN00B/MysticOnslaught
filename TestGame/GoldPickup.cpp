@@ -1,6 +1,9 @@
-#include "GoldPickup.h"
+﻿#include "GoldPickup.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 #include "Character.h"
+#include "VirtualCanvas.h"
 
 Texture2D GoldPickup::_texSingle{};
 Texture2D GoldPickup::_texFive{};
@@ -27,8 +30,8 @@ void GoldPickup::Draw(Vector2 worldOffset)
         (_denomination == GoldDenomination::Five) ? _texFive : _texSingle;
 
     Vector2 screenPos{ _worldPos.x + worldOffset.x, _worldPos.y + worldOffset.y };
-    screenPos.x += GetScreenWidth()  / 2.f;
-    screenPos.y += GetScreenHeight() / 2.f;
+    screenPos.x += kVirtualWidth  / 2.f;
+    screenPos.y += kVirtualHeight / 2.f;
 
     const float scale = 4.0f;
     Rectangle source{ 0.f, 0.f, (float)tex.width, (float)tex.height };

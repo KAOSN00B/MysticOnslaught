@@ -1,7 +1,10 @@
-#include "Enemy.h"
+﻿#include "Enemy.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <algorithm>
 #include <cmath>
 
@@ -731,8 +734,8 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     h *= launchScale;
 
     Vector2 screenPos = Vector2Subtract(_worldPos, heroWorldPos);
-    screenPos.x += GetScreenWidth() / 2.f;
-    screenPos.y += GetScreenHeight() / 2.f - launchLift;
+    screenPos.x += kVirtualWidth / 2.f;
+    screenPos.y += kVirtualHeight / 2.f - launchLift;
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
 

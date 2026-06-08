@@ -25,6 +25,12 @@ public:
     void StartBattleVictory();
     void StartBossVictory();
 
+    // Volume scale setters (called by SettingsManager::ApplyVolumes).
+    // These multiply against each cue's internal base volume.
+    void  SetMusicVolumeScale(float v) { _musicVolumeScale = v < 0.f ? 0.f : v > 1.f ? 1.f : v; }
+    void  SetSfxVolumeScale(float v)   { _sfxVolumeScale   = v < 0.f ? 0.f : v > 1.f ? 1.f : v; }
+    float GetSfxVolumeScale() const    { return _sfxVolumeScale; }
+
 private:
     Music* GetMusicByCue(MusicCue cue);
     MusicCue GetBiomeMusicCue(Biome biome) const;
@@ -47,6 +53,9 @@ private:
     Music _battleVictoryMusic{};
     Music _bossVictoryMusic{};
     Music _gameOverMusic{};
+
+    float    _musicVolumeScale = 1.0f;
+    float    _sfxVolumeScale   = 1.0f;
 
     MusicCue _currentMusicCue = MusicCue::None;
     MusicCue _suspendedMusicCue = MusicCue::None;

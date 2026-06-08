@@ -1,4 +1,5 @@
-#include "DebugPanel.h"
+﻿#include "DebugPanel.h"
+#include "VirtualCanvas.h"
 #include "Character.h"    // UpgradeType
 
 #include <algorithm>
@@ -180,15 +181,15 @@ DebugCommand DebugPanel::Update()
     if (!_open)
         return {};
 
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     const Rectangle panel{ sw * 0.67f, 86.f, sw * 0.30f, sh - 126.f };
     const Rectangle contentClip{ panel.x + 12.f, panel.y + 56.f,
                                   panel.width - 24.f, panel.height - 68.f };
     const float padX     = panel.x + 18.f;
     const float contentW = panel.width - 36.f;
 
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
 
     if (CheckCollisionPointRec(mouse, panel))
         _scrollY = std::clamp(_scrollY - GetMouseWheelMove() * 36.f, 0.f, 2400.f);
@@ -234,8 +235,8 @@ void DebugPanel::Draw(int act, int room, const char* roomTypeName) const
     if (!_open)
         return;
 
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     const Rectangle panel{ sw * 0.67f, 86.f, sw * 0.30f, sh - 126.f };
     const Rectangle contentClip{ panel.x + 12.f, panel.y + 56.f,
                                   panel.width - 24.f, panel.height - 68.f };

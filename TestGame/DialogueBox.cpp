@@ -1,5 +1,7 @@
-#include "DialogueBox.h"
+﻿#include "DialogueBox.h"
+#include "VirtualCanvas.h"
 #include "NineSlice.h"
+#include "VirtualCanvas.h"
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -105,8 +107,8 @@ void DialogueBox::ApplyScreenDefaults()
     if (defaultsApplied) return;
     defaultsApplied = true;
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     // Panel: tuned via F11 dialogue editor — centred-ish, ~68% wide, lower third.
     panelRect = { sw * 0.159f, sh * 0.687f, sw * 0.683f, sh * 0.238f };
@@ -153,8 +155,8 @@ void DialogueBox::Draw(Texture2D borderTex,
                        const std::string& visibleText,
                        bool showContinue) const
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     // ── Full-screen dim ───────────────────────────────────────────────────────
     DrawRectangle(0, 0, (int)sw, (int)sh, dimColor);

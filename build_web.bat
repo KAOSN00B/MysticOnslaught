@@ -55,6 +55,7 @@ call emcc ^
   %SRC%\HUDRenderer.cpp ^
   %SRC%\MapDirector.cpp ^
   %SRC%\WorldMapManager.cpp ^
+  %SRC%\SettingsManager.cpp ^
   %SRC%\NavigationGrid.cpp ^
   %SRC%\OverlayRenderer.cpp ^
   %SRC%\ProjectileSystem.cpp ^

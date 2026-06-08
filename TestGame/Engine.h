@@ -30,6 +30,8 @@
 #include "OverlayRenderer.h"
 #include "CutsceneManager.h"
 #include "WorldMapManager.h"
+#include "SettingsManager.h"
+#include "VirtualCanvas.h"
 #include "TileMapper.h"
 #include "NineSliceEditor.h"
 #include "DungeonGen.h"
@@ -139,6 +141,12 @@ private:
     std::vector<Vector2> GetCyclopsLaserEndpoints(const CyclopsLaserProjectile& laser) const;
     bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
 
+    // ── Settings screen ───────────────────────────────────────────────────────
+    void UpdateSettings(float dt);
+    void DrawSettings() const;
+    void DrawSettingsKeybindings(float contentY, float panelX, float panelW, Vector2 mouse) const;
+    void ApplySfxVolume();   // push current SFX scale to all owned Sound objects
+
     void UpdateMusicSystem();
     void EnsureAudioInitialized();
     void StartVictoryMusic(MusicCue cue);
@@ -187,6 +195,18 @@ private:
         std::vector<int> nextNodes;           // indices into _actMap
         Vector2  drawPos{};                   // screen-space position (computed in GenerateActMap)
     };
+
+    // ── Virtual canvas + settings ─────────────────────────────────────────────
+    RenderTexture2D _virtualCanvas{};
+    Texture2D       _settingsBorderTex{};
+    SettingsManager _settingsMgr;
+    GameState       _stateBeforeSettings = GameState::Menu;
+    // Settings screen UI state
+    int   _settingsTab        = 0;    // 0=Display  1=Audio  2=Keybindings
+    int   _settingsDragSlider = -1;   // -1=none  0=master  1=music  2=sfx
+    float _settingsDragStartX = 0.f;
+    float _settingsDragStartVal = 0.f;
+    int   _settingsRebindSlot = -1;   // -1=none; slot index 0-9 when waiting for key
 
     RunStateController _runState;
     GameState& _gameState;

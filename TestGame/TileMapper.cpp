@@ -1,6 +1,9 @@
-#include "TileMapper.h"
+﻿#include "TileMapper.h"
+#include "VirtualCanvas.h"
 #include "TileDefs.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -152,9 +155,9 @@ void TileMapper::UpdateFileSelect()
         return;
     }
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
-    Vector2 mouse = GetMousePosition();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
+    Vector2 mouse = GetVirtualMousePos();
 
     // Row layout
     float listX  = sw * 0.05f;
@@ -218,8 +221,8 @@ void TileMapper::DrawFileSelect() const
 {
     ClearBackground(Color{ 14, 14, 20, 255 });
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     DrawText("TILE MAPPER  —  Select a Tileset", 40, 18, 28, GOLD);
     DrawText("[ESC] Back to Menu", 40, 54, 16, Fade(WHITE, 0.45f));
@@ -303,7 +306,7 @@ void TileMapper::DrawFileSelect() const
     {
         float bx = sw * 0.5f - 130.f;
         float by = sh - 72.f;
-        bool hov = CheckCollisionPointRec(GetMousePosition(), { bx, by, 260.f, 52.f });
+        bool hov = CheckCollisionPointRec(GetVirtualMousePos(), { bx, by, 260.f, 52.f });
         DrawRectangleRounded({ bx, by, 260.f, 52.f }, 0.3f, 8,
             hov ? Color{ 40, 160, 40, 240 } : Color{ 25, 100, 25, 210 });
         DrawRectangleRoundedLines({ bx, by, 260.f, 52.f }, 0.3f, 8,
@@ -375,8 +378,8 @@ void TileMapper::LoadSheet(const std::string& path)
     _sheetCols = _sheet.width  / kTileSize;
     _sheetRows = _sheet.height / kTileSize;
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     _panelX = sw * (1.f - kPanelFrac);
 
     float availW = _panelX - 20.f;
@@ -436,9 +439,9 @@ void TileMapper::HandleMouseMapping()
 {
     if (_sheet.id == 0) return;
 
-    Vector2 mouse = GetMousePosition();
-    float sw      = (float)GetScreenWidth();
-    float sh      = (float)GetScreenHeight();
+    Vector2 mouse = GetVirtualMousePos();
+    float sw      = (float)kVirtualWidth;
+    float sh      = (float)kVirtualHeight;
     float panelW  = sw - _panelX;
 
     // ── Zoom (scroll wheel in sheet area) ─────────────────────────────────────
@@ -1059,7 +1062,7 @@ void TileMapper::DrawMapping() const
         DrawAssignments();
         DrawSelection();
         const char* hint = "[Click] Select  [Drag] Multi-tile  [S] Save & Export  [ESC] Back";
-        DrawText(hint, 10, GetScreenHeight() - 20, 14, Fade(WHITE, 0.4f));
+        DrawText(hint, 10, kVirtualHeight - 20, 14, Fade(WHITE, 0.4f));
     }
     DrawPanel();
 }
@@ -1115,7 +1118,7 @@ void TileMapper::DrawGrid() const
     }
 
     // Hover highlight (main or ground sheet)
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
     bool inMain   = (mouse.x >= _offX && mouse.x < _offX + _sheetCols  * cellPx &&
                      mouse.y >= _offY  && mouse.y < _offY  + _sheetRows  * cellPx);
     bool inGround = (_groundSheet.id != 0 &&
@@ -1197,8 +1200,8 @@ void TileMapper::DrawSelection() const
 
 void TileMapper::DrawPanel() const
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     float panelW = sw - _panelX;
 
     DrawRectangle((int)_panelX, 0, (int)panelW, (int)sh, Color{ 16, 16, 22, 248 });
@@ -1285,9 +1288,9 @@ void TileMapper::DrawPanel() const
         }
 
         float clearY = btnStartY + visibleIdx * (btnH + btnGap) + 8.f;
-        bool clearHov    = CheckCollisionPointRec(GetMousePosition(),
+        bool clearHov    = CheckCollisionPointRec(GetVirtualMousePos(),
                                { _panelX + 10.f, clearY, panelW - 20.f, 26.f }) && _hasSelection;
-        bool clearAllHov = CheckCollisionPointRec(GetMousePosition(),
+        bool clearAllHov = CheckCollisionPointRec(GetVirtualMousePos(),
                                { _panelX + 10.f, clearY + 32.f, panelW - 20.f, 26.f });
         DrawRectangleRec({ _panelX + 10.f, clearY,        panelW - 20.f, 26.f },
             clearHov    ? Fade(RED, 0.75f) : Fade(RED, 0.30f));
@@ -1316,7 +1319,7 @@ void TileMapper::DrawPanel() const
                                const char* addLabel, const char* emptyLabel)
     {
         // Add button
-        bool addHov = CheckCollisionPointRec(GetMousePosition(),
+        bool addHov = CheckCollisionPointRec(GetVirtualMousePos(),
             { _panelX + 10.f, kContentY, panelW - 20.f, 28.f }) && _hasSelection;
         DrawRectangleRec({ _panelX + 10.f, kContentY, panelW - 20.f, 28.f },
             addHov ? Color{40,160,40,230} : Color{25,100,25,180});
@@ -1365,7 +1368,7 @@ void TileMapper::DrawPanel() const
 
                 // Remove button
                 Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
-                bool remHov = CheckCollisionPointRec(GetMousePosition(), removeBtn);
+                bool remHov = CheckCollisionPointRec(GetVirtualMousePos(), removeBtn);
                 DrawRectangleRec(removeBtn, remHov ? Fade(RED, 0.85f) : Fade(RED, 0.45f));
                 DrawRectangleLinesEx(removeBtn, 1.f, remHov ? WHITE : Fade(WHITE, 0.2f));
                 DrawText("X",
@@ -1385,7 +1388,7 @@ void TileMapper::DrawPanel() const
     // ── Props tab ─────────────────────────────────────────────────────────────
     if (_panelTab == PanelTab::Props)
     {
-        Vector2 mouse2 = GetMousePosition();
+        Vector2 mouse2 = GetVirtualMousePos();
 
         // ── Static add button ─────────────────────────────────────────────────
         bool addHov = CheckCollisionPointRec(mouse2,
@@ -1563,7 +1566,7 @@ void TileMapper::DrawPanel() const
     if (_panelTab == PanelTab::Decors)
     {
         // Static add button
-        bool addHov = CheckCollisionPointRec(GetMousePosition(),
+        bool addHov = CheckCollisionPointRec(GetVirtualMousePos(),
             { _panelX + 10.f, kContentY, panelW - 20.f, 24.f }) && _hasSelection;
         DrawRectangleRec({ _panelX + 10.f, kContentY, panelW - 20.f, 24.f },
             addHov ? Color{40,160,40,230} : Color{25,100,25,180});
@@ -1581,7 +1584,7 @@ void TileMapper::DrawPanel() const
             10, Fade(ORANGE, 0.7f));
 
         float abY = kContentY + 44.f;
-        bool frameHov = CheckCollisionPointRec(GetMousePosition(),
+        bool frameHov = CheckCollisionPointRec(GetVirtualMousePos(),
             { _panelX+10.f, abY, panelW-20.f, 24.f }) && _hasSelection;
         DrawRectangleRec({ _panelX+10.f, abY, panelW-20.f, 24.f },
             frameHov ? Color{160,80,40,230} : Color{100,50,20,180});
@@ -1630,7 +1633,7 @@ void TileMapper::DrawPanel() const
                 DrawRectangleLinesEx({ tx, thumbY+10.f, thumbSz, thumbSz }, 1.f,
                     Fade(ORANGE, 0.5f));
                 Rectangle xBtn{ tx+22.f, thumbY+10.f, 10.f, 10.f };
-                bool xHov = CheckCollisionPointRec(GetMousePosition(), xBtn);
+                bool xHov = CheckCollisionPointRec(GetVirtualMousePos(), xBtn);
                 DrawRectangleRec(xBtn, xHov ? Fade(RED,0.9f) : Fade(RED,0.55f));
                 DrawText("x", (int)(xBtn.x+2.f), (int)(xBtn.y+1.f), 9, WHITE);
             }
@@ -1639,7 +1642,7 @@ void TileMapper::DrawPanel() const
         // Finalize button
         float finalY  = kContentY + 134.f;
         bool hasPendD = nPendD > 0;
-        bool finalHov = hasPendD && CheckCollisionPointRec(GetMousePosition(),
+        bool finalHov = hasPendD && CheckCollisionPointRec(GetVirtualMousePos(),
             { _panelX+10.f, finalY, panelW-20.f, 24.f });
         DrawRectangleRec({ _panelX+10.f, finalY, panelW-20.f, 24.f },
             finalHov ? Color{60,180,60,230}
@@ -1732,7 +1735,7 @@ void TileMapper::GetCollEditorLayout(float& offX, float& offY, float& zoom) cons
         { offX = offY = zoom = 0.f; return; }
 
     float availW = _panelX - 40.f;
-    float availH = (float)GetScreenHeight() - 120.f;
+    float availH = (float)kVirtualHeight - 120.f;
     zoom = std::min({ availW / src->width, availH / src->height, 24.f });
     zoom = std::max(zoom, 4.f);
     float dw = src->width  * zoom;
@@ -1769,7 +1772,7 @@ void TileMapper::HandleCollisionEditorMouse()
     float cw = collRef.width  * zoom;
     float ch = collRef.height * zoom;
 
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
 
     // Handle proximity — checked only when not already dragging
     if (!_collDragging)

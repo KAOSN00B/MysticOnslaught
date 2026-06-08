@@ -1,7 +1,11 @@
-#include "SpreadProjectile.h"
+﻿#include "SpreadProjectile.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 #include "AnimationUtils.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 Texture2D SpreadProjectile::_fireTex{};
 Texture2D SpreadProjectile::_iceTex{};
@@ -51,8 +55,8 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
         return;
 
     Vector2 screenPos = Vector2Add(_worldPos, worldOffset);
-    screenPos.x += GetScreenWidth()  / 2.f;
-    screenPos.y += GetScreenHeight() / 2.f;
+    screenPos.x += kVirtualWidth  / 2.f;
+    screenPos.y += kVirtualHeight / 2.f;
 
     const Texture2D* tex = &_fireTex;
     switch (_element)

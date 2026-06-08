@@ -113,6 +113,7 @@ bool AudioManager::ShouldHoldSilenceForVictory(const AudioContext& ctx) const
         && ctx.gameState != GameState::HowToPlay
         && ctx.gameState != GameState::Keybindings
         && ctx.gameState != GameState::Pause
+        && ctx.gameState != GameState::Settings
         && ctx.gameState != GameState::Shop
         && ctx.gameState != GameState::DemoEnd;
 }
@@ -150,6 +151,7 @@ MusicCue AudioManager::GetDesiredLoopMusicCue(const AudioContext& ctx) const
 
     case GameState::Keybindings:
     case GameState::Pause:
+    case GameState::Settings:
         return MusicCue::Pause;
 
     case GameState::Shop:
@@ -209,7 +211,7 @@ void AudioManager::StartMusicCue(MusicCue cue, float startTime)
     if (IsLoopMusicCue(cue))
         SetMusicVolume(*music, 0.f);
     else
-        SetMusicVolume(*music, GetMusicBaseVolume(cue));
+        SetMusicVolume(*music, GetMusicBaseVolume(cue) * _musicVolumeScale);
 
     PlayMusicStream(*music);
     if (startTime > 0.f)
@@ -320,7 +322,7 @@ void AudioManager::Update(const AudioContext& ctx)
             UpdateMusicStream(*current);
             if (IsLoopMusicCue(_currentMusicCue))
             {
-                float baseVolume = GetMusicBaseVolume(_currentMusicCue);
+                float baseVolume = GetMusicBaseVolume(_currentMusicCue) * _musicVolumeScale;
                 if (_musicFadeInTimer > 0.f)
                 {
                     _musicFadeInTimer = std::max(0.f, _musicFadeInTimer - GetFrameTime());

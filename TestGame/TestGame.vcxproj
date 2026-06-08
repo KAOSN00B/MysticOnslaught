@@ -144,6 +144,7 @@
     <ClCompile Include="Engine.cpp" />
     <ClCompile Include="MapDirector.cpp" />
     <ClCompile Include="WorldMapManager.cpp" />
+    <ClCompile Include="SettingsManager.cpp" />
     <ClCompile Include="DungeonGen.cpp" />
     <ClCompile Include="NavigationGrid.cpp" />
     <ClCompile Include="RoomLayout.cpp" />
@@ -192,6 +193,8 @@
     <ClInclude Include="Engine.h" />
     <ClInclude Include="MapDirector.h" />
     <ClInclude Include="WorldMapManager.h" />
+    <ClInclude Include="SettingsManager.h" />
+    <ClInclude Include="VirtualCanvas.h" />
     <ClInclude Include="NavigationGrid.h" />
     <ClInclude Include="VFXManager.h" />
     <ClInclude Include="Game.h" />

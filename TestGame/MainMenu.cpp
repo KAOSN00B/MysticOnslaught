@@ -1,6 +1,9 @@
-#include "MainMenu.h"
+﻿#include "MainMenu.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 #include "NineSlice.h"
+#include "VirtualCanvas.h"
 #include <cmath>
 
 // ── 9-slice corner sizes ──────────────────────────────────────────────────────
@@ -22,8 +25,8 @@ void MainMenu::Init()
 {
     _buttons.clear();
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     float buttonWidth  = sw * 0.20f;
     float buttonHeight = sh * 0.083f;
@@ -32,9 +35,10 @@ void MainMenu::Init()
     float startX = sw / 2.f - buttonWidth / 2.f;
     float firstY = sh * 0.47f;
 
-    _buttons.push_back({ "Start Game",  { startX, firstY,                       buttonWidth, buttonHeight } });
-    _buttons.push_back({ "How To Play", { startX, firstY + (buttonHeight + gap), buttonWidth, buttonHeight } });
-    _buttons.push_back({ "Quit",        { startX, firstY + (buttonHeight + gap)*2, buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Start Game",  { startX, firstY,                         buttonWidth, buttonHeight } });
+    _buttons.push_back({ "How To Play", { startX, firstY + (buttonHeight + gap),   buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Settings",    { startX, firstY + (buttonHeight + gap)*2, buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Quit",        { startX, firstY + (buttonHeight + gap)*3, buttonWidth, buttonHeight } });
     _buttons.push_back({ "Debug Mode",  { sw * 0.71f, sh * 0.54f, buttonWidth * 0.90f, buttonHeight * 0.95f } });
 
     // Corner buttons (smaller)
@@ -55,6 +59,7 @@ void MainMenu::Init()
     _dungeonRunPressed     = false;
     _tileMapperPressed     = false;
     _nineSliceEditorPressed = false;
+    _settingsPressed        = false;
 
     if (_borderTex.id == 0)
         _borderTex  = LoadTexture(AssetPath("UI/MainMenuBorder.png").c_str());
@@ -68,7 +73,17 @@ void MainMenu::Init()
 
 void MainMenu::Update()
 {
-    Vector2 mouse = GetMousePosition();
+    // Reset all per-frame press flags so returning to menu without Init() doesn't re-fire
+    _startPressed           = false;
+    _quitPressed            = false;
+    _howToPressed           = false;
+    _debugPressed           = false;
+    _dungeonRunPressed      = false;
+    _tileMapperPressed      = false;
+    _nineSliceEditorPressed = false;
+    _settingsPressed        = false;
+
+    Vector2 mouse = GetVirtualMousePos();
 
     for (auto& button : _buttons)
     {
@@ -86,14 +101,15 @@ void MainMenu::Update()
             if (button.text == "Dungeon Run")    _dungeonRunPressed      = true;
             if (button.text == "Tile Editor")   _tileMapperPressed      = true;
             if (button.text == "9-Slice Editor") _nineSliceEditorPressed = true;
+            if (button.text == "Settings")       _settingsPressed        = true;
         }
     }
 }
 
 void MainMenu::Draw()
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     // ── Animated checkerboard background ────────────────────────────────────
     {
@@ -251,3 +267,4 @@ void MainMenu::SetDebugUnlocked(bool unlocked)
 bool MainMenu::DungeonRunPressed()       const { return _dungeonRunPressed;       }
 bool MainMenu::TileMapperPressed()       const { return _tileMapperPressed;       }
 bool MainMenu::NineSliceEditorPressed()  const { return _nineSliceEditorPressed;  }
+bool MainMenu::SettingsPressed()         const { return _settingsPressed;          }

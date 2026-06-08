@@ -1,5 +1,7 @@
-#include "CutsceneManager.h"
+﻿#include "CutsceneManager.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <algorithm>
 #include <cstring>
 
@@ -249,7 +251,7 @@ void CutsceneManager::Draw(Texture2D borderTex, Texture2D portraitTex) const
     // ── Fade overlay (always drawn if there is any opacity) ───────────────────
     if (_fadeAlpha > 0.01f)
     {
-        DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(),
+        DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight,
             Fade(BLACK, _fadeAlpha));
     }
 

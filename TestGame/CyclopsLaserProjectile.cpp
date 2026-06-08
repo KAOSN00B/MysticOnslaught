@@ -1,5 +1,7 @@
-#include "CyclopsLaserProjectile.h"
+﻿#include "CyclopsLaserProjectile.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <algorithm>
 #include <cmath>
 
@@ -67,15 +69,15 @@ void CyclopsLaserProjectile::Draw(Vector2 worldOffset, const Vector2* clippedEnd
         return;
 
     const Vector2 screenOrigin{
-        _worldPos.x + worldOffset.x + GetScreenWidth() * 0.5f,
-        _worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f
+        _worldPos.x + worldOffset.x + kVirtualWidth * 0.5f,
+        _worldPos.y + worldOffset.y + kVirtualHeight * 0.5f
     };
 
     for (int i = 0; i < clippedEndCount; ++i)
     {
         const Vector2 screenEnd{
-            clippedEnds[i].x + worldOffset.x + GetScreenWidth() * 0.5f,
-            clippedEnds[i].y + worldOffset.y + GetScreenHeight() * 0.5f
+            clippedEnds[i].x + worldOffset.x + kVirtualWidth * 0.5f,
+            clippedEnds[i].y + worldOffset.y + kVirtualHeight * 0.5f
         };
 
         const float outerWidth = (_mode == Mode::Sweep) ? _beamWidth * 1.9f : _beamWidth * 2.1f;

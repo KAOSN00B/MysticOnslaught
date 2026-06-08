@@ -1,7 +1,10 @@
-#include "Character.h"
+﻿#include "Character.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -346,11 +349,11 @@ void Character::HandleAttackInput()
             static constexpr float kBottomPad = 12.f;
             const int   totalSlots = _maxAbilitySlots;
             const float totalW     = totalSlots * kSlotSize + (totalSlots - 1) * kSlotGap;
-            const float startX     = GetScreenWidth() / 2.f - totalW / 2.f;
-            const float slotY      = (float)GetScreenHeight() - kBottomPad - kSlotSize;
+            const float startX     = kVirtualWidth / 2.f - totalW / 2.f;
+            const float slotY      = (float)kVirtualHeight - kBottomPad - kSlotSize;
             Rectangle abilityBarBounds{ startX, slotY, totalW, kSlotSize };
 
-            if (CheckCollisionPointRec(GetMousePosition(), abilityBarBounds))
+            if (CheckCollisionPointRec(GetVirtualMousePos(), abilityBarBounds))
                 return;
         }
 
@@ -433,8 +436,8 @@ void Character::DrawPlayer(Vector2 cameraPos)
     float h = _height * _scale;
 
     // Compute screen position: world pos relative to camera, offset to screen center
-    float screenX = _worldPos.x - cameraPos.x + GetScreenWidth()  * 0.5f - w * 0.5f;
-    float screenY = _worldPos.y - cameraPos.y + GetScreenHeight() * 0.5f - h * 0.5f;
+    float screenX = _worldPos.x - cameraPos.x + kVirtualWidth  * 0.5f - w * 0.5f;
+    float screenY = _worldPos.y - cameraPos.y + kVirtualHeight * 0.5f - h * 0.5f;
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenX, screenY, w, h };

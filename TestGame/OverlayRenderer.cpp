@@ -1,8 +1,12 @@
-#include "OverlayRenderer.h"
+﻿#include "OverlayRenderer.h"
+#include "VirtualCanvas.h"
 
 #include "AbilityType.h"
+#include "VirtualCanvas.h"
 #include "Character.h"
+#include "VirtualCanvas.h"
 #include "NineSlice.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,8 +39,8 @@ namespace
 
 void OverlayRenderer::DrawDemoEnd(const DemoEndRenderContext& ctx) const
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
 
     DrawRectangleGradientV(0, 0, (int)sw, (int)sh, Color{8, 4, 20, 255}, Color{20, 10, 40, 255});
     DrawRectangle(0, 0, (int)sw, 6, Color{120, 60, 200, 200});
@@ -100,7 +104,7 @@ void OverlayRenderer::DrawDemoEnd(const DemoEndRenderContext& ctx) const
     cy += returnHintSz + 24.f;
 
     Rectangle btn = { sw * 0.5f - 160.f, sh * 0.88f, 320.f, 54.f };
-    bool hov = CheckCollisionPointRec(GetMousePosition(), btn);
+    bool hov = CheckCollisionPointRec(GetVirtualMousePos(), btn);
     DrawRectangleRounded(btn, 0.4f, 8, hov ? Color{70, 30, 130, 240} : Color{40, 16, 80, 200});
     DrawRectangleRoundedLines(btn, 0.4f, 8, hov ? Color{180, 100, 255, 255} : Color{120, 60, 200, 180});
     const char* btnTxt = "Return to Main Menu";
@@ -113,10 +117,10 @@ void OverlayRenderer::DrawDemoEnd(const DemoEndRenderContext& ctx) const
 
 void OverlayRenderer::DrawExpTally(const ExpTallyRenderContext& ctx) const
 {
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.65f));
+    DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(BLACK, 0.65f));
 
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     const float cx = sw * 0.5f;
     const int levelsGained = std::max(0, ctx.player->GetLevel() - ctx.tallyStartLevel);
 
@@ -206,8 +210,8 @@ void OverlayRenderer::DrawExpTally(const ExpTallyRenderContext& ctx) const
 
 void OverlayRenderer::DrawHowToPlay(const HowToPlayRenderContext& ctx) const
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     const float dt = GetFrameTime();
 
     const int titleSz = (int)(sh * 0.062f);
@@ -244,7 +248,7 @@ void OverlayRenderer::DrawHowToPlay(const HowToPlayRenderContext& ctx) const
         float tx = tabStartX + i * (tabW + tabGap);
         Rectangle tabRect = { tx, tabBarY, tabW, tabBarH };
         bool isActive = (*ctx.htpTab == i);
-        bool tabHov = CheckCollisionPointRec(GetMousePosition(), tabRect);
+        bool tabHov = CheckCollisionPointRec(GetVirtualMousePos(), tabRect);
 
         Color bgCol = isActive ? Color{ 185, 130, 30, 240 }
             : tabHov ? Color{ 100, 50,  90, 200 }
@@ -538,7 +542,7 @@ void OverlayRenderer::DrawHowToPlay(const HowToPlayRenderContext& ctx) const
     const float btnX = sw / 2.f - btnW / 2.f;
     const float btnY = sh - btnH - sh * 0.016f;
     Rectangle backBtn{ btnX, btnY, btnW, btnH };
-    bool hovered = CheckCollisionPointRec(GetMousePosition(), backBtn);
+    bool hovered = CheckCollisionPointRec(GetVirtualMousePos(), backBtn);
 
     DrawRectangleRounded(backBtn, 0.3f, 6, hovered ? Color{ 196, 86, 165, 240 } : Color{ 142, 58, 132, 228 });
     DrawRectangleRoundedLines(backBtn, 0.3f, 6, Fade(Color{ 255, 194, 92, 255 }, 0.68f));

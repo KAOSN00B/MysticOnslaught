@@ -1,17 +1,25 @@
-#define _CRT_SECURE_NO_WARNINGS
+﻿#define _CRT_SECURE_NO_WARNINGS
 #include "Engine.h"
+#include "VirtualCanvas.h"
 
 #ifdef PLATFORM_WEB
 #include <emscripten.h>
 #endif
 
 #include "AnimationUtils.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 #include "CapsuleCollision.h"
+#include "VirtualCanvas.h"
 #include "CutsceneAction.h"
+#include "VirtualCanvas.h"
 #include "NineSlice.h"
+#include "VirtualCanvas.h"
 #include "RoomLayout.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <array>
@@ -176,6 +184,8 @@ Engine::~Engine()
     UnloadTexture(_magicGemTex);
     UnloadTexture(_bossBarrierTex);
     _pauseUI.Unload();
+    UnloadTexture(_settingsBorderTex);
+    UnloadRenderTexture(_virtualCanvas);
     if (_audioInitialised)
         CloseAudioDevice();
     CloseWindow();
@@ -253,6 +263,13 @@ void Engine::Init()
     InitWindow(_windowWidth, _windowHeight, "Mystic Onslaught");
     SetTargetFPS(60);
 
+    // Load persisted settings and apply them before anything else draws.
+    _settingsMgr.Load();
+    _settingsMgr.ApplyWindow();
+
+    // Virtual 1920x1080 canvas — everything draws here, then it is letterboxed onto the real window.
+    _virtualCanvas = LoadRenderTexture(kVirtualWidth, kVirtualHeight);
+
 #ifdef PLATFORM_WEB
     {
         int mobile = emscripten_run_script_int(
@@ -290,6 +307,7 @@ void Engine::Init()
     _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
     _abilityIconIceTex      = LoadTexture(AssetPath("PowerUps/IceSpellPickup.png").c_str());
     _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
+    _settingsBorderTex      = LoadTexture(AssetPath("UI/SettingsBorder.png").c_str());
     _shopBorderTex          = LoadTexture(AssetPath("UI/PauseBoarder.png").c_str());
     _shopZephTex            = LoadTexture(AssetPath("UI/Zeph.png").c_str());
     _htpBorderTex           = LoadTexture(AssetPath("UI/HowToPlayBorder.png").c_str());
@@ -373,6 +391,10 @@ void Engine::EnsureAudioInitialized()
     // Reload player sounds that failed to load during Engine::Init() because
     // the audio device didn't exist yet (web deferred-init path).
     _player.ReloadSounds();
+
+    // Apply saved volume settings now that audio is fully initialised.
+    _settingsMgr.ApplyVolumes(_audio);
+    ApplySfxVolume();
 }
 
 void Engine::StartVictoryMusic(MusicCue cue)
@@ -490,8 +512,8 @@ void Engine::DebugStartRun()
 
 Vector2 Engine::GetDungeonBottomSpawnPos() const
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     float cellH = sh / (float)RoomLayout::kRows;
     return { sw * 0.5f, sh - cellH * 2.2f };
 }
@@ -501,8 +523,8 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
     if (room.type != RoomType::Store)
         return;
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     _shop.Enter({ sw * 0.5f, sh * 0.42f }, _player, _currentAct);
 
     // Zeph heals the player fully when they arrive at the store.
@@ -551,7 +573,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
 
     _player.SetWorldPos(playerSpawnPos);
     _player.Revive();
-    _cameraPos = { (float)GetScreenWidth() * 0.5f, (float)GetScreenHeight() * 0.5f };
+    _cameraPos = { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
     _props.clear();
 
     RebuildDungeonNav();
@@ -651,8 +673,8 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     _dungeonRoomStates[_dungeonRoomIdx].cleared = false;
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
     _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
@@ -1208,9 +1230,24 @@ void Engine::RunFrame()
     Update(dt);
     UpdateMusicSystem();
 
-    BeginDrawing();
+    // Draw everything to the fixed 1920x1080 virtual canvas.
+    BeginTextureMode(_virtualCanvas);
     ClearBackground(WHITE);
     Draw();
+    EndTextureMode();
+
+    // Scale the virtual canvas onto the real window with letterboxing.
+    // Black bars appear on wider/taller windows; nothing in the game changes.
+    BeginDrawing();
+    ClearBackground(BLACK);
+    {
+        LetterboxTransform lb = GetLetterboxTransform();
+        DrawTexturePro(
+            _virtualCanvas.texture,
+            { 0.f, 0.f, (float)kVirtualWidth, -(float)kVirtualHeight }, // negative H flips Raylib's inverted render texture Y
+            { lb.offsetX, lb.offsetY, (float)kVirtualWidth * lb.scale, (float)kVirtualHeight * lb.scale },
+            { 0.f, 0.f }, 0.f, WHITE);
+    }
     EndDrawing();
 }
 
@@ -1277,8 +1314,21 @@ void Engine::Update(float dt)
             _nineSliceEditor.Init(kUIFolder);
             _gameState = GameState::NineSliceEditor;
         }
+        if (_menu.SettingsPressed())
+        {
+            _stateBeforeSettings = GameState::Menu;
+            _settingsTab         = 0;
+            _settingsDragSlider  = -1;
+            _settingsRebindSlot  = -1;
+            _keybindingsEdit     = _player.GetBindings();
+            _gameState           = GameState::Settings;
+        }
         break;
     }
+
+    case GameState::Settings:
+        UpdateSettings(dt);
+        break;
 
     case GameState::DungeonRun:
         UpdateDungeonRun(dt);
@@ -1688,8 +1738,8 @@ void Engine::UpdateGamePlay(float dt)
         // GetMapScreenPos converts the clamped world-pos to a screen-space top-left
         // for the map texture draw call. Using the live screen size here means
         // a window resize mid-session (or a phone rotation) adapts automatically.
-        const int sw = GetScreenWidth();
-        const int sh = GetScreenHeight();
+        const int sw = kVirtualWidth;
+        const int sh = kVirtualHeight;
 
         _cameraPos = _worldConfig.ClampCamera(_player.GetWorldPos(), sw, sh);
         _mapPos    = _worldConfig.GetMapScreenPos(_cameraPos, sw, sh);
@@ -1730,8 +1780,8 @@ void Engine::Draw()
             else
             {
                 ClearBackground(Color{ 8, 6, 10, 255 });
-                float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
-                float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+                float scaleX = (float)kVirtualWidth  / (RoomLayout::kCols * 16.f);
+                float scaleY = (float)kVirtualHeight / (RoomLayout::kRows * 16.f);
                 if (_tileRenderer.IsLoaded())
                     _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
             }
@@ -1756,7 +1806,12 @@ void Engine::Draw()
             }
             else
             {
-                _gameState = GameState::Keybindings;
+                _stateBeforeSettings = GameState::Pause;
+                _settingsTab         = 2;
+                _settingsDragSlider  = -1;
+                _settingsRebindSlot  = -1;
+                _keybindingsEdit     = _player.GetBindings();
+                _gameState           = GameState::Settings;
             }
         }
         else if (pauseResult == 5)
@@ -1764,6 +1819,15 @@ void Engine::Draw()
             ResetRunState();
             _menu.Init();
             _gameState = GameState::Menu;
+        }
+        else if (pauseResult == 6)
+        {
+            _stateBeforeSettings = GameState::Pause;
+            _settingsTab         = 0;
+            _settingsDragSlider  = -1;
+            _settingsRebindSlot  = -1;
+            _keybindingsEdit     = _player.GetBindings();
+            _gameState           = GameState::Settings;
         }
 
         break;
@@ -1779,6 +1843,10 @@ void Engine::Draw()
 
     case GameState::WorldMap:
         DrawWorldMap();
+        break;
+
+    case GameState::Settings:
+        DrawSettings();
         break;
 
     case GameState::TileMapper:
@@ -1820,15 +1888,14 @@ void Engine::Draw()
     }
 
     case GameState::Keybindings:
-    {
-        if (_pauseUI.DrawKeybindings(_keybindingsEdit))
-        {
-            _player.SetBindings(_keybindingsEdit);
-            SaveKeybindings();
-            _gameState = GameState::Pause;
-        }
+        // Legacy path: redirect straight into the Settings KEYBINDINGS tab
+        _stateBeforeSettings = GameState::Pause;
+        _settingsTab         = 2;
+        _settingsDragSlider  = -1;
+        _settingsRebindSlot  = -1;
+        _keybindingsEdit     = _player.GetBindings();
+        _gameState           = GameState::Settings;
         break;
-    }
 
     case GameState::TouchButtonMapping:
     {
@@ -1865,8 +1932,8 @@ void Engine::Draw()
     case GameState::LevelUpChoice:
     {
         ClearBackground(Color{ 8, 6, 10, 255 });
-        float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
-        float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+        float scaleX = (float)kVirtualWidth  / (RoomLayout::kCols * 16.f);
+        float scaleY = (float)kVirtualHeight / (RoomLayout::kRows * 16.f);
         if (_tileRenderer.IsLoaded())
             _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         DrawHUD();
@@ -1877,8 +1944,8 @@ void Engine::Draw()
     case GameState::AbilityChoice:
     {
         ClearBackground(Color{ 8, 6, 10, 255 });
-        float scaleX = (float)GetScreenWidth()  / (RoomLayout::kCols * 16.f);
-        float scaleY = (float)GetScreenHeight() / (RoomLayout::kRows * 16.f);
+        float scaleX = (float)kVirtualWidth  / (RoomLayout::kCols * 16.f);
+        float scaleY = (float)kVirtualHeight / (RoomLayout::kRows * 16.f);
         if (_tileRenderer.IsLoaded())
             _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
         DrawHUD();
@@ -2082,7 +2149,7 @@ void Engine::DrawHUD()
         int roomLabelW = MeasureText(roomLabel, (int)hc.actFs);
         Color labelColor = isBoss ? ORANGE : (isElite ? Color{255,140,0,255} : RAYWHITE);
         drawLabelBox(roomLabel,
-            (float)(GetScreenWidth() - roomLabelW - (int)hc.actOffsetX),
+            (float)(kVirtualWidth - roomLabelW - (int)hc.actOffsetX),
             hc.actY, (int)hc.actFs, labelColor);
     }
 
@@ -2142,13 +2209,13 @@ void Engine::DrawHUD()
         const char* mechLabel = kMechanicNames[_eliteMechanic];
         Color mechColor = kMechanicColors[_eliteMechanic];
         int mw = MeasureText(mechLabel, 20);
-        drawLabelBox(mechLabel, (float)(GetScreenWidth() - mw - (int)hc.actOffsetX), 58.f, 20, mechColor);
+        drawLabelBox(mechLabel, (float)(kVirtualWidth - mw - (int)hc.actOffsetX), 58.f, 20, mechColor);
     }
 
     if (_currentRoomType == RoomType::Elite && _eliteEnrageWarningTimer > 0.f)
     {
-        const float sw = (float)GetScreenWidth();
-        const float sh = (float)GetScreenHeight();
+        const float sw = (float)kVirtualWidth;
+        const float sh = (float)kVirtualHeight;
         float alpha = 1.f;
         if (_eliteEnrageWarningTimer > kEliteEnrageWarningDuration - 0.5f)
             alpha = (kEliteEnrageWarningDuration - _eliteEnrageWarningTimer) / 0.5f;
@@ -2174,7 +2241,7 @@ void Engine::DrawHUD()
     if (_touchModeActive)
     {
         DrawTouchAbilityArc();
-        _touch.Draw(GetScreenWidth(), GetScreenHeight());
+        _touch.Draw(kVirtualWidth, kVirtualHeight);
 
         // Pause button
         Rectangle pauseRec{ (float)_windowWidth - hc.touchPauseW - hc.touchPausePad,
@@ -2290,7 +2357,7 @@ void Engine::DrawHUD()
         constexpr float rowH  = 30.f;
         const float panW = colW * 2.f + colGap;
         const float panH = 40.f + kHalf * rowH;
-        const float sw   = (float)GetScreenWidth();
+        const float sw   = (float)kVirtualWidth;
         const float panX = sw * 0.5f - panW * 0.5f;
         const float panY = 10.f;
 
@@ -2330,15 +2397,15 @@ void Engine::DrawHUD()
     static constexpr float kBarGap = 8.f;
     static constexpr float kBotPad = 12.f;
 
-    const float expBarY  = (float)GetScreenHeight() - kBotPad - kBarH;
+    const float expBarY  = (float)kVirtualHeight - kBotPad - kBarH;
     const float manaBarY = expBarY - kBarGap - kBarH;
     const float hpBarY   = manaBarY - kBarGap - kBarH;
-    const float barX     = (float)GetScreenWidth() / 2.f - kBarW / 2.f;
+    const float barX     = (float)kVirtualWidth / 2.f - kBarW / 2.f;
 
     // ── Top banner ────────────────────────────────────────────────────────────
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight() / 8, Fade(BLACK, 0.6f));
+    DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight / 8, Fade(BLACK, 0.6f));
 
-    DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + GetScreenWidth() / 2 - 150, 60, 30, RAYWHITE);
+    DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + kVirtualWidth / 2 - 150, 60, 30, RAYWHITE);
     DrawText(("Gold: " + std::to_string(_player.GetGold())).c_str(), 20, 10, 30, GOLD);
     DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
 
@@ -2349,7 +2416,7 @@ void Engine::DrawHUD()
             ? TextFormat("Wave %d  - BOSS", _wave)
             : TextFormat("Wave %d", _wave);
         int waveLabelW = MeasureText(waveLabel, 32);
-        DrawText(waveLabel, GetScreenWidth() - waveLabelW - 20, 20, 32,
+        DrawText(waveLabel, kVirtualWidth - waveLabelW - 20, 20, 32,
             isBoss ? ORANGE : RAYWHITE);
     }
 
@@ -2441,7 +2508,7 @@ void Engine::DrawHUD()
         int warningSize = 34;
         int warningWidth = MeasureText(warning, warningSize);
         DrawText(warning,
-            GetScreenWidth() / 2 - warningWidth / 2,
+            kVirtualWidth / 2 - warningWidth / 2,
             96,
             warningSize,
             ORANGE);
@@ -2455,9 +2522,9 @@ void Engine::DrawAbilityBar()
     const int   totalSlots = _player.GetMaxAbilitySlots();
     const float slotSize   = hc.slotSz;
     const float slotGap    = hc.slotGap;
-    const float slotY      = (float)GetScreenHeight() - hc.slotBotPad - slotSize;
+    const float slotY      = (float)kVirtualHeight - hc.slotBotPad - slotSize;
     const float totalW     = totalSlots * slotSize + (totalSlots - 1) * slotGap;
-    const float startX     = GetScreenWidth() / 2.f - totalW / 2.f;
+    const float startX     = kVirtualWidth / 2.f - totalW / 2.f;
     const int   keyFs      = (int)hc.slotKeyFs;
     const int   nameFs     = (int)hc.slotNameFs;
 
@@ -2504,7 +2571,7 @@ void Engine::DrawAbilityBar()
             }
         }
     }
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
 
     for (int i = 0; i < totalSlots; i++)
     {
@@ -2578,10 +2645,10 @@ void Engine::DrawWaveIntro()
     if (!_waveStarting)
         return;
 
-    DrawRectangle(0, GetScreenHeight() / 2 - 80, GetScreenWidth(), 160, Fade(BLACK, 0.7f));
+    DrawRectangle(0, kVirtualHeight / 2 - 80, kVirtualWidth, 160, Fade(BLACK, 0.7f));
 
-    int sw = GetScreenWidth();
-    int sh = GetScreenHeight();
+    int sw = kVirtualWidth;
+    int sh = kVirtualHeight;
     int fontSize = 60;
     int midY     = sh / 2;
 
@@ -2808,13 +2875,13 @@ void Engine::GenerateAbilityChoiceOptions()
 
 void Engine::DrawAbilityChoice()
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
 
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.68f));
 
     bool ready = (_abilityChoiceOpenTimer <= 0.f);
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
 
     // Helper: map Learn*/Upgrade* → the underlying AbilityType
     auto upgradeToAbility = [](UpgradeType ut) -> AbilityType
@@ -3170,10 +3237,10 @@ void Engine::DrawExpTally()
 // the current act; available nodes are highlighted and clickable.
 void Engine::DrawMap()
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     bool ready     = (_mapOpenTimer <= 0.f);
-    Vector2 mouse  = GetMousePosition();
+    Vector2 mouse  = GetVirtualMousePos();
 
     // -- Background --------------------------------------------------------
     Biome actBiome = GetBiomeForAct(_currentAct);
@@ -3744,8 +3811,8 @@ void Engine::DrawMap()
 
 void Engine::DrawStartingAbilityChoice()
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.68f));
 
     const char* title = "Zeph: Choose your starting ability";
@@ -3794,7 +3861,7 @@ void Engine::DrawStartingAbilityChoice()
         }
     };
 
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
     bool ready = (_levelUpOpenTimer <= 0.f);
     const float cardW = 260.f;
     const float cardH = 275.f;
@@ -3907,8 +3974,8 @@ void Engine::DrawLevelUpChoice()
         DrawStartingAbilityChoice();
         return;
     }
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
 
     // Dim overlay
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.65f));
@@ -4172,7 +4239,7 @@ void Engine::DrawLevelUpChoice()
             lineIndex++;
         }
     };
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
     bool ready = (_levelUpOpenTimer <= 0.f);
 
     // ── Ultimate row (level 3 only, top) ─────────────────────────────────────
@@ -4517,15 +4584,15 @@ void Engine::HandlePlayerMeleeDamage()
 
 Rectangle Engine::GetTreasureChestRect() const
 {
-    float cx = (float)GetScreenWidth()  * 0.5f;
-    float cy = (float)GetScreenHeight() * 0.5f;
+    float cx = (float)kVirtualWidth  * 0.5f;
+    float cy = (float)kVirtualHeight * 0.5f;
     return { cx - 36.f, cy - 36.f, 72.f, 72.f };
 }
 
 void Engine::OpenTreasureChest()
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     _vfx.SpawnHitEffect(Character::CastType::None, { sw * 0.5f, sh * 0.5f }, _player.GetFacingDirection());
     TriggerScreenShake(5.f, 0.12f);
@@ -4643,8 +4710,8 @@ void Engine::SpawnUltimateBurst(AbilityType element)
     const float lifetime   = _ultCinematicDuration;
     const float margin     = 80.f;   // keep icons away from the very edge
 
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     Vector2 playerPos = _player.GetWorldPos();
 
     for (int i = 0; i < blastCount; i++)
@@ -4753,8 +4820,8 @@ void Engine::UpdateUltimateSequence(float dt)
 void Engine::ApplyUltimateImpact()
 {
     // Hit every enemy currently visible on screen (with a small margin beyond edges).
-    const float halfW = GetScreenWidth()  * 0.55f;
-    const float halfH = GetScreenHeight() * 0.55f;
+    const float halfW = kVirtualWidth  * 0.55f;
+    const float halfH = kVirtualHeight * 0.55f;
     Vector2 playerPos = _player.GetWorldPos();
 
     for (auto& enemy : _enemies)
@@ -4783,8 +4850,8 @@ void Engine::DrawUltimateSequence()
     if (_ultimatePhase == UltimatePhase::None)
         return;
 
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     const float cx = sw * 0.5f;
     const float cy = sh * 0.5f;
 
@@ -4882,8 +4949,8 @@ void Engine::DrawUltimateBlasts(Vector2 worldOffset)
         float size = maxSize * pulse;
 
         Vector2 screenPos = {
-            blast.worldPos.x + worldOffset.x + GetScreenWidth()  * 0.5f,
-            blast.worldPos.y + worldOffset.y + GetScreenHeight() * 0.5f
+            blast.worldPos.x + worldOffset.x + kVirtualWidth  * 0.5f,
+            blast.worldPos.y + worldOffset.y + kVirtualHeight * 0.5f
         };
 
         // Fixed facing direction per blast — no spinning
@@ -4931,8 +4998,8 @@ void Engine::UpdateSpreadProjectiles(float dt)
             Rectangle projRec = projectile.GetCollisionRec();
             bool blocked = false;
 
-            float cellW = (float)GetScreenWidth() / (float)RoomLayout::kCols;
-            float cellH = (float)GetScreenHeight() / (float)RoomLayout::kRows;
+            float cellW = (float)kVirtualWidth / (float)RoomLayout::kCols;
+            float cellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
 
             for (int r = 0; r < RoomLayout::kRows && !blocked; r++)
             {
@@ -5082,7 +5149,7 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
         // Overworld uses the map texture centre.
         Vector2 centre;
         if (_gameState == GameState::DungeonRun)
-            centre = { (float)GetScreenWidth() * 0.5f, (float)GetScreenHeight() * 0.5f };
+            centre = { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
         else
         {
             const float mapW = _map.width  * _mapScale;
@@ -5215,8 +5282,8 @@ void Engine::SpawnTimedPickup()
 
 void Engine::DrawHowToPlay()
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
     const float dt = GetFrameTime();
 
     // ── Font sizes ───────────────────────────────────────────────────────────
@@ -5263,7 +5330,7 @@ void Engine::DrawHowToPlay()
         float tx = tabStartX + i * (tabW + tabGap);
         Rectangle tabRect = { tx, tabBarY, tabW, tabBarH };
         bool isActive  = (_htpTab == i);
-        bool tabHov    = CheckCollisionPointRec(GetMousePosition(), tabRect);
+        bool tabHov    = CheckCollisionPointRec(GetVirtualMousePos(), tabRect);
 
         Color bgCol  = isActive  ? Color{ 185, 130, 30, 240 }
                      : tabHov    ? Color{ 100, 50,  90, 200 }
@@ -5637,7 +5704,7 @@ void Engine::DrawHowToPlay()
     const float btnX = sw / 2.f - btnW / 2.f;
     const float btnY = sh - btnH - sh * 0.016f;
     Rectangle backBtn{ btnX, btnY, btnW, btnH };
-    bool hovered = CheckCollisionPointRec(GetMousePosition(), backBtn);
+    bool hovered = CheckCollisionPointRec(GetVirtualMousePos(), backBtn);
 
     DrawRectangleRounded(backBtn, 0.3f, 6, hovered ? Color{ 196, 86, 165, 240 } : Color{ 142, 58, 132, 228 });
     DrawRectangleRoundedLines(backBtn, 0.3f, 6, Fade(Color{ 255, 194, 92, 255 }, 0.68f));
@@ -5827,7 +5894,7 @@ void Engine::ApplyBiome(Biome biome)
     // Compute the map scale for the current screen size.
     // WorldConfig derives the correct scale from mode + texture dimensions,
     // so the world always fits properly on 720p, 1080p, 4K, and phones.
-    _worldConfig.Recalculate(_map, GetScreenWidth(), GetScreenHeight());
+    _worldConfig.Recalculate(_map, kVirtualWidth, kVirtualHeight);
     _mapScale = _worldConfig.GetScale();
 
     _currentBiome = biome;
@@ -6617,8 +6684,8 @@ static Rectangle TouchAbilityRect(int slot, int screenW, int screenH,
 
 Rectangle Engine::GetDebugToggleTabRect() const
 {
-    const float screenW = (float)GetScreenWidth();
-    const float screenH = (float)GetScreenHeight();
+    const float screenW = (float)kVirtualWidth;
+    const float screenH = (float)kVirtualHeight;
     return Rectangle{ screenW - 54.f, screenH * 0.43f, 42.f, 132.f };
 }
 
@@ -6633,7 +6700,7 @@ bool Engine::HandleDebugToggleTabInput()
     if (touchCount == 0)
     {
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
-            CheckCollisionPointRec(GetMousePosition(), debugTab))
+            CheckCollisionPointRec(GetVirtualMousePos(), debugTab))
         {
             _debug.ToggleOpen();
             return true;
@@ -6643,7 +6710,7 @@ bool Engine::HandleDebugToggleTabInput()
 
     for (int i = 0; i < touchCount; ++i)
     {
-        if (CheckCollisionPointRec(GetTouchPosition(i), debugTab))
+        if (CheckCollisionPointRec(GetVirtualTouchPos(i), debugTab))
         {
             _debug.ToggleOpen();
             return true;
@@ -6687,7 +6754,7 @@ Vector2 Engine::GetDungeonSpawnPos(float cellW, float cellH) const
     }
 
     // Fallback: far corner of the room.
-    return { (float)GetScreenWidth() * 0.75f, (float)GetScreenHeight() * 0.5f };
+    return { (float)kVirtualWidth * 0.75f, (float)kVirtualHeight * 0.5f };
 }
 
 void Engine::SpawnDungeonRoomEnemies()
@@ -6697,8 +6764,8 @@ void Engine::SpawnDungeonRoomEnemies()
     // Rooms that have already been cleared don't respawn.
     if (_dungeonRoomStates[_dungeonRoomIdx].cleared) return;
 
-    float sw    = (float)GetScreenWidth();
-    float sh    = (float)GetScreenHeight();
+    float sw    = (float)kVirtualWidth;
+    float sh    = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
 
@@ -6913,8 +6980,8 @@ void Engine::SpawnDungeonDoorOpenEffects()
     if (_dungeonRoomIdx < 0 || _dungeonRoomIdx >= (int)rooms.size()) return;
 
     const DungeonRoom& room = rooms[_dungeonRoomIdx];
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
     int doorStartC = RoomLayout::kCols / 2 - 1;
@@ -7079,8 +7146,8 @@ Rectangle Engine::GetDungeonBossExitTrigger() const
     if (bossIdx >= (int)rooms.size()) return {};
     const DungeonRoom& boss = rooms[bossIdx];
 
-    float sw    = (float)GetScreenWidth();
-    float sh    = (float)GetScreenHeight();
+    float sw    = (float)kVirtualWidth;
+    float sh    = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
     int doorStartC = RoomLayout::kCols / 2 - 1;
@@ -7097,8 +7164,8 @@ Rectangle Engine::GetDungeonBossExitTrigger() const
 
 void Engine::RebuildDungeonNav()
 {
-    float sw    = (float)GetScreenWidth();
-    float sh    = (float)GetScreenHeight();
+    float sw    = (float)kVirtualWidth;
+    float sh    = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
 
@@ -7129,8 +7196,8 @@ void Engine::RebuildDungeonNav()
 
 void Engine::ResolveDungeonEnemyCollisions()
 {
-    float sw    = (float)GetScreenWidth();
-    float sh    = (float)GetScreenHeight();
+    float sw    = (float)kVirtualWidth;
+    float sh    = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
     float pxSX  = cellW / 16.f;
@@ -7218,8 +7285,8 @@ Rectangle Engine::GetDungeonRoomRect(int roomIdx) const
     if (roomIdx < 0 || roomIdx >= (int)rooms.size())
         return {};
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     float margin = 90.f;
     float gridPx = std::min((sw - margin * 2.f) / DungeonGen::kGridSize,
                             (sh - margin * 2.f - 80.f) / DungeonGen::kGridSize);
@@ -7254,8 +7321,8 @@ Engine::DungeonDoorSide Engine::GetBossBarrierSide() const
 
 Rectangle Engine::GetBossBarrierRect(DungeonDoorSide side) const
 {
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
     int doorStartC = RoomLayout::kCols / 2 - 1;
@@ -7273,7 +7340,7 @@ Rectangle Engine::GetBossBarrierRect(DungeonDoorSide side) const
 
 Vector2 Engine::GetMagicGemWorldPos() const
 {
-    return { (float)GetScreenWidth() * 0.5f, (float)GetScreenHeight() * 0.5f };
+    return { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
 }
 
 void Engine::UpdateDungeonMagicGemAndBarrier(float dt)
@@ -7380,12 +7447,550 @@ void Engine::DrawMagicGemHudIcon() const
     if (!_hasMagicGem || _magicGemTex.id == 0)
         return;
 
-    float sw = (float)GetScreenWidth();
+    float sw = (float)kVirtualWidth;
     Rectangle src{ 0.f, 0.f, 16.f, 16.f };
     Rectangle dst{ sw - 76.f, 22.f, 48.f, 48.f };
     DrawTexturePro(_magicGemTex, src, dst, {}, 0.f, WHITE);
     DrawText("x1", (int)(dst.x + dst.width + 4.f), (int)(dst.y + 18.f), 18, GOLD);
 }
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+void Engine::ApplySfxVolume()
+{
+    if (!_audioInitialised) return;
+    float sfx = _settingsMgr.Get().sfxVolume;
+    SetSoundVolume(_buttonPressSound,        0.35f * sfx);
+    SetSoundVolume(_pickupSound,             0.45f * sfx);
+    SetSoundVolume(_lavaBallImpactSound,     0.45f * sfx);
+    SetSoundVolume(_roomClearExplosionSound, 0.60f * sfx);
+    SetSoundVolume(_explosionSound,          1.0f  * sfx);
+    SetSoundVolume(_fireballCastSound,       1.0f  * sfx);
+}
+
+// ── Helpers used by the settings screen ──────────────────────────────────────
+namespace
+{
+    float DrawSettingsSlider(const char* label, float value, float trackX, float trackY,
+                             float trackW, bool isBeingDragged,
+                             Vector2 mouse, bool mouseDown, bool mouseReleased)
+    {
+        const float trackH  = 10.f;
+        const float handleR = 18.f;
+        const float labelFs = 34.f;
+        const float pctFs   = 30.f;
+
+        DrawText(label, (int)(trackX - 320.f), (int)(trackY + trackH * 0.5f - labelFs * 0.5f),
+                 (int)labelFs, Color{220, 240, 255, 230});
+
+        DrawRectangleRounded({ trackX, trackY, trackW, trackH }, 1.f, 4, Color{40, 60, 75, 220});
+        DrawRectangleRounded({ trackX, trackY, trackW * value, trackH }, 1.f, 4, Color{130, 235, 255, 220});
+
+        float hx = trackX + trackW * value;
+        float hy = trackY + trackH * 0.5f;
+        bool  hovered = (fabsf(mouse.x - hx) < handleR + 8.f && fabsf(mouse.y - hy) < handleR + 8.f);
+        DrawCircleV({ hx, hy }, handleR,
+                    (hovered || isBeingDragged) ? Color{255,255,255,255} : Color{180,220,240,255});
+
+        int pct = (int)(value * 100.f + 0.5f);
+        DrawText(TextFormat("%d%%", pct),
+                 (int)(trackX + trackW + 20.f),
+                 (int)(trackY + trackH * 0.5f - pctFs * 0.5f),
+                 (int)pctFs, Color{220, 240, 255, 200});
+
+        bool overTrack = (mouse.x >= trackX - handleR && mouse.x <= trackX + trackW + handleR
+                       && mouse.y >= trackY - handleR && mouse.y <= trackY + handleR * 2.f);
+        if (mouseDown && (isBeingDragged || overTrack))
+        {
+            float raw = (mouse.x - trackX) / trackW;
+            value = raw < 0.f ? 0.f : raw > 1.f ? 1.f : raw;
+        }
+        return value;
+    }
+
+    int DrawOptionRow(const char* label, const char* const* options, int count,
+                      int activeIdx, float rowX, float rowY, float btnW, float btnH,
+                      Vector2 mouse, bool mouseClicked)
+    {
+        const float labelFs = 34.f;
+        DrawText(label, (int)(rowX - 320.f), (int)(rowY + btnH * 0.5f - labelFs * 0.5f),
+                 (int)labelFs, Color{220, 240, 255, 230});
+
+        for (int i = 0; i < count; ++i)
+        {
+            float bx = rowX + i * (btnW + 16.f);
+            Rectangle btn = { bx, rowY, btnW, btnH };
+            bool isActive  = (i == activeIdx);
+            bool isHovered = CheckCollisionPointRec(mouse, btn);
+
+            Color fill   = isActive  ? Color{130, 235, 255, 200}
+                         : isHovered ? Color{60,  110, 140, 200}
+                                     : Color{30,   55,  70, 200};
+            Color border = isActive  ? Color{130, 235, 255, 255}
+                                     : Color{70,  120, 150, 160};
+            DrawRectangleRounded(btn, 0.2f, 6, fill);
+            DrawRectangleRoundedLines(btn, 0.2f, 6, border);
+
+            const float fs = 28.f;
+            int tw = MeasureText(options[i], (int)fs);
+            DrawText(options[i],
+                     (int)(bx + btnW * 0.5f - tw * 0.5f),
+                     (int)(rowY + btnH * 0.5f - fs * 0.5f),
+                     (int)fs, isActive ? BLACK : RAYWHITE);
+
+            if (mouseClicked && isHovered)
+                activeIdx = i;
+        }
+        return activeIdx;
+    }
+}
+
+void Engine::UpdateSettings(float dt)
+{
+    (void)dt;
+
+    GameSettings& s     = _settingsMgr.Get();
+    Vector2       mouse = GetVirtualMousePos();
+    bool mouseDown      = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
+    bool mousePressed   = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+    bool mouseReleased  = IsMouseButtonReleased(MOUSE_LEFT_BUTTON);
+
+    if (GetTouchPointCount() > 0)
+    {
+        mouse        = GetVirtualTouchPos(0);
+        mouseDown    = true;
+        mousePressed = true;
+    }
+
+    const float sw     = (float)kVirtualWidth;
+    const float sh     = (float)kVirtualHeight;
+    const float panelW = 1100.f;
+    const float panelH = 880.f;
+    const float panelX = sw * 0.5f - panelW * 0.5f;
+    const float panelY = sh * 0.5f - panelH * 0.5f;
+
+    // ESC: cancel an active rebind first; if none, exit settings
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+        if (_settingsRebindSlot >= 0)
+            _settingsRebindSlot = -1;
+        else
+        {
+            _player.SetBindings(_keybindingsEdit);
+            SaveKeybindings();
+            _settingsMgr.Save();
+            _settingsMgr.ApplyWindow();
+            _settingsMgr.ApplyVolumes(_audio);
+            ApplySfxVolume();
+            _gameState          = _stateBeforeSettings;
+            _settingsDragSlider = -1;
+        }
+        return;
+    }
+
+    // Tab strip
+    const float tabY   = panelY + 85.f;
+    const float tabH   = 52.f;
+    const float tabGap = 14.f;
+    const float kTabW[3] = { 195.f, 175.f, 225.f };
+    float tabX = panelX + 40.f;
+    for (int tabIdx = 0; tabIdx < 3; tabIdx++)
+    {
+        if (mousePressed && CheckCollisionPointRec(mouse, { tabX, tabY, kTabW[tabIdx], tabH }))
+        {
+            _settingsTab        = tabIdx;
+            _settingsRebindSlot = -1;
+        }
+        tabX += kTabW[tabIdx] + tabGap;
+    }
+
+    // Back button (saves everything and returns)
+    float backBtnX = panelX + panelW * 0.5f - 140.f;
+    float backBtnY = panelY + panelH - 75.f;
+    if (mousePressed && CheckCollisionPointRec(mouse, { backBtnX, backBtnY, 280.f, 55.f }))
+    {
+        _player.SetBindings(_keybindingsEdit);
+        SaveKeybindings();
+        _settingsMgr.Save();
+        _settingsMgr.ApplyWindow();
+        _settingsMgr.ApplyVolumes(_audio);
+        ApplySfxVolume();
+        _gameState          = _stateBeforeSettings;
+        _settingsDragSlider = -1;
+        _settingsRebindSlot = -1;
+        return;
+    }
+
+    const float contentX   = panelX + 400.f;
+    const float contentY   = panelY + 175.f;
+    const float rowSpacing = 110.f;
+
+    if (_settingsTab == 0)
+    {
+        // ── Display ─────────────────────────────────────────────────────────
+        static const char* kModes[] = { "Fullscreen", "Borderless", "Windowed" };
+        int modeIdx = (int)s.windowMode;
+        int newMode = DrawOptionRow("Window Mode", kModes, 3, modeIdx,
+                                    contentX, contentY, 210.f, 56.f, mouse, mousePressed);
+        if (newMode != modeIdx)
+        {
+            s.windowMode = (GameSettings::WindowMode)newMode;
+            _settingsMgr.ApplyWindow();
+        }
+
+        if (s.windowMode == GameSettings::WindowMode::Windowed)
+        {
+            static const char* kRes[]  = { "1280x720", "1920x1080", "2560x1440" };
+            static const int   kResW[] = { 1280, 1920, 2560 };
+            static const int   kResH[] = { 720,  1080, 1440 };
+            int curRes = 1;
+            if (s.windowedWidth == 1280)       curRes = 0;
+            else if (s.windowedWidth == 2560)  curRes = 2;
+            int newRes = DrawOptionRow("Resolution", kRes, 3, curRes,
+                                       contentX, contentY + rowSpacing, 210.f, 56.f, mouse, mousePressed);
+            if (newRes != curRes)
+            {
+                s.windowedWidth  = kResW[newRes];
+                s.windowedHeight = kResH[newRes];
+                _settingsMgr.ApplyWindow();
+            }
+        }
+
+        static const char* kVSync[] = { "On", "Off" };
+        int vsyncIdx = s.vsync ? 0 : 1;
+        int newVSync = DrawOptionRow("VSync", kVSync, 2, vsyncIdx,
+                                     contentX, contentY + rowSpacing * 2.f, 210.f, 56.f, mouse, mousePressed);
+        if (newVSync != vsyncIdx)
+        {
+            s.vsync = (newVSync == 0);
+            _settingsMgr.ApplyWindow();
+        }
+    }
+    else if (_settingsTab == 1)
+    {
+        // ── Audio ────────────────────────────────────────────────────────────
+        const float trackX = contentX;
+        const float trackW = 600.f;
+
+        auto handleSlider = [&](int sliderIdx, float sliderY, float& value)
+        {
+            bool dragging  = (_settingsDragSlider == sliderIdx);
+            bool overTrack = (mouse.x >= trackX - 26.f && mouse.x <= trackX + trackW + 26.f
+                           && mouse.y >= sliderY - 26.f && mouse.y <= sliderY + 46.f);
+            if (mousePressed && overTrack) { _settingsDragSlider = sliderIdx; dragging = true; }
+            if (mouseReleased)              _settingsDragSlider = -1;
+            if (mouseDown && dragging)
+            {
+                float rawValue = (mouse.x - trackX) / trackW;
+                value = rawValue < 0.f ? 0.f : rawValue > 1.f ? 1.f : rawValue;
+            }
+            return dragging;
+        };
+
+        handleSlider(0, contentY,                  s.masterVolume);
+        handleSlider(1, contentY + rowSpacing,     s.musicVolume);
+        handleSlider(2, contentY + rowSpacing * 2, s.sfxVolume);
+
+        if (_settingsDragSlider >= 0)
+        {
+            SetMasterVolume(s.masterVolume);
+            _audio.SetMusicVolumeScale(s.musicVolume);
+            _audio.SetSfxVolumeScale(s.sfxVolume);
+            ApplySfxVolume();
+        }
+    }
+    else
+    {
+        // ── Keybindings ──────────────────────────────────────────────────────
+        if (_settingsRebindSlot >= 0)
+        {
+            // Scan for any key press and assign it to the waiting slot
+            for (int k = 32; k <= 348; k++)
+            {
+                if (IsKeyPressed((KeyboardKey)k))
+                {
+                    switch (_settingsRebindSlot)
+                    {
+                    case 0: _keybindingsEdit.moveUp     = (KeyboardKey)k; break;
+                    case 1: _keybindingsEdit.moveDown   = (KeyboardKey)k; break;
+                    case 2: _keybindingsEdit.moveLeft   = (KeyboardKey)k; break;
+                    case 3: _keybindingsEdit.moveRight  = (KeyboardKey)k; break;
+                    case 4: _keybindingsEdit.dash       = (KeyboardKey)k; break;
+                    case 5: _keybindingsEdit.attack     = (KeyboardKey)k; break;
+                    case 6: _keybindingsEdit.ability[0] = (KeyboardKey)k; break;
+                    case 7: _keybindingsEdit.ability[1] = (KeyboardKey)k; break;
+                    case 8: _keybindingsEdit.ability[2] = (KeyboardKey)k; break;
+                    case 9: _keybindingsEdit.ability[3] = (KeyboardKey)k; break;
+                    default: break;
+                    }
+                    _settingsRebindSlot = -1;
+                    break;
+                }
+            }
+            return;
+        }
+
+        // Badge click detection — same layout as DrawSettingsKeybindings
+        const float rowX   = panelX + 40.f;
+        const float rowW   = panelW - 80.f;
+        const float rowH   = 42.f;
+        const float rowGap = 7.f;
+        const float labelH = 24.f;
+        const float grpGap = 18.f;
+        const float badgeW = 150.f;
+        const float badgeH = rowH * 0.72f;
+        const float badgeX = rowX + rowW - badgeW - 16.f;
+
+        // groupLabel non-null = start of a new group
+        static const bool kIsGroupStart[10] = { true, false, false, false, true, false, true, false, false, false };
+
+        float curY = contentY;
+        for (int slotIdx = 0; slotIdx < 10; slotIdx++)
+        {
+            if (kIsGroupStart[slotIdx])
+            {
+                if (slotIdx > 0) curY += grpGap;
+                curY += labelH + 4.f;
+            }
+            float badgeY = curY + rowH * 0.5f - badgeH * 0.5f;
+            if (mousePressed && CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH }))
+                _settingsRebindSlot = slotIdx;
+            curY += rowH + rowGap;
+        }
+    }
+}
+
+void Engine::DrawSettings() const
+{
+    const GameSettings& s  = _settingsMgr.Get();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+
+    // Scrolling checkerboard background — blue-navy tones
+    DrawScrollingCheckerboard(sw, sh,
+        Color{14, 28, 52, 255}, Color{20, 42, 76, 255}, 20.f, 11.f);
+
+    // Panel layout
+    const float panelW = 1100.f;
+    const float panelH = 880.f;
+    const float panelX = sw * 0.5f - panelW * 0.5f;
+    const float panelY = sh * 0.5f - panelH * 0.5f;
+
+    // Nine-slice border slightly outside the panel
+    if (_settingsBorderTex.id != 0)
+    {
+        const float borderPad = 24.f;
+        DrawNineSlice(_settingsBorderTex, 18.f, 22.f,
+            { panelX - borderPad, panelY - borderPad,
+              panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
+    }
+
+    // Dark panel interior
+    DrawRectangleRounded({ panelX, panelY, panelW, panelH },
+                          0.02f, 8, Fade(Color{8, 14, 26, 255}, 0.97f));
+
+    // Title
+    const char* title = "SETTINGS";
+    const int titleSz = 58;
+    int titleW = MeasureText(title, titleSz);
+    DrawText(title,
+             (int)(panelX + panelW * 0.5f - titleW * 0.5f),
+             (int)(panelY + 22.f),
+             titleSz, Color{255, 214, 102, 255});
+
+    // Tab strip
+    const float tabY   = panelY + 85.f;
+    const float tabH   = 52.f;
+    const float tabGap = 14.f;
+    const float kTabW[3]           = { 195.f, 175.f, 225.f };
+    static const char* kTabLabels[3] = { "DISPLAY", "AUDIO", "KEYBINDINGS" };
+    float tabX = panelX + 40.f;
+    for (int tabIdx = 0; tabIdx < 3; tabIdx++)
+    {
+        bool   active     = (_settingsTab == tabIdx);
+        Color  tabFill    = active ? Color{130, 235, 255, 200} : Color{30, 55, 70, 180};
+        Color  tabBorder  = active ? Color{130, 235, 255, 255} : Color{70, 120, 150, 140};
+        DrawRectangleRounded    ({ tabX, tabY, kTabW[tabIdx], tabH }, 0.25f, 6, tabFill);
+        DrawRectangleRoundedLines({ tabX, tabY, kTabW[tabIdx], tabH }, 0.25f, 6, tabBorder);
+        int tabFs = 30;
+        int tabTw = MeasureText(kTabLabels[tabIdx], tabFs);
+        DrawText(kTabLabels[tabIdx],
+                 (int)(tabX + kTabW[tabIdx] * 0.5f - tabTw * 0.5f),
+                 (int)(tabY + tabH * 0.5f - tabFs * 0.5f),
+                 tabFs, active ? BLACK : RAYWHITE);
+        tabX += kTabW[tabIdx] + tabGap;
+    }
+
+    // Divider below tabs
+    float divY = tabY + tabH + 12.f;
+    DrawLineEx({ panelX + 20.f, divY }, { panelX + panelW - 20.f, divY }, 1.f,
+               Fade(Color{130, 235, 255, 255}, 0.30f));
+
+    const float contentX   = panelX + 400.f;
+    const float contentY   = panelY + 175.f;
+    const float rowSpacing = 110.f;
+
+    Vector2 mouse = GetVirtualMousePos();
+    if (GetTouchPointCount() > 0) mouse = GetVirtualTouchPos(0);
+
+    if (_settingsTab == 0)
+    {
+        // Display tab
+        static const char* kModes[] = { "Fullscreen", "Borderless", "Windowed" };
+        DrawOptionRow("Window Mode", kModes, 3, (int)s.windowMode,
+                      contentX, contentY, 210.f, 56.f, mouse, false);
+
+        if (s.windowMode == GameSettings::WindowMode::Windowed)
+        {
+            static const char* kRes[] = { "1280x720", "1920x1080", "2560x1440" };
+            int curRes = 1;
+            if (s.windowedWidth == 1280)       curRes = 0;
+            else if (s.windowedWidth == 2560)  curRes = 2;
+            DrawOptionRow("Resolution", kRes, 3, curRes,
+                          contentX, contentY + rowSpacing, 210.f, 56.f, mouse, false);
+        }
+
+        static const char* kVSync[] = { "On", "Off" };
+        DrawOptionRow("VSync", kVSync, 2, s.vsync ? 0 : 1,
+                      contentX, contentY + rowSpacing * 2.f, 210.f, 56.f, mouse, false);
+    }
+    else if (_settingsTab == 1)
+    {
+        // Audio tab
+        const float trackX = contentX;
+        const float trackW = 600.f;
+        bool mouseDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON) || (GetTouchPointCount() > 0);
+        bool mouseRel  = IsMouseButtonReleased(MOUSE_LEFT_BUTTON);
+        DrawSettingsSlider("Master Volume", s.masterVolume,
+                           trackX, contentY, trackW,
+                           _settingsDragSlider == 0, mouse, mouseDown, mouseRel);
+        DrawSettingsSlider("Music Volume", s.musicVolume,
+                           trackX, contentY + rowSpacing, trackW,
+                           _settingsDragSlider == 1, mouse, mouseDown, mouseRel);
+        DrawSettingsSlider("SFX Volume", s.sfxVolume,
+                           trackX, contentY + rowSpacing * 2.f, trackW,
+                           _settingsDragSlider == 2, mouse, mouseDown, mouseRel);
+    }
+    else
+    {
+        // Keybindings tab
+        DrawSettingsKeybindings(contentY, panelX, panelW, mouse);
+    }
+
+    // Back button
+    float backX = panelX + panelW * 0.5f - 140.f;
+    float backY = panelY + panelH - 75.f;
+    Rectangle backBtn = { backX, backY, 280.f, 55.f };
+    bool backHov = CheckCollisionPointRec(mouse, backBtn);
+    DrawRectangleRounded(backBtn, 0.25f, 6,
+        backHov ? Color{60, 110, 140, 240} : Color{20, 40, 55, 200});
+    DrawRectangleRoundedLines(backBtn, 0.25f, 6, Color{130, 235, 255, 160});
+    int bfs = 32;
+    int bw  = MeasureText("BACK", bfs);
+    DrawText("BACK",
+             (int)(backX + 140.f - bw * 0.5f),
+             (int)(backY + 27.5f - bfs * 0.5f),
+             bfs, RAYWHITE);
+}
+
+void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW, Vector2 mouse) const
+{
+    const float rowX   = panelX + 40.f;
+    const float rowW   = panelW - 80.f;
+    const float rowH   = 42.f;
+    const float rowGap = 7.f;
+    const float labelH = 24.f;
+    const float grpGap = 18.f;
+    const float badgeW = 150.f;
+    const float badgeH = rowH * 0.72f;
+    const float badgeX = rowX + rowW - badgeW - 16.f;
+
+    struct SlotDef { const char* groupLabel; const char* name; };
+    static const SlotDef slots[10] = {
+        { "MOVEMENT",  "Move Up"    },
+        { nullptr,     "Move Down"  },
+        { nullptr,     "Move Left"  },
+        { nullptr,     "Move Right" },
+        { "ACTIONS",   "Dash"       },
+        { nullptr,     "Attack"     },
+        { "ABILITIES", "Ability 1"  },
+        { nullptr,     "Ability 2"  },
+        { nullptr,     "Ability 3"  },
+        { nullptr,     "Ability 4"  },
+    };
+
+    auto getSlotKey = [&](int slotIdx) -> KeyboardKey {
+        switch (slotIdx) {
+        case 0: return _keybindingsEdit.moveUp;
+        case 1: return _keybindingsEdit.moveDown;
+        case 2: return _keybindingsEdit.moveLeft;
+        case 3: return _keybindingsEdit.moveRight;
+        case 4: return _keybindingsEdit.dash;
+        case 5: return _keybindingsEdit.attack;
+        case 6: return _keybindingsEdit.ability[0];
+        case 7: return _keybindingsEdit.ability[1];
+        case 8: return _keybindingsEdit.ability[2];
+        default: return _keybindingsEdit.ability[3];
+        }
+    };
+
+    float curY = contentY;
+    for (int slotIdx = 0; slotIdx < 10; slotIdx++)
+    {
+        if (slots[slotIdx].groupLabel)
+        {
+            if (slotIdx > 0) curY += grpGap;
+            DrawText(slots[slotIdx].groupLabel,
+                     (int)rowX, (int)curY,
+                     (int)labelH, Color{255, 214, 102, 255});
+            curY += labelH + 4.f;
+        }
+
+        // Row background
+        DrawRectangleRounded({ rowX, curY, rowW, rowH }, 0.2f, 4, Color{15, 40, 55, 180});
+
+        // Slot name
+        const int nameFsz = 26;
+        DrawText(slots[slotIdx].name,
+                 (int)(rowX + 16.f),
+                 (int)(curY + rowH * 0.5f - nameFsz * 0.5f),
+                 nameFsz, Color{200, 225, 240, 220});
+
+        // Key badge
+        bool awaiting = (_settingsRebindSlot == slotIdx);
+        float badgeY  = curY + rowH * 0.5f - badgeH * 0.5f;
+        bool  hovered = CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH });
+
+        Color badgeFill   = awaiting ? Color{255, 200,  60, 230}
+                          : hovered  ? Color{ 80, 180,  80, 220}
+                                     : Color{ 40, 130,  70, 200};
+        Color badgeBorder = awaiting ? Color{255, 230, 100, 255}
+                                     : Color{ 80, 200,  80, 180};
+        DrawRectangleRounded     ({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeFill);
+        DrawRectangleRoundedLines({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeBorder);
+
+        const char* keyLabel = awaiting ? "PRESS KEY..." : GetKeyName(getSlotKey(slotIdx));
+        int keyFsz = awaiting ? 20 : 26;
+        int keyTw  = MeasureText(keyLabel, keyFsz);
+        DrawText(keyLabel,
+                 (int)(badgeX + badgeW * 0.5f - keyTw * 0.5f),
+                 (int)(badgeY + badgeH * 0.5f - keyFsz * 0.5f),
+                 keyFsz, awaiting ? BLACK : RAYWHITE);
+
+        curY += rowH + rowGap;
+    }
+
+    // Hint text
+    const char* hint = (_settingsRebindSlot >= 0)
+        ? "Press ESC to cancel  |  Press any key to assign"
+        : "Click a key badge to rebind";
+    const int hintFsz = 22;
+    int hintTw = MeasureText(hint, hintFsz);
+    DrawText(hint,
+             (int)(rowX + rowW * 0.5f - hintTw * 0.5f),
+             (int)(curY + 12.f),
+             hintFsz, Color{140, 180, 200, 160});
+}
+
 // ── World Map ──────────────────────────────────────────────────────────────────
 
 void Engine::OpenWorldMap()
@@ -7411,7 +8016,7 @@ void Engine::OpenWorldMap()
         _worldCompletedBiomes,
         _worldChosenNodeIndices,
         _worldZone + 1,
-        GetScreenWidth(), GetScreenHeight());
+        kVirtualWidth, kVirtualHeight);
 
     _gameState = GameState::WorldMap;
 }
@@ -7515,8 +8120,8 @@ void Engine::UpdateDungeonRun(float dt)
             return;
         }
 
-        float sw = (float)GetScreenWidth();
-        float sh = (float)GetScreenHeight();
+        float sw = (float)kVirtualWidth;
+        float sh = (float)kVirtualHeight;
 
         // ── Scroll animation ─────────────────────────────────────────────────
         if (_dungeonScrolling)
@@ -7935,8 +8540,8 @@ void Engine::UpdateDungeonRun(float dt)
 
         // Keep all enemies within the tile room bounds (one cell margin from edges).
         {
-            float roomRight  = (float)GetScreenWidth()  - cellW;
-            float roomBottom = (float)GetScreenHeight() - cellH;
+            float roomRight  = (float)kVirtualWidth  - cellW;
+            float roomBottom = (float)kVirtualHeight - cellH;
             for (auto& enemy : _enemies)
             {
                 if (!enemy->IsActive() || enemy->IsDying()) continue;
@@ -8126,8 +8731,8 @@ void Engine::UpdateDungeonRun(float dt)
         // [Enter] enters the room with the player for walking around.
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
         {
-            float hw = GetScreenWidth()  * 0.5f;
-            float hh = GetScreenHeight() * 0.5f;
+            float hw = kVirtualWidth  * 0.5f;
+            float hh = kVirtualHeight * 0.5f;
             _player.SetWorldPos({ hw, hh });
             _player.Revive();
             _cameraPos = { hw, hh };
@@ -8160,7 +8765,7 @@ void Engine::UpdateDungeonRun(float dt)
         const auto& rooms = _dungeonGen.GetRooms();
         for (int i = 0; i < (int)rooms.size(); i++)
         {
-            if (CheckCollisionPointRec(GetMousePosition(), GetDungeonRoomRect(i)))
+            if (CheckCollisionPointRec(GetVirtualMousePos(), GetDungeonRoomRect(i)))
             {
                 const DungeonRoom& room = rooms[i];
                 _dungeonRoomLayout    = RoomLayout::Generate(
@@ -8179,8 +8784,8 @@ void Engine::UpdateDungeonRun(float dt)
 
 void Engine::DrawDungeonRun()
 {
-    const float sw = (float)GetScreenWidth();
-    const float sh = (float)GetScreenHeight();
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
 
     // Scale so the room fills the entire game window exactly.
     float scaleX = sw / (RoomLayout::kCols * 16.f);
@@ -8448,11 +9053,11 @@ void Engine::UpdateHitboxEditor()
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
         Vector2 camRef = Vector2Subtract(_cameraPos, _shakeOffset);
-        float sw = (float)GetScreenWidth(), sh = (float)GetScreenHeight();
+        float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
         auto toScreen = [&](Rectangle r) {
             return Rectangle{ r.x - camRef.x + sw / 2.f, r.y - camRef.y + sh / 2.f, r.width, r.height };
         };
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
         BaseCharacter* hit = nullptr;
 
         // Helper: check if mouse is inside a capsule (screen space)
@@ -8615,8 +9220,8 @@ void Engine::UpdateHitboxEditor()
 void Engine::DrawHitboxEditor()
 {
     Vector2 camRef = Vector2Subtract(_cameraPos, _shakeOffset);
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     auto toScreen = [&](Rectangle r) {
         return Rectangle{ r.x - camRef.x + sw / 2.f, r.y - camRef.y + sh / 2.f, r.width, r.height };
@@ -8723,8 +9328,8 @@ void Engine::DrawDebugToggleTab()
 // touches on the ability arc.  Called each gameplay frame when touch mode is on.
 void Engine::UpdateTouchControls()
 {
-    const int screenW = GetScreenWidth();
-    const int screenH = GetScreenHeight();
+    const int screenW = kVirtualWidth;
+    const int screenH = kVirtualHeight;
 
     // Sync touch layout from HUD config so editor changes take effect immediately
     _touch.kJoyRadius     = _hudCfg.touchJoyR;
@@ -8740,7 +9345,7 @@ void Engine::UpdateTouchControls()
     // ── Ability slot drag (only when HUD editor is open) ─────────────────────
     if (_hudEditorActive)
     {
-        const Vector2 mousePos = GetMousePosition();
+        const Vector2 mousePos = GetVirtualMousePos();
         const int ts = _player.GetMaxAbilitySlots();
 
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _touchSlotDragIdx < 0)
@@ -8798,7 +9403,7 @@ void Engine::UpdateTouchControls()
         if (tc0 == 0)
         {
             zephHit = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
-                      CheckCollisionPointRec(GetMousePosition(), btnRect);
+                      CheckCollisionPointRec(GetVirtualMousePos(), btnRect);
         }
         else
         {
@@ -8808,7 +9413,7 @@ void Engine::UpdateTouchControls()
                 if (id == _touch.GetJoyTouchId() ||
                     id == _touch.GetAtkTouchId()  ||
                     id == _touch.GetDashTouchId()) continue;
-                if (CheckCollisionPointRec(GetTouchPosition(i), btnRect))
+                if (CheckCollisionPointRec(GetVirtualTouchPos(i), btnRect))
                 { zephHit = true; break; }
             }
         }
@@ -8832,7 +9437,7 @@ void Engine::UpdateTouchControls()
     {
         // Mouse simulation
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
-            CheckCollisionPointRec(GetMousePosition(), pauseRec))
+            CheckCollisionPointRec(GetVirtualMousePos(), pauseRec))
         {
             _gameState = GameState::Pause;
         }
@@ -8849,7 +9454,7 @@ void Engine::UpdateTouchControls()
             if (id == joyId || id == atkId || id == dashId) continue;
             bool seen = false;
             for (int sid : _abilityTapSeenIds) if (sid == id) { seen = true; break; }
-            if (!seen && CheckCollisionPointRec(GetTouchPosition(i), pauseRec))
+            if (!seen && CheckCollisionPointRec(GetVirtualTouchPos(i), pauseRec))
             {
                 _gameState = GameState::Pause;
                 return;
@@ -8867,8 +9472,8 @@ void Engine::ScanAbilityArcTaps()
 
     const int tc         = GetTouchPointCount();
     const int totalSlots = _player.GetMaxAbilitySlots();
-    const int screenW    = GetScreenWidth();
-    const int screenH    = GetScreenHeight();
+    const int screenW    = kVirtualWidth;
+    const int screenH    = kVirtualHeight;
 
     auto hitSlot = [&](Vector2 pos) -> int
     {
@@ -8886,7 +9491,7 @@ void Engine::ScanAbilityArcTaps()
     {
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
-            int slot = hitSlot(GetMousePosition());
+            int slot = hitSlot(GetVirtualMousePos());
             if (slot >= 0) _player.TriggerAbilityCast(slot);
         }
         return;
@@ -8918,7 +9523,7 @@ void Engine::ScanAbilityArcTaps()
         if (seen) continue;
 
         _abilityTapSeenIds.push_back(id);
-        int slot = hitSlot(GetTouchPosition(i));
+        int slot = hitSlot(GetVirtualTouchPos(i));
         if (slot >= 0) _player.TriggerAbilityCast(slot);
     }
 }
@@ -8928,8 +9533,8 @@ void Engine::ScanAbilityArcTaps()
 void Engine::DrawTouchAbilityArc()
 {
     const int totalSlots = _player.GetMaxAbilitySlots();
-    const int screenW    = GetScreenWidth();
-    const int screenH    = GetScreenHeight();
+    const int screenW    = kVirtualWidth;
+    const int screenH    = kVirtualHeight;
 
     if (totalSlots > 0)
     {
@@ -9076,8 +9681,8 @@ float Engine::GetTouchMappingRadius(int idx) const
 void Engine::EnterTouchButtonMapping()
 {
     _touchMappingDragIdx = -1;
-    const int sw = GetScreenWidth();
-    const int sh = GetScreenHeight();
+    const int sw = kVirtualWidth;
+    const int sh = kVirtualHeight;
 
     if (_touchLayoutCustom)
     {
@@ -9118,8 +9723,8 @@ void Engine::EnterTouchButtonMapping()
 
 void Engine::ApplyTouchCustomLayout()
 {
-    const int sw = GetScreenWidth();
-    const int sh = GetScreenHeight();
+    const int sw = kVirtualWidth;
+    const int sh = kVirtualHeight;
 
     _hudCfg.touchAtkPadR    = (float)sw - _touchCustomPos[0].x;
     _hudCfg.touchAtkPadB    = (float)sh - _touchCustomPos[0].y;
@@ -9141,8 +9746,8 @@ void Engine::ApplyTouchCustomLayout()
 
 int Engine::DrawTouchButtonMapping()
 {
-    const int sw = GetScreenWidth();
-    const int sh = GetScreenHeight();
+    const int sw = kVirtualWidth;
+    const int sh = kVirtualHeight;
 
     ClearBackground(Color{ 8, 6, 10, 255 });
     float scaleX = sw / (RoomLayout::kCols * 16.f);
@@ -9152,7 +9757,7 @@ int Engine::DrawTouchButtonMapping()
     DrawHUD();
     DrawRectangle(0, 0, sw, sh, Fade(BLACK, 0.54f));
 
-    const Vector2 inputPos  = GetMousePosition();
+    const Vector2 inputPos  = GetVirtualMousePos();
     const bool    inputDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
     const bool    inputPress= IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
 
@@ -9312,7 +9917,7 @@ static const float kDlgHandleRadius = 8.f;
 static bool DlgHandleHit(Vector2 pos, int id, int& activeHandle)
 {
     if (activeHandle != -1 && activeHandle != id) return false;
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
     bool over = (CheckCollisionPointCircle(mouse, pos, kDlgHandleRadius + 4.f));
     if (over && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) { activeHandle = id; return true; }
     return activeHandle == id;
@@ -9350,7 +9955,7 @@ void Engine::UpdateDialogueBoxEditor()
         fflush(stdout);
     }
 
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = GetVirtualMousePos();
     Vector2 delta = GetMouseDelta();
     Rectangle& p  = box.panelRect;
 
@@ -9465,8 +10070,8 @@ void Engine::DrawDialogueBoxEditor()
 {
     const DialogueBox& box = _cutscene.GetLayout();
 
-    float sw = (float)GetScreenWidth();
-    float sh = (float)GetScreenHeight();
+    float sw = (float)kVirtualWidth;
+    float sh = (float)kVirtualHeight;
 
     // ── Background: dungeon tiles for context ─────────────────────────────────
     ClearBackground(Color{ 8, 6, 10, 255 });
@@ -9522,7 +10127,7 @@ void Engine::DrawDialogueBoxEditor()
     {
         bool active = _dlgSpeakerFsDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
-        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetVirtualMousePos(), hit) ? 0.08f : 0.0f));
         else         DrawRectangleRec(hit, Fade(YELLOW, 0.18f));
         char buf[64];
         snprintf(buf, sizeof(buf), "Speaker Size: %d", box.speakerFontSize);
@@ -9535,7 +10140,7 @@ void Engine::DrawDialogueBoxEditor()
     {
         bool active = _dlgBodyFsDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
-        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetVirtualMousePos(), hit) ? 0.08f : 0.0f));
         else         DrawRectangleRec(hit, Fade(SKYBLUE, 0.18f));
         char buf[64];
         snprintf(buf, sizeof(buf), "Body Size: %d", box.bodyFontSize);
@@ -9548,7 +10153,7 @@ void Engine::DrawDialogueBoxEditor()
     {
         bool active = _dlgInsetLeftDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
-        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetVirtualMousePos(), hit) ? 0.08f : 0.0f));
         else         DrawRectangleRec(hit, Fade(ORANGE, 0.18f));
         char buf[64];
         snprintf(buf, sizeof(buf), "Text Left: %.0f", box.textInsetLeft);
@@ -9561,7 +10166,7 @@ void Engine::DrawDialogueBoxEditor()
     {
         bool active = _dlgInsetTopDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
-        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetMousePosition(), hit) ? 0.08f : 0.0f));
+        if (!active) DrawRectangleRec(hit, Fade(WHITE, CheckCollisionPointRec(GetVirtualMousePos(), hit) ? 0.08f : 0.0f));
         else         DrawRectangleRec(hit, Fade(ORANGE, 0.18f));
         char buf[64];
         snprintf(buf, sizeof(buf), "Text Top: %.0f", box.textInsetTop);

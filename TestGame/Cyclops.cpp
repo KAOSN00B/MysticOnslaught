@@ -1,6 +1,9 @@
-#include "Cyclops.h"
+﻿#include "Cyclops.h"
+#include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VirtualCanvas.h"
 #include <algorithm>
 
 // ---- Static member definitions ----------------------------------------------
@@ -443,8 +446,8 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     drawHeight *= launchScale;
 
     Vector2 screenPos = Vector2Subtract(_worldPos, cameraRef);
-    screenPos.x += GetScreenWidth()  / 2.f;
-    screenPos.y += GetScreenHeight() / 2.f - launchLift;
+    screenPos.x += kVirtualWidth  / 2.f;
+    screenPos.y += kVirtualHeight / 2.f - launchLift;
 
     bool burning       = !_pendingBurns.empty();
     bool frozen        = IsFrozen();
