@@ -130,6 +130,70 @@ void DungeonGen::AssignSpecialRooms()
     int northOfStart = _grid[_rooms[_startIdx].row - 1][_rooms[_startIdx].col];
     if (northOfStart >= 0)
         _rooms[northOfStart].hasSouth = false;
+
+    // Boss room gets exactly one dungeon connector. Other adjacent rooms may
+    // exist in the grid, but they should not open extra boss entrances.
+    if (_bossIdx >= 0)
+    {
+        struct BossNeighbor
+        {
+            int roomIdx;
+            int distFromStart;
+            int sideFromBoss; // 0=N, 1=S, 2=E, 3=W
+        };
+
+        DungeonRoom& boss = _rooms[_bossIdx];
+        BossNeighbor choices[4]{};
+        int choiceCount = 0;
+
+        auto addChoice = [&](int nr, int nc, int sideFromBoss)
+        {
+            if (nr < 0 || nr >= kGridSize || nc < 0 || nc >= kGridSize)
+                return;
+            int neighborIdx = _grid[nr][nc];
+            if (neighborIdx < 0)
+                return;
+            choices[choiceCount++] = BossNeighbor{ neighborIdx, DistanceBFS(_startIdx, neighborIdx), sideFromBoss };
+        };
+
+        addChoice(boss.row - 1, boss.col, 0);
+        addChoice(boss.row + 1, boss.col, 1);
+        addChoice(boss.row, boss.col + 1, 2);
+        addChoice(boss.row, boss.col - 1, 3);
+
+        boss.hasNorth = false;
+        boss.hasSouth = false;
+        boss.hasEast  = false;
+        boss.hasWest  = false;
+
+        int best = -1;
+        for (int i = 0; i < choiceCount; i++)
+        {
+            DungeonRoom& neighbor = _rooms[choices[i].roomIdx];
+            switch (choices[i].sideFromBoss)
+            {
+            case 0: neighbor.hasSouth = false; break;
+            case 1: neighbor.hasNorth = false; break;
+            case 2: neighbor.hasWest  = false; break;
+            case 3: neighbor.hasEast  = false; break;
+            }
+
+            if (best < 0 || choices[i].distFromStart < choices[best].distFromStart)
+                best = i;
+        }
+
+        if (best >= 0)
+        {
+            DungeonRoom& neighbor = _rooms[choices[best].roomIdx];
+            switch (choices[best].sideFromBoss)
+            {
+            case 0: boss.hasNorth = true; neighbor.hasSouth = true; break;
+            case 1: boss.hasSouth = true; neighbor.hasNorth = true; break;
+            case 2: boss.hasEast  = true; neighbor.hasWest  = true; break;
+            case 3: boss.hasWest  = true; neighbor.hasEast  = true; break;
+            }
+        }
+    }
 }
 
 int DungeonGen::FindFurthest(int fromIdx) const
@@ -201,3 +265,4 @@ int DungeonGen::DistanceBFS(int fromIdx, int toIdx) const
 
     return dist[toIdx];
 }
+
