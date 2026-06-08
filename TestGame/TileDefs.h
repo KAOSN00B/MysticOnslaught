@@ -9,11 +9,10 @@ struct SpriteDef {
     Rectangle collision;
 };
 
-// An animated sprite (e.g. torch/fire). Frames are laid out horizontally in the sheet.
+// An animated sprite (e.g. torch/fire). Each frame is a separate source rectangle.
 struct AnimSpriteDef {
-    Rectangle firstFrame;  // source rect of frame 0; subsequent frames at +firstFrame.width each
-    int       frameCount = 1;
-    float     fps        = 8.f;
+    std::vector<Rectangle> frames;  // one entry per frame, in playback order
+    float                  fps = 8.f;
 };
 
 // An animated prop — each frame is a separate source rectangle you selected in the TileMapper.

@@ -22,6 +22,7 @@ class NineSliceEditor
 public:
     void Init(const char* assetsRoot);
     void Unload();
+    ~NineSliceEditor() { Unload(); }
     void Update();
     void Draw() const;
 

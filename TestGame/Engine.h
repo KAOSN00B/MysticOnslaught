@@ -40,6 +40,7 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <functional>
 
 
 class Engine
@@ -105,6 +106,7 @@ private:
     void UpdateBossSupportRespawns(float dt);
     void ClearBossSupportAdds();
     const char* GetBiomeName(Biome biome) const;
+    void LoadTilesetForBiome(Biome biome);
     void ApplyBiome(Biome biome);
     void PopulatePropsForBiome(Biome biome);
     void UpdateBiomeTransition(float dt);
@@ -581,6 +583,14 @@ private:
     Vector2    _dungeonScrollSpawnPos = {};
     DungeonDoorSide _dungeonScrollNextEntryDoorSide = DungeonDoorSide::None;
     static constexpr float kDungeonScrollDur = 0.40f;
+
+    // Full-screen fade used when entering the dungeon from the Store and after boss clears.
+    enum class DungeonFadeState { None, FadingOut, FadingIn };
+    DungeonFadeState      _dungeonFadeState  = DungeonFadeState::None;
+    float                 _dungeonFadeAlpha  = 0.f;   // 0–255
+    float                 _dungeonFadeTimer  = 0.f;
+    std::function<void()> _dungeonFadePendingAction;
+    static constexpr float kDungeonFadeDuration = 0.40f;
 
     // Folder scanned by the TileMapper debug tool for PNG tilesets.
     static constexpr const char* kTilesheetFolder =

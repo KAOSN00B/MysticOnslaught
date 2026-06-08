@@ -87,8 +87,8 @@ private:
     // An animated prop — each frame is a separate drag-selected source rectangle.
     struct AnimPropDef { std::vector<Rectangle> frames; Rectangle collision; float fps; };
 
-    // An animated decoration (frames laid out horizontally in the sheet).
-    struct AnimDecorDef { Rectangle firstFrame; int frameCount; float fps; };
+    // An animated decoration — each frame is a separately drag-selected source rectangle.
+    struct AnimDecorDef { std::vector<Rectangle> frames; float fps; };
 
     // Eight handles used by the collision-box editor.
     enum class CollHandle { None, TL, TC, TR, ML, MR, BL, BC, BR, Body };
@@ -187,12 +187,12 @@ private:
     std::vector<AnimDecorDef> _animDecorDefs;
     float _propScrollY      = 0.f;
     float _decorScrollY     = 0.f;
-    int   _animDecorFrames  = 4;    // frame count for new animated decors
-    float _animDecorFps     = 8.f;  // fps for new animated decors
+    float _animDecorFps     = 8.f;  // fps for the anim decor being built
     float _animPropFps      = 8.f;  // fps for the anim prop being built
 
-    // Frames accumulated during anim prop building; cleared after Finalize or Clear.
+    // Frames accumulated during anim prop/decor building; cleared after Finalize or Clear.
     std::vector<Rectangle> _pendingAnimPropFrames;
+    std::vector<Rectangle> _pendingAnimDecorFrames;
 
     // Collision-box editor state.
     // Exactly one of _editingPropIdx or _editingAnimPropIdx is >= 0 at a time.

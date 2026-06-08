@@ -100,6 +100,16 @@ namespace
 
 }
 
+// Biomes that have a saved TileMapper export and a tilesheet PNG.
+// Add new entries here as tilesets are created and verified.
+// DreamRealm: txt file contains Forest data (wrong biome selected at export) — needs re-export.
+static constexpr Biome kTilesetBiomes[]  = { Biome::Caverns, Biome::AncientCastle,
+                                             Biome::DemonsInsides, Biome::Graveyard,
+                                             Biome::Jungle, Biome::DreamRealm,
+                                             Biome::Wastelands, Biome::LostCity,
+                                             Biome::TheSanctuary };
+static constexpr int   kTilesetBiomeCount = 9;
+
 Engine::Engine()
     : _gameState(_runState.StateRef())
     , _howToPlayFrom(_runState.HowToPlayFromRef())
@@ -430,13 +440,9 @@ void Engine::DebugStartRun()
     _message = "Debug Dungeon";
 
     _dungeonGen.Generate();
-    _tileDefs = {};
-    _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
-    {
-        std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
-        std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
-        _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
-    }
+    _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
+    _pendingBiome = _currentBiome;
+    LoadTilesetForBiome(_currentBiome);
 
     int startIdx = _dungeonGen.GetStartIndex();
     EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
@@ -1160,15 +1166,11 @@ void Engine::Update(float dt)
             _debug.Deactivate();
             ResetRunState();
 
-            // ── Enter the Caverns dungeon directly ────────────────────────────
+            // ── Enter a randomly chosen dungeon directly ──────────────────────
             _dungeonGen.Generate();
-            _tileDefs = {};
-            _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
-            {
-                std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
-                std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
-                _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
-            }
+            _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
+            _pendingBiome = _currentBiome;
+            LoadTilesetForBiome(_currentBiome);
 
             int startIdx2 = _dungeonGen.GetStartIndex();
             EnterDungeonRoom(startIdx2, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
@@ -1192,14 +1194,10 @@ void Engine::Update(float dt)
             _dungeonView          = DungeonView::Graph;
             _dungeonRoomIdx = -1;
 
-            // Load tile definitions from the Caverns tileset save file.
-            _tileDefs = {};
-            _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
-
-            // Load the tilesheet into the renderer.
-            std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
-            std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
-            _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
+            // Pick a random available biome and load its tileset.
+            _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
+            _pendingBiome = _currentBiome;
+            LoadTilesetForBiome(_currentBiome);
 
             _gameState = GameState::DungeonRun;
         }
@@ -1717,15 +1715,11 @@ void Engine::Draw()
         {
             ResetRunState();
 
-            // Re-initialize the dungeon exactly like the Start button does.
+            // Re-initialize the dungeon with a randomly chosen biome.
             _dungeonGen.Generate();
-            _tileDefs = {};
-            _tileDefs.LoadFromFile("tilemapper_Caverns.txt");
-            {
-                std::string sheetPath  = std::string(kTilesheetFolder) + "/Caverns.png";
-                std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
-                _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
-            }
+            _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
+            _pendingBiome = _currentBiome;
+            LoadTilesetForBiome(_currentBiome);
             int retryStartIdx = _dungeonGen.GetStartIndex();
             EnterDungeonRoom(retryStartIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
 
@@ -4940,9 +4934,17 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
     // Boss: scatter a large gold reward at the arena centre.
     if (isBoss)
     {
-        const float mapW = _map.width  * _mapScale;
-        const float mapH = _map.height * _mapScale;
-        const Vector2 centre{ mapW * 0.5f, mapH * 0.5f };
+        // DungeonRun world == screen, so use screen centre.
+        // Overworld uses the map texture centre.
+        Vector2 centre;
+        if (_gameState == GameState::DungeonRun)
+            centre = { (float)GetScreenWidth() * 0.5f, (float)GetScreenHeight() * 0.5f };
+        else
+        {
+            const float mapW = _map.width  * _mapScale;
+            const float mapH = _map.height * _mapScale;
+            centre = { mapW * 0.5f, mapH * 0.5f };
+        }
         auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
         {
             auto g = std::make_unique<GoldPickup>();
@@ -5584,6 +5586,19 @@ const char* Engine::GetBiomeName(Biome biome) const
     case Biome::Wastelands:     return "Wastelands";
     default:                    return "???";
     }
+}
+
+// Loads tile definitions and initialises the renderer for the given biome.
+// File names are derived from GetBiomeName(), e.g. "tilemapper_Ancient Castle.txt" / "Ancient Castle.png".
+void Engine::LoadTilesetForBiome(Biome biome)
+{
+    std::string biomeName  = GetBiomeName(biome);
+    std::string txtFile    = "tilemapper_" + biomeName + ".txt";
+    std::string sheetPath  = std::string(kTilesheetFolder) + "/" + biomeName + ".png";
+    std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
+    _tileDefs = {};
+    _tileDefs.LoadFromFile(txtFile.c_str());
+    _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
 }
 
 void Engine::PopulatePropsForBiome(Biome biome)
@@ -7009,6 +7024,40 @@ Rectangle Engine::GetDungeonRoomRect(int roomIdx) const
 
 void Engine::UpdateDungeonRun(float dt)
 {
+    // ── Dungeon fade transition (Store enter / boss clear) ────────────────────
+    if (_dungeonFadeState != DungeonFadeState::None)
+    {
+        _dungeonFadeTimer -= dt;
+        float progress = 1.f - std::max(0.f, _dungeonFadeTimer) / kDungeonFadeDuration;
+
+        if (_dungeonFadeState == DungeonFadeState::FadingOut)
+        {
+            _dungeonFadeAlpha = progress * 255.f;
+            if (_dungeonFadeTimer <= 0.f)
+            {
+                _dungeonFadeAlpha = 255.f;
+                if (_dungeonFadePendingAction)
+                {
+                    _dungeonFadePendingAction();
+                    _dungeonFadePendingAction = nullptr;
+                }
+                _dungeonFadeState = DungeonFadeState::FadingIn;
+                _dungeonFadeTimer = kDungeonFadeDuration;
+            }
+            return;  // freeze the old room while fading to black
+        }
+        else  // FadingIn
+        {
+            _dungeonFadeAlpha = (1.f - progress) * 255.f;
+            if (_dungeonFadeTimer <= 0.f)
+            {
+                _dungeonFadeAlpha = 0.f;
+                _dungeonFadeState = DungeonFadeState::None;
+            }
+            // gameplay runs normally during fade-in — don't return
+        }
+    }
+
     // ── Play view — player walks around the room ──────────────────────────────
     if (_dungeonView == DungeonView::Play)
     {
@@ -7286,6 +7335,22 @@ void Engine::UpdateDungeonRun(float dt)
                 playerPos.y = cellH + 4.f;
                 _player.SetWorldPos(playerPos);
             }
+            else if (_currentRoomType == RoomType::Store)
+            {
+                // Fade to black before entering the first dungeon room — feels more intentional
+                // than a Zelda-style room scroll for this "entering the dungeon" moment.
+                int nextIdx = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx, -1, 0);
+                if (nextIdx >= 0)
+                {
+                    Vector2 spawnPos{ sw * 0.5f, (RoomLayout::kRows - 2) * cellH };
+                    _dungeonFadePendingAction = [this, nextIdx, spawnPos]()
+                    {
+                        EnterDungeonRoom(nextIdx, DungeonDoorSide::South, spawnPos, false);
+                    };
+                    _dungeonFadeState = DungeonFadeState::FadingOut;
+                    _dungeonFadeTimer = kDungeonFadeDuration;
+                }
+            }
             else
                 startScroll(-1, 0, { 0.f, 1.f }, { pos.x, (RoomLayout::kRows - 2) * cellH });
         }
@@ -7490,12 +7555,17 @@ void Engine::UpdateDungeonRun(float dt)
             Rectangle exitRect = GetDungeonBossExitTrigger();
             if (CheckCollisionPointRec(_player.GetWorldPos(), exitRect))
             {
-                // Boss cleared — generate a fresh dungeon.
-                // (Biome/map selection will go here when ready.)
+                // Boss cleared — fade out, regenerate dungeon, then fade back in.
                 ClearDungeonEnemies();
                 _dungeonGen.Generate();
                 int freshStart = _dungeonGen.GetStartIndex();
-                EnterDungeonRoom(freshStart, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
+                Vector2 spawnPos = GetDungeonBottomSpawnPos();
+                _dungeonFadePendingAction = [this, freshStart, spawnPos]()
+                {
+                    EnterDungeonRoom(freshStart, DungeonDoorSide::None, spawnPos, true);
+                };
+                _dungeonFadeState = DungeonFadeState::FadingOut;
+                _dungeonFadeTimer = kDungeonFadeDuration;
                 return;
             }
         }
@@ -7664,6 +7734,13 @@ void Engine::DrawDungeonRun()
                 DrawHitboxEditor();
             if (_isDlgEditorActive)
                 DrawDialogueBoxEditor();
+        }
+
+        // ── Dungeon fade overlay (covers HUD, enemies, everything) ────────────
+        if (_dungeonFadeAlpha > 0.f)
+        {
+            unsigned char alpha = (unsigned char)std::clamp((int)_dungeonFadeAlpha, 0, 255);
+            DrawRectangle(0, 0, (int)sw, (int)sh, Color{ 0, 0, 0, alpha });
         }
         return;
     }

@@ -2,4 +2,4 @@ srcTop=1.0000
 srcBot=1.0000
 srcLeft=1.0000
 srcRight=1.0000
-dstCorner=16.0000
+dstCorner=1.0000

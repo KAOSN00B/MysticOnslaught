@@ -334,6 +334,7 @@ void TileMapper::OpenSelectedFile()
     _pendingAnimPropFrames.clear();
     _decorDefs.clear();
     _animDecorDefs.clear();
+    _pendingAnimDecorFrames.clear();
     _propScrollY        = 0.f;
     _decorScrollY       = 0.f;
     _panelTab           = PanelTab::Tiles;
@@ -415,6 +416,8 @@ void TileMapper::UpdateMapping()
         _animPropDefs.clear();
         _pendingAnimPropFrames.clear();
         _decorDefs.clear();
+        _animDecorDefs.clear();
+        _pendingAnimDecorFrames.clear();
         _hasSelection  = false;
         _openFileIdx   = -1;
         _screen        = Screen::FileSelect;
@@ -738,32 +741,54 @@ void TileMapper::HandleMouseMapping()
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         { _decorDefs.push_back(src); _hasSelection = false; }
 
-        // Animated add button (below static + frame/fps steppers)
-        float animY = kContentY + 32.f;
-        if (CheckCollisionPointRec(mouse, { _panelX + 10.f, animY, panelW - 20.f, 24.f }) &&
+        // ── Anim decor builder (mirrors anim prop builder in Props tab) ─────────
+        float abY = kContentY + 32.f;
+        if (CheckCollisionPointRec(mouse, { _panelX + 10.f, abY, panelW - 20.f, 24.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
-        { _animDecorDefs.push_back({ src, _animDecorFrames, _animDecorFps }); _hasSelection = false; }
-
-        // Frame count stepper
-        float stY = animY + 30.f;
-        if (CheckCollisionPointRec(mouse, { _panelX + 50.f, stY, 20.f, 20.f }) &&
-            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-            _animDecorFrames = std::max(1, _animDecorFrames - 1);
-        if (CheckCollisionPointRec(mouse, { _panelX + 90.f, stY, 20.f, 20.f }) &&
-            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-            _animDecorFrames = std::min(16, _animDecorFrames + 1);
+        {
+            _pendingAnimDecorFrames.push_back(src);
+            _hasSelection = false;
+        }
 
         // FPS stepper
-        float stY2 = stY + 26.f;
-        if (CheckCollisionPointRec(mouse, { _panelX + 50.f, stY2, 20.f, 20.f }) &&
+        float fpsY = kContentY + 60.f;
+        if (CheckCollisionPointRec(mouse, { _panelX + 50.f, fpsY, 20.f, 20.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _animDecorFps = std::max(1.f, _animDecorFps - 1.f);
-        if (CheckCollisionPointRec(mouse, { _panelX + 90.f, stY2, 20.f, 20.f }) &&
+        if (CheckCollisionPointRec(mouse, { _panelX + 90.f, fpsY, 20.f, 20.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _animDecorFps = std::min(30.f, _animDecorFps + 1.f);
 
+        // Per-frame X buttons on the pending thumbnail strip
+        float thumbY    = kContentY + 84.f;
+        float thumbSlot = 36.f;
+        for (int i = 0; i < (int)_pendingAnimDecorFrames.size(); i++)
+        {
+            float tx = _panelX + 10.f + i * thumbSlot;
+            if (tx + 32.f > _panelX + panelW - 10.f) break;
+            Rectangle xBtn{ tx + 22.f, thumbY + 10.f, 10.f, 10.f };
+            if (CheckCollisionPointRec(mouse, xBtn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            {
+                _pendingAnimDecorFrames.erase(_pendingAnimDecorFrames.begin() + i);
+                break;
+            }
+        }
+
+        // Finalize button — commits pending frames as a new AnimDecorDef
+        float finalY = kContentY + 122.f;
+        bool hasPendingDecor = !_pendingAnimDecorFrames.empty();
+        if (CheckCollisionPointRec(mouse, { _panelX + 10.f, finalY, panelW - 20.f, 24.f }) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && hasPendingDecor)
+        {
+            AnimDecorDef def;
+            def.frames = _pendingAnimDecorFrames;
+            def.fps    = _animDecorFps;
+            _animDecorDefs.push_back(std::move(def));
+            _pendingAnimDecorFrames.clear();
+        }
+
         // List area: static decors then animated decors
-        float listY = kContentY + 94.f;
+        float listY = kContentY + 150.f;
         int totalEntries = (int)_decorDefs.size() + (int)_animDecorDefs.size();
         for (int i = 0; i < (int)_decorDefs.size(); i++)
         {
@@ -862,10 +887,14 @@ void TileMapper::ExportAndSave() const
                 _animPropDefs[i].frames[f].width, _animPropDefs[i].frames[f].height);
     }
     for (int i = 0; i < (int)_animDecorDefs.size(); i++)
-        TraceLog(LOG_INFO, "AnimDecor[%d]     = { %3d, %3d, %3d, %3d }  %dfr %.0ffps;", i,
-            (int)_animDecorDefs[i].firstFrame.x, (int)_animDecorDefs[i].firstFrame.y,
-            (int)_animDecorDefs[i].firstFrame.width, (int)_animDecorDefs[i].firstFrame.height,
-            _animDecorDefs[i].frameCount, _animDecorDefs[i].fps);
+    {
+        TraceLog(LOG_INFO, "AnimDecor[%d]     = %dfr  %.0ffps;", i,
+            (int)_animDecorDefs[i].frames.size(), _animDecorDefs[i].fps);
+        for (int f = 0; f < (int)_animDecorDefs[i].frames.size(); f++)
+            TraceLog(LOG_INFO, "  frame[%d]        = { %.0f, %.0f, %.0f, %.0f };", f,
+                _animDecorDefs[i].frames[f].x, _animDecorDefs[i].frames[f].y,
+                _animDecorDefs[i].frames[f].width, _animDecorDefs[i].frames[f].height);
+    }
     TraceLog(LOG_INFO, "==========================================");
 
     std::string path = SavePath();
@@ -898,9 +927,12 @@ void TileMapper::ExportAndSave() const
         for (const Rectangle& r : _decorDefs)
             fprintf(f, "DECOR %.0f %.0f %.0f %.0f\n", r.x, r.y, r.width, r.height);
         for (const AnimDecorDef& a : _animDecorDefs)
-            fprintf(f, "ANIMDECOR %.0f %.0f %.0f %.0f %d %.1f\n",
-                a.firstFrame.x, a.firstFrame.y, a.firstFrame.width, a.firstFrame.height,
-                a.frameCount, a.fps);
+        {
+            fprintf(f, "ANIMDECOR %.1f %d", a.fps, (int)a.frames.size());
+            for (const Rectangle& r : a.frames)
+                fprintf(f, " %.0f %.0f %.0f %.0f", r.x, r.y, r.width, r.height);
+            fprintf(f, "\n");
+        }
         fclose(f);
 
         if (_openFileIdx >= 0 && _openFileIdx < (int)_files.size())
@@ -967,10 +999,19 @@ void TileMapper::TryLoadSave()
         }
         else if (strcmp(tag, "ANIMDECOR") == 0)
         {
-            float x, y, w, h, fps;
+            float fps;
             int   fc;
-            if (fscanf_s(f, "%f %f %f %f %d %f", &x, &y, &w, &h, &fc, &fps) != 6) continue;
-            _animDecorDefs.push_back({ {x, y, w, h}, fc, fps });
+            if (fscanf_s(f, "%f %d", &fps, &fc) != 2) continue;
+            AnimDecorDef def;
+            def.fps = fps;
+            for (int i = 0; i < fc; i++)
+            {
+                float fx, fy, fw, fh;
+                if (fscanf_s(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
+                def.frames.push_back({ fx, fy, fw, fh });
+            }
+            if (!def.frames.empty())
+                _animDecorDefs.push_back(std::move(def));
         }
         else if (strcmp(tag, "ANIMPROP") == 0)
         {
@@ -1533,42 +1574,88 @@ void TileMapper::DrawPanel() const
             (int)(_panelX + 10.f + (panelW-20.f)*0.5f - MeasureText(addLbl,12)*0.5f),
             (int)(kContentY + 5.f), 12, WHITE);
 
-        // Animated add button + frame/fps steppers
-        float animY = kContentY + 32.f;
-        bool animHov = CheckCollisionPointRec(GetMousePosition(),
-            { _panelX + 10.f, animY, panelW - 20.f, 24.f }) && _hasSelection;
-        DrawRectangleRec({ _panelX + 10.f, animY, panelW - 20.f, 24.f },
-            animHov ? Color{160,80,40,230} : Color{100,50,20,180});
-        DrawRectangleLinesEx({ _panelX + 10.f, animY, panelW - 20.f, 24.f }, 1.f,
-            animHov ? WHITE : Fade(WHITE, 0.25f));
-        const char* animLbl = "+ Add Animated Decor";
-        DrawText(animLbl,
-            (int)(_panelX + 10.f + (panelW-20.f)*0.5f - MeasureText(animLbl,12)*0.5f),
-            (int)(animY + 5.f), 12, ORANGE);
+        // ── Anim decor builder header ─────────────────────────────────────────
+        DrawLineEx({ _panelX+10.f, kContentY+28.f }, { _panelX+panelW-10.f, kContentY+28.f },
+            1.f, Fade(ORANGE, 0.3f));
+        DrawText("Anim Decor Builder", (int)(_panelX+12.f), (int)(kContentY+30.f),
+            10, Fade(ORANGE, 0.7f));
 
-        // Frame count stepper
-        float stY = animY + 30.f;
-        DrawText("Frames:", (int)(_panelX + 12.f), (int)(stY + 3.f), 11, Fade(WHITE, 0.7f));
-        DrawRectangleRounded({ _panelX + 50.f, stY, 20.f, 20.f }, 0.3f, 4, Fade(WHITE,0.12f));
-        DrawText("<", (int)(_panelX + 56.f), (int)(stY + 3.f), 13, WHITE);
-        DrawText(TextFormat("%d", _animDecorFrames), (int)(_panelX + 74.f), (int)(stY + 3.f), 12, GOLD);
-        DrawRectangleRounded({ _panelX + 90.f, stY, 20.f, 20.f }, 0.3f, 4, Fade(WHITE,0.12f));
-        DrawText(">", (int)(_panelX + 95.f), (int)(stY + 3.f), 13, WHITE);
+        float abY = kContentY + 44.f;
+        bool frameHov = CheckCollisionPointRec(GetMousePosition(),
+            { _panelX+10.f, abY, panelW-20.f, 24.f }) && _hasSelection;
+        DrawRectangleRec({ _panelX+10.f, abY, panelW-20.f, 24.f },
+            frameHov ? Color{160,80,40,230} : Color{100,50,20,180});
+        DrawRectangleLinesEx({ _panelX+10.f, abY, panelW-20.f, 24.f }, 1.f,
+            frameHov ? WHITE : Fade(WHITE, 0.25f));
+        const char* frameLbl = "+ Add Frame";
+        DrawText(frameLbl,
+            (int)(_panelX+10.f+(panelW-20.f)*0.5f-MeasureText(frameLbl,13)*0.5f),
+            (int)(abY+5.f), 13, _hasSelection ? ORANGE : Fade(ORANGE, 0.4f));
 
-        float stY2 = stY + 26.f;
-        DrawText("FPS:", (int)(_panelX + 12.f), (int)(stY2 + 3.f), 11, Fade(WHITE, 0.7f));
-        DrawRectangleRounded({ _panelX + 50.f, stY2, 20.f, 20.f }, 0.3f, 4, Fade(WHITE,0.12f));
-        DrawText("<", (int)(_panelX + 56.f), (int)(stY2 + 3.f), 13, WHITE);
-        DrawText(TextFormat("%.0f", _animDecorFps), (int)(_panelX + 74.f), (int)(stY2 + 3.f), 12, GOLD);
-        DrawRectangleRounded({ _panelX + 90.f, stY2, 20.f, 20.f }, 0.3f, 4, Fade(WHITE,0.12f));
-        DrawText(">", (int)(_panelX + 95.f), (int)(stY2 + 3.f), 13, WHITE);
+        // FPS stepper
+        float fpsY = kContentY + 72.f;
+        DrawText("FPS:", (int)(_panelX+12.f), (int)(fpsY+2.f), 11, Fade(WHITE, 0.7f));
+        DrawRectangleRounded({ _panelX+52.f, fpsY, 18.f, 18.f }, 0.3f, 4, Fade(WHITE,0.12f));
+        DrawText("<", (int)(_panelX+57.f), (int)(fpsY+2.f), 12, WHITE);
+        DrawText(TextFormat("%.0f", _animDecorFps), (int)(_panelX+74.f), (int)(fpsY+2.f), 12, GOLD);
+        DrawRectangleRounded({ _panelX+88.f, fpsY, 18.f, 18.f }, 0.3f, 4, Fade(WHITE,0.12f));
+        DrawText(">", (int)(_panelX+93.f), (int)(fpsY+2.f), 12, WHITE);
 
-        if (!_hasSelection)
-            DrawText("(select first frame)", (int)(_panelX + 12.f), (int)(stY2 + 24.f),
-                10, Fade(WHITE, 0.35f));
+        // Pending frame thumbnail strip with per-frame X buttons
+        float thumbY    = kContentY + 96.f;
+        float thumbSz   = 32.f;
+        float thumbSlot = 36.f;
+        int   nPendD    = (int)_pendingAnimDecorFrames.size();
+        if (nPendD == 0)
+        {
+            DrawText("(select regions, click Add Frame)",
+                (int)(_panelX+12.f), (int)(thumbY+8.f), 10, Fade(WHITE, 0.3f));
+        }
+        else
+        {
+            DrawText(TextFormat("%d frame%s:", nPendD, nPendD==1?"":"s"),
+                (int)(_panelX+12.f), (int)(thumbY-2.f), 10, Fade(ORANGE, 0.8f));
+            for (int i = 0; i < nPendD; i++)
+            {
+                float tx = _panelX + 10.f + i * thumbSlot;
+                if (tx + thumbSz > _panelX + panelW - 10.f)
+                {
+                    DrawText(TextFormat("+%d", nPendD - i),
+                        (int)(tx+2.f), (int)(thumbY+10.f), 11, Fade(ORANGE, 0.7f));
+                    break;
+                }
+                if (_sheet.id != 0)
+                    DrawTexturePro(_sheet, _pendingAnimDecorFrames[i],
+                        { tx, thumbY+10.f, thumbSz, thumbSz }, {}, 0.f, WHITE);
+                DrawRectangleLinesEx({ tx, thumbY+10.f, thumbSz, thumbSz }, 1.f,
+                    Fade(ORANGE, 0.5f));
+                Rectangle xBtn{ tx+22.f, thumbY+10.f, 10.f, 10.f };
+                bool xHov = CheckCollisionPointRec(GetMousePosition(), xBtn);
+                DrawRectangleRec(xBtn, xHov ? Fade(RED,0.9f) : Fade(RED,0.55f));
+                DrawText("x", (int)(xBtn.x+2.f), (int)(xBtn.y+1.f), 9, WHITE);
+            }
+        }
+
+        // Finalize button
+        float finalY  = kContentY + 134.f;
+        bool hasPendD = nPendD > 0;
+        bool finalHov = hasPendD && CheckCollisionPointRec(GetMousePosition(),
+            { _panelX+10.f, finalY, panelW-20.f, 24.f });
+        DrawRectangleRec({ _panelX+10.f, finalY, panelW-20.f, 24.f },
+            finalHov ? Color{60,180,60,230}
+            : hasPendD ? Color{35,110,35,200} : Color{20,40,20,160});
+        DrawRectangleLinesEx({ _panelX+10.f, finalY, panelW-20.f, 24.f }, 1.f,
+            finalHov ? WHITE : hasPendD ? Fade(WHITE,0.3f) : Fade(WHITE,0.12f));
+        const char* fnLbl = hasPendD ? "Finalize Anim Decor" : "Finalize  (add frames first)";
+        DrawText(fnLbl,
+            (int)(_panelX+10.f+(panelW-20.f)*0.5f-MeasureText(fnLbl,12)*0.5f),
+            (int)(finalY+5.f), 12, hasPendD ? WHITE : Fade(WHITE, 0.30f));
+
+        DrawLineEx({ _panelX+10.f, kContentY+162.f },
+            { _panelX+panelW-10.f, kContentY+162.f }, 1.f, Fade(WHITE,0.15f));
 
         // Unified scrollable list: static decors then animated decors
-        float listY = kContentY + 94.f;
+        float listY = kContentY + 166.f;
         BeginScissorMode((int)_panelX, (int)listY, (int)panelW, (int)(sh - listY));
 
         int totalRows = (int)_decorDefs.size() + (int)_animDecorDefs.size();
@@ -1604,11 +1691,11 @@ void TileMapper::DrawPanel() const
                 Color{32,22,16,200});
             DrawRectangleLinesEx({ _panelX+6.f, ry, panelW-12.f, kListRowH-2.f },
                 1.f, Color{180,90,40,120});
-            if (_sheet.id != 0)
-                DrawTexturePro(_sheet, _animDecorDefs[i].firstFrame,
+            if (_sheet.id != 0 && !_animDecorDefs[i].frames.empty())
+                DrawTexturePro(_sheet, _animDecorDefs[i].frames[0],
                     { _panelX+12.f, ry+7.f, 36.f, 36.f }, {}, 0.f, WHITE);
             DrawText(TextFormat("Anim #%d  %dfr %.0ffps", i,
-                    _animDecorDefs[i].frameCount, _animDecorDefs[i].fps),
+                    (int)_animDecorDefs[i].frames.size(), _animDecorDefs[i].fps),
                 (int)(_panelX+54.f), (int)(ry+15.f), 11, ORANGE);
             Rectangle rb{ _panelX+panelW-36.f, ry+13.f, 26.f, 24.f };
             DrawRectangleRec(rb, Fade(RED, 0.45f));

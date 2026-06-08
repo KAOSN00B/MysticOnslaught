@@ -16,6 +16,7 @@ void NineSliceEditor::Init(const char* assetsRoot)
     _screen       = Screen::FileSelect;
     _wantsToExit  = false;
     _selectedIdx  = -1;
+    _openIdx      = -1;
     _listScrollY  = 0.f;
     _filterBuf[0] = '\0';
 
@@ -317,7 +318,7 @@ void NineSliceEditor::UpdateEditor()
         _texOffX = mx - (mx - _texOffX) * zoomFactor;
         _texOffY = my - (my - _texOffY) * zoomFactor;
         _texScale *= zoomFactor;
-        _texScale = std::max(_texScale, 0.05f);
+        _texScale = std::max(0.05f, std::min(64.f, _texScale));
     }
 
     // ── Middle-mouse pan ──────────────────────────────────────────────────────

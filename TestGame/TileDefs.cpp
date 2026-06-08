@@ -65,11 +65,19 @@ bool TileDefSet::LoadFromFile(const char* path)
         }
         else if (strcmp(tag, "ANIMDECOR") == 0)
         {
-            float x, y, w, h;
-            int   fc;
             float fps;
-            if (fscanf_s(f, "%f %f %f %f %d %f", &x, &y, &w, &h, &fc, &fps) != 6) continue;
-            animDecors.push_back({ {x, y, w, h}, fc, fps });
+            int   fc;
+            if (fscanf_s(f, "%f %d", &fps, &fc) != 2) continue;
+            AnimSpriteDef def;
+            def.fps = fps;
+            for (int i = 0; i < fc; i++)
+            {
+                float fx, fy, fw, fh;
+                if (fscanf_s(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
+                def.frames.push_back({ fx, fy, fw, fh });
+            }
+            if (!def.frames.empty())
+                animDecors.push_back(std::move(def));
         }
         else if (strcmp(tag, "GTILE") == 0)
         {

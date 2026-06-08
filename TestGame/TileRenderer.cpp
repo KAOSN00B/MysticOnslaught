@@ -65,12 +65,12 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         if (d.defIdx < 0 || d.defIdx >= (int)_defs.animDecors.size()) continue;
         const AnimSpriteDef& anim = _defs.animDecors[d.defIdx];
 
+        if (anim.frames.empty()) continue;
         int frame = 0;
-        if (anim.frameCount > 1 && anim.fps > 0.f)
-            frame = (int)(GetTime() * anim.fps) % anim.frameCount;
+        if ((int)anim.frames.size() > 1 && anim.fps > 0.f)
+            frame = (int)(GetTime() * anim.fps) % (int)anim.frames.size();
 
-        Rectangle src = anim.firstFrame;
-        src.x += frame * src.width;
+        Rectangle src = anim.frames[frame];
 
         // Draw at half scale like static decors, centred in the cell.
         float dScaleX = scaleX * 0.75f;

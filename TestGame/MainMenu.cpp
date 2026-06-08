@@ -128,8 +128,8 @@ void MainMenu::Draw()
     float borderY = sh * 0.35f;
 
     if (_borderTex.id != 0)
-        DrawNineSliceEx(_borderTex, BORDER_SRC_TOP, BORDER_SRC_BOT, BORDER_SRC_LEFT, BORDER_SRC_RIGHT,
-            BORDER_DST_CORNER, { borderX, borderY, borderW, borderH }, WHITE);
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
+            { borderX, borderY, borderW, borderH }, WHITE);
 
     // ── Title banner ─────────────────────────────────────────────────────────
     float bannerW = sw * 0.42f;

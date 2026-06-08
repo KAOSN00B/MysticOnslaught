@@ -6,10 +6,7 @@
 
 // ── 9-slice corner sizes ──────────────────────────────────────────────────────
 // Border values tuned via 9-Slice Editor (MainMenuBorder.png).
-static constexpr float BORDER_SRC_TOP    = 13.8f;
-static constexpr float BORDER_SRC_BOT    = 13.3f;
-static constexpr float BORDER_SRC_LEFT   = 14.3f;
-static constexpr float BORDER_SRC_RIGHT  = 14.5f;
+static constexpr float BORDER_SRC_CORNER = 1.f;
 static constexpr float BORDER_DST_CORNER = 16.f;
 static constexpr float BTN_SRC_CORNER    = 8.f;
 static constexpr float BTN_DST_CORNER    = 16.f;
@@ -110,7 +107,7 @@ int PauseAndGameOver::DrawPause()
     // Draw border texture as the panel background (slightly oversized for visual frame)
     float borderPad = sw * 0.03f;
     if (_borderTex.id != 0)
-        DrawNineSliceEx(_borderTex, BORDER_SRC_TOP, BORDER_SRC_BOT, BORDER_SRC_LEFT, BORDER_SRC_RIGHT, BORDER_DST_CORNER,
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
             { panelX - borderPad, panelY - borderPad,
               panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
     else
@@ -389,7 +386,7 @@ int PauseAndGameOver::DrawGameOver()
 
     float borderPad = sw * 0.03f;
     if (_borderTex.id != 0)
-        DrawNineSliceEx(_borderTex, BORDER_SRC_TOP, BORDER_SRC_BOT, BORDER_SRC_LEFT, BORDER_SRC_RIGHT, BORDER_DST_CORNER,
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
             { panelX - borderPad, panelY - borderPad,
               panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
     else
