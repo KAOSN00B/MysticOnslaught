@@ -1,6 +1,7 @@
 ﻿#include "TileMapper.h"
 #include "VirtualCanvas.h"
 #include "TileDefs.h"
+#include "RoomLayout.h"
 #include "VirtualCanvas.h"
 #include "raymath.h"
 #include "VirtualCanvas.h"
@@ -553,13 +554,20 @@ void TileMapper::HandleMouseMapping()
     static constexpr float kAddBtnH  = 28.f;
     static constexpr float kListY    = kContentY + kAddBtnH + 8.f;
 
-    // Tab row
-    float tabW = (panelW - 20.f) / 3.f;
-    for (int t = 0; t < 3; t++)
+    // Tab row — 4 tabs including Spawn Zone
+    float tabW = (panelW - 20.f) / 4.f;
+    for (int t = 0; t < 4; t++)
     {
         Rectangle tab{ _panelX + 10.f + t * tabW, kTabsY, tabW, kTabH };
         if (CheckCollisionPointRec(mouse, tab) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _panelTab = (PanelTab)t;
+    }
+
+    // Spawn Zone tab handles its own input in the room area; skip sheet interaction.
+    if (_panelTab == PanelTab::SpawnZone)
+    {
+        UpdateSpawnZoneInput();
+        return;
     }
 
     // ── Tiles tab ─────────────────────────────────────────────────────────────
@@ -1054,6 +1062,10 @@ void TileMapper::DrawMapping() const
     {
         DrawCollisionEditor();
     }
+    else if (_panelTab == PanelTab::SpawnZone)
+    {
+        DrawSpawnZoneView();
+    }
     else
     {
         ClearBackground(Color{ 18, 18, 24, 255 });
@@ -1240,9 +1252,9 @@ void TileMapper::DrawPanel() const
     static constexpr float kTabsY   = 96.f;
     static constexpr float kTabH    = 26.f;
     static constexpr float kContentY = kTabsY + kTabH + 4.f;
-    const char* tabNames[] = { "Tiles", "Props", "Decors" };
-    float tabW = (panelW - 20.f) / 3.f;
-    for (int t = 0; t < 3; t++)
+    const char* tabNames[] = { "Tiles", "Props", "Decors", "Spawn Zone" };
+    float tabW = (panelW - 20.f) / 4.f;
+    for (int t = 0; t < 4; t++)
     {
         Rectangle tab{ _panelX + 10.f + t * tabW, kTabsY, tabW, kTabH };
         bool active = ((int)_panelTab == t);
@@ -1713,12 +1725,227 @@ void TileMapper::DrawPanel() const
                 (int)(_panelX + 10.f), (int)(sh - 22.f), 11, Fade(WHITE, 0.35f));
     }
 
+    // ── Spawn Zone tab ────────────────────────────────────────────────────────
+    if (_panelTab == PanelTab::SpawnZone)
+    {
+        float infoX = _panelX + 14.f;
+        float infoY = kContentY + 8.f;
+        const int kFs = 15;
+        const int kSmFs = 12;
+
+        DrawText("Prop Spawn Constraints", (int)infoX, (int)infoY, kFs, GOLD);
+        infoY += 24.f;
+
+        DrawText(TextFormat("Col  min  : %2d", _szColMin), (int)infoX, (int)infoY, kFs, RAYWHITE);  infoY += 22.f;
+        DrawText(TextFormat("Col  max  : %2d", _szColMax), (int)infoX, (int)infoY, kFs, RAYWHITE);  infoY += 22.f;
+        DrawText(TextFormat("Row  min  : %2d", _szRowMin), (int)infoX, (int)infoY, kFs, RAYWHITE);  infoY += 22.f;
+        DrawText(TextFormat("Row  max  : %2d", _szRowMax), (int)infoX, (int)infoY, kFs, RAYWHITE);  infoY += 28.f;
+
+        DrawText("Room: 28 cols x 16 rows",   (int)infoX, (int)infoY, kSmFs, Fade(WHITE, 0.5f)); infoY += 18.f;
+        DrawText("Walls: row/col 0 and last",  (int)infoX, (int)infoY, kSmFs, Fade(WHITE, 0.5f)); infoY += 24.f;
+
+        DrawText("Door clearance (yellow):",   (int)infoX, (int)infoY, kSmFs, Color{220,200,60,200}); infoY += 16.f;
+        DrawText("  cols 12-16  rows 6-9",     (int)infoX, (int)infoY, kSmFs, Color{220,200,60,200}); infoY += 24.f;
+
+        DrawText("Drag green edges to resize.", (int)infoX, (int)infoY, kSmFs, Fade(WHITE, 0.55f)); infoY += 18.f;
+        DrawText("Values  ->  RoomLayout.cpp",  (int)infoX, (int)infoY, kSmFs, Fade(WHITE, 0.45f));
+    }
+
     // Save hint (always visible)
     int ew2 = MeasureText("[S]  Save & Export", 15);
-    if (_panelTab != PanelTab::Tiles)
+    if (_panelTab != PanelTab::Tiles && _panelTab != PanelTab::SpawnZone)
         DrawText("[S]  Save & Export",
             (int)(_panelX + panelW * 0.5f - ew2 * 0.5f),
             (int)(sh - 38.f), 15, Fade(GOLD, 0.85f));
+}
+
+// ── Spawn Zone ────────────────────────────────────────────────────────────────
+
+void TileMapper::UpdateSpawnZoneInput()
+{
+    Vector2 mouse = GetVirtualMousePos();
+    if (mouse.x >= _panelX) return;   // ignore panel area
+
+    const float sh       = (float)kVirtualHeight;
+    const int   kCols    = RoomLayout::kCols;
+    const int   kRows    = RoomLayout::kRows;
+    const float cellSize = std::min(_panelX / (float)kCols, sh / (float)kRows);
+    const float roomX    = 0.f;
+    const float roomY    = (sh - kRows * cellSize) * 0.5f;
+    const float kSnap    = 12.f;
+
+    if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+    {
+        _szDragging = false;
+        _szDragEdge = -1;
+        return;
+    }
+
+    float topEdgeY   = roomY + _szRowMin * cellSize;
+    float botEdgeY   = roomY + (_szRowMax + 1) * cellSize;
+    float leftEdgeX  = roomX + _szColMin * cellSize;
+    float rightEdgeX = roomX + (_szColMax + 1) * cellSize;
+
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !_szDragging)
+    {
+        if      (fabsf(mouse.y - topEdgeY)   < kSnap) { _szDragEdge = 0; _szDragging = true; }
+        else if (fabsf(mouse.y - botEdgeY)   < kSnap) { _szDragEdge = 1; _szDragging = true; }
+        else if (fabsf(mouse.x - leftEdgeX)  < kSnap) { _szDragEdge = 2; _szDragging = true; }
+        else if (fabsf(mouse.x - rightEdgeX) < kSnap) { _szDragEdge = 3; _szDragging = true; }
+    }
+
+    if (_szDragging && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+    {
+        switch (_szDragEdge)
+        {
+        case 0: // top — row min
+        {
+            int row   = (int)((mouse.y - roomY) / cellSize);
+            _szRowMin = std::clamp(row, 1, _szRowMax - 1);
+            break;
+        }
+        case 1: // bottom — row max (edge is at rowMax+1, so row−1)
+        {
+            int row   = (int)((mouse.y - roomY) / cellSize);
+            _szRowMax = std::clamp(row - 1, _szRowMin + 1, kRows - 2);
+            break;
+        }
+        case 2: // left — col min
+        {
+            int col   = (int)((mouse.x - roomX) / cellSize);
+            _szColMin = std::clamp(col, 1, _szColMax - 1);
+            break;
+        }
+        case 3: // right — col max (edge is at colMax+1, so col−1)
+        {
+            int col   = (int)((mouse.x - roomX) / cellSize);
+            _szColMax = std::clamp(col - 1, _szColMin + 1, kCols - 2);
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+void TileMapper::DrawSpawnZoneView() const
+{
+    const float sw       = (float)kVirtualWidth;
+    const float sh       = (float)kVirtualHeight;
+    const int   kCols    = RoomLayout::kCols;
+    const int   kRows    = RoomLayout::kRows;
+    const float cellSize = std::min(_panelX / (float)kCols, sh / (float)kRows);
+    const float roomX    = 0.f;
+    const float roomY    = (sh - kRows * cellSize) * 0.5f;
+
+    // Outer background
+    DrawRectangle(0, 0, (int)_panelX, (int)sh, Color{10, 10, 14, 255});
+
+    // Door positions (must match RoomLayout.cpp exactly)
+    const int doorStartC = kCols / 2 - 1;  // = 13
+    const int doorStartR = kRows / 2 - 1;  // = 7
+
+    // Draw each tile as a colour-coded rectangle
+    for (int r = 0; r < kRows; r++)
+    {
+        for (int c = 0; c < kCols; c++)
+        {
+            float tx = roomX + c * cellSize;
+            float ty = roomY + r * cellSize;
+
+            bool isTopWall    = (r == 0);
+            bool isBottomWall = (r == kRows - 1);
+            bool isLeftWall   = (c == 0);
+            bool isRightWall  = (c == kCols - 1);
+            bool isBorder     = isTopWall || isBottomWall || isLeftWall || isRightWall;
+
+            // North/south doors: 3-wide centred; east/west doors: 2-tall centred
+            bool isDoor = false;
+            if (isTopWall    && c >= doorStartC     && c <= doorStartC + 2) isDoor = true;
+            if (isBottomWall && c >= doorStartC     && c <= doorStartC + 2) isDoor = true;
+            if (isLeftWall   && r >= doorStartR     && r <= doorStartR + 1) isDoor = true;
+            if (isRightWall  && r >= doorStartR     && r <= doorStartR + 1) isDoor = true;
+
+            Color tileColor = isDoor    ? Color{55, 115, 155, 255}
+                            : isBorder  ? Color{82, 57,  34, 255}
+                                        : Color{40, 45,  50, 255};
+
+            DrawRectangleV({ tx, ty }, { cellSize, cellSize }, tileColor);
+            DrawRectangleLinesEx({ tx, ty, cellSize, cellSize }, 0.5f, Fade(BLACK, 0.28f));
+        }
+    }
+
+    // Door clearance zones — yellow semi-transparent strips
+    // Column clearance: cols 12-16 (doorStartC-1 to doorStartC+3)
+    float dcColX = roomX + (doorStartC - 1) * cellSize;
+    float dcColW = 5.f * cellSize;
+    DrawRectangle((int)dcColX, (int)(roomY + cellSize),
+                  (int)dcColW, (int)((kRows - 2) * cellSize),
+                  Color{210, 190, 40, 28});
+    DrawRectangleLinesEx({ dcColX, roomY + cellSize, dcColW, (kRows - 2) * cellSize },
+                          1.f, Color{210, 190, 40, 110});
+
+    // Row clearance: rows 6-9 (doorStartR-1 to doorStartR+2)
+    float dcRowY = roomY + (doorStartR - 1) * cellSize;
+    float dcRowH = 4.f * cellSize;
+    DrawRectangle((int)(roomX + cellSize), (int)dcRowY,
+                  (int)((kCols - 2) * cellSize), (int)dcRowH,
+                  Color{210, 190, 40, 28});
+    DrawRectangleLinesEx({ roomX + cellSize, dcRowY, (kCols - 2) * cellSize, dcRowH },
+                          1.f, Color{210, 190, 40, 110});
+
+    // Spawn zone rectangle
+    float szLeft   = roomX + _szColMin * cellSize;
+    float szRight  = roomX + (_szColMax + 1) * cellSize;
+    float szTop    = roomY + _szRowMin * cellSize;
+    float szBottom = roomY + (_szRowMax + 1) * cellSize;
+    DrawRectangle((int)szLeft, (int)szTop,
+                  (int)(szRight - szLeft), (int)(szBottom - szTop),
+                  Color{70, 210, 70, 40});
+
+    // Edge highlight colours: bright green when hovered or being dragged
+    Vector2 mouse    = GetVirtualMousePos();
+    const float kSnap = 12.f;
+    bool hovTop   = fabsf(mouse.y - szTop)    < kSnap && mouse.x < _panelX;
+    bool hovBot   = fabsf(mouse.y - szBottom) < kSnap && mouse.x < _panelX;
+    bool hovLeft  = fabsf(mouse.x - szLeft)   < kSnap && mouse.x < _panelX;
+    bool hovRight = fabsf(mouse.x - szRight)  < kSnap && mouse.x < _panelX;
+
+    // Active drag overrides hover
+    if (_szDragging) { hovTop = hovBot = hovLeft = hovRight = false; }
+    if (_szDragEdge == 0) hovTop   = true;
+    if (_szDragEdge == 1) hovBot   = true;
+    if (_szDragEdge == 2) hovLeft  = true;
+    if (_szDragEdge == 3) hovRight = true;
+
+    auto edgeCol = [](bool active) -> Color
+    { return active ? Color{130, 255, 130, 255} : Color{70, 210, 70, 190}; };
+
+    const float kEdgeThick = 3.f;
+    DrawLineEx({ szLeft,  szTop    }, { szRight, szTop    }, kEdgeThick, edgeCol(hovTop));
+    DrawLineEx({ szLeft,  szBottom }, { szRight, szBottom }, kEdgeThick, edgeCol(hovBot));
+    DrawLineEx({ szLeft,  szTop    }, { szLeft,  szBottom }, kEdgeThick, edgeCol(hovLeft));
+    DrawLineEx({ szRight, szTop    }, { szRight, szBottom }, kEdgeThick, edgeCol(hovRight));
+
+    // Row/col labels on each edge
+    const int kLabelFs = 14;
+    DrawText(TextFormat("row %d", _szRowMin),
+             (int)(szLeft + 4.f), (int)(szTop + 4.f), kLabelFs, Color{130,255,130,255});
+    DrawText(TextFormat("row %d", _szRowMax),
+             (int)(szLeft + 4.f), (int)(szBottom - kLabelFs - 4.f), kLabelFs, Color{130,255,130,255});
+    DrawText(TextFormat("col %d", _szColMin),
+             (int)(szLeft + 3.f), (int)(szBottom - kLabelFs * 2 - 8.f), kLabelFs, Color{130,255,130,255});
+    DrawText(TextFormat("col %d", _szColMax),
+             (int)(szRight - 46.f), (int)(szBottom - kLabelFs * 2 - 8.f), kLabelFs, Color{130,255,130,255});
+
+    // Legend
+    DrawRectangle(8, 8, 248, 84, Color{0, 0, 0, 150});
+    DrawText("SPAWN ZONE VIEWER",        16, 13, 13, GOLD);
+    DrawRectangle(16, 32, 12, 12, Color{70, 210, 70, 200});
+    DrawText("Spawn zone  (drag edges)", 32, 31, 12, RAYWHITE);
+    DrawRectangle(16, 50, 12, 12, Color{210, 190, 40, 140});
+    DrawText("Door clearance zones",     32, 49, 12, RAYWHITE);
+    DrawRectangle(16, 68, 12, 12, Color{55, 115, 155, 255});
+    DrawText("Door openings",            32, 67, 12, RAYWHITE);
 }
 
 // ── Collision-box editor ──────────────────────────────────────────────────────

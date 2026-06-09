@@ -64,7 +64,7 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
         layout.tiles[rows / 2][cols / 2] = TileType::ChestClosed;
 
     // ── Props (solid objects) ─────────────────────────────────────────────────
-    if (propCount > 0 && type != RoomType::Boss && type != RoomType::Rest)
+    if (propCount > 0 && type != RoomType::Boss && type != RoomType::Rest && type != RoomType::Store)
     {
         int numProps = 0;
         switch (type)
@@ -114,7 +114,7 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
     }
 
     // ── Animated props — scattered like static props, drawn on top with collision ─
-    if (animPropCount > 0 && type != RoomType::Boss && type != RoomType::Rest)
+    if (animPropCount > 0 && type != RoomType::Boss && type != RoomType::Rest && type != RoomType::Store)
     {
         int numAnimProps = 0;
         switch (type)

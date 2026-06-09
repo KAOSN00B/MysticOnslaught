@@ -125,6 +125,22 @@ void DungeonGen::AssignSpecialRooms()
     _rooms[_startIdx].hasEast  = false;
     _rooms[_startIdx].hasWest  = false;
 
+    // Strip reciprocal connections so no neighboring room opens a door facing the Store.
+    // BuildConnections uses raw grid adjacency, so east/west neighbors of the Store
+    // would otherwise generate a door tile pointing into the Store room.
+    int storeRow = _rooms[_startIdx].row;
+    int storeCol = _rooms[_startIdx].col;
+    if (storeCol + 1 < kGridSize)
+    {
+        int eastNeighbor = _grid[storeRow][storeCol + 1];
+        if (eastNeighbor >= 0) _rooms[eastNeighbor].hasWest = false;
+    }
+    if (storeCol - 1 >= 0)
+    {
+        int westNeighbor = _grid[storeRow][storeCol - 1];
+        if (westNeighbor >= 0) _rooms[westNeighbor].hasEast = false;
+    }
+
     // The room directly north of the Store has no south door — once the player
     // exits the Store they can never walk back in from above.
     int northOfStart = _grid[_rooms[_startIdx].row - 1][_rooms[_startIdx].col];

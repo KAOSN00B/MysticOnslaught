@@ -7212,7 +7212,8 @@ void Engine::ResolveDungeonEnemyCollisions()
         int ec = std::max(0, std::min((int)(ePos.x / cellW), RoomLayout::kCols - 1));
         int er = std::max(0, std::min((int)(ePos.y / cellH), RoomLayout::kRows - 1));
 
-        for (int r = std::max(0, er - 2); r <= std::min(RoomLayout::kRows - 1, er + 2); r++)
+        bool rushStopHandled = false;
+        for (int r = std::max(0, er - 2); r <= std::min(RoomLayout::kRows - 1, er + 2) && !rushStopHandled; r++)
         {
             for (int c = std::max(0, ec - 2); c <= std::min(RoomLayout::kCols - 1, ec + 2); c++)
             {
@@ -7225,6 +7226,17 @@ void Engine::ResolveDungeonEnemyCollisions()
                 Rectangle wallRect{ c * cellW, r * cellH, cellW, cellH };
                 Rectangle eRect = e->GetCollisionRec();
                 if (!CheckCollisionRecs(eRect, wallRect)) continue;
+
+                // Rushing ogre / dashing molarbeast: undo movement and signal impact.
+                // The position is already valid after UndoMovement, so skip the push-out.
+                if (Ogre* ogre = e->AsOgre())
+                {
+                    if (ogre->IsRushing()) { ogre->OnRushBlocked(); rushStopHandled = true; break; }
+                }
+                else if (Molarbeast* mb = e->AsMolarbeast())
+                {
+                    if (mb->IsDashing()) { mb->OnDashBlocked(); rushStopHandled = true; break; }
+                }
 
                 if (e->IsBeingForcedPushed())
                 {
@@ -7246,34 +7258,47 @@ void Engine::ResolveDungeonEnemyCollisions()
         }
 
         // ── Props — precise collision rect ────────────────────────────────────
-        for (const SpritePlacement& prop : _dungeonRoomLayout.props)
+        if (!rushStopHandled)
         {
-            if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
-            const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
-            Rectangle propRect{
-                prop.col * cellW + coll.x * pxSX,
-                prop.row * cellH + coll.y * pxSY,
-                coll.width  * pxSX,
-                coll.height * pxSY
-            };
-            Rectangle eRect = e->GetCollisionRec();
-            if (!CheckCollisionRecs(eRect, propRect)) continue;
+            for (const SpritePlacement& prop : _dungeonRoomLayout.props)
+            {
+                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
+                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+                Rectangle propRect{
+                    prop.col * cellW + coll.x * pxSX,
+                    prop.row * cellH + coll.y * pxSY,
+                    coll.width  * pxSX,
+                    coll.height * pxSY
+                };
+                Rectangle eRect = e->GetCollisionRec();
+                if (!CheckCollisionRecs(eRect, propRect)) continue;
 
-            if (e->IsBeingForcedPushed())
-            {
-                e->OnForcedPushCollision();
-            }
-            else
-            {
-                float oL = (eRect.x + eRect.width)  - propRect.x;
-                float oR = (propRect.x + propRect.width)  - eRect.x;
-                float oT = (eRect.y + eRect.height) - propRect.y;
-                float oB = (propRect.y + propRect.height) - eRect.y;
-                float rX = (oL < oR) ? -oL : oR;
-                float rY = (oT < oB) ? -oT : oB;
-                Vector2 p = e->GetWorldPos();
-                if (std::abs(rX) < std::abs(rY)) p.x += rX; else p.y += rY;
-                e->Teleport(p);
+                // Rushing ogre / dashing molarbeast: same stop logic as wall tiles.
+                if (Ogre* ogre = e->AsOgre())
+                {
+                    if (ogre->IsRushing()) { ogre->OnRushBlocked(); break; }
+                }
+                else if (Molarbeast* mb = e->AsMolarbeast())
+                {
+                    if (mb->IsDashing()) { mb->OnDashBlocked(); break; }
+                }
+
+                if (e->IsBeingForcedPushed())
+                {
+                    e->OnForcedPushCollision();
+                }
+                else
+                {
+                    float oL = (eRect.x + eRect.width)  - propRect.x;
+                    float oR = (propRect.x + propRect.width)  - eRect.x;
+                    float oT = (eRect.y + eRect.height) - propRect.y;
+                    float oB = (propRect.y + propRect.height) - eRect.y;
+                    float rX = (oL < oR) ? -oL : oR;
+                    float rY = (oT < oB) ? -oT : oB;
+                    Vector2 p = e->GetWorldPos();
+                    if (std::abs(rX) < std::abs(rY)) p.x += rX; else p.y += rY;
+                    e->Teleport(p);
+                }
             }
         }
     }
@@ -8120,6 +8145,19 @@ void Engine::UpdateDungeonRun(float dt)
             return;
         }
 
+        // Tick screen shake every frame so TriggerScreenShake has visible effect.
+        if (_shakeTimer > 0.f)
+        {
+            _shakeTimer -= dt;
+            float x = GetRandomValue(-100, 100) / 50.f * _shakeStrength;
+            float y = GetRandomValue(-100, 100) / 50.f * _shakeStrength;
+            _shakeOffset = { x, y };
+        }
+        else
+        {
+            _shakeOffset = Vector2Zero();
+        }
+
         float sw = (float)kVirtualWidth;
         float sh = (float)kVirtualHeight;
 
@@ -8833,12 +8871,14 @@ void Engine::DrawDungeonRun()
             }
             else
             {
-                _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+                _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, _shakeOffset);
                 DrawDungeonClearEffects();
                 DrawDungeonMagicGemAndBarrier();
 
                 // Enemies, projectiles, VFX — world == screen in dungeon run mode.
-                Vector2 worldOffset{ -_cameraPos.x, -_cameraPos.y };
+                // _shakeOffset shifts everything together so the screen-shake effect is visible.
+                Vector2 worldOffset{ -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
+                Vector2 shakenCamRef{ _cameraPos.x - _shakeOffset.x, _cameraPos.y - _shakeOffset.y };
                 for (const auto& proj : _spreadProjectiles)
                     proj.Draw(worldOffset);
                 DrawCyclopsLasers(worldOffset);
@@ -8848,8 +8888,8 @@ void Engine::DrawDungeonRun()
                 // Treasure chest appears at screen centre after combat is cleared.
                 if (_treasureChestSpawned && !_treasureChestBroken)
                 {
-                    float cx = sw * 0.5f;
-                    float cy = sh * 0.5f;
+                    float cx = sw * 0.5f + _shakeOffset.x;
+                    float cy = sh * 0.5f + _shakeOffset.y;
                     if (_mapIconTreasure.id != 0)
                     {
                         float chestSize = 72.f;
@@ -8867,13 +8907,13 @@ void Engine::DrawDungeonRun()
                 for (auto& enemy : _enemies)
                 {
                     if (!enemy->IsActive()) continue;
-                    enemy->DrawEnemy(_cameraPos);
+                    enemy->DrawEnemy(shakenCamRef);
                 }
 
                 if (_currentRoomType == RoomType::Store)
-                    _shop.DrawNpc({ -_cameraPos.x, -_cameraPos.y });
+                    _shop.DrawNpc(worldOffset);
 
-                _player.DrawPlayer(_cameraPos);
+                _player.DrawPlayer(shakenCamRef);
             }
         }
         else

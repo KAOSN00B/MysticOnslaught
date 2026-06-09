@@ -72,7 +72,7 @@ public:
 private:
     // ── Internal state ────────────────────────────────────────────────────────
     enum class Screen    { FileSelect, Mapping };
-    enum class PanelTab  { Tiles, Props, Decors };
+    enum class PanelTab  { Tiles, Props, Decors, SpawnZone };
 
     struct Assignment
     {
@@ -202,6 +202,17 @@ private:
     bool       _collDragging   = false;
     Vector2    _collDragStart  = {};
     Rectangle  _collDragOrig   = {};
+
+    // Spawn-zone overlay state (tile-grid units, RoomLayout 28×16)
+    int  _szColMin   = 2;
+    int  _szColMax   = 25;  // kCols - 3
+    int  _szRowMin   = 2;
+    int  _szRowMax   = 13;  // kRows - 3
+    int  _szDragEdge = -1;  // 0=top 1=bottom 2=left 3=right; -1=none
+    bool _szDragging = false;
+
+    void UpdateSpawnZoneInput();
+    void DrawSpawnZoneView()    const;
 
     // Index into _files for the sheet currently open
     int _openFileIdx = -1;
