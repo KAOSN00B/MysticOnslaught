@@ -20,6 +20,12 @@ private:
     Texture2D _btnTex{};
     Texture2D _htpBtnTex{};
 
+    // Gamepad navigation state
+    int   _gpPauseSelected        = 0;
+    float _gpPauseStickCooldown   = 0.f;
+    int   _gpGameOverSelected     = 0;
+    float _gpGameOverStickCooldown = 0.f;
+
     // ── Border panel editor ───────────────────────────────────────────────────
 public:
     void ToggleBorderEditor() { _editorActive = !_editorActive; _editorInited = false; }

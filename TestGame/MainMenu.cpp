@@ -96,9 +96,14 @@ void MainMenu::Update()
 
     Vector2 mouse = GetVirtualMousePos();
 
+    if (IsKeyPressed(KEY_BACKSLASH)) _devToolsVisible = !_devToolsVisible;
+
     for (auto& button : _buttons)
     {
         if (button.text == "Debug Mode" && !_debugUnlocked)
+            continue;
+        if ((button.text == "Dungeon Run" || button.text == "Tile Editor" || button.text == "9-Slice Editor")
+            && !_devToolsVisible)
             continue;
 
         bool isPanelBtn = (button.text == "Start Game" || button.text == "How To Play" ||
@@ -107,6 +112,8 @@ void MainMenu::Update()
         if (isPanelBtn)
             checkBounds.y = _btnEdFirstY + button.bounds.y;
         button.hovered = CheckCollisionPointRec(mouse, checkBounds);
+
+        button.selected = false; // reset gamepad-selection flag each frame
 
         if (button.hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
@@ -119,6 +126,59 @@ void MainMenu::Update()
             if (button.text == "9-Slice Editor") _nineSliceEditorPressed = true;
             if (button.text == "Settings")       _settingsPressed        = true;
         }
+    }
+
+    // ── Gamepad navigation for panel buttons (Start Game / HTP / Settings / Quit) ──
+    {
+        // Mouse movement hands control back to the cursor
+        Vector2 mouseDelta = GetMouseDelta();
+        if (mouseDelta.x * mouseDelta.x + mouseDelta.y * mouseDelta.y > 4.f)
+            _gpSelected = -1;
+    }
+
+    const int kPanelCount = 4;
+    if (IsGamepadAvailable(0))
+    {
+        bool moveDown = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN);
+        bool moveUp   = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP);
+
+        float stickY = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+        _gpStickCooldown -= GetFrameTime();
+        if (_gpStickCooldown <= 0.f)
+        {
+            if      (stickY >  0.5f) { moveDown = true; _gpStickCooldown = 0.22f; }
+            else if (stickY < -0.5f) { moveUp   = true; _gpStickCooldown = 0.22f; }
+            else                       _gpStickCooldown = 0.f;
+        }
+
+        if (moveDown || moveUp)
+        {
+            if (_gpSelected < 0)
+                _gpSelected = moveDown ? 0 : kPanelCount - 1;
+            else
+            {
+                _gpSelected += moveDown ? 1 : -1;
+                if (_gpSelected < 0)            _gpSelected = kPanelCount - 1;
+                if (_gpSelected >= kPanelCount) _gpSelected = 0;
+            }
+        }
+
+        // A / Cross confirms the highlighted button
+        if (_gpSelected >= 0 && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN))
+        {
+            switch (_gpSelected)
+            {
+            case 0: _startPressed    = true; break;
+            case 1: _howToPressed    = true; break;
+            case 2: _settingsPressed = true; break;
+            case 3: _quitPressed     = true; break;
+            }
+        }
+
+        // Stamp the selected flag on the active panel button
+        if (_gpSelected >= 0)
+            for (int i = 0; i < kPanelCount && i < (int)_buttons.size(); i++)
+                _buttons[i].selected = (_gpSelected == i);
     }
 
     if (!_editorActive) return;
@@ -341,18 +401,33 @@ void MainMenu::Draw()
     {
         if (button.text == "Debug Mode" && !_debugUnlocked)
             continue;
+        if ((button.text == "Dungeon Run" || button.text == "Tile Editor" || button.text == "9-Slice Editor")
+            && !_devToolsVisible)
+            continue;
 
         if (button.text == "Debug Mode")
         {
+            Rectangle drawBounds = button.bounds;
+            if (button.hovered)
+            {
+                float pulse  = 0.5f + 0.5f * sinf((float)GetTime() * 5.f);
+                float expand = drawBounds.width * 0.035f;
+                drawBounds = { drawBounds.x - expand, drawBounds.y - expand * 0.7f,
+                               drawBounds.width + expand * 2.f, drawBounds.height + expand * 1.4f };
+                Color glowCol{ 255, 205, 135, (unsigned char)(100 + (int)(80.f * pulse)) };
+                DrawRectangleRoundedLines({ drawBounds.x - 3.f, drawBounds.y - 3.f,
+                                            drawBounds.width + 6.f, drawBounds.height + 6.f },
+                                           0.24f, 8, glowCol);
+            }
             Color fill = button.hovered ? Color{ 180, 105, 55, 245 } : Color{ 126, 74, 38, 225 };
             Color edge = button.hovered ? Color{ 255, 205, 135, 255 } : Color{ 220, 168, 105, 215 };
-            DrawRectangleRounded(button.bounds, 0.24f, 8, fill);
-            DrawRectangleRoundedLines(button.bounds, 0.24f, 8, edge);
+            DrawRectangleRounded(drawBounds, 0.24f, 8, fill);
+            DrawRectangleRoundedLines(drawBounds, 0.24f, 8, edge);
             int fs = (int)(sh * 0.032f);
             int tw = MeasureText(button.text.c_str(), fs);
             DrawText(button.text.c_str(),
-                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
-                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                (int)(drawBounds.x + drawBounds.width  / 2 - tw / 2),
+                (int)(drawBounds.y + drawBounds.height / 2 - fs / 2),
                 fs, Color{ 255, 244, 220, 255 });
             continue;
         }
@@ -360,31 +435,55 @@ void MainMenu::Draw()
         // Dungeon Run button — teal
         if (button.text == "Dungeon Run")
         {
+            Rectangle drawBounds = button.bounds;
+            if (button.hovered)
+            {
+                float pulse  = 0.5f + 0.5f * sinf((float)GetTime() * 5.f);
+                float expand = drawBounds.width * 0.035f;
+                drawBounds = { drawBounds.x - expand, drawBounds.y - expand * 0.7f,
+                               drawBounds.width + expand * 2.f, drawBounds.height + expand * 1.4f };
+                Color glowCol{ 100, 230, 230, (unsigned char)(100 + (int)(80.f * pulse)) };
+                DrawRectangleRoundedLines({ drawBounds.x - 3.f, drawBounds.y - 3.f,
+                                            drawBounds.width + 6.f, drawBounds.height + 6.f },
+                                           0.24f, 8, glowCol);
+            }
             Color fill = button.hovered ? Color{ 40, 160, 160, 245 } : Color{ 25, 100, 100, 220 };
             Color edge = button.hovered ? Color{ 100, 230, 230, 255 } : Color{ 60, 170, 170, 200 };
-            DrawRectangleRounded(button.bounds, 0.24f, 8, fill);
-            DrawRectangleRoundedLines(button.bounds, 0.24f, 8, edge);
+            DrawRectangleRounded(drawBounds, 0.24f, 8, fill);
+            DrawRectangleRoundedLines(drawBounds, 0.24f, 8, edge);
             int fs = (int)(sh * 0.026f);
             int tw = MeasureText(button.text.c_str(), fs);
             DrawText(button.text.c_str(),
-                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
-                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                (int)(drawBounds.x + drawBounds.width  / 2 - tw / 2),
+                (int)(drawBounds.y + drawBounds.height / 2 - fs / 2),
                 fs, RAYWHITE);
             continue;
         }
 
-        // Tile Mapper button — orange
-        if (button.text == "Tile Mapper")
+        // Tile Editor / 9-Slice Editor — orange
+        if (button.text == "Tile Editor" || button.text == "Tile Mapper" || button.text == "9-Slice Editor")
         {
+            Rectangle drawBounds = button.bounds;
+            if (button.hovered)
+            {
+                float pulse  = 0.5f + 0.5f * sinf((float)GetTime() * 5.f);
+                float expand = drawBounds.width * 0.035f;
+                drawBounds = { drawBounds.x - expand, drawBounds.y - expand * 0.7f,
+                               drawBounds.width + expand * 2.f, drawBounds.height + expand * 1.4f };
+                Color glowCol{ 255, 175, 80, (unsigned char)(100 + (int)(80.f * pulse)) };
+                DrawRectangleRoundedLines({ drawBounds.x - 3.f, drawBounds.y - 3.f,
+                                            drawBounds.width + 6.f, drawBounds.height + 6.f },
+                                           0.24f, 8, glowCol);
+            }
             Color fill = button.hovered ? Color{ 180, 100, 30, 245 } : Color{ 120, 65, 18, 220 };
             Color edge = button.hovered ? Color{ 255, 175, 80, 255 } : Color{ 200, 140, 60, 200 };
-            DrawRectangleRounded(button.bounds, 0.24f, 8, fill);
-            DrawRectangleRoundedLines(button.bounds, 0.24f, 8, edge);
+            DrawRectangleRounded(drawBounds, 0.24f, 8, fill);
+            DrawRectangleRoundedLines(drawBounds, 0.24f, 8, edge);
             int fs = (int)(sh * 0.026f);
             int tw = MeasureText(button.text.c_str(), fs);
             DrawText(button.text.c_str(),
-                (int)(button.bounds.x + button.bounds.width  / 2 - tw / 2),
-                (int)(button.bounds.y + button.bounds.height / 2 - fs / 2),
+                (int)(drawBounds.x + drawBounds.width  / 2 - tw / 2),
+                (int)(drawBounds.y + drawBounds.height / 2 - fs / 2),
                 fs, RAYWHITE);
             continue;
         }
@@ -397,14 +496,34 @@ void MainMenu::Draw()
         else if (button.text == "Quit")
             tint = Color{ 230, 80, 80, 255 };
 
-        if (button.hovered)
-            tint = Fade(tint, 0.78f);
-
         bool isPanelBtn = (button.text == "Start Game" || button.text == "How To Play" ||
                            button.text == "Settings"   || button.text == "Quit");
         Rectangle drawBounds = button.bounds;
         if (isPanelBtn)
             drawBounds.y = _btnEdFirstY + button.bounds.y;
+
+        bool highlighted = button.hovered || button.selected;
+        if (highlighted)
+        {
+            // "Bloom bigger" — expand the button rect and draw a pulsing glow ring behind it
+            float pulse  = 0.5f + 0.5f * sinf((float)GetTime() * 5.f);
+            float expand = drawBounds.width * 0.04f;
+            drawBounds = { drawBounds.x - expand, drawBounds.y - expand * 0.7f,
+                           drawBounds.width + expand * 2.f, drawBounds.height + expand * 1.4f };
+
+            // Gold glow for gamepad cursor, white glow for mouse hover
+            Color glowCol = button.selected
+                ? Color{ 255, (unsigned char)(200 + (int)(45.f * pulse)), 40,
+                         (unsigned char)(160 + (int)(80.f * pulse)) }
+                : Color{ 255, 255, 255, (unsigned char)(90 + (int)(70.f * pulse)) };
+            Rectangle glowRect{ drawBounds.x - 4.f, drawBounds.y - 4.f,
+                                 drawBounds.width + 8.f, drawBounds.height + 8.f };
+            DrawRectangleRoundedLines(glowRect, 0.25f, 8, glowCol);
+        }
+        else
+        {
+            tint = Fade(tint, 0.78f); // dim slightly when not highlighted
+        }
 
         if (tex->id != 0)
             DrawNineSlice(*tex, BTN_SRC_CORNER, BTN_DST_CORNER, drawBounds, tint);

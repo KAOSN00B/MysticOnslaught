@@ -29,10 +29,15 @@ private:
     struct Button
     {
         std::string text;
-        Rectangle bounds;
-        bool hovered = false;
+        Rectangle   bounds;
+        bool        hovered  = false;
+        bool        selected = false; // true when navigated to by gamepad
     };
     std::vector<Button> _buttons;
+
+    // Gamepad navigation (panel buttons 0-3 only)
+    int   _gpSelected      = -1;
+    float _gpStickCooldown = 0.f;
 
     Texture2D _borderTex{};
     Texture2D _bannerTex{};
@@ -48,6 +53,7 @@ private:
     bool _nineSliceEditorPressed = false;
     bool _settingsPressed        = false;
     bool _debugUnlocked          = false;
+    bool _devToolsVisible        = false; // toggled by \ key
 
     // ── Border panel editor ───────────────────────────────────────────────────
 public:

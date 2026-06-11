@@ -1272,6 +1272,7 @@ void Engine::Update(float dt)
         {
             _debug.Deactivate();
             ResetRunState();
+            _isMainGameRun = true;
 
             _dungeonGen.Generate();
             _currentBiome = Biome::Caverns;
@@ -1296,6 +1297,7 @@ void Engine::Update(float dt)
         }
         if (_menu.DungeonRunPressed())
         {
+            _isMainGameRun = false;
             _dungeonGen.Generate();
             _dungeonView          = DungeonView::Graph;
             _dungeonRoomIdx = -1;
@@ -1390,15 +1392,23 @@ void Engine::Update(float dt)
 
     case GameState::DemoEnd:
     {
-        bool anyKey = (GetKeyPressed() != 0);
+        bool anyKey   = (GetKeyPressed() != 0);
         bool anyMouse = IsMouseButtonPressed(MOUSE_LEFT_BUTTON)
                      || IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)
                      || IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON);
         bool touchDown = (_touchModeActive && GetTouchPointCount() > 0);
-        bool touchTap = touchDown && !_demoEndTouchHeld;
+        bool touchTap  = touchDown && !_demoEndTouchHeld;
         _demoEndTouchHeld = touchDown;
 
-        if (anyKey || anyMouse || touchTap)
+        bool anyGamepad = false;
+        if (IsGamepadAvailable(GamepadInput::kGamepad))
+        {
+            for (int b = 1; b <= 17; b++)
+                if (IsGamepadButtonPressed(GamepadInput::kGamepad, (GamepadButton)b))
+                    { anyGamepad = true; break; }
+        }
+
+        if (anyKey || anyMouse || touchTap || anyGamepad)
         {
             ResetRunState();
             _menu.Init();
@@ -6126,6 +6136,8 @@ void Engine::ResetRunState()
     _mapOpenTimer       = 0.f;
     _actMap.clear();
 
+    _isMainGameRun = false;
+
     // World map run state
     _worldZone = 0;
     _worldCompletedBiomes.clear();
@@ -8274,6 +8286,14 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
 
 void Engine::OpenWorldMap()
 {
+    // Main game demo cap: after clearing the second level (zone 1) show the thanks screen.
+    if (_isMainGameRun && _worldZone >= 1)
+    {
+        _demoCompleted = true;
+        _gameState     = GameState::DemoEnd;
+        return;
+    }
+
     // Zone 4 boss just cleared → skip map, go straight to DemonsInsides.
     if (_worldZone >= 4)
     {

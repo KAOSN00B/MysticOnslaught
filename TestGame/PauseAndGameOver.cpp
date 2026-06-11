@@ -37,11 +37,31 @@ static void DrawScrollingCheckerboard(float sw, float sh, Color dark, Color ligh
 }
 
 // ── Shared helper: draw a textured button, return true if clicked ─────────────
-static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color tint)
+// selected=true means the gamepad cursor is on this button (gold bloom + expansion)
+static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color tint, bool selected = false)
 {
-    Vector2 mouse  = GetVirtualMousePos();
-    bool hovered   = CheckCollisionPointRec(mouse, btn);
-    Color drawTint = hovered ? Fade(tint, 0.75f) : tint;
+    Vector2 mouse      = GetVirtualMousePos();
+    bool    hovered    = CheckCollisionPointRec(mouse, btn);
+    bool    highlighted = hovered || selected;
+
+    if (highlighted)
+    {
+        // Expand the button rect ("bloom bigger")
+        float pulse  = 0.5f + 0.5f * sinf((float)GetTime() * 5.f);
+        float expand = btn.width * 0.04f;
+        btn = { btn.x - expand,           btn.y - expand * 0.7f,
+                btn.width + expand * 2.f, btn.height + expand * 1.4f };
+
+        // Gold glow for gamepad selection, white glow for mouse hover
+        Color glowCol = selected
+            ? Color{ 255, (unsigned char)(200 + (int)(45.f * pulse)), 40,
+                     (unsigned char)(160 + (int)(80.f * pulse)) }
+            : Color{ 255, 255, 255, (unsigned char)(90 + (int)(70.f * pulse)) };
+        DrawRectangleRoundedLines({ btn.x - 4.f, btn.y - 4.f, btn.width + 8.f, btn.height + 8.f },
+                                   0.25f, 8, glowCol);
+    }
+
+    Color drawTint = highlighted ? tint : Fade(tint, 0.78f);
 
     if (tex.id != 0)
         DrawNineSlice(tex, BTN_SRC_CORNER, BTN_DST_CORNER, btn, drawTint);
@@ -252,44 +272,80 @@ int PauseAndGameOver::DrawPause()
 
     // Title sits above buttons
     const char* title = "PAUSED";
-    int titleSz = (int)(sh * 0.055f);
+    int titleSz  = (int)(sh * 0.055f);
     int titleWpx = MeasureText(title, titleSz);
     DrawText(title, (int)(sw / 2.f - titleWpx / 2.f),
         (int)(activeBtnY - titleH), titleSz, BLACK);
 
-    // Buttons
+    // ── Gamepad D-pad / left-stick navigation ─────────────────────────────────
+    if (IsGamepadAvailable(0))
+    {
+        bool moveDown = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN);
+        bool moveUp   = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP);
+
+        _gpPauseStickCooldown -= GetFrameTime();
+        float stickY = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+        if (_gpPauseStickCooldown <= 0.f)
+        {
+            if      (stickY >  0.5f) { moveDown = true; _gpPauseStickCooldown = 0.22f; }
+            else if (stickY < -0.5f) { moveUp   = true; _gpPauseStickCooldown = 0.22f; }
+            else                       _gpPauseStickCooldown = 0.f;
+        }
+
+        if (moveDown) _gpPauseSelected = (_gpPauseSelected + 1) % 6;
+        if (moveUp)   _gpPauseSelected = (_gpPauseSelected - 1 + 6) % 6;
+    }
+
     float btnX = sw / 2.f - btnW / 2.f;
     float btnY = activeBtnY;
+    int   result = 0;
 
-    int result = 0;
+    // Gamepad A = confirm selection, B / Circle = Resume shortcut
+    bool gpActive = IsGamepadAvailable(0);
+    if (gpActive)
+    {
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN))
+        {
+            int map[6] = {1, 2, 4, 6, 5, 3};
+            result = map[_gpPauseSelected];
+        }
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT))
+            result = 1;
+    }
 
-    // Resume — green tint on play button
-    if (DrawButton(_btnTex, "Resume", { btnX, btnY, btnW, btnH }, Color{ 100, 210, 120, 255 }))
+    // Resume — green
+    if (DrawButton(_btnTex, "Resume", { btnX, btnY, btnW, btnH },
+            Color{ 100, 210, 120, 255 }, gpActive && _gpPauseSelected == 0))
         result = 1;
     btnY += btnH + btnGap;
 
-    // How To Play — use the HTP button texture
-    if (DrawButton(_htpBtnTex, "How To Play", { btnX, btnY, btnW, btnH }, WHITE))
+    // How To Play
+    if (DrawButton(_htpBtnTex, "How To Play", { btnX, btnY, btnW, btnH },
+            WHITE, gpActive && _gpPauseSelected == 1))
         result = 2;
     btnY += btnH + btnGap;
 
-    // Button Mapping — blue tint
-    if (DrawButton(_btnTex, "Button Mapping", { btnX, btnY, btnW, btnH }, Color{ 80, 150, 230, 255 }))
+    // Button Mapping — blue
+    if (DrawButton(_btnTex, "Button Mapping", { btnX, btnY, btnW, btnH },
+            Color{ 80, 150, 230, 255 }, gpActive && _gpPauseSelected == 2))
         result = 4;
     btnY += btnH + btnGap;
 
-    // Settings — teal tint
-    if (DrawButton(_btnTex, "Settings", { btnX, btnY, btnW, btnH }, Color{ 50, 170, 200, 255 }))
+    // Settings — teal
+    if (DrawButton(_btnTex, "Settings", { btnX, btnY, btnW, btnH },
+            Color{ 50, 170, 200, 255 }, gpActive && _gpPauseSelected == 3))
         result = 6;
     btnY += btnH + btnGap;
 
-    // Main Menu — orange tint
-    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH }, Color{ 230, 160, 50, 255 }))
+    // Main Menu — orange
+    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH },
+            Color{ 230, 160, 50, 255 }, gpActive && _gpPauseSelected == 4))
         result = 5;
     btnY += btnH + btnGap;
 
-    // Quit — red tint
-    if (DrawButton(_btnTex, "Quit Game", { btnX, btnY, btnW, btnH }, Color{ 230, 80, 80, 255 }))
+    // Quit — red
+    if (DrawButton(_btnTex, "Quit Game", { btnX, btnY, btnW, btnH },
+            Color{ 230, 80, 80, 255 }, gpActive && _gpPauseSelected == 5))
         result = 3;
 
     return result;
@@ -337,21 +393,49 @@ int PauseAndGameOver::DrawGameOver()
         (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
         (int)(panelY + padV), titleSz, RED);
 
+    // ── Gamepad D-pad / left-stick navigation ─────────────────────────────────
+    if (IsGamepadAvailable(0))
+    {
+        bool moveDown = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN);
+        bool moveUp   = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP);
+
+        _gpGameOverStickCooldown -= GetFrameTime();
+        float stickY = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+        if (_gpGameOverStickCooldown <= 0.f)
+        {
+            if      (stickY >  0.5f) { moveDown = true; _gpGameOverStickCooldown = 0.22f; }
+            else if (stickY < -0.5f) { moveUp   = true; _gpGameOverStickCooldown = 0.22f; }
+            else                       _gpGameOverStickCooldown = 0.f;
+        }
+
+        if (moveDown) _gpGameOverSelected = (_gpGameOverSelected + 1) % 3;
+        if (moveUp)   _gpGameOverSelected = (_gpGameOverSelected - 1 + 3) % 3;
+    }
+
     // Buttons — all centred
     float btnX = sw / 2.f - btnW / 2.f;
     float btnY = panelY + padV + titleH;
+    int   result = 0;
 
-    int result = 0;
+    bool gpActive = IsGamepadAvailable(0);
+    if (gpActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN))
+    {
+        int map[3] = {1, 2, 3};
+        result = map[_gpGameOverSelected];
+    }
 
-    if (DrawButton(_btnTex,    "Retry",     { btnX, btnY, btnW, btnH }, Color{ 100, 210, 120, 255 }))
+    if (DrawButton(_btnTex,    "Retry",     { btnX, btnY, btnW, btnH },
+            Color{ 100, 210, 120, 255 }, gpActive && _gpGameOverSelected == 0))
         result = 1;
     btnY += btnH + btnGap;
 
-    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH }, Color{ 230, 160,  50, 255 }))
+    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH },
+            Color{ 230, 160,  50, 255 }, gpActive && _gpGameOverSelected == 1))
         result = 2;
     btnY += btnH + btnGap;
 
-    if (DrawButton(_btnTex,    "Quit Game", { btnX, btnY, btnW, btnH }, Color{ 230,  80,  80, 255 }))
+    if (DrawButton(_btnTex,    "Quit Game", { btnX, btnY, btnW, btnH },
+            Color{ 230,  80,  80, 255 }, gpActive && _gpGameOverSelected == 2))
         result = 3;
 
     return result;

@@ -611,6 +611,7 @@ private:
     bool  _biomeTransitionSwapped = false;
     float _biomeTransitionTimer = 0.f;
     bool     _demoEndTouchHeld = false;
+    bool     _isMainGameRun   = false; // true when started via "Start Game" (not Dungeon Run)
     AudioManager _audio;
     CombatDirector _combatDirector;
     OverlayRenderer _overlayRenderer;
