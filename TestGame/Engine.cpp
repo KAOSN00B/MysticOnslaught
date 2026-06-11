@@ -1548,6 +1548,24 @@ void Engine::UpdateGamePlay(float dt)
     if (_touchModeActive)
         UpdateTouchControls();
 
+    // Gamepad input — works alongside keyboard and touch on all platforms
+    _gamepad.Update(_gamepadBindingsEdit);
+    if (_gamepad.isActive)
+    {
+        if (Vector2LengthSqr(_gamepad.moveDir) > 0.f)
+            _player.SetTouchDirection(_gamepad.moveDir);
+        if (_gamepad.attackPressed)  _player.SetTouchAttack();
+        if (_gamepad.dashPressed)    _player.SetTouchDash();
+        for (int i = 0; i < 4; i++)
+            if (_gamepad.abilityPressed[i]) _player.TriggerAbilityCast(i);
+        if (_gamepad.pausePressed)
+        {
+            _stateBeforePause = GameState::Play;
+            _gameState = GameState::Pause;
+            return;
+        }
+    }
+
     _player.Update(dt);
 
     // During the cinematic ultimate sequence everything except the player
@@ -6624,9 +6642,11 @@ void Engine::UpdateLavaBallProjectiles(float dt)
 
 void Engine::SaveKeybindings()
 {
-    const KeyBindings& b = _player.GetBindings();
+    const KeyBindings& b  = _player.GetBindings();
+    const GamepadBindings& g = _gamepadBindingsEdit;
     FILE* f = fopen("keybindings.cfg", "w");
     if (!f) return;
+    // Keyboard / Mouse
     std::fprintf(f, "moveUp %d\n",    (int)b.moveUp);
     std::fprintf(f, "moveDown %d\n",  (int)b.moveDown);
     std::fprintf(f, "moveLeft %d\n",  (int)b.moveLeft);
@@ -6636,6 +6656,15 @@ void Engine::SaveKeybindings()
     std::fprintf(f, "ability0 %d\n",  (int)b.ability[0]);
     std::fprintf(f, "ability1 %d\n",  (int)b.ability[1]);
     std::fprintf(f, "ability2 %d\n",  (int)b.ability[2]);
+    std::fprintf(f, "ability3 %d\n",  (int)b.ability[3]);
+    // Gamepad
+    std::fprintf(f, "gp_attack %d\n",    (int)g.attack);
+    std::fprintf(f, "gp_dash %d\n",      (int)g.dash);
+    std::fprintf(f, "gp_ability0 %d\n",  (int)g.ability[0]);
+    std::fprintf(f, "gp_ability1 %d\n",  (int)g.ability[1]);
+    std::fprintf(f, "gp_ability2 %d\n",  (int)g.ability[2]);
+    std::fprintf(f, "gp_ability3 %d\n",  (int)g.ability[3]);
+    std::fprintf(f, "gp_pause %d\n",     (int)g.pause);
     std::fclose(f);
 }
 
@@ -6643,23 +6672,33 @@ void Engine::LoadKeybindings()
 {
     FILE* f = fopen("keybindings.cfg", "r");
     if (!f) return;
-    KeyBindings b;
+    KeyBindings     b;
+    GamepadBindings g;
     char key[32];
     int  value;
     while (fscanf(f, "%31s %d", key, &value) == 2)
     {
-        if      (std::strcmp(key, "moveUp")    == 0) b.moveUp     = (KeyboardKey)value;
-        else if (std::strcmp(key, "moveDown")  == 0) b.moveDown   = (KeyboardKey)value;
-        else if (std::strcmp(key, "moveLeft")  == 0) b.moveLeft   = (KeyboardKey)value;
-        else if (std::strcmp(key, "moveRight") == 0) b.moveRight  = (KeyboardKey)value;
-        else if (std::strcmp(key, "dash")      == 0) b.dash       = (KeyboardKey)value;
-        else if (std::strcmp(key, "attack")    == 0) b.attack     = (KeyboardKey)value;
-        else if (std::strcmp(key, "ability0")  == 0) b.ability[0] = (KeyboardKey)value;
-        else if (std::strcmp(key, "ability1")  == 0) b.ability[1] = (KeyboardKey)value;
-        else if (std::strcmp(key, "ability2")  == 0) b.ability[2] = (KeyboardKey)value;
+        if      (std::strcmp(key, "moveUp")     == 0) b.moveUp       = (KeyboardKey)value;
+        else if (std::strcmp(key, "moveDown")   == 0) b.moveDown     = (KeyboardKey)value;
+        else if (std::strcmp(key, "moveLeft")   == 0) b.moveLeft     = (KeyboardKey)value;
+        else if (std::strcmp(key, "moveRight")  == 0) b.moveRight    = (KeyboardKey)value;
+        else if (std::strcmp(key, "dash")       == 0) b.dash         = (KeyboardKey)value;
+        else if (std::strcmp(key, "attack")     == 0) b.attack       = (KeyboardKey)value;
+        else if (std::strcmp(key, "ability0")   == 0) b.ability[0]   = (KeyboardKey)value;
+        else if (std::strcmp(key, "ability1")   == 0) b.ability[1]   = (KeyboardKey)value;
+        else if (std::strcmp(key, "ability2")   == 0) b.ability[2]   = (KeyboardKey)value;
+        else if (std::strcmp(key, "ability3")   == 0) b.ability[3]   = (KeyboardKey)value;
+        else if (std::strcmp(key, "gp_attack")  == 0) g.attack       = (GamepadButton)value;
+        else if (std::strcmp(key, "gp_dash")    == 0) g.dash         = (GamepadButton)value;
+        else if (std::strcmp(key, "gp_ability0")== 0) g.ability[0]   = (GamepadButton)value;
+        else if (std::strcmp(key, "gp_ability1")== 0) g.ability[1]   = (GamepadButton)value;
+        else if (std::strcmp(key, "gp_ability2")== 0) g.ability[2]   = (GamepadButton)value;
+        else if (std::strcmp(key, "gp_ability3")== 0) g.ability[3]   = (GamepadButton)value;
+        else if (std::strcmp(key, "gp_pause")   == 0) g.pause        = (GamepadButton)value;
     }
     std::fclose(f);
     _player.SetBindings(b);
+    _gamepadBindingsEdit = g;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -7638,6 +7677,8 @@ void Engine::UpdateSettings(float dt)
     {
         if (_settingsRebindSlot >= 0)
             _settingsRebindSlot = -1;
+        else if (_settingsGpRebindSlot >= 0)
+            _settingsGpRebindSlot = -1;
         else
         {
             _player.SetBindings(_keybindingsEdit);
@@ -7646,8 +7687,8 @@ void Engine::UpdateSettings(float dt)
             _settingsMgr.ApplyWindow();
             _settingsMgr.ApplyVolumes(_audio);
             ApplySfxVolume();
-            _gameState          = _stateBeforeSettings;
-            _settingsDragSlider = -1;
+            _gameState            = _stateBeforeSettings;
+            _settingsDragSlider   = -1;
         }
         return;
     }
@@ -7662,15 +7703,16 @@ void Engine::UpdateSettings(float dt)
     {
         if (mousePressed && CheckCollisionPointRec(mouse, { tabX, tabY, kTabW[tabIdx], tabH }))
         {
-            _settingsTab        = tabIdx;
-            _settingsRebindSlot = -1;
+            _settingsTab          = tabIdx;
+            _settingsRebindSlot   = -1;
+            _settingsGpRebindSlot = -1;
         }
         tabX += kTabW[tabIdx] + tabGap;
     }
 
-    // Back button (saves everything and returns)
+    // Back button — sits below the nine-slice border PNG (borderPad=24 + 8 gap)
     float backBtnX = panelX + panelW * 0.5f - 140.f;
-    float backBtnY = panelY + panelH - 75.f;
+    float backBtnY = panelY + panelH + 32.f;
     if (mousePressed && CheckCollisionPointRec(mouse, { backBtnX, backBtnY, 280.f, 55.f }))
     {
         _player.SetBindings(_keybindingsEdit);
@@ -7681,7 +7723,8 @@ void Engine::UpdateSettings(float dt)
         ApplySfxVolume();
         _gameState          = _stateBeforeSettings;
         _settingsDragSlider = -1;
-        _settingsRebindSlot = -1;
+        _settingsRebindSlot   = -1;
+        _settingsGpRebindSlot = -1;
         return;
     }
 
@@ -7766,60 +7809,136 @@ void Engine::UpdateSettings(float dt)
     else
     {
         // ── Keybindings ──────────────────────────────────────────────────────
-        if (_settingsRebindSlot >= 0)
+
+        // Sub-tab click (M&K vs Gamepad) — same geometry as DrawSettingsKeybindings
+        const float subTabH   = 40.f;
+        const float subTabW   = 160.f;
+        const float subTabGap = 10.f;
+        const float subTabY   = contentY + 8.f;
+        if (mousePressed)
         {
-            // Scan for any key press and assign it to the waiting slot
-            for (int k = 32; k <= 348; k++)
+            if (CheckCollisionPointRec(mouse, { panelX + 40.f, subTabY, subTabW, subTabH }))
             {
-                if (IsKeyPressed((KeyboardKey)k))
-                {
-                    switch (_settingsRebindSlot)
-                    {
-                    case 0: _keybindingsEdit.moveUp     = (KeyboardKey)k; break;
-                    case 1: _keybindingsEdit.moveDown   = (KeyboardKey)k; break;
-                    case 2: _keybindingsEdit.moveLeft   = (KeyboardKey)k; break;
-                    case 3: _keybindingsEdit.moveRight  = (KeyboardKey)k; break;
-                    case 4: _keybindingsEdit.dash       = (KeyboardKey)k; break;
-                    case 5: _keybindingsEdit.attack     = (KeyboardKey)k; break;
-                    case 6: _keybindingsEdit.ability[0] = (KeyboardKey)k; break;
-                    case 7: _keybindingsEdit.ability[1] = (KeyboardKey)k; break;
-                    case 8: _keybindingsEdit.ability[2] = (KeyboardKey)k; break;
-                    case 9: _keybindingsEdit.ability[3] = (KeyboardKey)k; break;
-                    default: break;
-                    }
-                    _settingsRebindSlot = -1;
-                    break;
-                }
+                _keybindSubTab        = 0;
+                _settingsRebindSlot   = -1;
+                _settingsGpRebindSlot = -1;
             }
-            return;
+            else if (CheckCollisionPointRec(mouse, { panelX + 40.f + subTabW + subTabGap, subTabY, subTabW, subTabH }))
+            {
+                _keybindSubTab        = 1;
+                _settingsRebindSlot   = -1;
+                _settingsGpRebindSlot = -1;
+            }
         }
 
-        // Badge click detection — same layout as DrawSettingsKeybindings
-        const float rowX   = panelX + 40.f;
-        const float rowW   = panelW - 80.f;
-        const float rowH   = 42.f;
-        const float rowGap = 7.f;
-        const float labelH = 24.f;
-        const float grpGap = 18.f;
-        const float badgeW = 150.f;
-        const float badgeH = rowH * 0.72f;
-        const float badgeX = rowX + rowW - badgeW - 16.f;
+        // Rows start below the sub-tab strip
+        const float rowsStartY = contentY + subTabH + 22.f;
 
-        // groupLabel non-null = start of a new group
-        static const bool kIsGroupStart[10] = { true, false, false, false, true, false, true, false, false, false };
-
-        float curY = contentY;
-        for (int slotIdx = 0; slotIdx < 10; slotIdx++)
+        if (_keybindSubTab == 0)
         {
-            if (kIsGroupStart[slotIdx])
+            // ── M&K sub-tab ──────────────────────────────────────────────────
+            if (_settingsRebindSlot >= 0)
             {
-                if (slotIdx > 0) curY += grpGap;
-                curY += labelH + 4.f;
+                for (int k = 32; k <= 348; k++)
+                {
+                    if (IsKeyPressed((KeyboardKey)k))
+                    {
+                        switch (_settingsRebindSlot)
+                        {
+                        case 0: _keybindingsEdit.moveUp     = (KeyboardKey)k; break;
+                        case 1: _keybindingsEdit.moveDown   = (KeyboardKey)k; break;
+                        case 2: _keybindingsEdit.moveLeft   = (KeyboardKey)k; break;
+                        case 3: _keybindingsEdit.moveRight  = (KeyboardKey)k; break;
+                        case 4: _keybindingsEdit.dash       = (KeyboardKey)k; break;
+                        case 5: _keybindingsEdit.attack     = (KeyboardKey)k; break;
+                        case 6: _keybindingsEdit.ability[0] = (KeyboardKey)k; break;
+                        case 7: _keybindingsEdit.ability[1] = (KeyboardKey)k; break;
+                        case 8: _keybindingsEdit.ability[2] = (KeyboardKey)k; break;
+                        case 9: _keybindingsEdit.ability[3] = (KeyboardKey)k; break;
+                        default: break;
+                        }
+                        _settingsRebindSlot = -1;
+                        break;
+                    }
+                }
+                return;
             }
-            float badgeY = curY + rowH * 0.5f - badgeH * 0.5f;
-            if (mousePressed && CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH }))
-                _settingsRebindSlot = slotIdx;
-            curY += rowH + rowGap;
+
+            // Badge click detection (matches DrawSettingsKeybindings M&K layout)
+            const float rowX   = panelX + 40.f;
+            const float rowW   = panelW - 80.f;
+            const float rowH   = 42.f;
+            const float rowGap = 7.f;
+            const float labelH = 24.f;
+            const float grpGap = 18.f;
+            const float badgeW = 150.f;
+            const float badgeH = rowH * 0.72f;
+            const float badgeX = rowX + rowW - badgeW - 16.f;
+            static const bool kMKGroupStart[10] = { true, false, false, false, true, false, true, false, false, false };
+            float curY = rowsStartY;
+            for (int slotIdx = 0; slotIdx < 10; slotIdx++)
+            {
+                if (kMKGroupStart[slotIdx]) { if (slotIdx > 0) curY += grpGap; curY += labelH + 4.f; }
+                float badgeY = curY + rowH * 0.5f - badgeH * 0.5f;
+                if (mousePressed && CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH }))
+                    _settingsRebindSlot = slotIdx;
+                curY += rowH + rowGap;
+            }
+        }
+        else
+        {
+            // ── Gamepad sub-tab ──────────────────────────────────────────────
+            if (_settingsGpRebindSlot >= 0)
+            {
+                // Scan for any gamepad button press and assign it
+                if (IsGamepadAvailable(GamepadInput::kGamepad))
+                {
+                    for (int b = 1; b <= 17; b++)
+                    {
+                        if (IsGamepadButtonPressed(GamepadInput::kGamepad, (GamepadButton)b))
+                        {
+                            GamepadButton pressed = (GamepadButton)b;
+                            switch (_settingsGpRebindSlot)
+                            {
+                            case 0: _gamepadBindingsEdit.attack      = pressed; break;
+                            case 1: _gamepadBindingsEdit.dash        = pressed; break;
+                            case 2: _gamepadBindingsEdit.ability[0]  = pressed; break;
+                            case 3: _gamepadBindingsEdit.ability[1]  = pressed; break;
+                            case 4: _gamepadBindingsEdit.ability[2]  = pressed; break;
+                            case 5: _gamepadBindingsEdit.ability[3]  = pressed; break;
+                            case 6: _gamepadBindingsEdit.pause       = pressed; break;
+                            default: break;
+                            }
+                            _settingsGpRebindSlot = -1;
+                            SaveKeybindings();
+                            break;
+                        }
+                    }
+                }
+                return;
+            }
+
+            // Badge click detection (matches DrawSettingsKeybindings Gamepad layout)
+            const float rowX   = panelX + 40.f;
+            const float rowW   = panelW - 80.f;
+            const float rowH   = 42.f;
+            const float rowGap = 7.f;
+            const float labelH = 24.f;
+            const float grpGap = 18.f;
+            const float badgeW = 150.f;
+            const float badgeH = rowH * 0.72f;
+            const float badgeX = rowX + rowW - badgeW - 16.f;
+            // 7 slots: Attack, Dash, Pause  |  Ability 1-4
+            static const bool kGPGroupStart[7] = { true, false, false, true, false, false, false };
+            float curY = rowsStartY;
+            for (int slotIdx = 0; slotIdx < 7; slotIdx++)
+            {
+                if (kGPGroupStart[slotIdx]) { if (slotIdx > 0) curY += grpGap; curY += labelH + 4.f; }
+                float badgeY = curY + rowH * 0.5f - badgeH * 0.5f;
+                if (mousePressed && CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH }))
+                    _settingsGpRebindSlot = slotIdx;
+                curY += rowH + rowGap;
+            }
         }
     }
 }
@@ -7941,9 +8060,9 @@ void Engine::DrawSettings() const
         DrawSettingsKeybindings(contentY, panelX, panelW, mouse);
     }
 
-    // Back button
+    // Back button — sits below the nine-slice border PNG (borderPad=24 + 8 gap)
     float backX = panelX + panelW * 0.5f - 140.f;
-    float backY = panelY + panelH - 75.f;
+    float backY = panelY + panelH + 32.f;
     Rectangle backBtn = { backX, backY, 280.f, 55.f };
     bool backHov = CheckCollisionPointRec(mouse, backBtn);
     DrawRectangleRounded(backBtn, 0.25f, 6,
@@ -7969,91 +8088,186 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
     const float badgeH = rowH * 0.72f;
     const float badgeX = rowX + rowW - badgeW - 16.f;
 
-    struct SlotDef { const char* groupLabel; const char* name; };
-    static const SlotDef slots[10] = {
-        { "MOVEMENT",  "Move Up"    },
-        { nullptr,     "Move Down"  },
-        { nullptr,     "Move Left"  },
-        { nullptr,     "Move Right" },
-        { "ACTIONS",   "Dash"       },
-        { nullptr,     "Attack"     },
-        { "ABILITIES", "Ability 1"  },
-        { nullptr,     "Ability 2"  },
-        { nullptr,     "Ability 3"  },
-        { nullptr,     "Ability 4"  },
-    };
+    // ── Sub-tab strip (M&K / GAMEPAD) ────────────────────────────────────────
+    const float subTabH   = 40.f;
+    const float subTabW   = 160.f;
+    const float subTabGap = 10.f;
+    const float subTabY   = contentY + 8.f;
 
-    auto getSlotKey = [&](int slotIdx) -> KeyboardKey {
-        switch (slotIdx) {
-        case 0: return _keybindingsEdit.moveUp;
-        case 1: return _keybindingsEdit.moveDown;
-        case 2: return _keybindingsEdit.moveLeft;
-        case 3: return _keybindingsEdit.moveRight;
-        case 4: return _keybindingsEdit.dash;
-        case 5: return _keybindingsEdit.attack;
-        case 6: return _keybindingsEdit.ability[0];
-        case 7: return _keybindingsEdit.ability[1];
-        case 8: return _keybindingsEdit.ability[2];
-        default: return _keybindingsEdit.ability[3];
-        }
-    };
-
-    float curY = contentY;
-    for (int slotIdx = 0; slotIdx < 10; slotIdx++)
+    static const char* kSubTabs[2] = { "M&K", "GAMEPAD" };
+    float stX = panelX + 40.f;
+    for (int st = 0; st < 2; st++)
     {
-        if (slots[slotIdx].groupLabel)
-        {
-            if (slotIdx > 0) curY += grpGap;
-            DrawText(slots[slotIdx].groupLabel,
-                     (int)rowX, (int)curY,
-                     (int)labelH, Color{255, 214, 102, 255});
-            curY += labelH + 4.f;
-        }
-
-        // Row background
-        DrawRectangleRounded({ rowX, curY, rowW, rowH }, 0.2f, 4, Color{15, 40, 55, 180});
-
-        // Slot name
-        const int nameFsz = 26;
-        DrawText(slots[slotIdx].name,
-                 (int)(rowX + 16.f),
-                 (int)(curY + rowH * 0.5f - nameFsz * 0.5f),
-                 nameFsz, Color{200, 225, 240, 220});
-
-        // Key badge
-        bool awaiting = (_settingsRebindSlot == slotIdx);
-        float badgeY  = curY + rowH * 0.5f - badgeH * 0.5f;
-        bool  hovered = CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH });
-
-        Color badgeFill   = awaiting ? Color{255, 200,  60, 230}
-                          : hovered  ? Color{ 80, 180,  80, 220}
-                                     : Color{ 40, 130,  70, 200};
-        Color badgeBorder = awaiting ? Color{255, 230, 100, 255}
-                                     : Color{ 80, 200,  80, 180};
-        DrawRectangleRounded     ({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeFill);
-        DrawRectangleRoundedLines({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeBorder);
-
-        const char* keyLabel = awaiting ? "PRESS KEY..." : GetKeyName(getSlotKey(slotIdx));
-        int keyFsz = awaiting ? 20 : 26;
-        int keyTw  = MeasureText(keyLabel, keyFsz);
-        DrawText(keyLabel,
-                 (int)(badgeX + badgeW * 0.5f - keyTw * 0.5f),
-                 (int)(badgeY + badgeH * 0.5f - keyFsz * 0.5f),
-                 keyFsz, awaiting ? BLACK : RAYWHITE);
-
-        curY += rowH + rowGap;
+        bool active      = (_keybindSubTab == st);
+        Color fill       = active ? Color{130, 235, 255, 200} : Color{30, 55, 70, 180};
+        Color border     = active ? Color{130, 235, 255, 255} : Color{70, 120, 150, 140};
+        DrawRectangleRounded     ({ stX, subTabY, subTabW, subTabH }, 0.25f, 6, fill);
+        DrawRectangleRoundedLines({ stX, subTabY, subTabW, subTabH }, 0.25f, 6, border);
+        int stFs = 28;
+        int stTw = MeasureText(kSubTabs[st], stFs);
+        DrawText(kSubTabs[st],
+                 (int)(stX + subTabW * 0.5f - stTw * 0.5f),
+                 (int)(subTabY + subTabH * 0.5f - stFs * 0.5f),
+                 stFs, active ? BLACK : RAYWHITE);
+        stX += subTabW + subTabGap;
     }
 
-    // Hint text
-    const char* hint = (_settingsRebindSlot >= 0)
-        ? "Press ESC to cancel  |  Press any key to assign"
-        : "Click a key badge to rebind";
-    const int hintFsz = 22;
-    int hintTw = MeasureText(hint, hintFsz);
-    DrawText(hint,
-             (int)(rowX + rowW * 0.5f - hintTw * 0.5f),
-             (int)(curY + 12.f),
-             hintFsz, Color{140, 180, 200, 160});
+    // Divider below sub-tabs
+    float subDivY = subTabY + subTabH + 8.f;
+    DrawLineEx({ rowX, subDivY }, { rowX + rowW, subDivY }, 1.f,
+               Fade(Color{130, 235, 255, 255}, 0.25f));
+
+    // Rows start below the sub-tab strip
+    const float rowsStartY = contentY + subTabH + 22.f;
+
+    if (_keybindSubTab == 0)
+    {
+        // ── M&K ──────────────────────────────────────────────────────────────
+        struct SlotDef { const char* groupLabel; const char* name; };
+        static const SlotDef mkSlots[10] = {
+            { "MOVEMENT",  "Move Up"    },
+            { nullptr,     "Move Down"  },
+            { nullptr,     "Move Left"  },
+            { nullptr,     "Move Right" },
+            { "ACTIONS",   "Dash"       },
+            { nullptr,     "Attack"     },
+            { "ABILITIES", "Ability 1"  },
+            { nullptr,     "Ability 2"  },
+            { nullptr,     "Ability 3"  },
+            { nullptr,     "Ability 4"  },
+        };
+        auto getMKKey = [&](int i) -> KeyboardKey {
+            switch (i) {
+            case 0: return _keybindingsEdit.moveUp;
+            case 1: return _keybindingsEdit.moveDown;
+            case 2: return _keybindingsEdit.moveLeft;
+            case 3: return _keybindingsEdit.moveRight;
+            case 4: return _keybindingsEdit.dash;
+            case 5: return _keybindingsEdit.attack;
+            case 6: return _keybindingsEdit.ability[0];
+            case 7: return _keybindingsEdit.ability[1];
+            case 8: return _keybindingsEdit.ability[2];
+            default: return _keybindingsEdit.ability[3];
+            }
+        };
+
+        float curY = rowsStartY;
+        for (int i = 0; i < 10; i++)
+        {
+            if (mkSlots[i].groupLabel)
+            {
+                if (i > 0) curY += grpGap;
+                DrawText(mkSlots[i].groupLabel, (int)rowX, (int)curY, (int)labelH, Color{255, 214, 102, 255});
+                curY += labelH + 4.f;
+            }
+            DrawRectangleRounded({ rowX, curY, rowW, rowH }, 0.2f, 4, Color{15, 40, 55, 180});
+            const int nameFsz = 26;
+            DrawText(mkSlots[i].name, (int)(rowX + 16.f),
+                     (int)(curY + rowH * 0.5f - nameFsz * 0.5f),
+                     nameFsz, Color{200, 225, 240, 220});
+
+            bool  awaiting   = (_settingsRebindSlot == i);
+            float badgeY     = curY + rowH * 0.5f - badgeH * 0.5f;
+            bool  hovered    = CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH });
+            Color badgeFill  = awaiting ? Color{255, 200, 60, 230} : hovered ? Color{80, 180, 80, 220} : Color{40, 130, 70, 200};
+            Color badgeBorder= awaiting ? Color{255, 230, 100, 255} : Color{80, 200, 80, 180};
+            DrawRectangleRounded     ({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeFill);
+            DrawRectangleRoundedLines({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeBorder);
+            const char* keyLabel = awaiting ? "PRESS KEY..." : GetKeyName(getMKKey(i));
+            int keyFsz = awaiting ? 20 : 26;
+            int keyTw  = MeasureText(keyLabel, keyFsz);
+            DrawText(keyLabel, (int)(badgeX + badgeW * 0.5f - keyTw * 0.5f),
+                     (int)(badgeY + badgeH * 0.5f - keyFsz * 0.5f),
+                     keyFsz, awaiting ? BLACK : RAYWHITE);
+            curY += rowH + rowGap;
+        }
+
+        const char* hint = (_settingsRebindSlot >= 0)
+            ? "Press ESC to cancel  |  Press any key to assign"
+            : "Click a key badge to rebind";
+        int hintFsz = 22;
+        int hintTw  = MeasureText(hint, hintFsz);
+        DrawText(hint, (int)(rowX + rowW * 0.5f - hintTw * 0.5f),
+                 (int)(rowsStartY + (rowH + rowGap) * 10 + grpGap * 3 + 12.f),
+                 hintFsz, Color{140, 180, 200, 160});
+    }
+    else
+    {
+        // ── Gamepad ───────────────────────────────────────────────────────────
+        struct GpSlotDef { const char* groupLabel; const char* name; };
+        static const GpSlotDef gpSlots[7] = {
+            { "ACTIONS",   "Attack"    },
+            { nullptr,     "Dash"      },
+            { nullptr,     "Pause"     },
+            { "ABILITIES", "Ability 1" },
+            { nullptr,     "Ability 2" },
+            { nullptr,     "Ability 3" },
+            { nullptr,     "Ability 4" },
+        };
+        auto getGpButton = [&](int i) -> GamepadButton {
+            switch (i) {
+            case 0: return _gamepadBindingsEdit.attack;
+            case 1: return _gamepadBindingsEdit.dash;
+            case 2: return _gamepadBindingsEdit.pause;
+            case 3: return _gamepadBindingsEdit.ability[0];
+            case 4: return _gamepadBindingsEdit.ability[1];
+            case 5: return _gamepadBindingsEdit.ability[2];
+            default: return _gamepadBindingsEdit.ability[3];
+            }
+        };
+
+        // Left-stick info row at the top
+        float infoY = rowsStartY;
+        DrawRectangleRounded({ rowX, infoY, rowW, rowH }, 0.2f, 4, Color{10, 30, 45, 160});
+        const int infoFs = 24;
+        DrawText("Move", (int)(rowX + 16.f), (int)(infoY + rowH * 0.5f - infoFs * 0.5f),
+                 infoFs, Color{200, 225, 240, 180});
+        const char* stickLabel = "Left Stick";
+        int stickTw = MeasureText(stickLabel, infoFs);
+        DrawText(stickLabel, (int)(badgeX + badgeW * 0.5f - stickTw * 0.5f),
+                 (int)(infoY + rowH * 0.5f - infoFs * 0.5f),
+                 infoFs, Color{160, 200, 220, 160});
+        float curY = infoY + rowH + rowGap + 6.f;
+
+        for (int i = 0; i < 7; i++)
+        {
+            if (gpSlots[i].groupLabel)
+            {
+                if (i > 0) curY += grpGap;
+                DrawText(gpSlots[i].groupLabel, (int)rowX, (int)curY, (int)labelH, Color{255, 214, 102, 255});
+                curY += labelH + 4.f;
+            }
+            DrawRectangleRounded({ rowX, curY, rowW, rowH }, 0.2f, 4, Color{15, 40, 55, 180});
+            const int nameFsz = 26;
+            DrawText(gpSlots[i].name, (int)(rowX + 16.f),
+                     (int)(curY + rowH * 0.5f - nameFsz * 0.5f),
+                     nameFsz, Color{200, 225, 240, 220});
+
+            bool  awaiting   = (_settingsGpRebindSlot == i);
+            float badgeY     = curY + rowH * 0.5f - badgeH * 0.5f;
+            bool  hovered    = CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH });
+            Color badgeFill  = awaiting ? Color{255, 200, 60, 230} : hovered ? Color{80, 180, 80, 220} : Color{40, 130, 70, 200};
+            Color badgeBorder= awaiting ? Color{255, 230, 100, 255} : Color{80, 200, 80, 180};
+            DrawRectangleRounded     ({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeFill);
+            DrawRectangleRoundedLines({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeBorder);
+
+            const char* btnLabel = awaiting ? "PRESS BUTTON..." : GetGamepadButtonName(getGpButton(i));
+            int keyFsz = awaiting ? 18 : 22;
+            int keyTw  = MeasureText(btnLabel, keyFsz);
+            DrawText(btnLabel, (int)(badgeX + badgeW * 0.5f - keyTw * 0.5f),
+                     (int)(badgeY + badgeH * 0.5f - keyFsz * 0.5f),
+                     keyFsz, awaiting ? BLACK : RAYWHITE);
+            curY += rowH + rowGap;
+        }
+
+        const char* hint = (_settingsGpRebindSlot >= 0)
+            ? "Press ESC to cancel  |  Press any button to assign"
+            : "Click a badge to rebind  |  Left stick always moves";
+        int hintFsz = 22;
+        int hintTw  = MeasureText(hint, hintFsz);
+        DrawText(hint, (int)(rowX + rowW * 0.5f - hintTw * 0.5f),
+                 (int)(curY + 12.f), hintFsz, Color{140, 180, 200, 160});
+    }
 }
 
 // ── World Map ──────────────────────────────────────────────────────────────────
@@ -8816,6 +9030,25 @@ void Engine::UpdateDungeonRun(float dt)
 
         _player.SetCombatLocked(false);
         _player.SetTouchModeEnabled(false);
+
+        // Gamepad input for dungeon run
+        _gamepad.Update(_gamepadBindingsEdit);
+        if (_gamepad.isActive)
+        {
+            if (Vector2LengthSqr(_gamepad.moveDir) > 0.f)
+                _player.SetTouchDirection(_gamepad.moveDir);
+            if (_gamepad.attackPressed)  _player.SetTouchAttack();
+            if (_gamepad.dashPressed)    _player.SetTouchDash();
+            for (int i = 0; i < 4; i++)
+                if (_gamepad.abilityPressed[i]) _player.TriggerAbilityCast(i);
+            if (!_dungeonScrolling && _gamepad.pausePressed)
+            {
+                _stateBeforePause = GameState::DungeonRun;
+                _gameState = GameState::Pause;
+                return;
+            }
+        }
+
         _player.Update(dt);
         HandlePlayerCastRequest();
         UpdateDungeonMagicGemAndBarrier(dt);

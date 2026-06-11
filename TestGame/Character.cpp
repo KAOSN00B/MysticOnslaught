@@ -328,16 +328,10 @@ void Character::HandleAttackInput()
     if (_takingDamage || _dying || _isDashing || IsForceLocked() || _combatLocked)
         return;
 
-    bool attackPressed = false;
+    // _touchAttackJustPressed works in all modes (touch UI and gamepad both set it)
+    bool attackPressed = _touchAttackJustPressed;
 
-    // In touch mode (real device OR mouse-simulated), all melee triggers come
-    // from the dedicated ATK button — not from raw mouse clicks — to prevent
-    // the joystick/drag from accidentally firing attacks.
-    if (_touchModeEnabled)
-    {
-        attackPressed = _touchAttackJustPressed;
-    }
-    else
+    if (!_touchModeEnabled)
     {
         // Mouse clicks on the bottom ability bar should not also count as melee
         // attacks. The HUD resolves those clicks into TriggerAbilityCast during
@@ -354,11 +348,14 @@ void Character::HandleAttackInput()
             Rectangle abilityBarBounds{ startX, slotY, totalW, kSlotSize };
 
             if (CheckCollisionPointRec(GetVirtualMousePos(), abilityBarBounds))
+            {
+                _touchAttackJustPressed = false;
                 return;
+            }
         }
 
-        attackPressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
-                        (_bindings.attack != KEY_NULL && IsKeyPressed(_bindings.attack));
+        attackPressed |= IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+                         (_bindings.attack != KEY_NULL && IsKeyPressed(_bindings.attack));
     }
 
     _touchAttackJustPressed = false; // always consume

@@ -171,11 +171,13 @@
     <ClCompile Include="RunStateController.cpp" />
     <ClCompile Include="ShopManager.cpp" />
     <ClCompile Include="SpreadProjectile.cpp" />
+    <ClCompile Include="GamepadInput.cpp" />
     <ClCompile Include="TouchControls.cpp" />
     <ClCompile Include="WorldConfig.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AbilityType.h" />
+    <ClInclude Include="GamepadInput.h" />
     <ClInclude Include="AudioManager.h" />
     <ClInclude Include="CutsceneAction.h" />
     <ClInclude Include="CutsceneManager.h" />

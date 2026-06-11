@@ -38,6 +38,7 @@
 #include "TileDefs.h"
 #include "RoomLayout.h"
 #include "TileRenderer.h"
+#include "GamepadInput.h"
 
 #include <vector>
 #include <string>
@@ -202,11 +203,14 @@ private:
     SettingsManager _settingsMgr;
     GameState       _stateBeforeSettings = GameState::Menu;
     // Settings screen UI state
-    int   _settingsTab        = 0;    // 0=Display  1=Audio  2=Keybindings
-    int   _settingsDragSlider = -1;   // -1=none  0=master  1=music  2=sfx
-    float _settingsDragStartX = 0.f;
+    int   _settingsTab          = 0;   // 0=Display  1=Audio  2=Keybindings
+    int   _settingsDragSlider   = -1;  // -1=none  0=master  1=music  2=sfx
+    float _settingsDragStartX   = 0.f;
     float _settingsDragStartVal = 0.f;
-    int   _settingsRebindSlot = -1;   // -1=none; slot index 0-9 when waiting for key
+    int   _settingsRebindSlot   = -1;  // -1=none; slot index 0-9 when waiting for key (M&K)
+    int   _keybindSubTab        = 0;   // 0=M&K  1=Gamepad  (sub-tab inside KEYBINDINGS tab)
+    int   _settingsGpRebindSlot = -1;  // -1=none; 0=attack 1=dash 2-5=ability[0-3] 6=pause
+    GamepadBindings _gamepadBindingsEdit;
 
     RunStateController _runState;
     GameState& _gameState;
@@ -614,6 +618,7 @@ private:
     // ── Touch mode ───────────────────────────────────────────────────────────
     bool          _touchModeActive = false;
     TouchControls _touch;
+    GamepadInput  _gamepad;
     // Touch IDs that have already triggered an ability cast this press.
     // Cleared each frame when the touch lifts; prevents repeat casts on hold.
     std::vector<int> _abilityTapSeenIds;
