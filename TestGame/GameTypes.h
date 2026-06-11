@@ -20,6 +20,7 @@ enum class LevelUpOfferContext
 {
     NormalLevel,
     TreasureBasic,
+    TreasureChest,  // treasure room chest — mixed upgrade + ability cards
     EliteReward,
     StoreStock,
 };

@@ -45,3 +45,36 @@ inline std::string AssetPath(const char* relativePath)
     return normalized;
 #endif
 }
+
+// AssetFolderPath resolves a relative folder path the same way AssetPath does,
+// but checks for directory existence instead of file existence.
+inline std::string AssetFolderPath(const char* relativePath)
+{
+    std::string normalized = relativePath != nullptr ? relativePath : "";
+    for (char& ch : normalized)
+    {
+        if (ch == '\\')
+            ch = '/';
+    }
+
+#ifdef __EMSCRIPTEN__
+    return normalized;
+#else
+    static const char* prefixes[] =
+    {
+        "",
+        "../",
+        "../../",
+        "../../../"
+    };
+
+    for (const char* prefix : prefixes)
+    {
+        std::string candidate = std::string(prefix) + normalized;
+        if (DirectoryExists(candidate.c_str()))
+            return candidate;
+    }
+
+    return normalized;
+#endif
+}

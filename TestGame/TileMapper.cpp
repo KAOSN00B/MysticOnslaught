@@ -1,4 +1,8 @@
-﻿#include "TileMapper.h"
+﻿#ifdef _MSC_VER
+#pragma warning(disable: 4996)
+#endif
+#include "TileMapper.h"
+#include "AssetPaths.h"
 #include "VirtualCanvas.h"
 #include "TileDefs.h"
 #include "RoomLayout.h"
@@ -43,6 +47,10 @@ const Color TileMapper::kTypeColors[TileMapper::kTypeCount] = {
 
 void TileMapper::Init(const char* folderPath)
 {
+    // Resolve the folder relative to the exe/working directory.
+    std::string resolvedFolder = AssetFolderPath(folderPath);
+    folderPath = resolvedFolder.c_str();
+
     _wantsToExit      = false;
     _screen           = Screen::FileSelect;
     _selectedFileIdx  = -1;
@@ -94,15 +102,14 @@ void TileMapper::ScanFolder(const char* folderPath)
             // Check whether a save file exists for this tileset.
             std::string savePath = "tilemapper_" + f.stem + ".txt";
             FILE* test = nullptr;
-            fopen_s(&test, savePath.c_str(), "r");
+            test = fopen(savePath.c_str(), "r");
             if (test)
             {
                 f.hasSave = true;
                 // Peek at the biome name stored in the save.
                 char biomeName[64]{};
                 char tag[16]{};
-                if (fscanf_s(test, "%15s %63s", tag, (unsigned)sizeof(tag),
-                             biomeName, (unsigned)sizeof(biomeName)) == 2)
+                if (fscanf(test, "%15s %63s", tag, biomeName) == 2)
                 {
                     for (int i = 0; i < kBiomeCount; i++)
                     {
@@ -910,7 +917,7 @@ void TileMapper::ExportAndSave() const
 
     std::string path = SavePath();
     FILE* f = nullptr;
-    fopen_s(&f, path.c_str(), "w");
+    f = fopen(path.c_str(), "w");
     if (f)
     {
         fprintf(f, "BIOME %s\n", biomeName);
@@ -957,13 +964,12 @@ void TileMapper::TryLoadSave()
 
     std::string path = SavePath();
     FILE* f = nullptr;
-    fopen_s(&f, path.c_str(), "r");
+    f = fopen(path.c_str(), "r");
     if (!f) return;
 
     // First line: BIOME <name>
     char biomeTag[16]{}, biomeName[64]{};
-    if (fscanf_s(f, "%15s %63s", biomeTag, (unsigned)sizeof(biomeTag),
-                 biomeName, (unsigned)sizeof(biomeName)) == 2)
+    if (fscanf(f, "%15s %63s", biomeTag, biomeName) == 2)
     {
         for (int i = 0; i < kBiomeCount; i++)
         {
@@ -976,13 +982,13 @@ void TileMapper::TryLoadSave()
     }
 
     char tag[32]{};
-    while (fscanf_s(f, "%31s", tag, (unsigned)sizeof(tag)) == 1)
+    while (fscanf(f, "%31s", tag) == 1)
     {
         if (strcmp(tag, "TILE") == 0 || strcmp(tag, "GTILE") == 0)
         {
             bool isGround = (strcmp(tag, "GTILE") == 0);
             int col, row, sc, sr, ti;
-            if (fscanf_s(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &ti) != 5) continue;
+            if (fscanf(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &ti) != 5) continue;
             if (ti < 0 || ti >= kTypeCount) continue;
             Assignment a;
             a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr;
@@ -992,11 +998,11 @@ void TileMapper::TryLoadSave()
         else if (strcmp(tag, "PROP") == 0)
         {
             float x, y, w, h;
-            if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
+            if (fscanf(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
             float cx = 0.f, cy = 0.f, cw = w, ch = h;
             long savedPos = ftell(f);
             float tmp[4]{};
-            if (fscanf_s(f, "%f %f %f %f", &tmp[0], &tmp[1], &tmp[2], &tmp[3]) == 4)
+            if (fscanf(f, "%f %f %f %f", &tmp[0], &tmp[1], &tmp[2], &tmp[3]) == 4)
                 { cx = tmp[0]; cy = tmp[1]; cw = tmp[2]; ch = tmp[3]; }
             else
                 fseek(f, savedPos, SEEK_SET);
@@ -1005,20 +1011,20 @@ void TileMapper::TryLoadSave()
         else if (strcmp(tag, "DECOR") == 0)
         {
             float x, y, w, h;
-            if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
+            if (fscanf(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
             _decorDefs.push_back({ x, y, w, h });
         }
         else if (strcmp(tag, "ANIMDECOR") == 0)
         {
             float fps;
             int   fc;
-            if (fscanf_s(f, "%f %d", &fps, &fc) != 2) continue;
+            if (fscanf(f, "%f %d", &fps, &fc) != 2) continue;
             AnimDecorDef def;
             def.fps = fps;
             for (int i = 0; i < fc; i++)
             {
                 float fx, fy, fw, fh;
-                if (fscanf_s(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
+                if (fscanf(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
                 def.frames.push_back({ fx, fy, fw, fh });
             }
             if (!def.frames.empty())
@@ -1028,14 +1034,14 @@ void TileMapper::TryLoadSave()
         {
             float cx, cy, cw, ch, fps;
             int   fc;
-            if (fscanf_s(f, "%f %f %f %f %f %d", &cx, &cy, &cw, &ch, &fps, &fc) != 6) continue;
+            if (fscanf(f, "%f %f %f %f %f %d", &cx, &cy, &cw, &ch, &fps, &fc) != 6) continue;
             AnimPropDef def;
             def.collision = { cx, cy, cw, ch };
             def.fps       = fps;
             for (int i = 0; i < fc; i++)
             {
                 float fx, fy, fw, fh;
-                if (fscanf_s(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
+                if (fscanf(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
                 def.frames.push_back({ fx, fy, fw, fh });
             }
             if (!def.frames.empty())
@@ -1045,7 +1051,7 @@ void TileMapper::TryLoadSave()
         {
             // Legacy format: tag is the col integer.
             int col = atoi(tag), row, sc, sr, ti;
-            if (fscanf_s(f, "%d %d %d %d", &row, &sc, &sr, &ti) != 4) continue;
+            if (fscanf(f, "%d %d %d %d", &row, &sc, &sr, &ti) != 4) continue;
             if (ti < 0 || ti >= kTypeCount) continue;
             Assignment a; a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr; a.typeIdx = ti;
             _assignments.push_back(a);

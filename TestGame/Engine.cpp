@@ -1436,6 +1436,7 @@ void Engine::Update(float dt)
         }
         break;
 
+    default: break;
     }
 }
 
@@ -1543,11 +1544,10 @@ void Engine::UpdateGamePlay(float dt)
         UpdateBiomeTransition(dt);
 
     // Block attacks during room intro and ultimate cinematic.
-    // Also lock combat in non-combat rooms (rest/store/treasure) so the player
+    // Also lock combat in non-combat rooms (rest/store) so the player
     // can't accidentally trigger the attack animation while browsing.
     bool inNonCombatRoom = (_currentRoomType == RoomType::Rest  ||
                             _currentRoomType == RoomType::Store ||
-                            _currentRoomType == RoomType::Treasure ||
                             _debug.IsOpen());
     const bool ultActive = (_ultimatePhase != UltimatePhase::None);
     _player.SetCombatLocked(_waveStarting || ultActive || inNonCombatRoom);
@@ -1635,8 +1635,7 @@ void Engine::UpdateGamePlay(float dt)
 
         // Timed heal drops — boss fights and non-combat rooms suppress this.
         if (_currentRoomType != RoomType::Rest  &&
-            _currentRoomType != RoomType::Store &&
-            _currentRoomType != RoomType::Treasure)
+            _currentRoomType != RoomType::Store)
         {
             _pickupSpawnTimer -= dt;
             if (_pickupSpawnTimer <= 0.f)
@@ -1989,6 +1988,7 @@ void Engine::Draw()
         break;
     }
 
+    default: break;
     }
 }
 
@@ -2901,6 +2901,80 @@ void Engine::GenerateAbilityChoiceOptions()
     _abilityChoiceOptionCount = (poolSize < 3) ? poolSize : 3;
     for (int i = 0; i < _abilityChoiceOptionCount; i++)
         _abilityChoiceOptions[i] = pool[i];
+}
+
+// =============================================================================
+// Treasure chest mixed reward — 3 cards, each randomly an ability or stat upgrade
+// =============================================================================
+
+void Engine::GenerateTreasureChestOptions()
+{
+    // ── Build ability pool (unlearned abilities or upgradable ones) ────────────
+    static const AbilityType allAbilities[9] = {
+        AbilityType::FireSpread,   AbilityType::IceSpread,   AbilityType::ElectricSpread,
+        AbilityType::FireBolt,     AbilityType::IceBolt,     AbilityType::ElectricBolt,
+        AbilityType::FireUltimate, AbilityType::IceUltimate, AbilityType::ElectricUltimate
+    };
+    static const UpgradeType learnTypes[9] = {
+        UpgradeType::LearnFireSpread,    UpgradeType::LearnIceSpread,    UpgradeType::LearnElectricSpread,
+        UpgradeType::LearnFireBolt,      UpgradeType::LearnIceBolt,      UpgradeType::LearnElectricBolt,
+        UpgradeType::LearnFireUltimate,  UpgradeType::LearnIceUltimate,  UpgradeType::LearnElectricUltimate
+    };
+    static const UpgradeType upgradeAbilityTypes[9] = {
+        UpgradeType::UpgradeFireSpread,    UpgradeType::UpgradeIceSpread,    UpgradeType::UpgradeElectricSpread,
+        UpgradeType::UpgradeFireBolt,      UpgradeType::UpgradeIceBolt,      UpgradeType::UpgradeElectricBolt,
+        UpgradeType::UpgradeFireUltimate,  UpgradeType::UpgradeIceUltimate,  UpgradeType::UpgradeElectricUltimate
+    };
+
+    UpgradeType abilityPool[18];
+    int abilityPoolSize = 0;
+    for (int i = 0; i < 9; i++)
+    {
+        if (!_player.HasLearnedAbility(allAbilities[i]))
+            abilityPool[abilityPoolSize++] = learnTypes[i];
+        else if (_player.CanUpgradeAbility(allAbilities[i]))
+            abilityPool[abilityPoolSize++] = upgradeAbilityTypes[i];
+    }
+    for (int i = 0; i < abilityPoolSize; i++)
+    {
+        int j = GetRandomValue(i, abilityPoolSize - 1);
+        UpgradeType tmp = abilityPool[i]; abilityPool[i] = abilityPool[j]; abilityPool[j] = tmp;
+    }
+
+    // ── Build stat upgrade pool (common + rare) ────────────────────────────────
+    UpgradeType statPool[12] = {
+        UpgradeType::AttackPower,      UpgradeType::AttackRange,   UpgradeType::MaxHealth,
+        UpgradeType::MaxMana,          UpgradeType::Defense,       UpgradeType::MoveSpeed,
+        UpgradeType::IronConstitution, UpgradeType::SwiftFeet,     UpgradeType::Ferocity,
+        UpgradeType::ArcaneMind,       UpgradeType::IronSkin,      UpgradeType::BladeEdge
+    };
+    for (int i = 0; i < 12; i++)
+    {
+        int j = GetRandomValue(i, 11);
+        UpgradeType tmp = statPool[i]; statPool[i] = statPool[j]; statPool[j] = tmp;
+    }
+
+    _levelUpOfferContext  = LevelUpOfferContext::TreasureChest;
+    _showUltimateRow      = false;
+    _ultimateRowPicked    = false;
+    _regularRowPicked     = false;
+
+    // ── Fill 3 slots — each slot randomly an ability or a stat upgrade ─────────
+    int aIdx = 0;
+    int sIdx = 0;
+    for (int i = 0; i < 3; i++)
+    {
+        bool canAbility = (aIdx < abilityPoolSize);
+        bool canStat    = (sIdx < 12);
+        bool pickAbility = canAbility && (!canStat || GetRandomValue(0, 1) == 0);
+
+        if (pickAbility)
+            _levelUpOptions[i] = abilityPool[aIdx++];
+        else if (canStat)
+            _levelUpOptions[i] = statPool[sIdx++];
+        else
+            _levelUpOptions[i] = UpgradeType::AttackPower; // should never reach
+    }
 }
 
 void Engine::DrawAbilityChoice()
@@ -4018,6 +4092,8 @@ void Engine::DrawLevelUpChoice()
     const char* title;
     if (_awaitingStartingAbility)
         title = "Choose your starting ability:";
+    else if (_levelUpOfferContext == LevelUpOfferContext::TreasureChest)
+        title = "Treasure Chest  -  Choose your reward:";
     else if (_levelUpOfferContext == LevelUpOfferContext::TreasureBasic)
         title = "Treasure Room  -  Choose a basic upgrade:";
     else if (_levelUpOfferContext == LevelUpOfferContext::EliteReward)
@@ -4595,17 +4671,6 @@ void Engine::HandlePlayerMeleeDamage()
         }
     }
 
-    // Treasure chest hit (DungeonRun only).
-    if (_gameState == GameState::DungeonRun && _treasureChestSpawned && !_treasureChestBroken)
-    {
-        if (CheckCollisionRecs(attackRec, GetTreasureChestRect()))
-        {
-            _treasureChestBroken = true;
-            hitAny = true;
-            OpenTreasureChest();
-        }
-    }
-
     _player.ConsumeMeleeDamageFrame();
 
     if (hitAny)
@@ -4624,36 +4689,18 @@ void Engine::OpenTreasureChest()
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
 
+    // Switch tile sprite to open chest immediately.
+    _dungeonRoomLayout.tiles[RoomLayout::kRows / 2][RoomLayout::kCols / 2] = TileType::ChestOpen;
+
     _vfx.SpawnHitEffect(Character::CastType::None, { sw * 0.5f, sh * 0.5f }, _player.GetFacingDirection());
     TriggerScreenShake(5.f, 0.12f);
     StopSound(_pickupSound);
     PlaySound(_pickupSound);
 
-    if (GetRandomValue(0, 1) == 0)
-    {
-        // Gold reward — scatter coins around screen centre.
-        auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
-        {
-            auto g = std::make_unique<GoldPickup>();
-            g->Init({ sw * 0.5f + ox, sh * 0.5f + oy }, denom);
-            _pickups.push_back(std::move(g));
-        };
-        spawnGold(GoldDenomination::Ten,      0.f,    0.f);
-        spawnGold(GoldDenomination::Ten,    -75.f,  -35.f);
-        spawnGold(GoldDenomination::Five,    65.f,  -45.f);
-        spawnGold(GoldDenomination::Five,   -55.f,   55.f);
-        spawnGold(GoldDenomination::Five,    60.f,   45.f);
-        spawnGold(GoldDenomination::Single, -85.f,   10.f);
-        spawnGold(GoldDenomination::Single,  80.f,   20.f);
-    }
-    else
-    {
-        // Buff card — pick one free upgrade.
-        GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
-        _levelUpReturnState = GameState::DungeonRun;
-        _levelUpOpenTimer   = 0.3f;
-        _gameState          = GameState::LevelUpChoice;
-    }
+    GenerateTreasureChestOptions();
+    _levelUpReturnState = GameState::DungeonRun;
+    _levelUpOpenTimer   = 0.3f;
+    _gameState          = GameState::LevelUpChoice;
 }
 
 void Engine::HandlePlayerCastRequest()
@@ -5835,10 +5882,10 @@ void Engine::LoadTilesetForBiome(Biome biome)
 {
     std::string biomeName  = GetBiomeName(biome);
     std::string txtFile    = "tilemapper_" + biomeName + ".txt";
-    std::string sheetPath  = std::string(kTilesheetFolder) + "/" + biomeName + ".png";
-    std::string groundPath = std::string(kTilesheetFolder) + "/Ground TIles.png";
+    std::string sheetPath  = AssetPath((std::string(kTilesheetFolder) + "/" + biomeName + ".png").c_str());
+    std::string groundPath = AssetPath((std::string(kTilesheetFolder) + "/Ground TIles.png").c_str());
     _tileDefs = {};
-    _tileDefs.LoadFromFile(txtFile.c_str());
+    _tileDefs.LoadFromFile(AssetPath(txtFile.c_str()).c_str());
     _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
 }
 
@@ -8934,6 +8981,12 @@ void Engine::UpdateDungeonRun(float dt)
                         ApplyDungeonBossExitTiles(TileType::DoorOpen);
                     SpawnDungeonDoorOpenEffects();
                     RebuildDungeonNav();
+                    if (_currentRoomType == RoomType::Treasure)
+                    {
+                        _treasureChestSpawned = true;
+                        _treasureChestBroken  = false;
+                        _dungeonRoomLayout.tiles[RoomLayout::kRows / 2][RoomLayout::kCols / 2] = TileType::ChestClosed;
+                    }
                     break;
                 case DebugActionKind::RestartRoom:
                     DebugRestartDungeonRoomAs((RoomType)cmd.value); break;
@@ -9410,11 +9463,12 @@ void Engine::UpdateDungeonRun(float dt)
                 SpawnDungeonDoorOpenEffects();
                 RebuildDungeonNav();
 
-                // Treasure room: chest appears after all enemies die.
+                // Treasure room: chest tile appears at screen centre after all enemies die.
                 if (_currentRoomType == RoomType::Treasure)
                 {
                     _treasureChestSpawned = true;
                     _treasureChestBroken  = false;
+                    _dungeonRoomLayout.tiles[RoomLayout::kRows / 2][RoomLayout::kCols / 2] = TileType::ChestClosed;
                 }
                 // Elite room: scatter gold and offer an upgrade card.
                 else if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
@@ -9452,6 +9506,17 @@ void Engine::UpdateDungeonRun(float dt)
                 _dungeonFadePendingAction = [this]() { OpenWorldMap(); };
                 _dungeonFadeState = DungeonFadeState::FadingOut;
                 _dungeonFadeTimer = kDungeonFadeDuration;
+                return;
+            }
+        }
+
+        // Treasure chest overlap — player walks over the chest to open it.
+        if (_treasureChestSpawned && !_treasureChestBroken)
+        {
+            if (CheckCollisionPointRec(_player.GetWorldPos(), GetTreasureChestRect()))
+            {
+                _treasureChestBroken = true;
+                OpenTreasureChest();
                 return;
             }
         }
@@ -9628,25 +9693,20 @@ void Engine::DrawDungeonRun()
                 _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
                 for (auto& pickup : _pickups)
                     pickup->Draw(worldOffset);
-                // Treasure chest appears at screen centre after combat is cleared.
+                // Treasure chest tile (ChestClosed / ChestOpen) is drawn by the tile renderer.
+                // Show a hint label above the chest while it is unopened.
                 if (_treasureChestSpawned && !_treasureChestBroken)
                 {
                     float cx = sw * 0.5f + _shakeOffset.x;
                     float cy = sh * 0.5f + _shakeOffset.y;
-                    if (_mapIconTreasure.id != 0)
-                    {
-                        float chestSize = 72.f;
-                        float scale = chestSize / (float)_mapIconTreasure.width;
-                        DrawTextureEx(_mapIconTreasure,
-                            { cx - chestSize * 0.5f, cy - chestSize * 0.5f },
-                            0.f, scale, WHITE);
-                    }
-                    else
-                    {
-                        DrawRectangleLines((int)(cx - 36), (int)(cy - 36), 72, 72, YELLOW);
-                        DrawText("CHEST", (int)(cx - 28), (int)(cy - 8), 18, YELLOW);
-                    }
+                    float pulse = 0.65f + 0.35f * sinf((float)GetTime() * 3.f);
+                    const char* hint = "Walk over to open!";
+                    int hintSz = 22;
+                    int hintW  = MeasureText(hint, hintSz);
+                    DrawText(hint, (int)(cx - hintW * 0.5f), (int)(cy - 72), hintSz,
+                             Fade(GOLD, pulse));
                 }
+
                 for (auto& enemy : _enemies)
                 {
                     if (!enemy->IsActive()) continue;

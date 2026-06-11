@@ -60,8 +60,8 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
                 layout.tiles[r][c] = TileType::FloorVariant;
 
     // ── Treasure chest centred in the room ───────────────────────────────────
-    if (type == RoomType::Treasure)
-        layout.tiles[rows / 2][cols / 2] = TileType::ChestClosed;
+    // Starts as Floor — Engine switches it to ChestClosed after enemies die, ChestOpen after opened.
+    // (No tile change here; Engine handles it on _treasureChestSpawned / _treasureChestBroken.)
 
     // ── Props (solid objects) ─────────────────────────────────────────────────
     if (propCount > 0 && type != RoomType::Boss && type != RoomType::Rest && type != RoomType::Store)

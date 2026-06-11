@@ -1,3 +1,7 @@
+#ifdef _MSC_VER
+#pragma warning(disable: 4996) // suppress MSVC "unsafe function" warnings for fopen/fscanf
+#endif
+
 #include "TileDefs.h"
 #include <cstdio>
 #include <cstring>
@@ -21,22 +25,20 @@ Rectangle TileDefSet::Get(TileType t) const
 
 bool TileDefSet::LoadFromFile(const char* path)
 {
-    FILE* f = nullptr;
-    fopen_s(&f, path, "r");
+    FILE* f = fopen(path, "r");
     if (!f) return false;
 
     // First line: BIOME <name> — skip it.
     char tag[32]{}, biome[64]{};
-    fscanf_s(f, "%31s %63s", tag, (unsigned)sizeof(tag),
-                              biome, (unsigned)sizeof(biome));
+    fscanf(f, "%31s %63s", tag, biome);
 
     // Remaining lines: tag-prefixed or legacy (5 bare integers).
-    while (fscanf_s(f, "%31s", tag, (unsigned)sizeof(tag)) == 1)
+    while (fscanf(f, "%31s", tag) == 1)
     {
         if (strcmp(tag, "TILE") == 0)
         {
             int col, row, sc, sr, typeIdx;
-            if (fscanf_s(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &typeIdx) != 5) continue;
+            if (fscanf(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &typeIdx) != 5) continue;
             if (typeIdx < 0 || typeIdx >= (int)TileType::Count) continue;
             rects[typeIdx]    = { (float)(col * kTileSize), (float)(row * kTileSize),
                                   (float)(sc  * kTileSize), (float)(sr  * kTileSize) };
@@ -45,13 +47,13 @@ bool TileDefSet::LoadFromFile(const char* path)
         else if (strcmp(tag, "PROP") == 0)
         {
             float x, y, w, h;
-            if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
+            if (fscanf(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
             // Try to read optional collision rect (cx cy cw ch).
             // Old files only have 4 values; default collision = full sprite.
             float cx = 0.f, cy = 0.f, cw = w, ch = h;
             long savedPos = ftell(f);
             float tmp[4]{};
-            if (fscanf_s(f, "%f %f %f %f", &tmp[0], &tmp[1], &tmp[2], &tmp[3]) == 4)
+            if (fscanf(f, "%f %f %f %f", &tmp[0], &tmp[1], &tmp[2], &tmp[3]) == 4)
                 { cx = tmp[0]; cy = tmp[1]; cw = tmp[2]; ch = tmp[3]; }
             else
                 fseek(f, savedPos, SEEK_SET);
@@ -60,20 +62,20 @@ bool TileDefSet::LoadFromFile(const char* path)
         else if (strcmp(tag, "DECOR") == 0)
         {
             float x, y, w, h;
-            if (fscanf_s(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
+            if (fscanf(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
             decors.push_back({ { x, y, w, h } });
         }
         else if (strcmp(tag, "ANIMDECOR") == 0)
         {
             float fps;
             int   fc;
-            if (fscanf_s(f, "%f %d", &fps, &fc) != 2) continue;
+            if (fscanf(f, "%f %d", &fps, &fc) != 2) continue;
             AnimSpriteDef def;
             def.fps = fps;
             for (int i = 0; i < fc; i++)
             {
                 float fx, fy, fw, fh;
-                if (fscanf_s(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
+                if (fscanf(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
                 def.frames.push_back({ fx, fy, fw, fh });
             }
             if (!def.frames.empty())
@@ -82,7 +84,7 @@ bool TileDefSet::LoadFromFile(const char* path)
         else if (strcmp(tag, "GTILE") == 0)
         {
             int col, row, sc, sr, typeIdx;
-            if (fscanf_s(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &typeIdx) != 5) continue;
+            if (fscanf(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &typeIdx) != 5) continue;
             if (typeIdx < 0 || typeIdx >= (int)TileType::Count) continue;
             rects[typeIdx]     = { (float)(col * kTileSize), (float)(row * kTileSize),
                                    (float)(sc  * kTileSize), (float)(sr  * kTileSize) };
@@ -94,14 +96,14 @@ bool TileDefSet::LoadFromFile(const char* path)
             // Format: cx cy cw ch fps frameCount  x0 y0 w0 h0  x1 y1 w1 h1 ...
             float cx, cy, cw, ch, fps;
             int   fc;
-            if (fscanf_s(f, "%f %f %f %f %f %d", &cx, &cy, &cw, &ch, &fps, &fc) != 6) continue;
+            if (fscanf(f, "%f %f %f %f %f %d", &cx, &cy, &cw, &ch, &fps, &fc) != 6) continue;
             AnimPropDef def;
             def.collision = { cx, cy, cw, ch };
             def.fps       = fps;
             for (int i = 0; i < fc; i++)
             {
                 float fx, fy, fw, fh;
-                if (fscanf_s(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
+                if (fscanf(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
                 def.frames.push_back({ fx, fy, fw, fh });
             }
             if (!def.frames.empty())
@@ -112,7 +114,7 @@ bool TileDefSet::LoadFromFile(const char* path)
             // Legacy format: tag is actually the first integer (col).
             int col = atoi(tag);
             int row, sc, sr, typeIdx;
-            if (fscanf_s(f, "%d %d %d %d", &row, &sc, &sr, &typeIdx) != 4) continue;
+            if (fscanf(f, "%d %d %d %d", &row, &sc, &sr, &typeIdx) != 4) continue;
             if (typeIdx < 0 || typeIdx >= (int)TileType::Count) continue;
             rects[typeIdx]    = { (float)(col * kTileSize), (float)(row * kTileSize),
                                   (float)(sc  * kTileSize), (float)(sr  * kTileSize) };

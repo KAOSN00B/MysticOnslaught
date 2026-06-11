@@ -1,4 +1,7 @@
-﻿#include "NineSliceEditor.h"
+﻿#ifdef _MSC_VER
+#pragma warning(disable: 4996)
+#endif
+#include "NineSliceEditor.h"
 #include "VirtualCanvas.h"
 #include "NineSlice.h"
 #include "VirtualCanvas.h"
@@ -691,7 +694,7 @@ void NineSliceEditor::Save()
     f.hasSave   = true;
 
     FILE* fp = nullptr;
-    fopen_s(&fp, SavePath(f).c_str(), "w");
+    fp = fopen(SavePath(f).c_str(), "w");
     if (!fp) return;
 
     fprintf(fp, "srcTop=%.4f\n",    _srcTop);
@@ -705,12 +708,12 @@ void NineSliceEditor::Save()
 void NineSliceEditor::TryLoad(PngFile& f)
 {
     FILE* fp = nullptr;
-    fopen_s(&fp, SavePath(f).c_str(), "r");
+    fp = fopen(SavePath(f).c_str(), "r");
     if (!fp) return;
 
     char  key[32];
     float val;
-    while (fscanf_s(fp, "%31[^=]=%f\n", key, (unsigned)sizeof(key), &val) == 2)
+    while (fscanf(fp, "%31[^=]=%f\n", key, &val) == 2)
     {
         if (strcmp(key, "srcTop")    == 0) f.srcTop    = val;
         if (strcmp(key, "srcBot")    == 0) f.srcBot    = val;

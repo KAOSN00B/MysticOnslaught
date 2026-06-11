@@ -40,15 +40,11 @@ call emcc ^
   %SRC%\MainMenu.cpp ^
   %SRC%\PauseAndGameOver.cpp ^
   %SRC%\Leaderboard.cpp ^
-  %SRC%\FireballProjectile.cpp ^
-  %SRC%\SwordBeamProjectile.cpp ^
-  %SRC%\FreezeProjectile.cpp ^
   %SRC%\CyclopsLaserProjectile.cpp ^
   %SRC%\LavaballProjectile.cpp ^
   %SRC%\SpreadProjectile.cpp ^
   %SRC%\HealPickup.cpp ^
   %SRC%\GoldPickup.cpp ^
-  %SRC%\ManaGemPickup.cpp ^
   %SRC%\AudioManager.cpp ^
   %SRC%\CombatDirector.cpp ^
   %SRC%\DebugPanel.cpp ^
@@ -65,6 +61,15 @@ call emcc ^
   %SRC%\TouchControls.cpp ^
   %SRC%\VFXManager.cpp ^
   %SRC%\WorldConfig.cpp ^
+  %SRC%\DungeonGen.cpp ^
+  %SRC%\RoomLayout.cpp ^
+  %SRC%\TileDefs.cpp ^
+  %SRC%\TileRenderer.cpp ^
+  %SRC%\TileMapper.cpp ^
+  %SRC%\NineSliceEditor.cpp ^
+  %SRC%\CutsceneManager.cpp ^
+  %SRC%\DialogueBox.cpp ^
+  %SRC%\GamepadInput.cpp ^
   -o %OUT%\index.html ^
   -std=c++17 -Os -DPLATFORM_WEB ^
   -I%SRC% ^
@@ -79,13 +84,23 @@ call emcc ^
   --preload-file Hero ^
   --preload-file Enemy ^
   --preload-file Bosses ^
-  --preload-file ForestLevel ^
   --preload-file TileSet ^
+  --preload-file MapTilesets ^
   --preload-file UI ^
   --preload-file Sounds ^
   --preload-file Music ^
   --preload-file PowerUps ^
-  --preload-file Map.png
+  --preload-file Map.png ^
+  "--preload-file" "TestGame/tilemapper_Ancient Castle.txt@tilemapper_Ancient Castle.txt" ^
+  "--preload-file" "TestGame/tilemapper_Caverns.txt@tilemapper_Caverns.txt" ^
+  "--preload-file" "TestGame/tilemapper_Demons Insides.txt@tilemapper_Demons Insides.txt" ^
+  "--preload-file" "TestGame/tilemapper_Dream Realm.txt@tilemapper_Dream Realm.txt" ^
+  "--preload-file" "TestGame/tilemapper_Forest.txt@tilemapper_Forest.txt" ^
+  "--preload-file" "TestGame/tilemapper_Graveyard.txt@tilemapper_Graveyard.txt" ^
+  "--preload-file" "TestGame/tilemapper_Jungle.txt@tilemapper_Jungle.txt" ^
+  "--preload-file" "TestGame/tilemapper_Lost City.txt@tilemapper_Lost City.txt" ^
+  "--preload-file" "TestGame/tilemapper_The Sanctuary.txt@tilemapper_The Sanctuary.txt" ^
+  "--preload-file" "TestGame/tilemapper_Wastelands.txt@tilemapper_Wastelands.txt"
 
 if %ERRORLEVEL% NEQ 0 ( echo. & echo BUILD FAILED & pause & exit /b 1 )
 

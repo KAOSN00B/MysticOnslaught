@@ -120,6 +120,7 @@ private:
 
     void DrawLevelUpChoice();
     void GenerateLevelUpOptions(LevelUpOfferContext context = LevelUpOfferContext::NormalLevel);
+    void GenerateTreasureChestOptions(); // mixed upgrade + ability cards for treasure room chest
     void DrawAbilityChoice();
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
@@ -687,12 +688,10 @@ private:
     bool _treasureChestBroken  = false;
 
     // Folder scanned by the TileMapper debug tool for PNG tilesets.
-    static constexpr const char* kTilesheetFolder =
-        "C:/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/MapTilesets";
+    static constexpr const char* kTilesheetFolder = "MapTilesets";
 
     // Folder scanned by the 9-Slice Editor — top-level PNGs in UI/ only, no subfolders.
-    static constexpr const char* kUIFolder =
-        "C:/Lasalle/Semester 4/2DGamesProgramming/ClassNotes/TestGame/UI";
+    static constexpr const char* kUIFolder = "UI";
 
     // ── Hitbox debug editor (F12 while debug active) ─────────────────────────
     bool           _isHitboxEditorActive = false;
