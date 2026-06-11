@@ -29,7 +29,7 @@ struct TouchControls
     Vector2 joystickStick{};
 
     // ── Layout constants (tunable via HUD editor — Engine syncs from HUDConfig) ──
-    float kJoyRadius      = 90.f;   // outer ring radius
+    float kJoyRadius      = 52.f;   // outer ring radius
     float kBtnRadius      = 81.f;   // ATK hit + visual radius
     float kDashBtnRadius  = 65.f;   // DASH hit + visual radius
     float kBtnRightPad    = 140.f;  // ATK centre x from right edge
@@ -40,7 +40,7 @@ struct TouchControls
     float kDashLabelFs    = 22.f;   // DASH button text size
 
     // ── Fixed constants ────────────────────────────────────────────────────────
-    static constexpr float kJoyDeadZone   = 14.f;
+    static constexpr float kJoyDeadZone   = 8.f;
     static constexpr int   kJoyDirections = 8;
 
     // ── API ───────────────────────────────────────────────────────────────────

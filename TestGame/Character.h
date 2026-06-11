@@ -148,6 +148,9 @@ public:
     int   GetMaxMana() const { return _maxMana; }
     float GetAttackPowerValue() const { return _attackPower; }
     float GetMoveSpeedValue() const { return _speed; }
+    void  SetBiomeDashLocked(bool b)    { _biomeDashLocked = b; }
+    void  SetBiomeSlowFactor(float f)   { _biomeSlowFactor = f; }
+    void  ClearBiomeDebuffs()           { _biomeDashLocked = false; _biomeSlowFactor = 1.f; }
     float GetAttackRangeMultiplierValue() const { return _attackRangeMultiplier; }
     float GetManaRegenPerSecond() const { return kManaRegenBase * _manaRegenMultiplier; }
     static constexpr int   kLevelHpGain    = 1;
@@ -240,6 +243,10 @@ private:
 
     float _dashCooldown = 0.f;
     float _dashCooldownTime = 1.3f;
+
+    // Sanctuary biome debuff zone — set each frame by Engine while player is inside a zone
+    bool  _biomeDashLocked = false;
+    float _biomeSlowFactor = 1.f;
     float _invincibleTimer = 0.f;
     float _invincibleDuration = 0.4f;
     float _forcedPushSpeed = 0.f;

@@ -112,10 +112,10 @@ namespace
 // DreamRealm: txt file contains Forest data (wrong biome selected at export) � needs re-export.
 static constexpr Biome kTilesetBiomes[]  = { Biome::Caverns, Biome::AncientCastle,
                                              Biome::DemonsInsides, Biome::Graveyard,
-                                             Biome::Jungle, Biome::DreamRealm,
+                                             Biome::Forest, Biome::Jungle, Biome::DreamRealm,
                                              Biome::Wastelands, Biome::LostCity,
                                              Biome::TheSanctuary };
-static constexpr int   kTilesetBiomeCount = 9;
+static constexpr int   kTilesetBiomeCount = 10;
 
 Engine::Engine()
     : _gameState(_runState.StateRef())
@@ -540,11 +540,13 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     const DungeonRoom& room = rooms[roomIdx];
     _dungeonRoomIdx = roomIdx;
     _dungeonEntryDoorSide = entryDoorSide;
+    int propDensityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 5 : 0;
     _dungeonRoomLayout = RoomLayout::Generate(
         room.hasNorth, room.hasSouth,
         room.hasEast,  room.hasWest, room.type,
         (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
-        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size(),
+        propDensityBonus);
 
     if (resetRoomStates)
     {
@@ -580,6 +582,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     ClearDungeonEnemies();
     EnterDungeonShopIfNeeded(room);
     SpawnDungeonRoomEnemies();
+    InitBiomeModifierRoom();
 
     if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
         ApplyDungeonBossExitTiles(TileType::DoorLocked);
@@ -1261,6 +1264,7 @@ void Engine::Update(float dt)
     {
     case GameState::Menu:
     {
+        if (IsKeyPressed(KEY_F1)) _menu.ToggleBorderEditor();
         _menu.SetDebugUnlocked(_demoCompleted);
         _menu.Update();
 
@@ -1269,9 +1273,8 @@ void Engine::Update(float dt)
             _debug.Deactivate();
             ResetRunState();
 
-            // Enter a randomly chosen dungeon directly.
             _dungeonGen.Generate();
-            _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
+            _currentBiome = Biome::Caverns;
             _pendingBiome = _currentBiome;
             LoadTilesetForBiome(_currentBiome);
 
@@ -1376,8 +1379,8 @@ void Engine::Update(float dt)
 
     case GameState::Pause:
     {
-        if (IsKeyPressed(KEY_ESCAPE))
-            _gameState = _stateBeforePause;
+        if (IsKeyPressed(KEY_F1))     _pauseUI.ToggleBorderEditor();
+        if (IsKeyPressed(KEY_ESCAPE)) _gameState = _stateBeforePause;
 
         break;
     }
@@ -1865,9 +1868,8 @@ void Engine::Draw()
         {
             ResetRunState();
 
-            // Re-initialize the dungeon with a randomly chosen biome.
             _dungeonGen.Generate();
-            _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
+            _currentBiome = Biome::Caverns;
             _pendingBiome = _currentBiome;
             LoadTilesetForBiome(_currentBiome);
             int retryStartIdx = _dungeonGen.GetStartIndex();
@@ -6857,12 +6859,48 @@ void Engine::SpawnDungeonRoomEnemies()
         // Basic count: 1–2 early, 2–3 mid, 2–4 late.
         int minBasics = tier == 0 ? 1 : 2;
         int maxBasics = tier == 0 ? 2 : (tier == 1 ? 3 : 4);
-        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, GetRandomValue(minBasics, maxBasics));
+
+        // Demon Insides: significantly harder rooms.
+        if (_currentBiome == Biome::DemonsInsides)
+            maxBasics += 5;
+
+        int basicCount = GetRandomValue(minBasics, maxBasics);
+
+        // Ancient Castle: spawn in a tight cluster so enemies charge together.
+        if (_currentBiome == Biome::AncientCastle && basicCount > 1)
+        {
+            Vector2 clusterCenter = GetDungeonSpawnPos(cellW, cellH);
+            SpawnBasicEnemy(clusterCenter);
+            for (int n = 1; n < basicCount; n++)
+            {
+                float   angle = (float)GetRandomValue(0, 628) / 100.f;
+                float   dist  = (float)GetRandomValue(30, 100);
+                Vector2 clusterPos{
+                    std::clamp(clusterCenter.x + cosf(angle) * dist, 80.f, sw - 80.f),
+                    std::clamp(clusterCenter.y + sinf(angle) * dist, 80.f, sh - 80.f)
+                };
+                SpawnBasicEnemy(clusterPos);
+            }
+        }
+        else
+        {
+            spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, basicCount);
+        }
 
         // Cyclops: rare early, moderate mid, common late.
         int cyclopsRoll = tier == 0 ? 4 : (tier == 1 ? 2 : 1);   // 1-in-N chance
         if (GetRandomValue(0, cyclopsRoll) == 0)
             SpawnCyclops(GetDungeonSpawnPos(cellW, cellH));
+    }
+
+    // Graveyard: every non-boss enemy gets a one-time revive.
+    if (_currentBiome == Biome::Graveyard)
+    {
+        for (auto& enemy : _enemies)
+        {
+            if (!enemy->IsActive() || enemy->IsBoss()) continue;
+            enemy->SetGraveReviveAvailable(true);
+        }
     }
 
     _dungeonEnemiesSpawned = true;
@@ -7188,6 +7226,8 @@ void Engine::RebuildDungeonNav()
     // Props (full cell approximation is accurate enough for nav pathfinding).
     for (const SpritePlacement& p : _dungeonRoomLayout.props)
         solids.push_back({ p.col * cellW, p.row * cellH, cellW, cellH });
+    for (const SpritePlacement& p : _dungeonRoomLayout.animProps)
+        solids.push_back({ p.col * cellW, p.row * cellH, cellW, cellH });
 
     _nav.CancelAndReset();
     _nav.Rebuild(sw, sh, solids);
@@ -7260,45 +7300,45 @@ void Engine::ResolveDungeonEnemyCollisions()
         // ── Props — precise collision rect ────────────────────────────────────
         if (!rushStopHandled)
         {
+            auto resolveEnemyVsPropRect = [&](Rectangle propRect) {
+                Rectangle eRect = e->GetCollisionRec();
+                if (!CheckCollisionRecs(eRect, propRect)) return;
+
+                if (Ogre* ogre = e->AsOgre())
+                    { if (ogre->IsRushing()) { ogre->OnRushBlocked(); return; } }
+                else if (Molarbeast* mb = e->AsMolarbeast())
+                    { if (mb->IsDashing()) { mb->OnDashBlocked(); return; } }
+
+                if (e->IsBeingForcedPushed()) { e->OnForcedPushCollision(); return; }
+
+                float oL = (eRect.x + eRect.width)  - propRect.x;
+                float oR = (propRect.x + propRect.width)  - eRect.x;
+                float oT = (eRect.y + eRect.height) - propRect.y;
+                float oB = (propRect.y + propRect.height) - eRect.y;
+                float rX = (oL < oR) ? -oL : oR;
+                float rY = (oT < oB) ? -oT : oB;
+                Vector2 p = e->GetWorldPos();
+                if (std::abs(rX) < std::abs(rY)) p.x += rX; else p.y += rY;
+                e->Teleport(p);
+            };
+
             for (const SpritePlacement& prop : _dungeonRoomLayout.props)
             {
                 if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
                 const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
-                Rectangle propRect{
+                resolveEnemyVsPropRect({
                     prop.col * cellW + coll.x * pxSX,
                     prop.row * cellH + coll.y * pxSY,
-                    coll.width  * pxSX,
-                    coll.height * pxSY
-                };
-                Rectangle eRect = e->GetCollisionRec();
-                if (!CheckCollisionRecs(eRect, propRect)) continue;
-
-                // Rushing ogre / dashing molarbeast: same stop logic as wall tiles.
-                if (Ogre* ogre = e->AsOgre())
-                {
-                    if (ogre->IsRushing()) { ogre->OnRushBlocked(); break; }
-                }
-                else if (Molarbeast* mb = e->AsMolarbeast())
-                {
-                    if (mb->IsDashing()) { mb->OnDashBlocked(); break; }
-                }
-
-                if (e->IsBeingForcedPushed())
-                {
-                    e->OnForcedPushCollision();
-                }
-                else
-                {
-                    float oL = (eRect.x + eRect.width)  - propRect.x;
-                    float oR = (propRect.x + propRect.width)  - eRect.x;
-                    float oT = (eRect.y + eRect.height) - propRect.y;
-                    float oB = (propRect.y + propRect.height) - eRect.y;
-                    float rX = (oL < oR) ? -oL : oR;
-                    float rY = (oT < oB) ? -oT : oB;
-                    Vector2 p = e->GetWorldPos();
-                    if (std::abs(rX) < std::abs(rY)) p.x += rX; else p.y += rY;
-                    e->Teleport(p);
-                }
+                    coll.width  * pxSX, coll.height * pxSY });
+            }
+            for (const SpritePlacement& prop : _dungeonRoomLayout.animProps)
+            {
+                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.animProps.size()) continue;
+                const Rectangle& coll = _tileDefs.animProps[prop.defIdx].collision;
+                resolveEnemyVsPropRect({
+                    prop.col * cellW + coll.x * pxSX,
+                    prop.row * cellH + coll.y * pxSY,
+                    coll.width  * pxSX, coll.height * pxSY });
             }
         }
     }
@@ -8099,6 +8139,409 @@ void Engine::DrawWorldMap()
         _worldMap.DrawEditor();
 }
 
+void Engine::InitBiomeModifierRoom()
+{
+    _wastelandHazards.clear();
+    _wastelandHazardTimer = kWastelandHazardInterval;
+    _lostCityBeams.clear();
+    _sanctuaryZones.clear();
+    _demonPulseTimer = 0.f;
+    _player.ClearBiomeDebuffs();
+
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+
+    if (_currentBiome == Biome::LostCity)
+    {
+        LostCityBeam beam1{};
+        beam1.center       = { sw * 0.28f, sh * 0.30f };
+        beam1.angle        = 0.f;
+        beam1.rotSpeed     = kLostCityBeamRotSpeed;
+        beam1.length       = kLostCityBeamLength;
+        beam1.damageCooldown = 0.f;
+
+        LostCityBeam beam2{};
+        beam2.center       = { sw * 0.72f, sh * 0.70f };
+        beam2.angle        = 1.57f;
+        beam2.rotSpeed     = -kLostCityBeamRotSpeed;
+        beam2.length       = kLostCityBeamLength;
+        beam2.damageCooldown = 0.f;
+
+        _lostCityBeams.push_back(beam1);
+        _lostCityBeams.push_back(beam2);
+    }
+    else if (_currentBiome == Biome::TheSanctuary)
+    {
+        // Build a list of prop world-space centers so zones don't land on top of them.
+        const float cellW = sw / (float)RoomLayout::kCols;
+        const float cellH = sh / (float)RoomLayout::kRows;
+        std::vector<Vector2> propCenters;
+        for (const auto& sp : _dungeonRoomLayout.props)
+            propCenters.push_back({ sp.col * cellW + cellW * 0.5f, sp.row * cellH + cellH * 0.5f });
+        for (const auto& sp : _dungeonRoomLayout.animProps)
+            propCenters.push_back({ sp.col * cellW + cellW * 0.5f, sp.row * cellH + cellH * 0.5f });
+
+        int zoneCount = GetRandomValue(2, 3);
+        static constexpr float kZoneMargin = 160.f;
+        for (int z = 0; z < zoneCount; z++)
+        {
+            for (int attempt = 0; attempt < 30; attempt++)
+            {
+                Vector2 candidate{
+                    (float)GetRandomValue((int)kZoneMargin, (int)(sw - kZoneMargin)),
+                    (float)GetRandomValue((int)kZoneMargin, (int)(sh - kZoneMargin))
+                };
+                // Skip if too close to another zone.
+                bool overlaps = false;
+                for (const auto& existing : _sanctuaryZones)
+                    if (Vector2Distance(candidate, existing.pos) < kSanctuaryZoneRadius * 2.2f)
+                    { overlaps = true; break; }
+                if (overlaps) continue;
+                // Skip if too close to any prop.
+                for (const auto& pc : propCenters)
+                    if (Vector2Distance(candidate, pc) < kSanctuaryZoneRadius * 0.9f)
+                    { overlaps = true; break; }
+                if (overlaps) continue;
+
+                _sanctuaryZones.push_back({ candidate, kSanctuaryZoneRadius });
+                break;
+            }
+        }
+    }
+}
+
+void Engine::UpdateBiomeModifiers(float dt)
+{
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+    Vector2 playerWorldPos = _player.GetWorldPos();
+
+    // Sanctuary debuffs are re-applied below when the player is inside a zone;
+    // clearing them here lets them drop the moment the player steps out.
+    _player.ClearBiomeDebuffs();
+
+    switch (_currentBiome)
+    {
+    case Biome::Wastelands:
+    {
+        _wastelandHazardTimer -= dt;
+        if (_wastelandHazardTimer <= 0.f)
+        {
+            _wastelandHazardTimer = kWastelandHazardInterval;
+            Vector2 hazardPos{
+                (float)GetRandomValue(150, (int)(sw - 150)),
+                (float)GetRandomValue(150, (int)(sh - 150))
+            };
+            _wastelandHazards.push_back({ hazardPos, kWastelandWarningDuration, 0.f, 0.f, false });
+        }
+
+        for (auto& hazard : _wastelandHazards)
+        {
+            if (!hazard.exploded)
+            {
+                hazard.warningTimer -= dt;
+                if (hazard.warningTimer <= 0.f)
+                {
+                    hazard.exploded    = true;
+                    hazard.activeTimer = kWastelandActiveDuration;
+                    StopSound(_explosionSound);
+                    PlaySound(_explosionSound);
+                }
+            }
+            else
+            {
+                hazard.activeTimer -= dt;
+                if (hazard.dmgCooldown > 0.f) hazard.dmgCooldown -= dt;
+
+                // Damage zone is active for the full sprite duration.
+                if (hazard.dmgCooldown <= 0.f &&
+                    Vector2Distance(_player.GetFeetWorldPos(), hazard.pos) <= kWastelandExplosionRadius)
+                {
+                    _player.TakeDamage(kWastelandDamage, hazard.pos);
+                    hazard.dmgCooldown = 0.3f;
+                }
+            }
+        }
+
+        _wastelandHazards.erase(
+            std::remove_if(_wastelandHazards.begin(), _wastelandHazards.end(),
+                [](const WastelandHazard& h){ return h.exploded && h.activeTimer <= 0.f; }),
+            _wastelandHazards.end());
+        break;
+    }
+
+    case Biome::LostCity:
+    {
+        for (auto& beam : _lostCityBeams)
+        {
+            beam.angle += beam.rotSpeed * dt;
+            if (beam.damageCooldown > 0.f) beam.damageCooldown -= dt;
+
+            float   halfLen = beam.length * 0.5f;
+            Vector2 beamDir{ cosf(beam.angle), sinf(beam.angle) };
+            Vector2 beamA{ beam.center.x - beamDir.x * halfLen, beam.center.y - beamDir.y * halfLen };
+            Vector2 beamB{ beam.center.x + beamDir.x * halfLen, beam.center.y + beamDir.y * halfLen };
+
+            Vector2 ab = Vector2Subtract(beamB, beamA);
+            Vector2 ap = Vector2Subtract(playerWorldPos, beamA);
+            float   t  = Vector2DotProduct(ap, ab) / Vector2DotProduct(ab, ab);
+            if (t >= 0.f && t <= 1.f)
+            {
+                float cross = ap.x * ab.y - ap.y * ab.x;
+                float perp  = fabsf(cross) / Vector2Length(ab);
+                if (perp < kLostCityBeamWidth * 0.5f && beam.damageCooldown <= 0.f)
+                {
+                    _player.TakeDamage(1, beam.center);
+                    beam.damageCooldown = kLostCityBeamDmgCooldown;
+                }
+            }
+        }
+        break;
+    }
+
+    case Biome::TheSanctuary:
+    {
+        for (const auto& zone : _sanctuaryZones)
+        {
+            if (Vector2Distance(playerWorldPos, zone.pos) <= zone.radius)
+            {
+                _player.SetBiomeDashLocked(true);
+                _player.SetBiomeSlowFactor(kSanctuarySlowFactor);
+                break;
+            }
+        }
+        break;
+    }
+
+    case Biome::DemonsInsides:
+        _demonPulseTimer += dt;
+        break;
+
+    default:
+        break;
+    }
+}
+
+void Engine::DrawBiomeModifiers()
+{
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+
+    // World pos → screen pos in dungeon run (room fills the screen, camera at center).
+    auto worldToScreen = [&](Vector2 worldPos) -> Vector2
+    {
+        return { worldPos.x + _shakeOffset.x, worldPos.y + _shakeOffset.y };
+    };
+
+    switch (_currentBiome)
+    {
+    case Biome::Wastelands:
+    {
+        for (const auto& hazard : _wastelandHazards)
+        {
+            Vector2 sp  = worldToScreen(hazard.pos);
+            int     cx  = (int)sp.x;
+            int     cy  = (int)sp.y;
+
+            if (!hazard.exploded)
+            {
+                float progress = 1.f - (hazard.warningTimer / kWastelandWarningDuration);
+                float radius   = kWastelandExplosionRadius * (0.4f + 0.6f * progress);
+                float pulse    = sinf((float)GetTime() * 12.f) * 0.3f + 0.7f;
+                DrawCircleLines(cx, cy, radius, Fade(RED, pulse));
+                DrawCircleLines(cx, cy, radius * 0.55f, Fade(Color{ 255, 120, 0, 255 }, pulse * 0.5f));
+            }
+            else if (_roomClearExplosionTex.id != 0)
+            {
+                // Play Flame_Explosion.png — only the first 8 frames contain fire content.
+                // Sprite bottom is anchored at the circle center so flames fill the circle.
+                static constexpr int   kExpFrameW = 64;
+                static constexpr int   kExpFrameH = 64;
+                static constexpr int   kExpFrames  = 16;
+                float progress = 1.f - (hazard.activeTimer / kWastelandActiveDuration);
+                int   frame    = std::min((int)(progress * kExpFrames), kExpFrames - 1);
+                Rectangle src  = GetAnimationFrameRect(_roomClearExplosionTex, kExpFrameW, kExpFrameH, frame);
+                float diam = kWastelandExplosionRadius * 2.f;
+                // Bottom edge at sp.y so flame base sits at the circle center; flames rise upward.
+                Rectangle dst{ sp.x - diam * 0.5f, sp.y - diam, diam, diam };
+                DrawTexturePro(_roomClearExplosionTex, src, dst, Vector2{}, 0.f, WHITE);
+            }
+        }
+        break;
+    }
+
+    case Biome::LostCity:
+    {
+        for (const auto& beam : _lostCityBeams)
+        {
+            float   halfLen = beam.length * 0.5f;
+            Vector2 beamDir{ cosf(beam.angle), sinf(beam.angle) };
+            Vector2 worldA{ beam.center.x - beamDir.x * halfLen, beam.center.y - beamDir.y * halfLen };
+            Vector2 worldB{ beam.center.x + beamDir.x * halfLen, beam.center.y + beamDir.y * halfLen };
+
+            Vector2 screenA = worldToScreen(worldA);
+            Vector2 screenB = worldToScreen(worldB);
+            Vector2 screenC = worldToScreen(beam.center);
+
+            DrawLineEx(screenA, screenB, kLostCityBeamWidth + 6.f,
+                Fade(Color{ 255, 220, 60, 255 }, 0.30f));
+            DrawLineEx(screenA, screenB, kLostCityBeamWidth,
+                Color{ 255, 230, 80, 230 });
+            DrawCircle((int)screenC.x, (int)screenC.y, 7, Color{ 255, 200, 50, 200 });
+        }
+        break;
+    }
+
+    case Biome::TheSanctuary:
+    {
+        // Gentle breathing fill + bright border — the whole disc is visible, not just an edge ring.
+        float fill  = sinf((float)GetTime() * 2.0f) * 0.08f + 0.22f;
+        float border = 0.75f;
+        for (const auto& zone : _sanctuaryZones)
+        {
+            Vector2 sp = worldToScreen(zone.pos);
+            int cx = (int)sp.x;
+            int cy = (int)sp.y;
+            DrawCircle(cx, cy, (int)zone.radius, Fade(Color{ 50, 70, 220, 255 }, fill));
+            DrawCircleLines(cx, cy, zone.radius, Fade(Color{ 110, 150, 255, 255 }, border));
+        }
+        break;
+    }
+
+    case Biome::DemonsInsides:
+    {
+        float pulse = sinf(_demonPulseTimer * 3.5f) * 0.5f + 0.5f;
+        DrawRectangle(0, 0, (int)sw, (int)sh, Fade(RED, pulse * 0.10f));
+        break;
+    }
+
+    case Biome::DreamRealm:
+    {
+        float t = (float)GetTime();
+
+        // Pulsing dark purple overlay over the whole room.
+        DrawRectangle(0, 0, (int)sw, (int)sh,
+            Fade(Color{ 30, 0, 60, 255 }, 0.15f + 0.07f * sinf(t * 0.7f)));
+
+        // Floating dream wisps — stateless, positions driven by time + per-wisp phase.
+        constexpr int kWisps = 12;
+        for (int w = 0; w < kWisps; w++)
+        {
+            float phase = w * 0.524f;   // 2π / 12
+            float px = sw * (0.06f + 0.88f * ((w + 0.5f) / kWisps))
+                       + cosf(t * 0.38f + phase) * sw * 0.06f;
+            float py = sh * 0.5f + sinf(t * 0.28f + phase * 1.4f) * sh * 0.33f;
+            px = std::clamp(px, 30.f, sw - 30.f);
+            py = std::clamp(py, 30.f, sh - 30.f);
+            float alpha = 0.28f + 0.18f * sinf(t * 2.2f + phase);
+            DrawCircle((int)px, (int)py, 9, Fade(Color{ 210, 140, 255, 255 }, alpha));
+            DrawCircle((int)px, (int)py, 4, Fade(WHITE, alpha * 0.55f));
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+void Engine::UpdateDreamFlicker(float dt)
+{
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+    const float margin = 100.f;
+    Vector2 playerPos = _player.GetWorldPos();
+
+    for (auto& enemy : _enemies)
+    {
+        if (!enemy->IsActive() || enemy->IsDying() || enemy->IsBoss()) continue;
+
+        enemy->TickFlicker(dt);
+
+        // Complete a windup that just finished — teleport and restart cooldown.
+        if (enemy->ConsumeFlickerComplete())
+        {
+            enemy->Teleport(enemy->GetFlickerTarget());
+            enemy->SetFlickerCooldown((float)GetRandomValue(300, 600) / 100.f);
+            continue;
+        }
+
+        if (enemy->IsFlickerInWindup()) continue;
+        if (enemy->GetFlickerCooldown() > 0.f) continue;
+        if (enemy->IsFrozen() || enemy->IsElectroStunned()) continue;
+
+        float distToPlayer = Vector2Distance(enemy->GetWorldPos(), playerPos);
+
+        // Per-type trigger condition.
+        bool shouldFlicker = false;
+        if (Ogre* ogre = enemy->AsOgre())
+        {
+            // Ogre only repositions when far away and not mid-rush.
+            shouldFlicker = !ogre->IsRushing() && distToPlayer > 420.f;
+        }
+        else if (Cyclops* cyclops = enemy->AsCyclops())
+        {
+            // Cyclops blinks away when the player gets too close.
+            (void)cyclops;
+            shouldFlicker = distToPlayer < 280.f;
+        }
+        else
+        {
+            // Basic grunt: flicker sideways to surround the player.
+            shouldFlicker = distToPlayer > 200.f;
+        }
+
+        if (!shouldFlicker)
+        {
+            // Not far enough / close enough yet — check again soon.
+            enemy->SetFlickerCooldown(0.5f);
+            continue;
+        }
+
+        // Find a valid destination: random angle, 100–200 px away from current pos.
+        Vector2 enemyPos  = enemy->GetWorldPos();
+        Vector2 blinkDest{};
+        bool    foundDest = false;
+
+        for (int attempt = 0; attempt < 14 && !foundDest; attempt++)
+        {
+            float angle = (float)GetRandomValue(0, 628) / 100.f;
+            float dist  = (float)GetRandomValue(100, 200);
+            Vector2 candidate{
+                enemyPos.x + cosf(angle) * dist,
+                enemyPos.y + sinf(angle) * dist
+            };
+
+            candidate.x = std::clamp(candidate.x, margin, sw - margin);
+            candidate.y = std::clamp(candidate.y, margin, sh - margin);
+
+            if (!IsSpawnPositionValid(candidate)) continue;
+
+            // Must land far enough from the player.
+            if (Vector2Distance(candidate, playerPos) < 130.f) continue;
+
+            // Cyclops must end up farther from the player than it started.
+            if (enemy->AsCyclops() &&
+                Vector2Distance(candidate, playerPos) < distToPlayer * 0.85f)
+                continue;
+
+            blinkDest = candidate;
+            foundDest = true;
+        }
+
+        if (!foundDest)
+        {
+            // No valid spot this attempt — try again in a moment.
+            enemy->SetFlickerCooldown(0.8f);
+            continue;
+        }
+
+        enemy->StartFlickerWindup(0.5f, blinkDest);
+        // Freeze the enemy for the windup so it pauses before vanishing.
+        enemy->ApplyFreeze(0.5f);
+    }
+}
+
 void Engine::UpdateDungeonRun(float dt)
 {
     // ── Dungeon fade transition (Store enter / boss clear) ────────────────────
@@ -8491,19 +8934,9 @@ void Engine::UpdateDungeonRun(float dt)
             // Prop collision — resolve player out of each prop's stored collision rect.
             float pxScaleX = cellW / 16.f;
             float pxScaleY = cellH / 16.f;
-            for (const SpritePlacement& prop : _dungeonRoomLayout.props)
-            {
-                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
-                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
-                Rectangle propRect{
-                    prop.col * cellW + coll.x * pxScaleX,
-                    prop.row * cellH + coll.y * pxScaleY,
-                    coll.width  * pxScaleX,
-                    coll.height * pxScaleY
-                };
+            auto resolvePlayerVsPropRect = [&](Rectangle propRect) {
                 Rectangle playerRect = _player.GetCollisionRec();
-                if (!CheckCollisionRecs(playerRect, propRect)) continue;
-
+                if (!CheckCollisionRecs(playerRect, propRect)) return;
                 bool wasPushed = _player.IsBeingForcedPushed();
                 float overlapL = (playerRect.x + playerRect.width)  - propRect.x;
                 float overlapR = (propRect.x   + propRect.width)    - playerRect.x;
@@ -8511,16 +8944,29 @@ void Engine::UpdateDungeonRun(float dt)
                 float overlapB = (propRect.y   + propRect.height)   - playerRect.y;
                 float resolveX = (overlapL < overlapR) ? -overlapL : overlapR;
                 float resolveY = (overlapT < overlapB) ? -overlapT : overlapB;
-
                 Vector2 p = _player.GetWorldPos();
-                if (std::abs(resolveX) < std::abs(resolveY))
-                    p.x += resolveX;
-                else
-                    p.y += resolveY;
+                if (std::abs(resolveX) < std::abs(resolveY)) p.x += resolveX;
+                else                                          p.y += resolveY;
                 _player.SetWorldPos(p);
-                // End forced push on prop impact, same as in the main game.
-                if (wasPushed)
-                    _player.OnForcedPushCollision();
+                if (wasPushed) _player.OnForcedPushCollision();
+            };
+            for (const SpritePlacement& prop : _dungeonRoomLayout.props)
+            {
+                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
+                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+                resolvePlayerVsPropRect({
+                    prop.col * cellW + coll.x * pxScaleX,
+                    prop.row * cellH + coll.y * pxScaleY,
+                    coll.width * pxScaleX, coll.height * pxScaleY });
+            }
+            for (const SpritePlacement& prop : _dungeonRoomLayout.animProps)
+            {
+                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.animProps.size()) continue;
+                const Rectangle& coll = _tileDefs.animProps[prop.defIdx].collision;
+                resolvePlayerVsPropRect({
+                    prop.col * cellW + coll.x * pxScaleX,
+                    prop.row * cellH + coll.y * pxScaleY,
+                    coll.width * pxScaleX, coll.height * pxScaleY });
             }
         }
 
@@ -8557,6 +9003,11 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.lavaBalls          = &_lavaBalls;
         eCtx.triggerScreenShake = [&](float s, float d){ TriggerScreenShake(s, d); };
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
+
+        if (_currentBiome == Biome::DreamRealm)
+            UpdateDreamFlicker(dt);
+
+        UpdateBiomeModifiers(dt);
 
         HandlePlayerMeleeDamage();
         ResolveDungeonEnemyCollisions();
@@ -8780,8 +9231,33 @@ void Engine::UpdateDungeonRun(float dt)
             RebuildDungeonNav();
             ClearDungeonEnemies();
             SpawnDungeonRoomEnemies();
+            InitBiomeModifierRoom();
             if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
                 ApplyDungeonBossExitTiles(TileType::DoorLocked);
+        }
+
+        // [B] cycles biome while previewing a room so you can see the tileset change live.
+        if (IsKeyPressed(KEY_B))
+        {
+            int currentIdx = 0;
+            for (int i = 0; i < kTilesetBiomeCount; i++)
+                if (kTilesetBiomes[i] == _currentBiome) { currentIdx = i; break; }
+            _currentBiome = kTilesetBiomes[(currentIdx + 1) % kTilesetBiomeCount];
+            _pendingBiome = _currentBiome;
+            LoadTilesetForBiome(_currentBiome);
+
+            // Regenerate the room preview with the new biome's prop set.
+            if (_dungeonRoomIdx >= 0 && _dungeonRoomIdx < (int)_dungeonGen.GetRooms().size())
+            {
+                const DungeonRoom& room = _dungeonGen.GetRooms()[_dungeonRoomIdx];
+                int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 5 : 0;
+                _dungeonRoomLayout = RoomLayout::Generate(
+                    room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
+                    (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
+                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size(),
+                    densityBonus);
+                ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+            }
         }
         return;
     }
@@ -8797,6 +9273,17 @@ void Engine::UpdateDungeonRun(float dt)
     if (IsKeyPressed(KEY_R))
         _dungeonGen.Generate();
 
+    // [B] cycles through all biomes so you can test each one in the map test mode.
+    if (IsKeyPressed(KEY_B))
+    {
+        int currentIdx = 0;
+        for (int i = 0; i < kTilesetBiomeCount; i++)
+            if (kTilesetBiomes[i] == _currentBiome) { currentIdx = i; break; }
+        _currentBiome = kTilesetBiomes[(currentIdx + 1) % kTilesetBiomeCount];
+        _pendingBiome = _currentBiome;
+        LoadTilesetForBiome(_currentBiome);
+    }
+
     // Click a room node to open its tile-rendered preview.
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
@@ -8806,10 +9293,12 @@ void Engine::UpdateDungeonRun(float dt)
             if (CheckCollisionPointRec(GetVirtualMousePos(), GetDungeonRoomRect(i)))
             {
                 const DungeonRoom& room = rooms[i];
+                int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 5 : 0;
                 _dungeonRoomLayout    = RoomLayout::Generate(
                     room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
                     (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
-                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size(),
+                    densityBonus);
                 _dungeonRoomIdx = i;
                 _dungeonEntryDoorSide = DungeonDoorSide::None;
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
@@ -8874,6 +9363,7 @@ void Engine::DrawDungeonRun()
                 _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, _shakeOffset);
                 DrawDungeonClearEffects();
                 DrawDungeonMagicGemAndBarrier();
+                DrawBiomeModifiers();
 
                 // Enemies, projectiles, VFX — world == screen in dungeon run mode.
                 // _shakeOffset shifts everything together so the screen-shake effect is visible.
@@ -8910,6 +9400,38 @@ void Engine::DrawDungeonRun()
                     enemy->DrawEnemy(shakenCamRef);
                 }
 
+                // Dream Realm flicker — pulsing ring at windup position + destination marker.
+                if (_currentBiome == Biome::DreamRealm)
+                {
+                    float pulse = sinf((float)GetTime() * 18.f) * 0.35f + 0.65f;
+                    for (const auto& enemy : _enemies)
+                    {
+                        if (!enemy->IsActive() || !enemy->IsFlickerInWindup()) continue;
+
+                        Vector2 srcScreen = Vector2Subtract(enemy->GetWorldPos(), shakenCamRef);
+                        srcScreen.x += sw * 0.5f;
+                        srcScreen.y += sh * 0.5f;
+
+                        Vector2 dstScreen = Vector2Subtract(enemy->GetFlickerTarget(), shakenCamRef);
+                        dstScreen.x += sw * 0.5f;
+                        dstScreen.y += sh * 0.5f;
+
+                        // Ring where the enemy is fading out.
+                        DrawCircleLines((int)srcScreen.x, (int)srcScreen.y, 40.f,
+                            Fade(Color{ 180, 100, 255, 255 }, pulse));
+                        DrawCircleLines((int)srcScreen.x, (int)srcScreen.y, 26.f,
+                            Fade(Color{ 200, 140, 255, 255 }, pulse * 0.6f));
+
+                        // Smaller ring marking the destination.
+                        DrawCircleLines((int)dstScreen.x, (int)dstScreen.y, 28.f,
+                            Fade(Color{ 130, 60, 220, 255 }, 0.55f));
+
+                        // Faint line connecting source to destination.
+                        DrawLineEx(srcScreen, dstScreen, 1.5f,
+                            Fade(Color{ 180, 100, 255, 255 }, 0.25f));
+                    }
+                }
+
                 if (_currentRoomType == RoomType::Store)
                     _shop.DrawNpc(worldOffset);
 
@@ -8926,6 +9448,15 @@ void Engine::DrawDungeonRun()
             DrawHUD();
             DrawMagicGemHudIcon();
             drawRoomLabel();
+
+            // Small biome name reminder in the bottom-right corner — useful when
+            // cycling biomes in the pregen map test without losing track of which one is active.
+            {
+                const char* biomeTag = TextFormat("[ %s ]", GetBiomeName(_currentBiome));
+                int biomeTagW = MeasureText(biomeTag, 16);
+                DrawText(biomeTag, (int)(sw - biomeTagW - 12), (int)(sh - 26), 16,
+                    Fade(Color{ 160, 200, 255, 255 }, 0.55f));
+            }
             if (_bossBarrierMessageTimer > 0.f)
             {
                 const char* msg = "you need a a magic gem to get past the barrier";
@@ -8970,8 +9501,8 @@ void Engine::DrawDungeonRun()
                 20, 20, 22, RED);
 
         drawRoomLabel();
-        DrawText("[Enter] Walk in room   [ESC] Back to map", 20, (int)(sh - 32.f), 18,
-            Fade(WHITE, 0.55f));
+        DrawText(TextFormat("[Enter] Walk in room   [B] Cycle Biome   [ESC] Back  |  Biome: %s",
+            GetBiomeName(_currentBiome)), 20, (int)(sh - 32.f), 18, Fade(WHITE, 0.55f));
         return;
     }
 
@@ -9053,7 +9584,12 @@ void Engine::DrawDungeonRun()
     int titleW = MeasureText(title, 32);
     DrawText(title, (int)(sw * 0.5f - titleW * 0.5f), 16, 32, GOLD);
 
-    const char* info = TextFormat("%d rooms  |  Click a room to preview  |  [R] Regenerate  |  [ESC] Back",
+    // Active biome name shown beneath the title.
+    const char* biomeLine = TextFormat("Biome: %s", GetBiomeName(_currentBiome));
+    int biomeLineW = MeasureText(biomeLine, 20);
+    DrawText(biomeLine, (int)(sw * 0.5f - biomeLineW * 0.5f), 54, 20, Color{ 160, 200, 255, 220 });
+
+    const char* info = TextFormat("%d rooms  |  Click a room to preview  |  [R] Regenerate  |  [B] Cycle Biome  |  [ESC] Back",
         (int)rooms.size());
     int infoW = MeasureText(info, 18);
     DrawText(info, (int)(sw * 0.5f - infoW * 0.5f), (int)(sh - 32.f), 18, Fade(WHITE, 0.55f));

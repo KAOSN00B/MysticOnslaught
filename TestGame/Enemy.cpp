@@ -104,6 +104,16 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _forcedPushSpeed     = 0.f;
     _inAttackRange       = false;
 
+    _graveReviveAvailable  = false;
+    _graveReviveInvulTimer = 0.f;
+
+    // Stagger each enemy's first flicker so a room full of grunts doesn't all
+    // vanish at the same moment on the first tick.
+    _flickerCooldown    = (float)GetRandomValue(150, 450) / 100.f;
+    _flickerInWindup    = false;
+    _flickerWindupTimer = 0.f;
+    _flickerTarget      = Vector2Zero();
+
     // Each enemy gets its own flank slot so nearby enemies naturally choose
     // slightly different approach lanes around the player instead of piling
     // into one exact point.
@@ -230,6 +240,8 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
 
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
+    if (_graveReviveInvulTimer > 0.f)
+        _graveReviveInvulTimer -= dt;
 
     // Periodically repick approach direction so enemies shift positions
     // and don't permanently crowd one side of the player.
@@ -749,11 +761,12 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     bool electroStunned = IsElectroStunned();
     bool charged       = _isCharged && !electroStunned;
 
-    Color tint = electroStunned ? Color{ 255, 255,  60, 255 } :   // bright yellow — stunned
-                 charged        ? Color{ 220, 220,  80, 255 } :   // dim yellow — charged, not stunned
-                 frozen         ? Color{ 140, 200, 255, 255 } :
-                 burning        ? Color{ 255, 180, 180, 255 } :
-                                  WHITE;
+    Color tint = electroStunned   ? Color{ 255, 255,  60, 255 } :   // bright yellow — stunned
+                 charged         ? Color{ 220, 220,  80, 255 } :   // dim yellow — charged, not stunned
+                 _flickerInWindup ? Color{ 180, 100, 255, 180 } :  // purple + semi-transparent — flicker windup
+                 frozen          ? Color{ 140, 200, 255, 255 } :
+                 burning         ? Color{ 255, 180, 180, 255 } :
+                                   WHITE;
 
     if (burning)
     {
@@ -767,6 +780,14 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     }
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
+
+    // Graveyard revive invincibility window — pulsing green ring so it's obvious when testing.
+    if (_graveReviveInvulTimer > 0.f)
+    {
+        float pulse = sinf((float)GetTime() * 10.f) * 0.4f + 0.6f;
+        DrawCircleLines((int)screenPos.x, (int)screenPos.y, 55.f, Fade(Color{  80, 255, 120, 255 }, pulse));
+        DrawCircleLines((int)screenPos.x, (int)screenPos.y, 42.f, Fade(Color{ 160, 255, 200, 255 }, pulse * 0.5f));
+    }
 
     if (_health != _maxHealth)
         DrawHealthBar(screenPos, w, h);
@@ -868,6 +889,55 @@ void Enemy::ApplyFreeze(float duration)
     float capped = std::min(duration, kMaxFreezeDuration);
     if (capped > _freezeTimer)
         _freezeTimer = capped;
+}
+
+void Enemy::TakeDamage(int damage, Vector2 attackerPos)
+{
+    // If the revive one-shot invul window is active, ignore all damage.
+    if (_graveReviveInvulTimer > 0.f)
+        return;
+
+    // Check whether this hit would kill us and the revive is still available.
+    bool wouldKill = (_health - damage <= 0);
+    if (wouldKill && _graveReviveAvailable)
+    {
+        _graveReviveAvailable  = false;
+        _graveReviveInvulTimer = 1.5f;
+        _health                = _maxHealth * 0.5f;
+        // Play hurt reaction so the revive is visually readable.
+        _takingDamage = true;
+        _texture      = _takeDamageAnim;
+        _frame        = 0;
+        _runningTime  = 0.f;
+        _maxFrames    = (int)(_texture.width / _width);
+        _hitTimer     = _maxFrames * _updateTime + 0.05f;
+        return;
+    }
+
+    BaseCharacter::TakeDamage(damage, attackerPos);
+}
+
+void Enemy::StartFlickerWindup(float duration, Vector2 target)
+{
+    _flickerInWindup    = true;
+    _flickerWindupTimer = duration;
+    _flickerTarget      = target;
+}
+
+bool Enemy::ConsumeFlickerComplete()
+{
+    if (_flickerInWindup && _flickerWindupTimer <= 0.f)
+    {
+        _flickerInWindup = false;
+        return true;
+    }
+    return false;
+}
+
+void Enemy::TickFlicker(float dt)
+{
+    if (_flickerCooldown > 0.f)    _flickerCooldown    -= dt;
+    if (_flickerInWindup)           _flickerWindupTimer -= dt;
 }
 
 void Enemy::ApplyElectricCharge()

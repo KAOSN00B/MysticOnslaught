@@ -5,7 +5,7 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
                                 bool hasEast,  bool hasWest,
                                 RoomType type,
                                 int propCount, int decorCount, int animDecorCount,
-                                int animPropCount)
+                                int animPropCount, int propDensityBonus)
 {
     RoomLayout layout;
 
@@ -69,18 +69,19 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
         int numProps = 0;
         switch (type)
         {
-        case RoomType::Standard: numProps = GetRandomValue(1, 3); break;
-        case RoomType::Elite:    numProps = GetRandomValue(3, 5); break;
-        case RoomType::Treasure: numProps = GetRandomValue(0, 2); break;
-        default:                 numProps = GetRandomValue(0, 2); break;
+        case RoomType::Standard: numProps = GetRandomValue(1, 3 + propDensityBonus); break;
+        case RoomType::Elite:    numProps = GetRandomValue(3, 5 + propDensityBonus); break;
+        case RoomType::Treasure: numProps = GetRandomValue(0, 2 + propDensityBonus); break;
+        default:                 numProps = GetRandomValue(0, 2 + propDensityBonus); break;
         }
 
         for (int p = 0; p < numProps; p++)
         {
-            for (int attempt = 0; attempt < 25; attempt++)
+            for (int attempt = 0; attempt < 40; attempt++)
             {
-                int pr = GetRandomValue(2, rows - 3);
-                int pc = GetRandomValue(2, cols - 3);
+                // Stay 2 tiles from every wall so sprites don't bleed onto the border.
+                int pr = GetRandomValue(3, rows - 4);
+                int pc = GetRandomValue(3, cols - 4);
 
                 // Stay clear of door paths.
                 if (pc >= doorStartC - 1 && pc <= doorStartC + 3) continue;
@@ -88,6 +89,13 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
 
                 TileType t = layout.tiles[pr][pc];
                 if (t != TileType::Floor && t != TileType::FloorVariant) continue;
+
+                // Enforce a minimum 2-tile gap between props so the player can pass between them.
+                bool tooClose = false;
+                for (const auto& sp : layout.props)
+                    if (std::abs(sp.col - pc) < 2 && std::abs(sp.row - pr) < 2)
+                    { tooClose = true; break; }
+                if (tooClose) continue;
 
                 layout.props.push_back({ GetRandomValue(0, propCount - 1), pc, pr });
                 break;
@@ -127,18 +135,24 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
 
         for (int p = 0; p < numAnimProps; p++)
         {
-            for (int attempt = 0; attempt < 25; attempt++)
+            for (int attempt = 0; attempt < 40; attempt++)
             {
-                int pr = GetRandomValue(2, rows - 3);
-                int pc = GetRandomValue(2, cols - 3);
+                int pr = GetRandomValue(3, rows - 4);
+                int pc = GetRandomValue(3, cols - 4);
                 if (pc >= doorStartC - 1 && pc <= doorStartC + 3) continue;
                 if (pr >= doorStartR - 1 && pr <= doorStartR + 2) continue;
                 TileType t = layout.tiles[pr][pc];
                 if (t != TileType::Floor && t != TileType::FloorVariant) continue;
-                bool occupied = false;
+                // 2-tile gap from all props and other animProps.
+                bool tooClose = false;
                 for (const auto& sp : layout.props)
-                    if (sp.col == pc && sp.row == pr) { occupied = true; break; }
-                if (occupied) continue;
+                    if (std::abs(sp.col - pc) < 2 && std::abs(sp.row - pr) < 2)
+                    { tooClose = true; break; }
+                if (!tooClose)
+                    for (const auto& ap : layout.animProps)
+                        if (std::abs(ap.col - pc) < 2 && std::abs(ap.row - pr) < 2)
+                        { tooClose = true; break; }
+                if (tooClose) continue;
                 layout.animProps.push_back({ GetRandomValue(0, animPropCount - 1), pc, pr });
                 break;
             }

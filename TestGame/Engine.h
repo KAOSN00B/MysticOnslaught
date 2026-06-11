@@ -451,6 +451,50 @@ private:
     static constexpr int   kHazardVolleyMinCount        = 3;
     static constexpr int   kHazardVolleyMaxCount        = 6;
 
+    // ── Biome-modifier room state ─────────────────────────────────────────
+    // Wastelands: warning circles that detonate on the player after a delay
+    struct WastelandHazard
+    {
+        Vector2 pos;
+        float   warningTimer;   // counts down; on zero, explodes and sets exploded = true
+        float   activeTimer;    // counts down while the sprite is playing
+        float   dmgCooldown;    // per-hazard cooldown so the player isn't hit every frame
+        bool    exploded;
+    };
+    std::vector<WastelandHazard> _wastelandHazards;
+    float _wastelandHazardTimer = 0.f;
+
+    // Lost City: two long beams that rotate around fixed pivot points
+    struct LostCityBeam
+    {
+        Vector2 center;
+        float   angle;          // current angle in radians
+        float   rotSpeed;       // rad/s (negative = counter-clockwise)
+        float   length;
+        float   damageCooldown; // per-beam cooldown so the player isn't hit every frame
+    };
+    std::vector<LostCityBeam> _lostCityBeams;
+
+    // Sanctuary: debuff zones — player inside one is dash-locked and slowed
+    struct SanctuaryZone { Vector2 pos; float radius; };
+    std::vector<SanctuaryZone> _sanctuaryZones;
+
+    // Demon Insides: pulsing red overlay timer
+    float _demonPulseTimer = 0.f;
+
+    // Biome-modifier constants
+    static constexpr float kWastelandHazardInterval  = 2.8f;
+    static constexpr float kWastelandWarningDuration = 1.8f;
+    static constexpr float kWastelandExplosionRadius = 75.f;
+    static constexpr int   kWastelandDamage          = 1;
+    static constexpr float kWastelandActiveDuration  = 0.80f;
+    static constexpr float kLostCityBeamLength       = 340.f;
+    static constexpr float kLostCityBeamWidth        = 10.f;
+    static constexpr float kLostCityBeamRotSpeed     = 0.9f;
+    static constexpr float kLostCityBeamDmgCooldown  = 0.35f;
+    static constexpr float kSanctuaryZoneRadius      = 130.f;
+    static constexpr float kSanctuarySlowFactor      = 0.45f;
+
     // Ability choice state (shown after every 5th-wave boss clear)
     UpgradeType _abilityChoiceOptions[3] = { UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread, UpgradeType::LearnFireSpread };
     int         _abilityChoiceOptionCount = 0;
@@ -694,6 +738,10 @@ private:
 
     // Dungeon run
     void UpdateDungeonRun(float dt);
+    void UpdateDreamFlicker(float dt);
+    void InitBiomeModifierRoom();
+    void UpdateBiomeModifiers(float dt);
+    void DrawBiomeModifiers();
     void DrawDungeonRun();
     Rectangle GetDungeonRoomRect(int roomIdx) const;
     DungeonDoorSide GetBossBarrierSide() const;

@@ -86,34 +86,34 @@ private:
     float _labelFs        = 24.f;    // biome name font size under node
     float _confirmW       = 620.f;
     float _confirmH       = 210.f;
-    float _confirmFs      = 36.f;
+    float _confirmFs      = 29.f;
     float _btnH           = 58.f;
     float _headerX        = 0.525f;  // fraction of sw for header centre
     float _headerY        = 10.f;
-    float _headerFs       = 50.f;
+    float _headerFs       = 48.f;
     float _subY           = 62.f;
     float _subFs          = 28.f;
-    float _hintY          = 35.f;
-    float _hintFs         = 32.f;
+    float _hintY          = 31.f;
+    float _hintFs         = 22.f;
 
     // Left stats panel
     float _panelX         = 48.f;
     float _panelY         = 98.f;
-    float _panelW         = 490.f;
+    float _panelW         = 458.f;
 
     // Right journey panel
-    float _journeyX       = 0.79f;   // fraction of sw
-    float _journeyPad     = 21.f;
-    float _journeyTitleFs = 43.f;
-    float _journeyCircleR = 22.f;    // radius of completed-biome circles in the journey list
-    float _journeyGap     = 12.f;    // gap between journey entries
+    float _journeyX       = 0.785f;  // fraction of sw
+    float _journeyPad     = 23.f;
+    float _journeyTitleFs = 54.f;
+    float _journeyCircleR = 20.f;    // radius of completed-biome circles in the journey list
+    float _journeyGap     = 15.f;    // gap between journey entries
 
     // Panel text font sizes (all editor-tunable)
-    float _statTitleFs    = 32.f;   // "PLAYER STATS" and "ABILITIES" section headers
-    float _statFs         = 28.f;   // stat row text
-    float _abilFs         = 24.f;   // ability list entries
-    float _journeyNameFs  = 22.f;   // biome name text in the right journey panel
-    float _nodeBgPad      = 12.f;   // padding around each node for the semi-transparent bg box
+    float _statTitleFs    = 40.f;   // "PLAYER STATS" and "ABILITIES" section headers
+    float _statFs         = 37.f;   // stat row text
+    float _abilFs         = 37.f;   // ability list entries
+    float _journeyNameFs  = 38.f;   // biome name text in the right journey panel
+    float _nodeBgPad      = 15.f;   // padding around each node for the semi-transparent bg box
 
     int   _lastTouchCount = 0;       // tracks touch-down edges for click detection
 

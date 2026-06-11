@@ -45,6 +45,21 @@ public:
     bool IsBeingForcedPushed() const { return _forcedPushActive; }
 
     virtual bool IsFrozen()        const { return _freezeTimer > 0.f; }
+
+    // Graveyard revive
+    void SetGraveReviveAvailable(bool b)   { _graveReviveAvailable = b; }
+    bool IsGraveReviveAvailable()    const { return _graveReviveAvailable; }
+    bool IsGraveReviveInvulnerable() const { return _graveReviveInvulTimer > 0.f; }
+    void TakeDamage(int damage, Vector2 attackerPos) override;
+
+    // Dream Realm flicker
+    bool    IsFlickerInWindup()   const { return _flickerInWindup; }
+    Vector2 GetFlickerTarget()    const { return _flickerTarget; }
+    float   GetFlickerCooldown()  const { return _flickerCooldown; }
+    void    SetFlickerCooldown(float t) { _flickerCooldown = t; }
+    void    StartFlickerWindup(float duration, Vector2 target);
+    bool    ConsumeFlickerComplete();
+    void    TickFlicker(float dt);
     virtual bool IsElectroStunned() const { return _isCharged && _takingDamage; }
     bool IsCharged()               const { return _isCharged; }
     virtual int  GetExpValue()  const { return _expValue; }
@@ -162,6 +177,16 @@ protected:
     float   _burnSoundTimer = 0.f;
 
     float   _freezeTimer        = 0.f;
+
+    // Graveyard revive — set by Engine when entering a Graveyard room
+    bool    _graveReviveAvailable  = false;
+    float   _graveReviveInvulTimer = 0.f;
+
+    // Dream Realm flicker — biome mechanic, managed externally by Engine
+    float   _flickerCooldown    = 0.f;
+    float   _flickerWindupTimer = 0.f;
+    bool    _flickerInWindup    = false;
+    Vector2 _flickerTarget      = {};
 
     // Electric charge — applied by ElectricSpread hits; repeating random stuns, capped at 10 s
     bool    _isCharged              = false;

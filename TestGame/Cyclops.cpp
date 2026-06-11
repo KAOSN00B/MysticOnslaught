@@ -453,10 +453,11 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     bool frozen        = IsFrozen();
     bool electroStunned = IsElectroStunned();
 
-    Color tint = electroStunned ? Color{ 255, 255,  60, 255 } :
-                 frozen         ? Color{ 140, 200, 255, 255 } :
-                 burning        ? Color{ 255, 180, 180, 255 } :
-                                  WHITE;
+    Color tint = electroStunned   ? Color{ 255, 255,  60, 255 } :
+                 _flickerInWindup ? Color{ 180, 100, 255, 180 } :
+                 frozen          ? Color{ 140, 200, 255, 255 } :
+                 burning         ? Color{ 255, 180, 180, 255 } :
+                                   WHITE;
 
     if (burning && !frozen)
     {
@@ -495,6 +496,13 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
+
+    if (_graveReviveInvulTimer > 0.f)
+    {
+        float pulse = sinf((float)GetTime() * 10.f) * 0.4f + 0.6f;
+        DrawCircleLines((int)screenPos.x, (int)screenPos.y, 65.f, Fade(Color{  80, 255, 120, 255 }, pulse));
+        DrawCircleLines((int)screenPos.x, (int)screenPos.y, 50.f, Fade(Color{ 160, 255, 200, 255 }, pulse * 0.5f));
+    }
 
     if (_health != _maxHealth)
         DrawHealthBar(screenPos, drawWidth, drawHeight);

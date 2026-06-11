@@ -104,30 +104,162 @@ int PauseAndGameOver::DrawPause()
     const float panelW = btnW + sw * 0.06f;
     const float panelH = padV + titleH + 5.f * (btnH + btnGap) + padV;
 
-    float panelX = sw / 2.f - panelW / 2.f;
-    float panelY = sh / 2.f - panelH / 2.f;
-
-    // Draw border texture as the panel background (slightly oversized for visual frame)
+    float panelX    = sw / 2.f - panelW / 2.f;
     float borderPad = sw * 0.03f;
+
+    Rectangle naturalBorderRect{ sw * 0.3300f, sh * 0.0768f, sw * 0.3400f, sh * 0.8391f };
+    float naturalPanelY = naturalBorderRect.y + borderPad;
+
+    // On first editor activation, seed the editor rect from the natural layout.
+    if (_editorActive && !_editorInited)
+    { _edRect = naturalBorderRect; _editorInited = true; }
+
+    Rectangle borderRect = _editorActive ? _edRect : naturalBorderRect;
+    // Draw border texture as the panel background (slightly oversized for visual frame)
+    float panelY = _editorActive ? (_edRect.y + borderPad) : naturalPanelY;
+
     if (_borderTex.id != 0)
-        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
-            { panelX - borderPad, panelY - borderPad,
-              panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER, borderRect, WHITE);
     else
     {
         DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(BLACK, 0.92f));
         DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(WHITE, 0.35f));
     }
 
-    // Title
+    // ── Border editor overlay ─────────────────────────────────────────────────
+    if (_editorActive)
+    {
+        Vector2 mouse = GetVirtualMousePos();
+        const float hs = 10.f;
+        auto handlePos = [&](int i) -> Vector2 {
+            switch (i) {
+                case 0: return { _edRect.x,                     _edRect.y                      };
+                case 1: return { _edRect.x + _edRect.width,     _edRect.y                      };
+                case 2: return { _edRect.x,                     _edRect.y + _edRect.height     };
+                case 3: return { _edRect.x + _edRect.width,     _edRect.y + _edRect.height     };
+                case 4: return { _edRect.x + _edRect.width/2.f, _edRect.y                      };
+                case 5: return { _edRect.x + _edRect.width/2.f, _edRect.y + _edRect.height     };
+                case 6: return { _edRect.x,                     _edRect.y + _edRect.height/2.f };
+                default:return { _edRect.x + _edRect.width,     _edRect.y + _edRect.height/2.f };
+            }
+        };
+
+        // Mouse input — priority: edge handles > button group > border interior
+        float groupH2 = 5.f * (btnH + btnGap);
+        Rectangle btnGroupRect{ sw / 2.f - btnW / 2.f - 8.f, _btnEdY - 8.f,
+                                 btnW + 16.f, groupH2 + 16.f };
+
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            _edHandle = -1; _btnDragging = false;
+
+            // 1. Edge handles
+            for (int i = 0; i < 8; i++)
+            {
+                Vector2 h = handlePos(i);
+                if (CheckCollisionPointRec(mouse, { h.x - hs, h.y - hs, hs * 2.f, hs * 2.f }))
+                { _edHandle = i; break; }
+            }
+
+            if (_edHandle == -1)
+            {
+                // 2. Button group (inside border — checked before interior)
+                if (CheckCollisionPointRec(mouse, btnGroupRect))
+                { _btnDragging = true; _btnDragStartMY = mouse.y; _btnDragStartY = _btnEdY; }
+                // 3. Border interior
+                else if (CheckCollisionPointRec(mouse, _edRect))
+                { _edHandle = -2; }
+            }
+
+            if (_edHandle != -1) { _edDragStart = mouse; _edRectStart = _edRect; }
+        }
+        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) { _edHandle = -1; _btnDragging = false; }
+
+        if (_edHandle != -1)
+        {
+            float dx = mouse.x - _edDragStart.x;
+            float dy = mouse.y - _edDragStart.y;
+            Rectangle r = _edRectStart;
+            switch (_edHandle) {
+                case -2: r.y += dy; break;
+                case  0: r.x += dx; r.width -= dx; r.y += dy; r.height -= dy; break;
+                case  1: r.width += dx;             r.y += dy; r.height -= dy; break;
+                case  2: r.x += dx; r.width -= dx;             r.height += dy; break;
+                case  3: r.width += dx;                        r.height += dy; break;
+                case  4:                            r.y += dy; r.height -= dy; break;
+                case  5:                                       r.height += dy; break;
+                case  6: r.x += dx; r.width -= dx;                            break;
+                case  7: r.width += dx;                                        break;
+            }
+            r.width  = std::max(r.width,  60.f);
+            r.height = std::max(r.height, 40.f);
+            _edRect = r;
+        }
+
+        // Draw handles
+        DrawRectangleLinesEx(_edRect, 1.5f, Color{ 255, 220, 0, 180 });
+        for (int i = 0; i < 8; i++)
+        {
+            Vector2 h = handlePos(i);
+            Color hcol = (_edHandle == i) ? Color{ 255, 255, 80, 255 } : Color{ 255, 200, 0, 220 };
+            DrawRectangle((int)(h.x - hs), (int)(h.y - hs), (int)(hs * 2.f), (int)(hs * 2.f), hcol);
+        }
+        DrawText("[F1] close  [S] export", (int)(_edRect.x + 4), (int)(_edRect.y - 18), 14,
+            Color{ 255, 220, 0, 200 });
+
+        if (IsKeyPressed(KEY_S))
+        {
+            TraceLog(LOG_INFO, "=== Pause Border Export ===");
+            TraceLog(LOG_INFO, "borderRect.x = sw * %.4ff;", _edRect.x / sw);
+            TraceLog(LOG_INFO, "borderRect.y = sh * %.4ff;", _edRect.y / sh);
+            TraceLog(LOG_INFO, "borderRect.w = sw * %.4ff;", _edRect.width  / sw);
+            TraceLog(LOG_INFO, "borderRect.h = sh * %.4ff;", _edRect.height / sh);
+            TraceLog(LOG_INFO, "btnY         = sh * %.4ff;", _btnEdY / sh);
+            TraceLog(LOG_INFO, "===========================");
+        }
+    }
+
+    // Seed the button group Y on first editor activation
+    float naturalBtnY = panelY + padV + titleH;
+    if (_editorActive && !_btnInited) { _btnEdY = naturalBtnY; _btnInited = true; }
+    float activeBtnY = _editorActive ? _btnEdY : naturalBtnY;
+
+    // Button group drag
+    if (_editorActive)
+    {
+        Vector2 mouse = GetVirtualMousePos();
+        float groupH = 5.f * (btnH + btnGap);
+        Rectangle groupRect{ sw / 2.f - btnW / 2.f - 8.f, activeBtnY - 8.f,
+                              btnW + 16.f, groupH + 16.f };
+
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _edHandle == -1)
+        {
+            if (CheckCollisionPointRec(mouse, groupRect))
+            { _btnDragging = true; _btnDragStartMY = mouse.y; _btnDragStartY = _btnEdY; }
+        }
+        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) _btnDragging = false;
+        if (_btnDragging)
+            _btnEdY = _btnDragStartY + (mouse.y - _btnDragStartMY);
+        activeBtnY = _btnEdY;
+
+        // Button group outline
+        groupRect.y = activeBtnY - 8.f;
+        DrawRectangleLinesEx(groupRect, 1.f,
+            _btnDragging ? Color{ 100, 255, 160, 220 } : Color{ 80, 220, 120, 120 });
+        DrawText("drag", (int)(groupRect.x + 4), (int)(groupRect.y + 2), 12,
+            Color{ 80, 220, 120, 160 });
+    }
+
+    // Title sits above buttons
     const char* title = "PAUSED";
     int titleSz = (int)(sh * 0.055f);
     int titleWpx = MeasureText(title, titleSz);
-    DrawText(title, (int)(sw / 2.f - titleWpx / 2.f), (int)(panelY + padV), titleSz, BLACK);
+    DrawText(title, (int)(sw / 2.f - titleWpx / 2.f),
+        (int)(activeBtnY - titleH), titleSz, BLACK);
 
     // Buttons
     float btnX = sw / 2.f - btnW / 2.f;
-    float btnY = panelY + padV + titleH;
+    float btnY = activeBtnY;
 
     int result = 0;
 

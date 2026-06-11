@@ -194,6 +194,7 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
     screenPos.y += kVirtualHeight / 2.f;
 
     Color tint = IsElectroStunned() ? Color{ 255, 255,  60, 255 } :
+                 _flickerInWindup   ? Color{ 180, 100, 255, 180 } :
                  IsFrozen()         ? Color{ 140, 200, 255, 255 } :
                  _takingDamage      ? Color{ 255, 215, 215, 255 } :
                                       WHITE;
@@ -259,6 +260,13 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
     // This is the same visual goal as the cyclops fix: animation changes
     // frames, but the character should not appear to swim across the arena.
     DrawTexturePro(_texture, source, dest, Vector2{ drawWidth / 2.f, drawHeight }, 0.f, tint);
+
+    if (_graveReviveInvulTimer > 0.f)
+    {
+        float pulse = sinf((float)GetTime() * 10.f) * 0.4f + 0.6f;
+        DrawCircleLines((int)screenPos.x, (int)screenPos.y, 80.f, Fade(Color{  80, 255, 120, 255 }, pulse));
+        DrawCircleLines((int)screenPos.x, (int)screenPos.y, 62.f, Fade(Color{ 160, 255, 200, 255 }, pulse * 0.5f));
+    }
 
     if (_health != _maxHealth)
         DrawHealthBar(screenPos, drawWidth, drawHeight);

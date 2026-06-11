@@ -19,4 +19,22 @@ private:
     Texture2D _borderTex{};
     Texture2D _btnTex{};
     Texture2D _htpBtnTex{};
+
+    // ── Border panel editor ───────────────────────────────────────────────────
+public:
+    void ToggleBorderEditor() { _editorActive = !_editorActive; _editorInited = false; }
+private:
+    bool      _editorActive = false;
+    bool      _editorInited = false;
+    Rectangle _edRect       = {};
+    int       _edHandle     = -1;
+    Vector2   _edDragStart  = {};
+    Rectangle _edRectStart  = {};
+
+    // Button group drag (Y only)
+    float _btnEdY         = 0.f;
+    bool  _btnInited      = false;
+    bool  _btnDragging    = false;
+    float _btnDragStartMY = 0.f;
+    float _btnDragStartY  = 0.f;
 };

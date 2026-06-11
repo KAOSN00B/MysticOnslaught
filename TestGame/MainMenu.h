@@ -48,4 +48,26 @@ private:
     bool _nineSliceEditorPressed = false;
     bool _settingsPressed        = false;
     bool _debugUnlocked          = false;
+
+    // ── Border panel editor ───────────────────────────────────────────────────
+public:
+    void ToggleBorderEditor() { _editorActive = !_editorActive; }
+private:
+    bool      _editorActive = false;
+    Rectangle _edRect       = {};
+    int       _edHandle     = -1;
+    Vector2   _edDragStart  = {};
+    Rectangle _edRectStart  = {};
+
+    // Banner drag (Y only)
+    float _bannerEdY         = 0.f;
+    bool  _bannerDragging    = false;
+    float _bannerDragStartMY = 0.f;
+    float _bannerDragStartY  = 0.f;
+
+    // Button group drag (Y only)
+    float _btnEdFirstY      = 0.f;
+    bool  _btnDragging      = false;
+    float _btnDragStartMY   = 0.f;
+    float _btnDragStartFY   = 0.f;
 };

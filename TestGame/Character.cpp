@@ -258,7 +258,7 @@ void Character::HandleInput()
     bool dashTrigger = (!_touchModeEnabled && IsKeyPressed(_bindings.dash)) || _touchDashJustPressed;
     _touchDashJustPressed = false; // always consume
 
-    if (dashTrigger && !_isDashing && _dashCooldown <= 0.f)
+    if (dashTrigger && !_isDashing && _dashCooldown <= 0.f && !_biomeDashLocked)
     {
         // Cancel any ongoing attack or cast so movement isn't blocked after the dash
         _attacking = false;
@@ -291,7 +291,7 @@ void Character::HandleMovement(float dt)
 
     if (Vector2Length(_direction) > 0.f)
     {
-        _worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(_direction), _speed * dt));
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(_direction), _speed * _biomeSlowFactor * dt));
 
         if (_direction.x < 0) _rightLeft = -1;
         if (_direction.x > 0) _rightLeft = 1;
@@ -498,7 +498,7 @@ void Character::HandleAnimation(float dt)
     if (_forcedPushActive)
         return;
 
-    _runningTime += dt;
+    _runningTime += dt * _biomeSlowFactor;
 
     if (_runningTime >= _updateTime)
     {

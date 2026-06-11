@@ -37,5 +37,6 @@ struct RoomLayout
                                int      propCount       = 0,
                                int      decorCount      = 0,
                                int      animDecorCount  = 0,
-                               int      animPropCount   = 0);
+                               int      animPropCount   = 0,
+                               int      propDensityBonus = 0);
 };
