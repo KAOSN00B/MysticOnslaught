@@ -96,9 +96,11 @@ void OverlayRenderer::DrawDemoEnd(const DemoEndRenderContext& ctx) const
         cy += hintSz + 30.f;
     }
 
-    const char* returnHint = ctx.touchModeActive
-        ? "Tap anywhere to return to the main menu"
-        : "Press any key or click anywhere to return to the main menu";
+    const char* returnHint = (ctx.promptMode == InputPromptMode::Gamepad)
+        ? "A: Return to the main menu"
+        : (ctx.promptMode == InputPromptMode::Touch)
+            ? "Tap anywhere to return to the main menu"
+            : "Press any key or click anywhere to return to the main menu";
     int returnHintSz = 18;
     DrawText(returnHint, (int)(sw * 0.5f - MeasureText(returnHint, returnHintSz) * 0.5f), (int)cy, returnHintSz, Color{210, 200, 235, 190});
     cy += returnHintSz + 24.f;
@@ -194,15 +196,15 @@ void OverlayRenderer::DrawExpTally(const ExpTallyRenderContext& ctx) const
     {
         const char* hint = nullptr;
         if (ctx.tallyLevelUpsRemaining > 0 && !ctx.tallyChoiceChaining)
-            hint = ctx.touchModeActive ? "Tap to choose an upgrade!" : "Space / Enter  -  Choose an Upgrade!";
+            hint = (ctx.promptMode == InputPromptMode::Gamepad) ? "A: Choose an Upgrade!" : (ctx.promptMode == InputPromptMode::Touch) ? "Tap to choose an upgrade!" : "Space / Enter  -  Choose an Upgrade!";
         else
-            hint = ctx.touchModeActive ? "Tap to Continue" : "Space / Enter  to Continue";
+            hint = PromptContinue(ctx.promptMode);
         int hintW = MeasureText(hint, 26);
         DrawText(hint, (int)(cx - hintW * 0.5f), (int)(sh * 0.70f), 26, Fade(RAYWHITE, pulse));
     }
-    else if (!ctx.touchModeActive)
+    else if (ctx.promptMode != InputPromptMode::Touch)
     {
-        const char* skipHint = "Space / Enter  to skip";
+        const char* skipHint = PromptSkip(ctx.promptMode);
         int skipW = MeasureText(skipHint, 20);
         DrawText(skipHint, (int)(cx - skipW * 0.5f), (int)(sh * 0.70f), 20, Fade(RAYWHITE, 0.45f));
     }
@@ -300,18 +302,20 @@ void OverlayRenderer::DrawHowToPlay(const HowToPlayRenderContext& ctx) const
         const float divX = cx + colW + midGap / 2.f;
 
         const float basicsHeaderY = cy + sh * 0.022f;
-        DrawText("KEYBOARD & MOVEMENT", (int)leftX, (int)basicsHeaderY, headerSz, Color{ 255, 194, 92, 255 });
+        DrawText((ctx.promptMode == InputPromptMode::Gamepad) ? "CONTROLLER & MOVEMENT" : (ctx.promptMode == InputPromptMode::Touch) ? "TOUCH & MOVEMENT" : "KEYBOARD & MOVEMENT", (int)leftX, (int)basicsHeaderY, headerSz, Color{ 255, 194, 92, 255 });
         DrawText("ACTIONS & ABILITIES", (int)rightX, (int)basicsHeaderY, headerSz, Color{ 255, 194, 92, 255 });
         DrawLineEx({ divX, basicsHeaderY + headerSz + 4.f }, { divX, panelY + panelH - sh * 0.03f }, 1.5f, Fade(Color{ 220, 160, 240, 255 }, 0.35f));
 
+        std::string abilitySlots = PromptAbilitySlots(ctx.promptMode);
+        std::string cycleLabel = (ctx.promptMode == InputPromptMode::Gamepad) ? "LB/RB" : (ctx.promptMode == InputPromptMode::Touch) ? "Tap Slots" : "Scroll Wheel";
         struct KBEntry { const char* key; const char* desc; };
         KBEntry kb[] = {
-            { "W / A / S / D",  "Move" },
-            { "SPACE",          "Dash  (brief invincibility)" },
-            { "Left Click",     "Melee attack" },
-            { "1  2  3  4",     "Use ability in that slot" },
-            { "Scroll Wheel",   "Cycle active ability" },
-            { "ESC",            "Pause / unpause" },
+            { PromptMove(ctx.promptMode),  "Move" },
+            { PromptDash(ctx.promptMode),  "Dash  (brief invincibility)" },
+            { PromptAttack(ctx.promptMode), "Melee attack" },
+            { abilitySlots.c_str(), "Use ability in that slot" },
+            { cycleLabel.c_str(), "Cycle active ability" },
+            { PromptPause(ctx.promptMode), "Pause / unpause" },
         };
         float rowY = basicsHeaderY + headerSz + sh * 0.022f;
         for (auto& k : kb)
@@ -340,11 +344,13 @@ void OverlayRenderer::DrawHowToPlay(const HowToPlayRenderContext& ctx) const
             rowY += descSz + sh * 0.008f;
         }
 
+        std::string meleeLine = std::string(PromptAttack(ctx.promptMode)) + " to swing your sword.";
+        std::string abilityLine = PromptAbilityAction(ctx.promptMode);
         struct ActionEntry { const char* name; const char* line1; const char* line2; };
         ActionEntry acts[] = {
             { "DASH", "Quick burst of movement in any direction.", "You are invincible for its full duration." },
-            { "MELEE", "Left-click to swing your sword.", "Hits all enemies in a forward arc." },
-            { "ABILITIES", "Press 1-4 to cast a learned ability.", "Each ability costs Mana to activate." },
+            { "MELEE", meleeLine.c_str(), "Hits all enemies in a forward arc." },
+            { "ABILITIES", abilityLine.c_str(), "Each ability costs Mana to activate." },
             { "MANA", "Blue gems drop from defeated enemies.", "Pick them up to fuel your abilities." },
         };
         float rowR = basicsHeaderY + headerSz + sh * 0.022f;

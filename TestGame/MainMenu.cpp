@@ -1,4 +1,4 @@
-﻿#include "MainMenu.h"
+#include "MainMenu.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
@@ -6,9 +6,9 @@
 #include "VirtualCanvas.h"
 #include <cmath>
 
-// ── 9-slice corner sizes ──────────────────────────────────────────────────────
+// -- 9-slice corner sizes ------------------------------------------------------
 static constexpr float BORDER_SRC_CORNER = 1.0f;
-static constexpr float BORDER_DST_CORNER = 20.0f; // screen px — raise/lower if corners look off
+static constexpr float BORDER_DST_CORNER = 20.0f; // screen px � raise/lower if corners look off
 static constexpr float BTN_SRC_CORNER    = 8.f;
 static constexpr float BTN_DST_CORNER    = 16.f;
 
@@ -33,7 +33,7 @@ void MainMenu::Init()
 
     float startX = sw / 2.f - buttonWidth / 2.f;
 
-    // Y stored as offset from group top — draw adds _btnEdFirstY at runtime
+    // Y stored as offset from group top � draw adds _btnEdFirstY at runtime
     _buttons.push_back({ "Start Game",  { startX, 0.f,                           buttonWidth, buttonHeight } });
     _buttons.push_back({ "How To Play", { startX, (buttonHeight + gap),           buttonWidth, buttonHeight } });
     _buttons.push_back({ "Settings",    { startX, (buttonHeight + gap) * 2.f,     buttonWidth, buttonHeight } });
@@ -46,7 +46,7 @@ void MainMenu::Init()
     float cornerPad = sw * 0.018f;
     float lbGap = sh * 0.008f;
 
-    // Bottom-left dev tools — always visible so you can test without finishing the demo
+    // Bottom-left dev tools � always visible so you can test without finishing the demo
     _buttons.push_back({ "Dungeon Run",   { cornerPad, sh - lbH * 3.f - lbGap * 2.f - sh * 0.018f, lbW, lbH } });
     _buttons.push_back({ "Tile Editor",   { cornerPad, sh - lbH * 2.f - lbGap       - sh * 0.018f, lbW, lbH } });
     _buttons.push_back({ "9-Slice Editor",{ cornerPad, sh - lbH                     - sh * 0.018f, lbW, lbH } });
@@ -128,7 +128,7 @@ void MainMenu::Update()
         }
     }
 
-    // ── Gamepad navigation for panel buttons (Start Game / HTP / Settings / Quit) ──
+    // -- Gamepad navigation for panel buttons (Start Game / HTP / Settings / Quit) --
     {
         // Mouse movement hands control back to the cursor
         Vector2 mouseDelta = GetMouseDelta();
@@ -163,9 +163,13 @@ void MainMenu::Update()
             }
         }
 
-        // A / Cross confirms the highlighted button
-        if (_gpSelected >= 0 && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN))
+        // A / Cross confirms the highlighted button. If nothing is highlighted yet,
+        // treat A as selecting the top option so controller users never get a dead press.
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN))
         {
+            if (_gpSelected < 0)
+                _gpSelected = 0;
+
             switch (_gpSelected)
             {
             case 0: _startPressed    = true; break;
@@ -183,7 +187,7 @@ void MainMenu::Update()
 
     if (!_editorActive) return;
 
-    // ── Editor input — unified click priority ─────────────────────────────────
+    // -- Editor input � unified click priority ---------------------------------
     // Priority: edge handles > banner > button group > border interior
     const float hs = 10.f;
     auto handlePos = [&](int i) -> Vector2 {
@@ -227,7 +231,7 @@ void MainMenu::Update()
             // 2. Banner
             if (CheckCollisionPointRec(mouse, bannerRect))
             { _bannerDragging = true; _bannerDragStartMY = mouse.y; _bannerDragStartY = _bannerEdY; }
-            // 3. Button group (inside border — must be before interior check)
+            // 3. Button group (inside border � must be before interior check)
             else if (CheckCollisionPointRec(mouse, btnGroupRect))
             { _btnDragging = true; _btnDragStartMY = mouse.y; _btnDragStartFY = _btnEdFirstY; }
             // 4. Border interior (anywhere else inside the border rect)
@@ -273,7 +277,7 @@ void MainMenu::Draw()
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
 
-    // ── Animated checkerboard background ────────────────────────────────────
+    // -- Animated checkerboard background ------------------------------------
     {
         const int   cell   = 80;
         const Color dark   = Color{ 52, 38, 26, 255 };
@@ -283,7 +287,7 @@ void MainMenu::Draw()
         float t      = (float)GetTime();
         int   offX   = (int)fmodf(t * 22.f, (float)period);
         int   offY   = (int)fmodf(t * 12.f, (float)period);
-        int   phaseX = offX / cell;       // 0 or 1 — which colour phase
+        int   phaseX = offX / cell;       // 0 or 1 � which colour phase
         int   phaseY = offY / cell;
         int   pixX   = offX % cell;       // sub-cell pixel offset
         int   pixY   = offY % cell;
@@ -299,14 +303,14 @@ void MainMenu::Draw()
         }
     }
 
-    // ── Panel border around the button area ──────────────────────────────────
+    // -- Panel border around the button area ----------------------------------
     Rectangle borderRect = _editorActive ? _edRect
         : Rectangle{ sw / 2.f - sw * 0.3703f / 2.f, sh * 0.2731f, sw * 0.3703f, sh * 0.6466f };
 
     if (_borderTex.id != 0)
         DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER, borderRect, WHITE);
 
-    // ── Border editor overlay ─────────────────────────────────────────────────
+    // -- Border editor overlay -------------------------------------------------
     if (_editorActive)
     {
         const float hs = 10.f;
@@ -347,7 +351,7 @@ void MainMenu::Draw()
         }
     }
 
-    // ── Title banner ─────────────────────────────────────────────────────────
+    // -- Title banner ---------------------------------------------------------
     float bannerW = sw * 0.42f;
     float bannerH = (_bannerTex.id != 0)
         ? bannerW * ((float)_bannerTex.height / (float)_bannerTex.width)
@@ -361,7 +365,7 @@ void MainMenu::Draw()
             { bannerX, bannerY, bannerW, bannerH },
             {}, 0.f, WHITE);
 
-    // Title text — centred in the flat body of the banner, with black outline
+    // Title text � centred in the flat body of the banner, with black outline
     int         titleSz = (int)(sh * 0.058f);
     const char* title   = "Mystic Onslaught";
     int         titleW  = MeasureText(title, titleSz);
@@ -396,7 +400,7 @@ void MainMenu::Draw()
             Color{ 80, 220, 120, 160 });
     }
 
-    // ── Buttons ──────────────────────────────────────────────────────────────
+    // -- Buttons --------------------------------------------------------------
     for (auto& button : _buttons)
     {
         if (button.text == "Debug Mode" && !_debugUnlocked)
@@ -432,7 +436,7 @@ void MainMenu::Draw()
             continue;
         }
 
-        // Dungeon Run button — teal
+        // Dungeon Run button � teal
         if (button.text == "Dungeon Run")
         {
             Rectangle drawBounds = button.bounds;
@@ -460,7 +464,7 @@ void MainMenu::Draw()
             continue;
         }
 
-        // Tile Editor / 9-Slice Editor — orange
+        // Tile Editor / 9-Slice Editor � orange
         if (button.text == "Tile Editor" || button.text == "Tile Mapper" || button.text == "9-Slice Editor")
         {
             Rectangle drawBounds = button.bounds;
@@ -505,7 +509,7 @@ void MainMenu::Draw()
         bool highlighted = button.hovered || button.selected;
         if (highlighted)
         {
-            // "Bloom bigger" — expand the button rect and draw a pulsing glow ring behind it
+            // "Bloom bigger" � expand the button rect and draw a pulsing glow ring behind it
             float pulse  = 0.5f + 0.5f * sinf((float)GetTime() * 5.f);
             float expand = drawBounds.width * 0.04f;
             drawBounds = { drawBounds.x - expand, drawBounds.y - expand * 0.7f,

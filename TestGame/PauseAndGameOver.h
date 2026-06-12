@@ -1,6 +1,8 @@
-#pragma once
+﻿#pragma once
 
 #include "raylib.h"
+#include "WebGamepad.h"
+#include "InputPrompts.h"
 
 class PauseAndGameOver
 {
@@ -11,8 +13,8 @@ public:
     void Init();
     void Unload();
 
-    int  DrawPause();      // 0=nothing  1=resume  2=howtoplay  3=quit  4=keybindings  5=mainmenu
-    int  DrawGameOver();   // 0=nothing  1=retry  2=main menu  3=quit
+    int  DrawPause(InputPromptMode promptMode = InputPromptMode::KeyboardMouse);      // 0=nothing  1=resume  2=howtoplay  3=quit  4=keybindings  5=mainmenu
+    int  DrawGameOver(InputPromptMode promptMode = InputPromptMode::KeyboardMouse);   // 0=nothing  1=retry  2=main menu  3=quit
 
 private:
 

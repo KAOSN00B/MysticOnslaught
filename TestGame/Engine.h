@@ -1,4 +1,4 @@
-﻿
+
 #pragma once
 
 #include "raylib.h"
@@ -39,6 +39,7 @@
 #include "RoomLayout.h"
 #include "TileRenderer.h"
 #include "GamepadInput.h"
+#include "InputPrompts.h"
 
 #include <vector>
 #include <string>
@@ -63,6 +64,8 @@ private:
 
     void Update(float dt);
     void Draw();
+    void UpdateInputPromptMode();
+    InputPromptMode GetPromptModeForUi() const;
 
     void UpdateGamePlay(float dt);
     void SpawnWave();
@@ -126,24 +129,24 @@ private:
     void ResetRunState();
 
 
-    // ── EXP Tally screen ─────────────────────────────────────────────────────
+    // -- EXP Tally screen -----------------------------------------------------
     void UpdateExpTally(float dt);
     void DrawExpTally();
 
-    // ── Demo end screen ───────────────────────────────────────────────────────
+    // -- Demo end screen -------------------------------------------------------
     void DrawDemoEnd();
 
-    // ── Room-based run progression ────────────────────────────────────────────
+    // -- Room-based run progression --------------------------------------------
     void StartNextRoom(RoomType type);    // internal setup helper (biome + wave intro)
     void GenerateActMap();                // builds the full act node graph
     void EnterMapRoom(int nodeIdx);       // called when the player clicks a map node
     void CompleteCurrentMapNode();        // marks the current node complete and unlocks next nodes
     void HandleRoomContinueAction();      // shared continue path for cleared/completed rooms
-    void DrawMap();                       // Slay-the-Spire–style act map screen
+    void DrawMap();                       // Slay-the-Spire�style act map screen
     std::vector<Vector2> GetCyclopsLaserEndpoints(const CyclopsLaserProjectile& laser) const;
     bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
 
-    // ── Settings screen ───────────────────────────────────────────────────────
+    // -- Settings screen -------------------------------------------------------
     void UpdateSettings(float dt);
     void DrawSettings() const;
     void DrawSettingsKeybindings(float contentY, float panelX, float panelW, Vector2 mouse) const;
@@ -186,11 +189,11 @@ private:
     bool TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance);
 
 private:
-    // ── Act map node — one room on the Slay-the-Spire–style map ──────────────
+    // -- Act map node � one room on the Slay-the-Spire�style map --------------
     struct MapNode
     {
         int      row       = 0;               // 0 = entry, 5 = boss
-        float    normX     = 0.5f;            // 0–1 horizontal position in row
+        float    normX     = 0.5f;            // 0�1 horizontal position in row
         RoomType type      = RoomType::Standard;
         bool     completed = false;           // player has cleared this room
         bool     available = false;           // player can click this node now
@@ -198,7 +201,7 @@ private:
         Vector2  drawPos{};                   // screen-space position (computed in GenerateActMap)
     };
 
-    // ── Virtual canvas + settings ─────────────────────────────────────────────
+    // -- Virtual canvas + settings ---------------------------------------------
     RenderTexture2D _virtualCanvas{};
     Texture2D       _settingsBorderTex{};
     SettingsManager _settingsMgr;
@@ -225,6 +228,7 @@ private:
     GameState& _howToPlayFrom;
     int& _htpTab;
     float& _htpSlideOffset;
+    float _htpGpCooldown = 0.f;
 
     bool       _audioInitialised  = false;
     bool       _shouldExit        = false;
@@ -239,7 +243,7 @@ private:
     int  _enemiesKilled      = 0;
     int  _goldDroughtCounter = 0;  // kills since last Five-or-better drop; resets at 5
     int  _bossesDefeated     = 0;  // how many Molarbeasts have been killed this run
-    bool _demoCompleted      = false; // true after 2 boss kills OR secret code — unlocks debug
+    bool _demoCompleted      = false; // true after 2 boss kills OR secret code � unlocks debug
 
     float _shakeTimer = 0.f;
     float _shakeStrength = 0.f;
@@ -262,7 +266,7 @@ private:
     float _bossWarningTimer = 0.f;
     float _levelUpOpenTimer = 0.f;  // blocks card clicks briefly after panel opens
 
-    // ── Act / room progression ────────────────────────────────────────────────
+    // -- Act / room progression ------------------------------------------------
     // _wave keeps its name but now means "total rooms entered this run"
     // (used for enemy scaling via GetEnemyPowerLevelForWave).
     // _currentAct / _currentRoom drive display and encounter selection.
@@ -270,18 +274,18 @@ private:
     int      _currentRoom     = 0;                  // 1-5 normal + 6 boss within the act
     RoomType _currentRoomType = RoomType::Standard; // drives SpawnEnemies and reward logic
     bool     _pendingRoomChoice  = false; // after AbilityChoice (boss clear), show new-act map
-    bool     _roomClearPending   = false; // combat finished — waiting for player to click Continue
+    bool     _roomClearPending   = false; // combat finished � waiting for player to click Continue
     float    _roomClearTimer     = 0.f;  // non-combat rooms wait before advancing (Rest/Store)
 
     // EXP tally state
     float _pendingExp             = 0.f;   // EXP accumulated during combat, drained during tally
     float _expTallyAccum          = 0.f;   // fractional drain accumulator
-    bool  _expTallyDone           = false; // bar fully drained — show dismiss hint
+    bool  _expTallyDone           = false; // bar fully drained � show dismiss hint
     int   _tallyStartLevel        = 1;     // player level when tally begins, to count level-ups
     int   _tallyLevelUpsRemaining = 0;     // level-up choices still to show after tally
     bool  _tallyChoiceChaining    = false; // true once player pressed Continue to start chain
 
-    // Act map state (Slay-the-Spire–style node graph)
+    // Act map state (Slay-the-Spire�style node graph)
     std::vector<MapNode> _actMap;
     int   _currentMapNodeIdx  = -1;         // index of the node currently in / last completed
     int   _mapKeySelectedIdx  = -1;         // keyboard-highlighted node on the map screen (-1 = none)
@@ -290,13 +294,13 @@ private:
     static constexpr int kTotalActs = 5;
     std::vector<Biome> _biomeSequence;      // 5 randomly chosen biomes per run
 
-    // ── World map (biome selection) ───────────────────────────────────────
+    // -- World map (biome selection) ---------------------------------------
     WorldMapManager       _worldMap;
     int                   _worldZone = 0;          // 0=Caverns, 1-4=picked zones, 5=DemonsInsides
     std::vector<Biome>    _worldCompletedBiomes;   // biomes played, in order (after Caverns)
     std::vector<int>      _worldChosenNodeIndices; // 0/1/2 tierIdx chosen at each completed tier
 
-    // ── Map screen right-panel debug editor ───────────────────────────────
+    // -- Map screen right-panel debug editor -------------------------------
     bool  _mapEditorActive  = false;
     int   _mapEditorSelIdx  = 0;
     float _mapJourneyX      = 0.725f;  // 0  right panel X as fraction of sw
@@ -319,28 +323,28 @@ private:
     float _mapHintY         = 35.f;    // 17 bottom hint distance from screen bottom
     float _mapHintFs        = 34.f;    // 18 bottom hint font size
 
-    // ── In-game HUD debug editor ──────────────────────────────────────────
+    // -- In-game HUD debug editor ------------------------------------------
     struct HUDConfig
     {
-        // HP / MP bars (0–4)
+        // HP / MP bars (0�4)
         float barW         = 534.f;   // 0  bar width
         float barH         = 30.f;    // 1  bar height
         float barGap       = 28.f;    // 2  gap between HP and MP bars
         float barTopPad    = 16.f;    // 3  Y of HP bar from top
         float barLabelFs   = 15.f;    // 4  font inside bars
-        // Gold label (5–7)
+        // Gold label (5�7)
         float goldX        = 21.f;    // 5  gold X
         float goldY        = 16.f;    // 6  gold Y
         float goldFs       = 48.f;    // 7  gold font size
-        // Enemies left (8–10)
+        // Enemies left (8�10)
         float enemiesX     = 22.f;    // 8  enemies label X
         float enemiesY     = 90.f;    // 9  enemies label Y
         float enemiesFs    = 45.f;    // 10 enemies label font size
-        // Act / Room label (11–13)
+        // Act / Room label (11�13)
         float actOffsetX   = 42.f;    // 11 offset from right edge
         float actY         = 30.f;    // 12 act label Y
         float actFs        = 43.f;    // 13 act label font size
-        // Minimap (14–22)
+        // Minimap (14�22)
         float miniX        = 16.f;    // 14 minimap origin X
         float miniY        = 164.f;   // 15 minimap origin Y
         float miniW        = 271.f;   // 16 minimap width (height auto-derived)
@@ -350,13 +354,13 @@ private:
         float miniDotProp  = 3.f;     // 20 prop dot base radius
         float miniDotPickup= 2.f;     // 21 pickup dot base radius
         float miniDotPlayer= 4.f;     // 22 player dot base radius
-        // PC ability bar (23–27)
+        // PC ability bar (23�27)
         float slotSz       = 103.f;   // 23 ability slot size (square)
         float slotGap      = 108.f;    // 24 gap between slots
         float slotBotPad   = 19.f;    // 25 slot Y from bottom
         float slotKeyFs    = 15.f;    // 26 keybind label font size
         float slotNameFs   = 21.f;    // 27 ability name font size
-        // Touch buttons (28–38)
+        // Touch buttons (28�38)
         float touchJoyR       = 90.f;   // 28 joystick radius
         float touchAtkR       = 113.f;  // 29 ATK button radius
         float touchDashR      = 111.f;  // 30 DASH button radius
@@ -369,7 +373,7 @@ private:
         float touchPausePad   = 85.f;   // 36 pause button edge padding
         float touchAtkFs      = 46.f;   // 37 ATK button text size
         float touchDashFs     = 57.f;   // 38 DASH button text size
-        // Touch ability slots (39–42)
+        // Touch ability slots (39�42)
         float touchSlotSz      = 130.f;  // 39 ability slot square size
         float touchSlotGap     = 20.f;   // 40 gap between slots
         float touchSlotRightPad= 27.f;   // 41 right-edge padding for slot row
@@ -408,7 +412,7 @@ private:
     Vector2 _touchMappingDragStart{};
     Vector2 _touchMappingPosAtDrag{};
 
-    // Snapshot of the original baked values — captured once on first mapping screen open.
+    // Snapshot of the original baked values � captured once on first mapping screen open.
     // Default always restores to these, regardless of how many saves have been made.
     struct TouchDefaults
     {
@@ -435,7 +439,7 @@ private:
     int         _startingAbilityPickCount = 0;
     bool        _starterAbilityGiftClaimed = false;
 
-    // ── Elite-room state (all reset in StartNextRoom) ─────────────────────
+    // -- Elite-room state (all reset in StartNextRoom) ---------------------
     // Active mechanic index: 0=Cage, 1=Bodyguard, 2=Enrage, 3=Leap, 4=Hazards; -1=none
     int     _eliteMechanic            = -1;
     Enemy*  _eliteMinibossPtr         = nullptr;  // non-owning ptr into _enemies
@@ -450,7 +454,7 @@ private:
     float   _eliteLeapTimer           = 0.f;
     float   _eliteHazardSpawnTimer    = 0.f;
 
-    // ── Elite constants ───────────────────────────────────────────────────
+    // -- Elite constants ---------------------------------------------------
     static constexpr float kEliteCageRadius             = 500.f;
     static constexpr float kEliteCageDamageInterval     = 0.5f;
     static constexpr float kEliteEnrageWarningDuration  = 4.0f;
@@ -463,7 +467,7 @@ private:
     static constexpr int   kHazardVolleyMinCount        = 3;
     static constexpr int   kHazardVolleyMaxCount        = 6;
 
-    // ── Biome-modifier room state ─────────────────────────────────────────
+    // -- Biome-modifier room state -----------------------------------------
     // Wastelands: warning circles that detonate on the player after a delay
     struct WastelandHazard
     {
@@ -487,7 +491,7 @@ private:
     };
     std::vector<LostCityBeam> _lostCityBeams;
 
-    // Sanctuary: debuff zones — player inside one is dash-locked and slowed
+    // Sanctuary: debuff zones � player inside one is dash-locked and slowed
     struct SanctuaryZone { Vector2 pos; float radius; };
     std::vector<SanctuaryZone> _sanctuaryZones;
 
@@ -541,19 +545,19 @@ private:
     Texture2D _rockTex{};
     Texture2D _bigRockTex{};
     Vector2 _mapPos{};
-    // Map scale is now computed by _worldConfig — do not set this by hand.
+    // Map scale is now computed by _worldConfig � do not set this by hand.
     // Read/write it through _worldConfig.Recalculate() and GetScale().
     float      _mapScale    = 3.f;
     WorldConfig _worldConfig;          // owns all map-scale and camera logic
     int _maxActiveEnemies = 16;
 
     Texture2D _pillarTex{};
-    Texture2D _torchTex{};       // Torch.png — 256x29, 8 frames of 32x29
-    Texture2D _pillarTorchTex{}; // PillarTorch.png — 290x52, 8 frames of 32x52 (content offset x=17)
+    Texture2D _torchTex{};       // Torch.png � 256x29, 8 frames of 32x29
+    Texture2D _pillarTorchTex{}; // PillarTorch.png � 290x52, 8 frames of 32x52 (content offset x=17)
     Texture2D _fireballCastTex{};
     Texture2D _fireballHitTex{};
-    Texture2D _genericHitTex{};   // Hit03.png — melee hit splat + electric impact sprite
-    Texture2D _iceHitTex{};       // Ice_Shard_Hit.png — ice ability impact
+    Texture2D _genericHitTex{};   // Hit03.png � melee hit splat + electric impact sprite
+    Texture2D _iceHitTex{};       // Ice_Shard_Hit.png � ice ability impact
     Texture2D _lightningCastTex{};
     Texture2D _healEffectTex{};
     Texture2D _roomClearExplosionTex{};
@@ -629,10 +633,11 @@ private:
     CombatDirector _combatDirector;
     OverlayRenderer _overlayRenderer;
 
-    // ── Touch mode ───────────────────────────────────────────────────────────
+    // -- Touch mode -----------------------------------------------------------
     bool          _touchModeActive = false;
     TouchControls _touch;
     GamepadInput  _gamepad;
+    InputPromptMode _inputPromptMode = InputPromptMode::KeyboardMouse;
     // Touch IDs that have already triggered an ability cast this press.
     // Cleared each frame when the touch lifts; prevents repeat casts on hold.
     std::vector<int> _abilityTapSeenIds;
@@ -667,7 +672,8 @@ private:
     std::vector<Vector2> _dungeonPropCentersScratch;
 
     std::unordered_map<int, DungeonRoomState> _dungeonRoomStates;
-    bool _dungeonEnemiesSpawned = false;
+    bool  _dungeonEnemiesSpawned  = false;
+    float _bossNoEnemyTimer       = 0.f;   // seconds since boss room had 0 active enemies
 
     bool _hasMagicGem = false;
     bool _magicGemSpawned = false;
@@ -691,22 +697,22 @@ private:
     // Full-screen fade used when entering the dungeon from the Store and after boss clears.
     enum class DungeonFadeState { None, FadingOut, FadingIn };
     DungeonFadeState      _dungeonFadeState  = DungeonFadeState::None;
-    float                 _dungeonFadeAlpha  = 0.f;   // 0–255
+    float                 _dungeonFadeAlpha  = 0.f;   // 0�255
     float                 _dungeonFadeTimer  = 0.f;
     std::function<void()> _dungeonFadePendingAction;
     static constexpr float kDungeonFadeDuration = 0.40f;
 
-    // Treasure room chest — spawns at screen centre after all enemies die.
+    // Treasure room chest � spawns at screen centre after all enemies die.
     bool _treasureChestSpawned = false;
     bool _treasureChestBroken  = false;
 
     // Folder scanned by the TileMapper debug tool for PNG tilesets.
     static constexpr const char* kTilesheetFolder = "MapTilesets";
 
-    // Folder scanned by the 9-Slice Editor — top-level PNGs in UI/ only, no subfolders.
+    // Folder scanned by the 9-Slice Editor � top-level PNGs in UI/ only, no subfolders.
     static constexpr const char* kUIFolder = "UI";
 
-    // ── Hitbox debug editor (F12 while debug active) ─────────────────────────
+    // -- Hitbox debug editor (F12 while debug active) -------------------------
     bool           _isHitboxEditorActive = false;
     BaseCharacter* _hitboxSelectedEntity = nullptr;
     bool           _hitboxEditAttack     = false;
@@ -717,7 +723,7 @@ private:
     void UpdateHitboxEditor();
     void DrawHitboxEditor();
 
-    // ── Dialogue box designer (F11 while debug active) ───────────────────────
+    // -- Dialogue box designer (F11 while debug active) -----------------------
     // Lets you drag and resize the dialogue panel and text sizes live
     // so you can tweak layout without recompiling.
     bool  _isDlgEditorActive   = false;
@@ -742,7 +748,7 @@ private:
     void UpdateDialogueBoxEditor();
     void DrawDialogueBoxEditor();
 
-    // ── Cutscene system ───────────────────────────────────────────────────────
+    // -- Cutscene system -------------------------------------------------------
     CutsceneManager _cutscene;
     bool            _cutsceneIntroPlayed = false; // stays true after first-ever intro
 

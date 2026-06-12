@@ -153,7 +153,7 @@ void DialogueBox::Draw(Texture2D borderTex,
                        Texture2D portraitTex,
                        const char* speaker,
                        const std::string& visibleText,
-                       bool showContinue) const
+                       bool showContinue, InputPromptMode promptMode) const
 {
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
@@ -202,7 +202,7 @@ void DialogueBox::Draw(Texture2D borderTex,
     // ── "Press E to continue" prompt ──────────────────────────────────────────
     if (showContinue)
     {
-        const char* prompt = "[ E ] Continue";
+        const char* prompt = PromptDialogueContinue(promptMode);
         int promptW = MeasureText(prompt, 16);
         float px = panelRect.x + panelRect.width - (float)promptW - 14.f;
         float py = panelRect.y + panelRect.height - 26.f;

@@ -107,7 +107,7 @@ void PauseAndGameOver::Unload()
 
 // ── Pause ─────────────────────────────────────────────────────────────────────
 // Returns: 0=nothing  1=resume  2=howtoplay  3=quit
-int PauseAndGameOver::DrawPause()
+int PauseAndGameOver::DrawPause(InputPromptMode promptMode)
 {
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
@@ -313,6 +313,15 @@ int PauseAndGameOver::DrawPause()
             result = 1;
     }
 
+    const char* navHint = (promptMode == InputPromptMode::Gamepad)
+        ? "Left Stick / D-Pad: Choose   A: Select   B: Resume"
+        : (promptMode == InputPromptMode::Touch)
+            ? "Tap: Select"
+            : "Click: Select   Esc: Resume";
+    int navFs = 20;
+    int navW = MeasureText(navHint, navFs);
+    DrawText(navHint, (int)(sw / 2.f - navW / 2.f), (int)(activeBtnY + 5.f * (btnH + btnGap) + 16.f), navFs, Fade(BLACK, 0.70f));
+
     // Resume — green
     if (DrawButton(_btnTex, "Resume", { btnX, btnY, btnW, btnH },
             Color{ 100, 210, 120, 255 }, gpActive && _gpPauseSelected == 0))
@@ -353,7 +362,7 @@ int PauseAndGameOver::DrawPause()
 
 // ── Game Over ─────────────────────────────────────────────────────────────────
 // Returns: 0=nothing  1=retry  2=main menu  3=quit
-int PauseAndGameOver::DrawGameOver()
+int PauseAndGameOver::DrawGameOver(InputPromptMode promptMode)
 {
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
@@ -423,6 +432,15 @@ int PauseAndGameOver::DrawGameOver()
         int map[3] = {1, 2, 3};
         result = map[_gpGameOverSelected];
     }
+
+    const char* goHint = (promptMode == InputPromptMode::Gamepad)
+        ? "Left Stick / D-Pad: Choose   A: Select"
+        : (promptMode == InputPromptMode::Touch)
+            ? "Tap: Select"
+            : "Click: Select";
+    int goFs = 20;
+    int goW = MeasureText(goHint, goFs);
+    DrawText(goHint, (int)(sw / 2.f - goW / 2.f), (int)(btnY + 3.f * (btnH + btnGap) + 14.f), goFs, Fade(RAYWHITE, 0.70f));
 
     if (DrawButton(_btnTex,    "Retry",     { btnX, btnY, btnW, btnH },
             Color{ 100, 210, 120, 255 }, gpActive && _gpGameOverSelected == 0))

@@ -1,7 +1,9 @@
-#pragma once
+﻿#pragma once
 
 #include "GameTypes.h"
+#include "InputPrompts.h"
 #include "raylib.h"
+#include "WebGamepad.h"
 #include <vector>
 
 class Character;
@@ -35,6 +37,7 @@ public:
     int   GetSelectedTierIdx() const { return _selectedTierIdx; }
 
     void Reset();
+    void SetPromptMode(InputPromptMode mode) { _promptMode = mode; }
 
     // Debug layout editor — toggle with KEY_NINE while WorldMap is active in debug mode.
     void ToggleEditor()        { _editorActive = !_editorActive; _editorSelIdx = 0; }
@@ -118,6 +121,7 @@ private:
     int   _lastTouchCount = 0;       // tracks touch-down edges for click detection
     int   _gpFocusIdx    = -1;      // index into _nodes of the gamepad-focused reachable node
     float _gpCooldown    = 0.f;
+    InputPromptMode _promptMode = InputPromptMode::KeyboardMouse;
 
     // ── Debug editor ─────────────────────────────────────────────────────────
     bool  _editorActive   = false;

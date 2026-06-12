@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include "raylib.h"
+#include "WebGamepad.h"
 #include <vector>
 #include <string>
 

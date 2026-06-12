@@ -133,9 +133,10 @@ namespace
     constexpr float kZephCollisionWidth = 72.f;
     constexpr float kZephCollisionHeight = 112.f;
 
-    Rectangle GetZephPromptRect(float sx, float sy, bool touchMode)
+    Rectangle GetZephPromptRect(float sx, float sy, InputPromptMode promptMode)
     {
-        const char* prompt = touchMode ? "Tap to Shop" : "[E] Shop";
+        const bool touchMode = (promptMode == InputPromptMode::Touch);
+        const char* prompt = PromptShopNpc(promptMode);
         int fontSize = touchMode ? 40 : 36;
         int textW = MeasureText(prompt, fontSize);
         float promptH = touchMode ? 56.f : 50.f;
@@ -242,7 +243,7 @@ bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMo
     const float sh2 = kVirtualHeight * 0.5f;
     float sx = _npcPos.x + worldOffset.x + sw2;
     float sy = _npcPos.y + worldOffset.y + sh2;
-    Rectangle promptRect = GetZephPromptRect(sx, sy, touchMode);
+    Rectangle promptRect = GetZephPromptRect(sx, sy, _promptMode);
 
     bool touchDown = touchMode && GetTouchPointCount() > 0;
     bool mouseTap  = touchMode && GetTouchPointCount() == 0 && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
@@ -324,7 +325,7 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
             Rectangle btnRect = GetNpcTouchBtnRect(sx, sy);
             DrawRectangleRounded(btnRect, 0.3f, 8, Fade(GOLD, 0.85f));
             DrawRectangleRoundedLines(btnRect, 0.3f, 8, Fade(WHITE, 0.9f));
-            const char* label = "Enter Shop";
+            const char* label = PromptShopNpc(InputPromptMode::Touch);
             int fs = (int)_uiNpcBtnFs;
             int lw = MeasureText(label, fs);
             DrawText(label,
@@ -334,10 +335,10 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
         }
         else
         {
-            const char* prompt = "[E] Shop";
+            const char* prompt = PromptShopNpc(_promptMode);
             int prFs = 36;
             int prW = MeasureText(prompt, prFs);
-            Rectangle promptRect = GetZephPromptRect(sx, sy, false);
+            Rectangle promptRect = GetZephPromptRect(sx, sy, _promptMode);
             DrawRectangleRounded(promptRect, 0.28f, 6, Fade(BLACK, 0.76f));
             DrawRectangleRoundedLines(promptRect, 0.28f, 6, Fade(GOLD, 0.55f));
             DrawText(prompt, (int)(sx - prW * 0.5f),

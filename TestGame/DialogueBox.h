@@ -1,5 +1,6 @@
-#pragma once
+﻿#pragma once
 #include "raylib.h"
+#include "InputPrompts.h"
 #include <string>
 #include <vector>
 
@@ -56,5 +57,5 @@ struct DialogueBox
               Texture2D portraitTex,
               const char* speaker,
               const std::string& visibleText,
-              bool showContinue) const;
+              bool showContinue, InputPromptMode promptMode = InputPromptMode::KeyboardMouse) const;
 };

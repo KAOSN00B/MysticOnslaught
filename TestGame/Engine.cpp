@@ -1,4 +1,4 @@
-﻿#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
 #include "Engine.h"
 #include "VirtualCanvas.h"
 
@@ -564,6 +564,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _currentRoom = 1;
 
     _dungeonEnemiesSpawned = false;
+    _bossNoEnemyTimer      = 0.f;
     _dungeonScrolling = false;
     _dungeonView = DungeonView::Play;
     _gameState = GameState::DungeonRun;
@@ -1256,8 +1257,57 @@ void Engine::RunFrame()
     EndDrawing();
 }
 
+InputPromptMode Engine::GetPromptModeForUi() const
+{
+    return _inputPromptMode;
+}
+
+void Engine::UpdateInputPromptMode()
+{
+    bool keyboardOrMouseUsed = false;
+
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_A) || IsKeyDown(KEY_S) || IsKeyDown(KEY_D) ||
+        IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_RIGHT) ||
+        IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) ||
+        IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_BACKSPACE) || IsKeyPressed(KEY_TAB) ||
+        IsKeyPressed(KEY_E) || IsKeyPressed(KEY_Q) || IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_TWO) ||
+        IsKeyPressed(KEY_THREE) || IsKeyPressed(KEY_FOUR) || IsKeyPressed(KEY_M))
+    {
+        keyboardOrMouseUsed = true;
+    }
+
+    Vector2 mouseDelta = GetMouseDelta();
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) ||
+        IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON) || fabsf(GetMouseWheelMove()) > 0.01f ||
+        (mouseDelta.x * mouseDelta.x + mouseDelta.y * mouseDelta.y > 4.f))
+    {
+        keyboardOrMouseUsed = true;
+    }
+
+    if (keyboardOrMouseUsed)
+        _inputPromptMode = InputPromptMode::KeyboardMouse;
+
+    if (IsGamepadAvailable(GamepadInput::kGamepad))
+    {
+        bool gamepadUsed = fabsf(GetGamepadAxisMovement(GamepadInput::kGamepad, GAMEPAD_AXIS_LEFT_X)) > GamepadInput::kDeadZone ||
+                           fabsf(GetGamepadAxisMovement(GamepadInput::kGamepad, GAMEPAD_AXIS_LEFT_Y)) > GamepadInput::kDeadZone ||
+                           fabsf(GetGamepadAxisMovement(GamepadInput::kGamepad, GAMEPAD_AXIS_RIGHT_X)) > GamepadInput::kDeadZone ||
+                           fabsf(GetGamepadAxisMovement(GamepadInput::kGamepad, GAMEPAD_AXIS_RIGHT_Y)) > GamepadInput::kDeadZone;
+        for (int b = 1; b <= 17 && !gamepadUsed; ++b)
+            gamepadUsed = IsGamepadButtonDown(GamepadInput::kGamepad, (GamepadButton)b);
+        if (gamepadUsed)
+            _inputPromptMode = InputPromptMode::Gamepad;
+    }
+
+    if (GetTouchPointCount() > 0)
+        _inputPromptMode = InputPromptMode::Touch;
+}
 void Engine::Update(float dt)
 {
+    UpdateInputPromptMode();
+    _shop.SetPromptMode(GetPromptModeForUi());
+    _worldMap.SetPromptMode(GetPromptModeForUi());
+
     // Secret unlock: F12 or \ to enable debug mode access.
     if (IsKeyPressed(KEY_F12) || IsKeyPressed(KEY_BACKSLASH))
         _demoCompleted = true;
@@ -1381,9 +1431,22 @@ void Engine::Update(float dt)
                 if (_howToPlayFrom == GameState::Menu) _menu.Init();
                 _runState.ReturnFromHowToPlay();
             }
-            // D-pad left/right cycles tabs
-            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  && _htpTab > 0) --_htpTab;
-            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) && _htpTab < 3) ++_htpTab;
+
+            _htpGpCooldown -= dt;
+            float axisX = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+            bool navLeft  = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || (axisX < -0.5f && _htpGpCooldown <= 0.f);
+            bool navRight = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || (axisX >  0.5f && _htpGpCooldown <= 0.f);
+
+            if (navLeft && _htpTab > 0)
+            {
+                --_htpTab;
+                _htpGpCooldown = 0.22f;
+            }
+            if (navRight && _htpTab < 3)
+            {
+                ++_htpTab;
+                _htpGpCooldown = 0.22f;
+            }
         }
         break;
     }
@@ -1876,7 +1939,7 @@ void Engine::Draw()
             }
         }
 
-        int pauseResult = _pauseUI.DrawPause();
+        int pauseResult = _pauseUI.DrawPause(GetPromptModeForUi());
         if (pauseResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
         if (pauseResult == 1)
             _gameState = _stateBeforePause;
@@ -1948,7 +2011,7 @@ void Engine::Draw()
 
     case GameState::GameOver:
     {
-        int goResult = _pauseUI.DrawGameOver();
+        int goResult = _pauseUI.DrawGameOver(GetPromptModeForUi());
         if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
         if (goResult == 1)
         {
@@ -2228,19 +2291,10 @@ void Engine::DrawHUD()
 
     drawLabelBox(("Gold: " + std::to_string(_player.GetGold())).c_str(),
         hc.goldX, hc.goldY, (int)hc.goldFs, GOLD);
-    drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(),
-        hc.enemiesX, hc.enemiesY, (int)hc.enemiesFs, RAYWHITE);
+    if (_currentRoomType != RoomType::Store)
+        drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(),
+            hc.enemiesX, hc.enemiesY, (int)hc.enemiesFs, RAYWHITE);
 
-    {
-        bool isBoss  = (_currentRoomType == RoomType::Boss);
-        bool isElite = (_currentRoomType == RoomType::Elite);
-        const char* roomLabel = TextFormat("%s Room", GetDebugRoomTypeName(_currentRoomType));
-        int roomLabelW = MeasureText(roomLabel, (int)hc.actFs);
-        Color labelColor = isBoss ? ORANGE : (isElite ? Color{255,140,0,255} : RAYWHITE);
-        drawLabelBox(roomLabel,
-            (float)(kVirtualWidth - roomLabelW - (int)hc.actOffsetX),
-            hc.actY, (int)hc.actFs, labelColor);
-    }
 
     auto drawOrb = [&](Vector2 centre, float radius, float pct, Color fill, const char* label)
     {
@@ -2694,12 +2748,12 @@ void Engine::DrawAbilityBar()
 
         if (isEmpty)
         {
-            DrawText(GetKeyName(_player.GetAbilityKey(i)),
+            DrawText(PromptAbilitySlot(GetPromptModeForUi(), i),
                 (int)(x + 6.f), (int)(slotY + 6.f), keyFs, Fade(WHITE, 0.25f));
             continue;
         }
 
-        DrawText(GetKeyName(_player.GetAbilityKey(i)),
+        DrawText(PromptAbilitySlot(GetPromptModeForUi(), i),
             (int)(x + 6.f), (int)(slotY + 6.f), keyFs, Fade(WHITE, 0.6f));
 
         if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -5565,7 +5619,12 @@ void Engine::DrawHowToPlay()
         const float divX   = cx + colW + midGap / 2.f;
 
         const float basicsHeaderY = cy + sh * 0.022f;
-        DrawText("KEYBOARD & MOVEMENT", (int)leftX,  (int)basicsHeaderY, headerSz, Color{ 255, 194, 92, 255 });
+        InputPromptMode promptMode = GetPromptModeForUi();
+        std::string abilitySlots = PromptAbilitySlots(promptMode);
+        std::string meleeLine = std::string(PromptAttack(promptMode)) + " to swing your sword.";
+        std::string abilityLine = PromptAbilityAction(promptMode);
+
+        DrawText((promptMode == InputPromptMode::Gamepad) ? "CONTROLLER & MOVEMENT" : (promptMode == InputPromptMode::Touch) ? "TOUCH & MOVEMENT" : "KEYBOARD & MOVEMENT", (int)leftX,  (int)basicsHeaderY, headerSz, Color{ 255, 194, 92, 255 });
         DrawText("ACTIONS & ABILITIES",  (int)rightX, (int)basicsHeaderY, headerSz, Color{ 255, 194, 92, 255 });
         DrawLineEx({ divX, basicsHeaderY + headerSz + 4.f }, { divX, panelY + panelH - sh * 0.03f },
             1.5f, Fade(Color{ 220, 160, 240, 255 }, 0.35f));
@@ -5573,12 +5632,12 @@ void Engine::DrawHowToPlay()
         // Keyboard controls
         struct KBEntry { const char* key; const char* desc; };
         KBEntry kb[] = {
-            { "W / A / S / D",  "Move"                       },
-            { "SPACE",          "Dash  (brief invincibility)" },
-            { "Left Click",     "Melee attack"                },
-            { "1  2  3  4",     "Use ability in that slot"    },
-            { "Scroll Wheel",   "Cycle active ability"        },
-            { "ESC",            "Pause / unpause"             },
+            { PromptMove(promptMode),  "Move"                       },
+            { PromptDash(promptMode),  "Dash  (brief invincibility)" },
+            { PromptAttack(promptMode), "Melee attack"                },
+            { abilitySlots.c_str(), "Use ability in that slot"    },
+            { (promptMode == InputPromptMode::Gamepad) ? "LB/RB" : (promptMode == InputPromptMode::Touch) ? "Tap Slots" : "Scroll Wheel", "Cycle active ability"        },
+            { PromptPause(promptMode), "Pause / unpause"             },
         };
         float rowY = basicsHeaderY + headerSz + sh * 0.022f;
         for (auto& k : kb)
@@ -5617,10 +5676,10 @@ void Engine::DrawHowToPlay()
               "Quick burst of movement in any direction.",
               "You are invincible for its full duration." },
             { "MELEE",
-              "Left-click to swing your sword.",
+              meleeLine.c_str(),
               "Hits all enemies in a forward arc." },
             { "ABILITIES",
-              "Press 1-4 to cast a learned ability.",
+              abilityLine.c_str(),
               "Each ability costs Mana to activate." },
             { "MANA",
               "Blue gems drop from defeated enemies.",
@@ -7900,7 +7959,7 @@ void Engine::UpdateSettings(float dt)
         return;
     }
 
-    // ── Gamepad cursor navigation ─────────────────────────────────────────────
+    // -- Gamepad cursor navigation ---------------------------------------------
     if (IsGamepadAvailable(GamepadInput::kGamepad))
     {
         float axisX = GetGamepadAxisMovement(GamepadInput::kGamepad, GAMEPAD_AXIS_LEFT_X);
@@ -8065,6 +8124,8 @@ void Engine::UpdateSettings(float dt)
                     {
                         if (_keybindSubTab == 0) _settingsRebindSlot   = _settingsGpContentRow;
                         else                     _settingsGpRebindSlot = _settingsGpContentRow;
+                        // Return immediately so the scan loop below doesn't see this same A press
+                        return;
                     }
                 }
                 break;
@@ -8299,11 +8360,11 @@ void Engine::UpdateSettings(float dt)
                             {
                             case 0: _gamepadBindingsEdit.attack      = pressed; break;
                             case 1: _gamepadBindingsEdit.dash        = pressed; break;
-                            case 2: _gamepadBindingsEdit.ability[0]  = pressed; break;
-                            case 3: _gamepadBindingsEdit.ability[1]  = pressed; break;
-                            case 4: _gamepadBindingsEdit.ability[2]  = pressed; break;
-                            case 5: _gamepadBindingsEdit.ability[3]  = pressed; break;
-                            case 6: _gamepadBindingsEdit.pause       = pressed; break;
+                            case 2: _gamepadBindingsEdit.pause       = pressed; break;
+                            case 3: _gamepadBindingsEdit.ability[0]  = pressed; break;
+                            case 4: _gamepadBindingsEdit.ability[1]  = pressed; break;
+                            case 5: _gamepadBindingsEdit.ability[2]  = pressed; break;
+                            case 6: _gamepadBindingsEdit.ability[3]  = pressed; break;
                             default: break;
                             }
                             _settingsGpRebindSlot = -1;
@@ -8762,6 +8823,7 @@ void Engine::UpdateWorldMap(float dt)
         return;
     }
 
+    _worldMap.SetPromptMode(GetPromptModeForUi());
     bool done = _worldMap.Update(dt);
     if (!done) return;
 
@@ -9482,7 +9544,17 @@ void Engine::UpdateDungeonRun(float dt)
             return;
         }
 
-        _player.SetCombatLocked(false);
+        const bool ultActive = (_ultimatePhase != UltimatePhase::None);
+        _player.SetCombatLocked(ultActive);
+        _player.SetManaRegenPaused(ultActive);
+
+        // During the ultimate cinematic freeze combat and advance the sequence.
+        if (ultActive)
+        {
+            _player.ConsumeCastRequest();
+            UpdateUltimateSequence(dt);
+            return;
+        }
 
         // Touch controls - must be set on player before Update() consumes them.
         _player.SetTouchModeEnabled(_touchModeActive);
@@ -9914,6 +9986,42 @@ void Engine::UpdateDungeonRun(float dt)
             }
         }
 
+        // -- Boss room fallback: respawn 2 adds after 10s with no non-boss enemies --
+        {
+            int bossIdx = _dungeonGen.GetBossIndex();
+            bool inBoss  = (_dungeonRoomIdx == bossIdx);
+            bool cleared = inBoss && _dungeonRoomStates.count(bossIdx)
+                           && _dungeonRoomStates[bossIdx].cleared;
+
+            if (inBoss && !cleared && _dungeonEnemiesSpawned)
+            {
+                int nonBossCount = 0;
+                for (const auto& e : _enemies)
+                    if (e->IsActive() && !e->IsBoss()) nonBossCount++;
+
+                if (nonBossCount == 0)
+                {
+                    _bossNoEnemyTimer += dt;
+                    if (_bossNoEnemyTimer >= 10.f)
+                    {
+                        _bossNoEnemyTimer = 0.f;
+                        float cellW = sw / (float)RoomLayout::kCols;
+                        float cellH = sh / (float)RoomLayout::kRows;
+                        SpawnBasicEnemy(GetDungeonSpawnPos(cellW, cellH));
+                        SpawnBasicEnemy(GetDungeonSpawnPos(cellW, cellH));
+                    }
+                }
+                else
+                {
+                    _bossNoEnemyTimer = 0.f;
+                }
+            }
+            else
+            {
+                _bossNoEnemyTimer = 0.f;
+            }
+        }
+
         // -- Boss exit trigger --------------------------------------------------
         int bossIdx = _dungeonGen.GetBossIndex();
         if (_dungeonRoomIdx == bossIdx && _dungeonRoomStates[bossIdx].cleared)
@@ -10184,6 +10292,79 @@ void Engine::DrawDungeonRun()
         if (!_dungeonScrolling)
         {
             DrawHUD();
+
+            // -- Dungeon graph minimap (top-right corner) ---------------------
+            {
+                const auto& mmRooms = _dungeonGen.GetRooms();
+                if (!mmRooms.empty())
+                {
+                    constexpr float kMmCell = 17.5f;              // px per grid cell
+                    constexpr float kMmPad  =  8.75f;             // inner padding
+                    constexpr float kMmSq   = kMmCell * 0.62f;    // room square size
+
+                    const float mmW = DungeonGen::kGridSize * kMmCell + kMmPad * 2.f;
+                    const float mmX = sw - mmW - 10.f;
+                    const float mmY =  8.f;
+
+                    // Semi-transparent grey background
+                    DrawRectangleRounded({ mmX, mmY, mmW, mmW }, 0.08f, 4,
+                                         Color{ 25, 25, 35, 155 });
+                    DrawRectangleRoundedLines({ mmX, mmY, mmW, mmW }, 0.08f, 4,
+                                              Color{ 200, 200, 220, 45 });
+
+                    int bossIdx = _dungeonGen.GetBossIndex();
+
+                    // Current-room pulse: slow blue flash with 3-second period
+                    float pulse = sinf((float)GetTime() * (2.f * PI / 3.f)) * 0.5f + 0.5f;
+
+                    // Connections drawn behind rooms
+                    for (const auto& room : mmRooms)
+                    {
+                        float cx = mmX + kMmPad + (room.col + 0.5f) * kMmCell;
+                        float cy = mmY + kMmPad + (room.row + 0.5f) * kMmCell;
+                        if (room.hasEast)
+                            DrawLineEx({ cx, cy }, { cx + kMmCell, cy },
+                                       1.2f, Color{ 185, 185, 205, 65 });
+                        if (room.hasSouth)
+                            DrawLineEx({ cx, cy }, { cx, cy + kMmCell },
+                                       1.2f, Color{ 185, 185, 205, 65 });
+                    }
+
+                    // Room squares
+                    for (int mmI = 0; mmI < (int)mmRooms.size(); mmI++)
+                    {
+                        const DungeonRoom& room = mmRooms[mmI];
+                        float rx = mmX + kMmPad + room.col * kMmCell
+                                   + (kMmCell - kMmSq) * 0.5f;
+                        float ry = mmY + kMmPad + room.row * kMmCell
+                                   + (kMmCell - kMmSq) * 0.5f;
+
+                        Color roomCol;
+                        if (mmI == _dungeonRoomIdx)
+                        {
+                            // Blue pulse for current position
+                            roomCol = {
+                                (unsigned char)(50  + (int)(40  * pulse)),
+                                (unsigned char)(120 + (int)(80  * pulse)),
+                                255,
+                                (unsigned char)(160 + (int)(95  * pulse))
+                            };
+                        }
+                        else if (mmI == bossIdx)
+                        {
+                            roomCol = Color{ 215, 50, 50, 175 };  // boss: red
+                        }
+                        else
+                        {
+                            roomCol = Color{ 210, 210, 225, 115 };  // standard: white
+                        }
+
+                        DrawRectangleRounded({ rx, ry, kMmSq, kMmSq }, 0.3f, 4, roomCol);
+                    }
+                }
+            }
+
+            DrawUltimateSequence();
             DrawMagicGemHudIcon();
             drawRoomLabel();
 
@@ -10204,7 +10385,7 @@ void Engine::DrawDungeonRun()
 
             // Draw cutscene overlay (dialogue box, fade, etc.) on top of the game.
             if (_cutscene.IsActive())
-                _cutscene.Draw(_shopBorderTex, _shopZephTex);
+                _cutscene.Draw(_shopBorderTex, _shopZephTex, GetPromptModeForUi());
 
             if (_debug.IsActive())
             {
@@ -10943,13 +11124,13 @@ void Engine::DrawTouchAbilityArc()
         if (isEmpty)
         {
             // Show slot number dimly, same as desktop bar
-            DrawText(GetKeyName(_player.GetAbilityKey(slot)),
+            DrawText(PromptAbilitySlot(GetPromptModeForUi(), slot),
                 (int)(rec.x + 8.f), (int)(rec.y + 8.f), 18, Fade(WHITE, 0.25f));
             continue;
         }
 
         // Slot number in top-left corner
-        DrawText(GetKeyName(_player.GetAbilityKey(slot)),
+        DrawText(PromptAbilitySlot(GetPromptModeForUi(), slot),
             (int)(rec.x + 8.f), (int)(rec.y + 8.f), 18, Fade(WHITE, 0.6f));
 
         // Element icon centred in the upper portion of the slot
@@ -11412,7 +11593,7 @@ void Engine::DrawDialogueBoxEditor()
     // -- Live dialogue box preview (no portrait) -------------------------------
     {
         std::string previewText = "The dungeon will still be there. Take a breath.";
-        box.Draw(_shopBorderTex, {}, "Zeph", previewText, true);
+        box.Draw(_shopBorderTex, {}, "Zeph", previewText, true, GetPromptModeForUi());
     }
 
     // -- Panel drag handles ----------------------------------------------------

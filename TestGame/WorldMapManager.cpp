@@ -574,7 +574,7 @@ void WorldMapManager::DrawLeftPanel(const Character& player) const
         if (ability == AbilityType::None) continue;
         anyAbility = true;
         const char* abilName = GetAbilityName(ability);
-        DrawText(TextFormat("%d.", i + 1), (int)(pX + pad), (int)cy, (int)abilFs, Color{180, 220, 240, 200});
+        DrawText(PromptAbilitySlot(_promptMode, i), (int)(pX + pad), (int)cy, (int)abilFs, Color{180, 220, 240, 200});
         DrawText(abilName, (int)(pX + pad + 32.f), (int)cy, (int)abilFs, RAYWHITE);
         cy += abilRowH;
     }
@@ -711,8 +711,8 @@ void WorldMapManager::DrawConfirmPopup(float sw, float sh) const
         noHov ? Color{180, 80, 80, 255} : Color{100, 40, 40, 255});
     DrawRectangleRoundedLines(noBtn, 0.2f, 6, Color{255, 120, 120, 180});
 
-    const char* yesLabel = "YES, LET'S GO";
-    const char* noLabel  = "NOT YET";
+    const char* yesLabel = PromptWorldMapYes(_promptMode);
+    const char* noLabel  = PromptWorldMapNo(_promptMode);
     const int   btnFs    = (int)(_btnH * 0.45f);
 
     int yw = MeasureText(yesLabel, btnFs);
@@ -936,7 +936,7 @@ void WorldMapManager::Draw(const Character& player) const
     // Bottom hint
     if (!_confirmActive)
     {
-        const char* hint = "Click a highlighted biome to travel there";
+        const char* hint = PromptWorldMapHint(_promptMode);
         int hintFs = (int)_hintFs;
         int hintW  = MeasureText(hint, hintFs);
         DrawText(hint, (int)(sw * 0.5f - hintW * 0.5f),

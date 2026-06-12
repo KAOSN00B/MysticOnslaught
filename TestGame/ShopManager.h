@@ -1,7 +1,9 @@
-#pragma once
+﻿#pragma once
 #include "raylib.h"
+#include "WebGamepad.h"
 #include "Character.h"
 #include "AbilityType.h"
+#include "InputPrompts.h"
 #include <vector>
 #include <string>
 
@@ -72,6 +74,7 @@ public:
     bool        IsNearNpc()    const { return _nearNpc; }
     Vector2     GetNpcPos()    const { return _npcPos;  }
     Rectangle   GetNpcTouchBtnRect(float sx, float sy) const;
+    void        SetPromptMode(InputPromptMode mode) { _promptMode = mode; }
 
 private:
     struct ShopItem
@@ -89,6 +92,7 @@ private:
     Vector2     _npcPos         = {};
     bool        _nearNpc        = false;
     bool        _touchPromptMode = false;
+    InputPromptMode _promptMode = InputPromptMode::KeyboardMouse;
     bool        _npcTouchHeld   = false;
     int         _rerollCost     = 20;
     int         _act            = 1;    // current act, set on Enter()

@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 #include "CutsceneAction.h"
 #include "DialogueBox.h"
+#include "InputPrompts.h"
 #include <string>
 #include <vector>
 
@@ -42,7 +43,7 @@ public:
     // Call every frame inside BeginDrawing() while IsActive().
     // borderTex  — shop border texture   (_shopBorderTex in Engine)
     // portraitTex — Zeph idle texture    (_shopZephTex in Engine)
-    void Draw(Texture2D borderTex, Texture2D portraitTex) const;
+    void Draw(Texture2D borderTex, Texture2D portraitTex, InputPromptMode promptMode = InputPromptMode::KeyboardMouse) const;
 
     // Call this when the player presses E or clicks during a Dialogue action.
     // First press skips the typewriter to show all text; second press advances.

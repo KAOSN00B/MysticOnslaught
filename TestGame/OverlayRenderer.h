@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include "GameTypes.h"
+#include "InputPrompts.h"
 #include "raylib.h"
 
 #include <functional>
@@ -10,6 +11,7 @@ class Character;
 struct DemoEndRenderContext
 {
     bool touchModeActive = false;
+    InputPromptMode promptMode = InputPromptMode::KeyboardMouse;
     bool demoCompleted = false;
     int enemiesKilled = 0;
     int bossesDefeated = 0;
@@ -26,6 +28,7 @@ struct ExpTallyRenderContext
     int tallyLevelUpsRemaining = 0;
     bool tallyChoiceChaining = false;
     bool touchModeActive = false;
+    InputPromptMode promptMode = InputPromptMode::KeyboardMouse;
 };
 
 struct HowToPlayRenderContext
@@ -33,6 +36,7 @@ struct HowToPlayRenderContext
     GameState howToPlayFrom = GameState::Menu;
     int* htpTab = nullptr;
     float* htpSlideOffset = nullptr;
+    InputPromptMode promptMode = InputPromptMode::KeyboardMouse;
 
     Texture2D* shopBorderTex = nullptr;
     Texture2D* abilityIconFireTex = nullptr;

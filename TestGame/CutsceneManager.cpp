@@ -244,7 +244,7 @@ void CutsceneManager::OnAbilitySelected()
 }
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
-void CutsceneManager::Draw(Texture2D borderTex, Texture2D portraitTex) const
+void CutsceneManager::Draw(Texture2D borderTex, Texture2D portraitTex, InputPromptMode promptMode) const
 {
     if (!_isActive) return;
 
@@ -263,6 +263,6 @@ void CutsceneManager::Draw(Texture2D borderTex, Texture2D portraitTex) const
         bool showContinue = _waitingForInput && (sinf(_blinkTimer * 6.f) > 0.f);
 
         const char* speaker = _actions[_current].speaker;
-        _box.Draw(borderTex, portraitTex, speaker, _visibleText, showContinue);
+        _box.Draw(borderTex, portraitTex, speaker, _visibleText, showContinue, promptMode);
     }
 }
