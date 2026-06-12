@@ -5,10 +5,12 @@
 void GamepadInput::Update(const GamepadBindings& bindings)
 {
     for (int i = 0; i < 4; i++) abilityPressed[i] = false;
-    attackPressed = false;
-    dashPressed   = false;
-    pausePressed  = false;
-    moveDir       = Vector2Zero();
+    attackPressed       = false;
+    dashPressed         = false;
+    pausePressed        = false;
+    backPressed         = false;
+    menuConfirmPressed  = false;
+    moveDir             = Vector2Zero();
 
     isActive = IsGamepadAvailable(kGamepad);
     if (!isActive) return;
@@ -26,5 +28,7 @@ void GamepadInput::Update(const GamepadBindings& bindings)
     dashPressed   = IsGamepadButtonPressed(kGamepad, bindings.dash);
     for (int i = 0; i < 4; i++)
         abilityPressed[i] = IsGamepadButtonPressed(kGamepad, bindings.ability[i]);
-    pausePressed = IsGamepadButtonPressed(kGamepad, bindings.pause);
+    pausePressed       = IsGamepadButtonPressed(kGamepad, bindings.pause);
+    backPressed        = IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT);
+    menuConfirmPressed = IsGamepadButtonPressed(kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
 }

@@ -280,12 +280,24 @@ void Cyclops::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigat
     Vector2 moveDir     = Vector2Zero();
     float   effectSpeed = _speed;
 
-    // The engine passes either a navigation waypoint or a direct target
-    // position. The cyclops uses whichever option is currently valid.
-    Vector2 targetPos = hasNavigationTarget ? navigationTarget : _target->GetFeetWorldPos();
+    // Use the shared waypoint path helper so the cyclops navigates around
+    // obstacles the same way the grunt does.
+    Vector2 targetPos = ResolveNavTarget(dt, _target->GetFeetWorldPos(), navigationTarget, hasNavigationTarget);
     Vector2 toTarget  = Vector2Subtract(targetPos, _worldPos);
     if (Vector2Length(toTarget) > 0.01f)
         moveDir = Vector2Normalize(toTarget);
+
+    // Blend 30% toward the player when following waypoints so path refreshes
+    // don't cause a sharp direction snap (same smoothing the grunt uses).
+    {
+        bool usingWaypoints = (!_waypoints.empty() && _waypointIndex < (int)_waypoints.size());
+        if (usingWaypoints && !hasNavigationTarget)
+        {
+            Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+            if (Vector2Length(toPlayer) > 0.01f)
+                moveDir = Vector2Add(moveDir, Vector2Scale(Vector2Normalize(toPlayer), 0.3f));
+        }
+    }
 
     // Nearby props push the cyclops away so it slides around pillars instead
     // of tunneling straight into them.

@@ -271,6 +271,39 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
     HandleAnimation(dt);
 }
 
+// Shared waypoint path helper used by all enemies that don't have their own
+// fully custom nav stack. Ticks the refresh timer, rebuilds the waypoint list
+// when needed, advances past reached waypoints, then returns the best next target.
+Vector2 Enemy::ResolveNavTarget(float dt, Vector2 playerFeet,
+                                Vector2 navigationTarget, bool hasNavigationTarget)
+{
+    _pathRefreshTimer -= dt;
+    bool needsRefresh = (_pathRefreshTimer <= 0.f || _waypoints.empty());
+
+    if (needsRefresh && _nav != nullptr)
+    {
+        _waypoints = _nav->GetWaypointPath(_worldPos, playerFeet, kMaxWaypoints);
+        _waypointIndex = 0;
+        _pathRefreshTimer = _pathRefreshInterval;
+    }
+
+    if (!_waypoints.empty())
+    {
+        const float waypointReachRadius = _nav ? _nav->GetCellSize() * 0.6f : 48.f;
+        while (_waypointIndex < (int)_waypoints.size() - 1 &&
+               Vector2Distance(_worldPos, _waypoints[_waypointIndex]) < waypointReachRadius)
+        {
+            _waypointIndex++;
+        }
+    }
+
+    if (!_waypoints.empty() && _waypointIndex < (int)_waypoints.size())
+        return _waypoints[_waypointIndex];
+    if (hasNavigationTarget)
+        return navigationTarget;
+    return playerFeet;
+}
+
 void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
     const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters)
 {
@@ -315,41 +348,11 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         return;
     }
 
-    // ── Waypoint path management ──────────────────────────────────────────────
-    // Tick down this enemy's personal refresh timer.
-    _pathRefreshTimer -= dt;
-    bool needsRefresh = (_pathRefreshTimer <= 0.f || _waypoints.empty());
-
-    if (needsRefresh && _nav != nullptr)
-    {
-        // Extract a fresh waypoint list by following the shared flow-field gradient.
-        // This is cheap (O(path length)) because the BFS is already computed.
-        _waypoints = _nav->GetWaypointPath(_worldPos, playerCenter, kMaxWaypoints);
-        _waypointIndex = 0;
-        _pathRefreshTimer = _pathRefreshInterval;
-    }
-
-    // Advance through waypoints: move to the next one when close enough.
-    if (!_waypoints.empty())
-    {
-        const float waypointReachRadius = _nav ? _nav->GetCellSize() * 0.6f : 48.f;
-        while (_waypointIndex < (int)_waypoints.size() - 1 &&
-               Vector2Distance(_worldPos, _waypoints[_waypointIndex]) < waypointReachRadius)
-        {
-            _waypointIndex++;
-        }
-    }
-
-    // Choose movement target: use the current waypoint when we have a cached path,
-    // otherwise fall back to the engine-supplied single-step or direct approach.
-    Vector2 targetPos;
+    // Choose movement target via the shared waypoint path helper.
+    Vector2 targetPos = ResolveNavTarget(dt, playerCenter, navigationTarget, hasNavigationTarget);
     bool usingWaypoints = (!_waypoints.empty() && _waypointIndex < (int)_waypoints.size());
-
-    if (usingWaypoints)
-        targetPos = _waypoints[_waypointIndex];
-    else if (hasNavigationTarget)
-        targetPos = navigationTarget;
-    else
+    // When no waypoints and no nav target, approach via the personal offset slot.
+    if (!usingWaypoints && !hasNavigationTarget)
         targetPos = Vector2Add(playerCenter, _approachOffset);
 
     Vector2 toPlayer = Vector2Subtract(targetPos, _worldPos);
@@ -361,7 +364,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
 
     // Blend a gentle pull toward this enemy's approach slot so enemies fan out
     // along the path rather than single-filing to the same waypoint cell.
-    if (usingWaypoints || hasNavigationTarget)
+    if (usingWaypoints && !hasNavigationTarget)
     {
         Vector2 slotTarget = Vector2Add(playerCenter, _approachOffset);
         Vector2 toSlot = Vector2Subtract(slotTarget, _worldPos);

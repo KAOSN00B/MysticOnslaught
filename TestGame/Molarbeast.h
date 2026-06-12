@@ -34,7 +34,6 @@ public:
     void DrawHealthBar(Vector2 screenPos, float w, float h) override;
 
     Molarbeast* AsMolarbeast() override { return this; }
-    bool UsesDirectPursuit() const override { return true; }
     bool IgnoresPropCollisions() const override { return false; }
     bool IsBoss() const override { return true; }
     int GetExpValue() const override { return _expValue; }

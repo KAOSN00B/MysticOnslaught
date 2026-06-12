@@ -56,7 +56,7 @@ namespace
     // -- Resource economy constants --------------------------------------------
     // Mana is now primarily passive-regen (see Character::kManaRegenPerSecond).
     // Pickups are supplemental / precious, not the main resource source.
-    // Boss fights suppress all timed and drop pickups � they should be won on
+    // Boss fights suppress all timed and drop pickups ? they should be won on
     // build and execution, not on floor loot.
     //
     // Store hook: when a store is added between key waves, these intervals can
@@ -65,7 +65,7 @@ namespace
     // Seconds between timed heal drops during normal waves.
     constexpr float kDefaultTimedPickupInterval = 45.f;
 
-    // Drop chance per enemy kill (normal waves only � boss fight suppresses drops).
+    // Drop chance per enemy kill (normal waves only ? boss fight suppresses drops).
     constexpr int kEnemyDropChancePercent = 8;
 
     constexpr float kBiomeFadeOutDuration = 3.f;
@@ -109,7 +109,7 @@ namespace
 
 // Biomes that have a saved TileMapper export and a tilesheet PNG.
 // Add new entries here as tilesets are created and verified.
-// DreamRealm: txt file contains Forest data (wrong biome selected at export) � needs re-export.
+// DreamRealm: txt file contains Forest data (wrong biome selected at export) ? needs re-export.
 static constexpr Biome kTilesetBiomes[]  = { Biome::Caverns, Biome::AncientCastle,
                                              Biome::DemonsInsides, Biome::Graveyard,
                                              Biome::Forest, Biome::Jungle, Biome::DreamRealm,
@@ -206,11 +206,11 @@ static const CutsceneAction kIntroCutscene[] =
     Dialogue("Zeph", "You're a Mystic."),
     Wait(0.4f),
     Dialogue("Zeph", "I can't do much for you. But I can offer this."),
-    Dialogue("Zeph", "Take the sword. And choose one of these � first spell's on me."),
+    Dialogue("Zeph", "Take the sword. And choose one of these ? first spell's on me."),
     OpenAbilitySelect(),
     Dialogue("Zeph", "Good choice."),
     Wait(0.3f),
-    Dialogue("Zeph", "Why am I here? Same reason as you � trying to stop whatever's out there."),
+    Dialogue("Zeph", "Why am I here? Same reason as you ? trying to stop whatever's out there."),
     Dialogue("Zeph", "Now go. And be careful. The Onslaught doesn't wait."),
     UnlockDoor(),
     EndCutscene()
@@ -238,7 +238,7 @@ static const CutsceneAction kZone3ArrivalCutscene[] =
 {
     FadeIn(1.0f),
     Dialogue("Zeph", "Back again. You're tougher than I gave you credit for."),
-    Dialogue("Zeph", "I can feel it now — something ancient is stirring ahead."),
+    Dialogue("Zeph", "I can feel it now - something ancient is stirring ahead."),
     EndCutscene()
 };
 
@@ -267,7 +267,7 @@ void Engine::Init()
     _settingsMgr.Load();
     _settingsMgr.ApplyWindow();
 
-    // Virtual 1920x1080 canvas — everything draws here, then it is letterboxed onto the real window.
+    // Virtual 1920x1080 canvas - everything draws here, then it is letterboxed onto the real window.
     _virtualCanvas = LoadRenderTexture(kVirtualWidth, kVirtualHeight);
 
 #ifdef PLATFORM_WEB
@@ -428,7 +428,7 @@ void Engine::UpdateMusicSystem()
     _audio.Update(ctx);
 }
 
-// -- Room progression � replaces the old SpawnWave() system -------------------
+// -- Room progression ? replaces the old SpawnWave() system -------------------
 // Called whenever the player is about to enter a specific room type.
 // Handles act advancement, biome transitions, and encounter setup.
 void Engine::StartNextRoom(RoomType type)
@@ -439,7 +439,7 @@ void Engine::StartNextRoom(RoomType type)
         _currentRoom = 1;
         _currentAct++;
     }
-    _wave++;  // _wave = total rooms entered � feeds GetEnemyPowerLevelForWave()
+    _wave++;  // _wave = total rooms entered ? feeds GetEnemyPowerLevelForWave()
     _currentRoomType = type;
 
     // Non-combat rooms get a rest timer before the choice screen appears.
@@ -460,7 +460,7 @@ void Engine::StartNextRoom(RoomType type)
     _eliteEnrageWarningTimer = 0.f;
     _eliteHazardSpawnTimer   = 0.f;
 
-    // Store room � place Zeph at map centre and stock the shop
+    // Store room ? place Zeph at map centre and stock the shop
     if (type == RoomType::Store)
     {
         float mapW = _map.width  * _mapScale;
@@ -568,6 +568,8 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _dungeonView = DungeonView::Play;
     _gameState = GameState::DungeonRun;
     _roomClearPending = false;
+    _waveStarting = false;
+    _waveIntroTimer = 0.f;
 
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
     if (room.type == RoomType::Rest || room.type == RoomType::Store)
@@ -592,14 +594,14 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     {
         if (!_cutsceneIntroPlayed)
         {
-            // First time ever entering the shop � play the full intro.
+            // First time ever entering the shop ? play the full intro.
             _cutsceneIntroPlayed = true;
             SetStoreDoorTiles(TileType::DoorLocked);   // lock until ability is chosen
             _cutscene.Play(kIntroCutscene, (int)(sizeof(kIntroCutscene) / sizeof(kIntroCutscene[0])));
         }
         else if (resetRoomStates)
         {
-            // Arriving at Zeph in a new zone (not a respawn) — zone-aware greeting.
+            // Arriving at Zeph in a new zone (not a respawn) - zone-aware greeting.
             const CutsceneAction* seq = nullptr;
             int cnt = 0;
             switch (_worldZone)
@@ -615,7 +617,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         }
         else
         {
-            // Returning after death — short respawn scene.
+            // Returning after death - short respawn scene.
             _cutscene.Play(kRespawnCutscene, (int)(sizeof(kRespawnCutscene) / sizeof(kRespawnCutscene[0])));
         }
     }
@@ -851,7 +853,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _gameState = GameState::Play;
 }
 
-// (ShowRoomChoiceScreen / GenerateRoomChoices removed � replaced by map system)
+// (ShowRoomChoiceScreen / GenerateRoomChoices removed ? replaced by map system)
 
 Biome Engine::GetBiomeForAct(int act) const
 {
@@ -877,7 +879,7 @@ Biome Engine::GetBiomeForAct(int act) const
 //   so the rewarded lanes shift each run and force different routing decisions.
 //
 //   A path visits exactly one node per row ? at most 2 specials per run.
-//   Rows 1 and 4 are all Standard (2�4 nodes) for additional branching variety.
+//   Rows 1 and 4 are all Standard (2?4 nodes) for additional branching variety.
 void Engine::GenerateActMap()
 {
     _actMap.clear();
@@ -885,8 +887,8 @@ void Engine::GenerateActMap()
     _mapOpenTimer = 0.f;
 
     // -- 1. Assign specials to rows by type -------------------------------
-    // Row 2 (early) always gets Elite + Treasure � combat/reward specials.
-    // Row 3 (late, after 3 rows of combat) always gets Shop + Rest �
+    // Row 2 (early) always gets Elite + Treasure ? combat/reward specials.
+    // Row 3 (late, after 3 rows of combat) always gets Shop + Rest ?
     //   utility/recovery specials that only make sense once the player has
     //   earned gold and taken some damage.
     // Each pair is randomly swapped so which side of the row each appears on
@@ -941,7 +943,7 @@ void Engine::GenerateActMap()
         {
             MapNode n;
             n.row   = r;
-            // normX: single-node rows centre at 0.5; multi-node rows spread 0.2�0.8
+            // normX: single-node rows centre at 0.5; multi-node rows spread 0.2?0.8
             n.normX = (rowCounts[r] == 1) ? 0.5f
                     : 0.2f + (float)i / (rowCounts[r] - 1) * 0.6f;
 
@@ -1060,7 +1062,7 @@ void Engine::EnterMapRoom(int idx)
     else
         _roomClearTimer = 0.f;
 
-    // Store room � place Zeph at map centre and stock the shop
+    // Store room ? place Zeph at map centre and stock the shop
     if (_currentRoomType == RoomType::Store)
     {
         float mapW = _map.width  * _mapScale;
@@ -1083,7 +1085,7 @@ void Engine::EnterMapRoom(int idx)
     }
     else
     {
-        // Same biome � re-randomise prop layout so every room feels distinct.
+        // Same biome ? re-randomise prop layout so every room feels distinct.
         PopulatePropsForBiome(_currentBiome);
         {
             std::vector<Rectangle> propRects;
@@ -1371,6 +1373,18 @@ void Engine::Update(float dt)
                 _menu.Init();
             _runState.ReturnFromHowToPlay();
         }
+        if (IsGamepadAvailable(0))
+        {
+            // B / Circle = back
+            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT))
+            {
+                if (_howToPlayFrom == GameState::Menu) _menu.Init();
+                _runState.ReturnFromHowToPlay();
+            }
+            // D-pad left/right cycles tabs
+            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  && _htpTab > 0) --_htpTab;
+            if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) && _htpTab < 3) ++_htpTab;
+        }
         break;
     }
 
@@ -1418,23 +1432,66 @@ void Engine::Update(float dt)
     }
 
     case GameState::LevelUpChoice:
+    {
         if (_levelUpOpenTimer > 0.f)
+        {
             _levelUpOpenTimer -= dt;
+            _levelUpGpCursor = 0;
+            _levelUpGpRow    = 1;
+        }
+        _gamepad.Update(_gamepadBindingsEdit);
+        if (_gamepad.isActive && _levelUpOpenTimer <= 0.f)
+        {
+            if (_levelUpGpCooldown > 0.f) _levelUpGpCooldown -= dt;
+            bool showUlt = _showUltimateRow && !_ultimateRowPicked;
+            bool showReg = !_regularRowPicked;
+            float axisX = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+            float axisY = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+            bool navLeft  = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || (axisX < -0.5f && _levelUpGpCooldown <= 0.f);
+            bool navRight = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || (axisX >  0.5f && _levelUpGpCooldown <= 0.f);
+            bool navUp    = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP)    || (axisY < -0.5f && _levelUpGpCooldown <= 0.f);
+            bool navDown  = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || (axisY >  0.5f && _levelUpGpCooldown <= 0.f);
+            if (navLeft  && _levelUpGpCursor > 0) { --_levelUpGpCursor; _levelUpGpCooldown = 0.18f; }
+            if (navRight && _levelUpGpCursor < 2) { ++_levelUpGpCursor; _levelUpGpCooldown = 0.18f; }
+            if (navUp   && showUlt && _levelUpGpRow == 1) { _levelUpGpRow = 0; _levelUpGpCooldown = 0.18f; }
+            if (navDown && showReg && _levelUpGpRow == 0) { _levelUpGpRow = 1; _levelUpGpCooldown = 0.18f; }
+        }
         break;
+    }
 
     case GameState::AbilityChoice:
+    {
         if (_abilityChoiceOpenTimer > 0.f)
+        {
             _abilityChoiceOpenTimer -= dt;
+            _abilityChoiceGpCursor = 0;
+        }
+        _gamepad.Update(_gamepadBindingsEdit);
+        if (_gamepad.isActive && _abilityChoiceOpenTimer <= 0.f)
+        {
+            if (_abilityChoiceGpCooldown > 0.f) _abilityChoiceGpCooldown -= dt;
+            int count = _abilityChoiceSwapPending ? _player.GetLearnedCount() : _abilityChoiceOptionCount;
+            float axisX = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+            bool navLeft  = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || (axisX < -0.5f && _abilityChoiceGpCooldown <= 0.f);
+            bool navRight = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || (axisX >  0.5f && _abilityChoiceGpCooldown <= 0.f);
+            if (navLeft  && _abilityChoiceGpCursor > 0)         { --_abilityChoiceGpCursor; _abilityChoiceGpCooldown = 0.18f; }
+            if (navRight && _abilityChoiceGpCursor < count - 1) { ++_abilityChoiceGpCursor; _abilityChoiceGpCooldown = 0.18f; }
+        }
         break;
+    }
 
     case GameState::Shop:
-        if (_shop.Update(_player, _debug.IsActive()))
+    {
+        _gamepad.Update(_gamepadBindingsEdit);
+        bool gpLeave = _shop.UpdateGamepadNav(GetFrameTime(), _player);
+        if (gpLeave || _shop.Update(_player, _debug.IsActive()))
         {
             _gameState = (_levelUpReturnState == GameState::DungeonRun) ? GameState::DungeonRun : GameState::Play;
             if (_currentRoomType == RoomType::Store && _gameState == GameState::Play)
                 _roomClearPending = true;
         }
         break;
+    }
 
     default: break;
     }
@@ -1500,7 +1557,7 @@ void Engine::UpdateGamePlay(float dt)
         }
     }
 
-    // Hitbox editor toggle — 0 key while debug panel is active
+    // Hitbox editor toggle - 0 key while debug panel is active
     if (_debug.IsActive() && IsKeyPressed(KEY_ZERO))
     {
         _isHitboxEditorActive = !_isHitboxEditorActive;
@@ -1553,17 +1610,18 @@ void Engine::UpdateGamePlay(float dt)
     _player.SetCombatLocked(_waveStarting || ultActive || inNonCombatRoom);
     _player.SetManaRegenPaused(ultActive);
 
-    // Touch controls — must be set on player before Update() consumes them
+    // Touch controls - must be set on player before Update() consumes them
     _player.SetTouchModeEnabled(_touchModeActive);
     if (_touchModeActive)
         UpdateTouchControls();
 
-    // Gamepad input — works alongside keyboard and touch on all platforms
+    // Gamepad input - works alongside keyboard and touch on all platforms
     _gamepad.Update(_gamepadBindingsEdit);
     if (_gamepad.isActive)
     {
-        if (Vector2LengthSqr(_gamepad.moveDir) > 0.f)
-            _player.SetTouchDirection(_gamepad.moveDir);
+        // Always push the direction (including zero) so releasing the stick
+        // clears _touchMoveDir and the player stops instead of drifting.
+        _player.SetTouchDirection(_gamepad.moveDir);
         if (_gamepad.attackPressed)  _player.SetTouchAttack();
         if (_gamepad.dashPressed)    _player.SetTouchDash();
         for (int i = 0; i < 4; i++)
@@ -1633,7 +1691,7 @@ void Engine::UpdateGamePlay(float dt)
         _gameTimer += dt;
         _nav.ApplyPendingRefresh();
 
-        // Timed heal drops — boss fights and non-combat rooms suppress this.
+        // Timed heal drops - boss fights and non-combat rooms suppress this.
         if (_currentRoomType != RoomType::Rest  &&
             _currentRoomType != RoomType::Store)
         {
@@ -1676,11 +1734,12 @@ void Engine::UpdateGamePlay(float dt)
             _roomClearPending = true;
         }
 
-        // ── Store room — Zeph NPC logic ───────────────────────────────────
+        // -- Store room - Zeph NPC logic -----------------------------------
         if (_currentRoomType == RoomType::Store)
         {
             Vector2 shopWorldOffset = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
-            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive)) { _levelUpReturnState = GameState::Play; _gameState = GameState::Shop; }
+            bool gamepadInteract = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
+            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive, gamepadInteract)) { _levelUpReturnState = GameState::Play; _gameState = GameState::Shop; }
         }
         else if (!_roomClearPending && GetActiveEnemyCount() == 0 && !_debug.IsActive())
         {
@@ -1764,7 +1823,7 @@ void Engine::UpdateGamePlay(float dt)
 
     {
         // WorldConfig::ClampCamera handles both the scroll-clamp (world > screen)
-        // and the centring case (world ≤ screen — e.g. FitToScreen on a large monitor).
+        // and the centring case (world = screen - e.g. FitToScreen on a large monitor).
         // GetMapScreenPos converts the clamped world-pos to a screen-space top-left
         // for the map texture draw call. Using the live screen size here means
         // a window resize mid-session (or a phone rotation) adapts automatically.
@@ -2010,7 +2069,7 @@ void Engine::HandleCollisions()
         if (_player.IsBeingForcedPushed())
             _player.OnForcedPushCollision();
 
-        // Always clamp — stops forced pushes and normal movement at the boundary
+        // Always clamp - stops forced pushes and normal movement at the boundary
         pos.x = std::max(marginLeft,        std::min(pos.x, mapW - marginRight));
         pos.y = std::max(marginTop,         std::min(pos.y, mapH - marginBottom));
         _player.SetWorldPos(pos);
@@ -2106,7 +2165,7 @@ void Engine::HandleCollisions()
     }
 
 
-    // Player vs enemy solid collision — dash passes straight through.
+    // Player vs enemy solid collision - dash passes straight through.
     // After the dash ends, eject the player if they landed inside an enemy.
     if (!_player.IsDashing())
     {
@@ -2122,7 +2181,7 @@ void Engine::HandleCollisions()
             if (_player.IsBeingForcedPushed())
                 continue;
 
-            // Apply MTV directly without undoing movement — lateral motion is preserved
+            // Apply MTV directly without undoing movement - lateral motion is preserved
             // giving a natural slide around enemy capsules instead of a hard stop.
             Vector2 pos = _player.GetWorldPos();
             _player.SetWorldPos({ pos.x + peMtv.x, pos.y + peMtv.y });
@@ -2205,7 +2264,21 @@ void Engine::DrawHUD()
         DrawText(label, (int)(centre.x - labelW * 0.5f), (int)(centre.y - fs * 0.5f), fs, RAYWHITE);
     };
 
-    {        const float orbR = std::max(24.f, hc.statOrbR);
+    {        float orbR = std::max(24.f, hc.statOrbR);
+
+        Vector2 hpOrbCentre{ hc.hpOrbX, hc.hpOrbY };
+        Vector2 mpOrbCentre{ hc.mpOrbX, hc.mpOrbY };
+        if (_touchModeActive)
+        {
+            orbR *= 1.25f;
+            const float centreX = kVirtualWidth * 0.5f;
+            const float centreGap = orbR * 2.f + 48.f;
+            const float maxY = kVirtualHeight - orbR - 10.f;
+            hpOrbCentre.x = centreX - centreGap * 0.5f;
+            mpOrbCentre.x = centreX + centreGap * 0.5f;
+            hpOrbCentre.y = std::min(hpOrbCentre.y, maxY);
+            mpOrbCentre.y = std::min(mpOrbCentre.y, maxY);
+        }
 
         float maxHp = _player.GetMaxHealthValue();
         float curHp = _player.GetHealthValue();
@@ -2214,15 +2287,15 @@ void Engine::DrawHUD()
         if (hpPct <= 0.30f)
         {
             float pulse = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
-            DrawCircleV({ hc.hpOrbX, hc.hpOrbY }, orbR + 16.f, Fade(RED, 0.22f * pulse));
+            DrawCircleV(hpOrbCentre, orbR + 16.f, Fade(RED, 0.22f * pulse));
         }
-        drawOrb({ hc.hpOrbX, hc.hpOrbY }, orbR, hpPct,
+        drawOrb(hpOrbCentre, orbR, hpPct,
             hpFill, TextFormat("HP %.0f", curHp));
 
         int curMana = _player.GetMana();
         int maxMana = _player.GetMaxMana();
         float manaPct = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
-        drawOrb({ hc.mpOrbX, hc.mpOrbY }, orbR, manaPct,
+        drawOrb(mpOrbCentre, orbR, manaPct,
             Color{245, 205, 45, 235}, TextFormat("MP %d", curMana));
     }
 
@@ -2289,7 +2362,7 @@ void Engine::DrawHUD()
         DrawAbilityBar();
     }
 
-    // ── HUD debug editor ──────────────────────────────────────────────────
+    // -- HUD debug editor --------------------------------------------------
     if (IsKeyPressed(KEY_NINE))
         _hudEditorActive = !_hudEditorActive;
 
@@ -2421,7 +2494,7 @@ void Engine::DrawHUD()
     }
     return;
 
-    // ── Shared bottom-bar layout constants (mirrored in DrawAbilityBar) ───────
+    // -- Shared bottom-bar layout constants (mirrored in DrawAbilityBar) -------
     static constexpr float kBarW   = 400.f;
     static constexpr float kBarH   = 28.f;
     static constexpr float kBarGap = 8.f;
@@ -2432,14 +2505,14 @@ void Engine::DrawHUD()
     const float hpBarY   = manaBarY - kBarGap - kBarH;
     const float barX     = (float)kVirtualWidth / 2.f - kBarW / 2.f;
 
-    // ── Top banner ────────────────────────────────────────────────────────────
+    // -- Top banner ------------------------------------------------------------
     DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight / 8, Fade(BLACK, 0.6f));
 
     DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + kVirtualWidth / 2 - 150, 60, 30, RAYWHITE);
     DrawText(("Gold: " + std::to_string(_player.GetGold())).c_str(), 20, 10, 30, GOLD);
     DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
 
-    // ── Wave display — top right ──────────────────────────────────────────────
+    // -- Wave display - top right ----------------------------------------------
     {
         bool isBoss = (_wave > 0 && _wave % 5 == 0);
         const char* waveLabel = isBoss
@@ -2450,7 +2523,7 @@ void Engine::DrawHUD()
             isBoss ? ORANGE : RAYWHITE);
     }
 
-    // ── HP bar (bottom, above EXP) ────────────────────────────────────────────
+    // -- HP bar (bottom, above EXP) --------------------------------------------
     {
         float maxHp = _player.GetMaxHealthValue();
         float curHp = _player.GetHealthValue();
@@ -2485,7 +2558,7 @@ void Engine::DrawHUD()
             18, BLACK);
     }
 
-    // ── Mana bar (middle) ─────────────────────────────────────────────────────
+    // -- Mana bar (middle) -----------------------------------------------------
     {
         int   curMana  = _player.GetMana();
         int   maxMana  = _player.GetMaxMana();
@@ -2505,7 +2578,7 @@ void Engine::DrawHUD()
             18, BLACK);
     }
 
-    // ── EXP bar (very bottom) ─────────────────────────────────────────────────
+    // -- EXP bar (very bottom) -------------------------------------------------
     {
         int   level    = _player.GetLevel();
         int   exp      = _player.GetExp();
@@ -2682,7 +2755,7 @@ void Engine::DrawWaveIntro()
     int fontSize = 60;
     int midY     = sh / 2;
 
-    // ── Room type label (center, primary) ────────────────────────────────────
+    // -- Room type label (center, primary) ------------------------------------
     const char* roomLabel = nullptr;
     Color       roomColor = YELLOW;
 
@@ -2714,7 +2787,7 @@ void Engine::DrawWaveIntro()
         break;
     }
 
-    // Very first room of the run — just show the biome name as the intro.
+    // Very first room of the run - just show the biome name as the intro.
     if (_wave == 1 && _currentAct == 1)
     {
         const char* biomeName = GetBiomeName(_currentBiome);
@@ -2730,7 +2803,7 @@ void Engine::DrawWaveIntro()
     // Act label line (shown on new acts and boss rooms)
     if (isFirstRoomOfNewAct)
     {
-        std::string actStr = "Act " + std::to_string(_currentAct) + " — " + GetBiomeName(GetBiomeForAct(_currentAct));
+        std::string actStr = "Act " + std::to_string(_currentAct) + " - " + GetBiomeName(GetBiomeForAct(_currentAct));
         int aw = MeasureText(actStr.c_str(), 42);
         DrawText(actStr.c_str(), sw / 2 - aw / 2, roomLabelY - 52, 42, LIGHTGRAY);
     }
@@ -2904,12 +2977,12 @@ void Engine::GenerateAbilityChoiceOptions()
 }
 
 // =============================================================================
-// Treasure chest mixed reward — 3 cards, each randomly an ability or stat upgrade
+// Treasure chest mixed reward - 3 cards, each randomly an ability or stat upgrade
 // =============================================================================
 
 void Engine::GenerateTreasureChestOptions()
 {
-    // ── Build ability pool (unlearned abilities or upgradable ones) ────────────
+    // -- Build ability pool (unlearned abilities or upgradable ones) ------------
     static const AbilityType allAbilities[9] = {
         AbilityType::FireSpread,   AbilityType::IceSpread,   AbilityType::ElectricSpread,
         AbilityType::FireBolt,     AbilityType::IceBolt,     AbilityType::ElectricBolt,
@@ -2941,7 +3014,7 @@ void Engine::GenerateTreasureChestOptions()
         UpgradeType tmp = abilityPool[i]; abilityPool[i] = abilityPool[j]; abilityPool[j] = tmp;
     }
 
-    // ── Build stat upgrade pool (common + rare) ────────────────────────────────
+    // -- Build stat upgrade pool (common + rare) --------------------------------
     UpgradeType statPool[12] = {
         UpgradeType::AttackPower,      UpgradeType::AttackRange,   UpgradeType::MaxHealth,
         UpgradeType::MaxMana,          UpgradeType::Defense,       UpgradeType::MoveSpeed,
@@ -2959,7 +3032,7 @@ void Engine::GenerateTreasureChestOptions()
     _ultimateRowPicked    = false;
     _regularRowPicked     = false;
 
-    // ── Fill 3 slots — each slot randomly an ability or a stat upgrade ─────────
+    // -- Fill 3 slots - each slot randomly an ability or a stat upgrade ---------
     int aIdx = 0;
     int sIdx = 0;
     for (int i = 0; i < 3; i++)
@@ -2987,7 +3060,7 @@ void Engine::DrawAbilityChoice()
     bool ready = (_abilityChoiceOpenTimer <= 0.f);
     Vector2 mouse = GetVirtualMousePos();
 
-    // Helper: map Learn*/Upgrade* → the underlying AbilityType
+    // Helper: map Learn*/Upgrade* ? the underlying AbilityType
     auto upgradeToAbility = [](UpgradeType ut) -> AbilityType
     {
         int base = (int)ut;
@@ -3007,7 +3080,7 @@ void Engine::DrawAbilityChoice()
         return Color{255, 220,  30, 255};  // electric
     };
 
-    // ── Swap sub-mode ─────────────────────────────────────────────────────────
+    // -- Swap sub-mode ---------------------------------------------------------
     if (_abilityChoiceSwapPending)
     {
         const char* title = "Replace which ability?";
@@ -3023,7 +3096,8 @@ void Engine::DrawAbilityChoice()
         {
             float cx = sx + i * (cardW + cardGap);
             Rectangle card{cx, sh/2.f - cardH/2.f, cardW, cardH};
-            bool hov = ready && CheckCollisionPointRec(mouse, card);
+            bool hov = (ready && CheckCollisionPointRec(mouse, card)) ||
+                       (_gamepad.isActive && i == _abilityChoiceGpCursor);
 
             DrawRectangleRounded(card, 0.12f, 8, hov ? Color{80,20,20,235} : Color{40,15,15,210});
             DrawRectangleRoundedLines(card, 0.12f, 8, hov ? RED : Color{180,55,55,160});
@@ -3045,7 +3119,9 @@ void Engine::DrawAbilityChoice()
             DrawText(lvStr, (int)(cx + cardW/2.f - MeasureText(lvStr, lvSz)/2.f),
                      (int)(card.y + cardH*0.70f), lvSz, Color{255,200,80,255});
 
-            if (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            bool swapCardActivated = (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+                                     (_gamepad.isActive && ready && i == _abilityChoiceGpCursor && _gamepad.menuConfirmPressed);
+            if (swapCardActivated)
             {
                 _player.RemoveAbilityAtSlot(i);
                 _player.ApplyUpgrade(_abilityChoiceSwapTarget);
@@ -3075,12 +3151,13 @@ void Engine::DrawAbilityChoice()
         int cSz = 22;
         DrawText(cTxt, (int)(cancelBtn.x + cancelBtn.width/2.f - MeasureText(cTxt,cSz)/2.f),
                  (int)(cancelBtn.y + cancelBtn.height/2.f - cSz/2.f), cSz, RAYWHITE);
-        if (ready && cHov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        if ((ready && cHov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+            (_gamepad.isActive && ready && _gamepad.backPressed))
             _abilityChoiceSwapPending = false;
         return;
     }
 
-    // ── Main ability choice ────────────────────────────────────────────────────
+    // -- Main ability choice ----------------------------------------------------
     const char* title = "Ability Upgrade!";
     int tSz = 46;
     DrawText(title, (int)(sw/2.f - MeasureText(title, tSz)/2.f), (int)(sh*0.06f), tSz, GOLD);
@@ -3100,7 +3177,8 @@ void Engine::DrawAbilityChoice()
     {
         float cx = sx + i * (cardW + cardGap);
         Rectangle card{cx, cardY, cardW, cardH};
-        bool hov = ready && CheckCollisionPointRec(mouse, card);
+        bool hov = (ready && CheckCollisionPointRec(mouse, card)) ||
+                   (_gamepad.isActive && i == _abilityChoiceGpCursor);
 
         UpgradeType opt = _abilityChoiceOptions[i];
         bool isLearn   = ((int)opt >= (int)UpgradeType::LearnFireSpread &&
@@ -3165,11 +3243,13 @@ void Engine::DrawAbilityChoice()
                          (int)(cardY + cardH*0.66f), dSz, LIGHTGRAY);
         }
 
-        if (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        bool abilCardActivated = (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+                                 (_gamepad.isActive && ready && i == _abilityChoiceGpCursor && _gamepad.menuConfirmPressed);
+        if (abilCardActivated)
         {
             if (isLearn && _player.GetLearnedCount() >= _player.GetMaxAbilitySlots())
             {
-                // No free slot — enter swap mode
+                // No free slot - enter swap mode
                 _abilityChoiceSwapPending = true;
                 _abilityChoiceSwapTarget  = opt;
             }
@@ -3230,7 +3310,7 @@ void Engine::DrawAbilityChoice()
     }
 }
 
-// ── DrawDemoEnd ───────────────────────────────────────────────────────────────
+// -- DrawDemoEnd ---------------------------------------------------------------
 void Engine::DrawDemoEnd()
 {
     DemoEndRenderContext ctx{};
@@ -3243,7 +3323,7 @@ void Engine::DrawDemoEnd()
     _overlayRenderer.DrawDemoEnd(ctx);
 }
 
-// ── UpdateExpTally ────────────────────────────────────────────────────────────
+// -- UpdateExpTally ------------------------------------------------------------
 // Drains _pendingExp into the player at 50 EXP/sec with NO interruptions.
 // Once the bar is full the player presses Continue, then level-up choices
 // fire (one per level gained).  Skip input drains the remainder instantly.
@@ -3282,11 +3362,11 @@ void Engine::UpdateExpTally(float dt)
         return;
     }
 
-    // ── Bar still draining ────────────────────────────────────────────────────
+    // -- Bar still draining ----------------------------------------------------
 
     if (skip)
     {
-        // Instantly drain all remaining EXP — no level-up interruption during drain.
+        // Instantly drain all remaining EXP - no level-up interruption during drain.
         if (_pendingExp > 0.f)
         {
             _player.AddExp((int)_pendingExp);
@@ -3298,7 +3378,7 @@ void Engine::UpdateExpTally(float dt)
         return;
     }
 
-    // Animated drain — 50 EXP per second, no interruptions.
+    // Animated drain - 50 EXP per second, no interruptions.
     static constexpr float kDrainRate = 50.f;
     float drain = std::min(kDrainRate * dt, _pendingExp);
     _pendingExp    -= drain;
@@ -3320,7 +3400,7 @@ void Engine::UpdateExpTally(float dt)
     }
 }
 
-// ── DrawExpTally ──────────────────────────────────────────────────────────────
+// -- DrawExpTally --------------------------------------------------------------
 // Dark overlay drawn on top of the game world showing EXP bar filling and
 // the player's current level.  Dismiss hint appears once the bar is full.
 void Engine::DrawExpTally()
@@ -3336,8 +3416,8 @@ void Engine::DrawExpTally()
     _overlayRenderer.DrawExpTally(ctx);
 }
 
-// ── DrawMap ───────────────────────────────────────────────────────────────────
-// Full-screen Slay-the-Spire–style act map.  Shows the entire node graph for
+// -- DrawMap -------------------------------------------------------------------
+// Full-screen Slay-the-Spire-style act map.  Shows the entire node graph for
 // the current act; available nodes are highlighted and clickable.
 void Engine::DrawMap()
 {
@@ -3357,8 +3437,8 @@ void Engine::DrawMap()
     }
     DrawScrollingCheckerboard(sw, sh, bgDark, bgLight, 18.f, 10.f);
 
-    // -- Header � centred over the node graph area -------------------------
-    // Graph spans 30�76% of the screen; journey panel occupies 78�97%.
+    // -- Header ? centred over the node graph area -------------------------
+    // Graph spans 30?76% of the screen; journey panel occupies 78?97%.
     const float mapCentreX = sw * _mapHeaderX;
     std::string header = "Act " + std::to_string(_currentAct)
                        + "  -  " + GetBiomeName(actBiome);
@@ -3560,7 +3640,7 @@ void Engine::DrawMap()
             Fade(Color{130, 235, 255, 255}, 0.55f));
         cy += 14.f;
 
-        // Visited-room tiles � one per completed node, stamped with the room
+        // Visited-room tiles ? one per completed node, stamped with the room
         // icon and crossed with a red diagonal slash.
         int drawn = 0;
         for (const auto& node : _actMap)
@@ -3632,7 +3712,7 @@ void Engine::DrawMap()
         DrawText(TextFormat("Gold:  %d", _player.GetGold()),
             (int)(jX + pad), (int)cy, (int)_mapRoomsFs, Color{255, 214, 102, 220});
 
-        // -- Biome progress diamonds � size-aware zone that lifts upward as
+        // -- Biome progress diamonds ? size-aware zone that lifts upward as
         // the diamonds get larger so the divider and label make room ---------
         {
             const float minDivY = cy + _mapRoomsFs + 20.f;
@@ -3978,7 +4058,8 @@ void Engine::DrawStartingAbilityChoice()
     {
         Rectangle card{ startX + i * (cardW + gapX), startY, cardW, cardH };
         bool selected = _startingAbilitySelected[i];
-        bool hovered = ready && CheckCollisionPointRec(mouse, card);
+        bool hovered = (ready && CheckCollisionPointRec(mouse, card)) ||
+                       (_gamepad.isActive && i == _levelUpGpCursor);
 
         Color bg = selected ? Color{45, 36, 10, 235} : (hovered ? Color{42, 42, 50, 230} : Color{22, 22, 25, 218});
         Color border = selected ? GOLD : (hovered ? Color{200, 200, 200, 220} : Color{120, 120, 120, 130});
@@ -4029,7 +4110,9 @@ void Engine::DrawStartingAbilityChoice()
             DrawText(mark, (int)(card.x + card.width * 0.5f - MeasureText(mark, fs) * 0.5f), (int)(card.y + card.height - 30.f), fs, GOLD);
         }
 
-        if (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        bool startCardActivated = (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+                                   (_gamepad.isActive && ready && i == _levelUpGpCursor && _gamepad.menuConfirmPressed);
+        if (startCardActivated)
         {
             if (_startingAbilitySelected[i])
             {
@@ -4040,6 +4123,12 @@ void Engine::DrawStartingAbilityChoice()
             {
                 _startingAbilitySelected[i] = true;
                 _startingAbilityPickCount++;
+            }
+            else
+            {
+                // Switch selection to the newly activated card
+                for (int j = 0; j < 3; j++) _startingAbilitySelected[j] = false;
+                _startingAbilitySelected[i] = true;
             }
         }
     }
@@ -4052,7 +4141,10 @@ void Engine::DrawStartingAbilityChoice()
     int cFs = 26;
     DrawText(cText, (int)(confirm.x + confirm.width * 0.5f - MeasureText(cText, cFs) * 0.5f), (int)(confirm.y + confirm.height * 0.5f - cFs * 0.5f), cFs, canConfirm ? BLACK : LIGHTGRAY);
 
-    if (canConfirm && ready && confirmHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    // Gamepad: pressing A on an already-selected card confirms (no need to navigate to the button)
+    bool gpConfirmStarting = _gamepad.isActive && ready && canConfirm &&
+                             _gamepad.menuConfirmPressed && _startingAbilitySelected[_levelUpGpCursor];
+    if ((canConfirm && ready && confirmHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) || gpConfirmStarting)
     {
         for (int i = 0; i < 3; i++)
             if (_startingAbilitySelected[i])
@@ -4120,7 +4212,7 @@ void Engine::DrawLevelUpChoice()
     const float totalW  = 3.f * cardW + 2.f * cardGap;
     const float startX  = sw / 2.f - totalW / 2.f;
 
-    // Row Y positions — stack both rows when both visible, otherwise center the lone row
+    // Row Y positions - stack both rows when both visible, otherwise center the lone row
     float ultRowY, regRowY;
     if (showUlt && showReg)
     {
@@ -4199,7 +4291,7 @@ void Engine::DrawLevelUpChoice()
             desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() * 1.10f);
             icon = &_upgradeMoveSpeedTex;
             break;
-        // ── Rare ──────────────────────────────────────────────────────────────
+        // -- Rare --------------------------------------------------------------
         case UpgradeType::IronConstitution:
             name = "Iron Constitution";
             desc = linePreview("HP", _player.GetMaxHealthValue(),
@@ -4238,7 +4330,7 @@ void Engine::DrawLevelUpChoice()
                 + float1String(_player.GetAttackRangeMultiplierValue() * 1.08f) + "x";
             icon = &_upgradeAttackRangeTex;
             break;
-        // ── Epic ──────────────────────────────────────────────────────────────
+        // -- Epic --------------------------------------------------------------
         case UpgradeType::WarGod:
             name = "War God";
             desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.20f)
@@ -4348,7 +4440,7 @@ void Engine::DrawLevelUpChoice()
     Vector2 mouse = GetVirtualMousePos();
     bool ready = (_levelUpOpenTimer <= 0.f);
 
-    // ── Ultimate row (level 3 only, top) ─────────────────────────────────────
+    // -- Ultimate row (level 3 only, top) -------------------------------------
     if (showUlt)
     {
         // Row label
@@ -4361,7 +4453,8 @@ void Engine::DrawLevelUpChoice()
         {
             float x = startX + i * (cardW + cardGap);
             Rectangle card{ x, ultRowY, cardW, cardH };
-            bool hovered = ready && CheckCollisionPointRec(mouse, card);
+            bool hovered = (ready && CheckCollisionPointRec(mouse, card)) ||
+                           (_gamepad.isActive && _levelUpGpRow == 0 && i == _levelUpGpCursor);
 
             // Gold-tinted card background to distinguish from regular row
             Color bgColor = hovered ? Color{55, 40, 10, 230} : Color{35, 25, 5, 215};
@@ -4413,7 +4506,9 @@ void Engine::DrawLevelUpChoice()
 
             drawMultilineCentered(desc, x + cardW / 2.f, ultRowY + cardH * 0.72f, 20, LIGHTGRAY);
 
-            if (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            bool ultActivated = (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+                                 (_gamepad.isActive && ready && _levelUpGpRow == 0 && i == _levelUpGpCursor && _gamepad.menuConfirmPressed);
+            if (ultActivated)
             {
                 _player.ApplyUpgrade(_levelUpUltimateOptions[i]);
                 _ultimateRowPicked = true;
@@ -4426,7 +4521,7 @@ void Engine::DrawLevelUpChoice()
         }
     }
 
-    // ── Regular row ──────────────────────────────────────────────────────────
+    // -- Regular row ----------------------------------------------------------
     if (showReg)
     {
         // Row label when both rows are visible
@@ -4443,7 +4538,8 @@ void Engine::DrawLevelUpChoice()
         float x = startX + i * (cardW + cardGap);
         Rectangle card{ x, cardY, cardW, cardH };
 
-        bool hovered = ready && CheckCollisionPointRec(mouse, card);
+        bool hovered = (ready && CheckCollisionPointRec(mouse, card)) ||
+                       (_gamepad.isActive && _levelUpGpRow == 1 && i == _levelUpGpCursor);
 
         // Rarity-based colors
         UpgradeRarity rarity = _player.GetUpgradeRarity(_levelUpOptions[i]);
@@ -4474,7 +4570,7 @@ void Engine::DrawLevelUpChoice()
         Texture2D* icon  = nullptr;
         getUpgradeInfo(_levelUpOptions[i], name, desc, icon);
 
-        // Icon area — ability unlocks get a drawn attack-pattern preview so the
+        // Icon area - ability unlocks get a drawn attack-pattern preview so the
         // player can immediately see "burst vs single shot". Stat upgrades keep
         // their regular texture icon.
         {
@@ -4583,7 +4679,7 @@ void Engine::DrawLevelUpChoice()
             }
             else if (icon && icon->id != 0)
             {
-                // Stat upgrade — draw the regular texture icon
+                // Stat upgrade - draw the regular texture icon
                 float iconScale = std::min(iconAreaSize / (float)icon->width,
                                            iconAreaSize / (float)icon->height);
                 float iconW = icon->width  * iconScale;
@@ -4616,8 +4712,10 @@ void Engine::DrawLevelUpChoice()
                 rarSz, WHITE);
         }
 
-        // Click to select — blocked until open timer expires
-        if (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        // Click or gamepad A to select - blocked until open timer expires
+        bool regActivated = (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+                            (_gamepad.isActive && ready && _levelUpGpRow == 1 && i == _levelUpGpCursor && _gamepad.menuConfirmPressed);
+        if (regActivated)
         {
             _player.ApplyUpgrade(_levelUpOptions[i]);
             _awaitingStartingAbility = false;
@@ -4821,7 +4919,7 @@ void Engine::SpawnUltimateBurst(AbilityType element)
 
 void Engine::UpdateUltimateBlasts(float dt)
 {
-    // Purely visual during the cinematic phase — damage is applied all at once
+    // Purely visual during the cinematic phase - damage is applied all at once
     // by ApplyUltimateImpact at the Impact phase transition.
     for (auto& blast : _ultimateBlasts)
         blast.timer -= dt;
@@ -4937,7 +5035,7 @@ void Engine::DrawUltimateSequence()
         (_ultimateElement == AbilityType::IceUltimate)      ? Color{ 80, 200, 255, 255} :
                                                                Color{255, 220,   0, 255};
 
-    // ── Dark overlay (ramps up during wind-up, holds, fades on release) ───────
+    // -- Dark overlay (ramps up during wind-up, holds, fades on release) -------
     if (_ultimatePhase != UltimatePhase::Impact)
     {
         float alpha =
@@ -4949,7 +5047,7 @@ void Engine::DrawUltimateSequence()
         DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, alpha));
     }
 
-    // ── Impact flash ─────────────────────────────────────────────────────────
+    // -- Impact flash ---------------------------------------------------------
     if (_ultimatePhase == UltimatePhase::Impact)
     {
         float t = 1.f - (_ultimatePhaseTimer / _ultImpactDuration);
@@ -4959,7 +5057,7 @@ void Engine::DrawUltimateSequence()
         DrawCircleLinesV({ cx, cy }, (1.f - t) * sw * 0.9f, ringCol);
     }
 
-    // ── Magic circle (wind-up + cinematic) ───────────────────────────────────
+    // -- Magic circle (wind-up + cinematic) -----------------------------------
     if (_ultimatePhase == UltimatePhase::WindUp || _ultimatePhase == UltimatePhase::Cinematic)
     {
         float progress = (_ultimatePhase == UltimatePhase::WindUp)
@@ -4999,7 +5097,7 @@ void Engine::DrawUltimateBlasts(Vector2 worldOffset)
         if (blast.timer <= 0.f)
             continue;
 
-        // Progress 0→1 as blast ages
+        // Progress 0?1 as blast ages
         float progress = 1.f - (blast.timer / blast.lifetime);
 
         // Pulse envelope: pop in fast, hold, fade out
@@ -5010,7 +5108,7 @@ void Engine::DrawUltimateBlasts(Vector2 worldOffset)
 
         if (pulse <= 0.f) continue;
 
-        // Animated sprite sheet — ultimate types use their own 64x64 sheets
+        // Animated sprite sheet - ultimate types use their own 64x64 sheets
         const Texture2D& tex = SpreadProjectile::GetAnimTexture(blast.element);
 
         const float fw        = (float)SpreadProjectile::GetFrameWFor(blast.element);
@@ -5030,14 +5128,14 @@ void Engine::DrawUltimateBlasts(Vector2 worldOffset)
             blast.worldPos.y + worldOffset.y + kVirtualHeight * 0.5f
         };
 
-        // Fixed facing direction per blast — no spinning
+        // Fixed facing direction per blast - no spinning
         float rotation = blast.rotation;
 
         Rectangle dest     = { screenPos.x, screenPos.y, size, size };
         Vector2   origin   = { size * 0.5f, size * 0.5f };
         unsigned char alpha = (unsigned char)(pulse * 255.f);
 
-        // Soft glow behind — slightly larger, low alpha
+        // Soft glow behind - slightly larger, low alpha
         float     glowSize   = size * 1.65f;
         Rectangle glowDest   = { screenPos.x, screenPos.y, glowSize, glowSize };
         Vector2   glowOrigin = { glowSize * 0.5f, glowSize * 0.5f };
@@ -5183,7 +5281,7 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 _vfx.SpawnFloatingText(enemy->GetWorldPos(), hitDamage, dmgColor);
             }
 
-            // Per-element on-hit effect — same for both spread and bolt of the same element
+            // Per-element on-hit effect - same for both spread and bolt of the same element
             Character::CastType hitEffectType = Character::CastType::FireSpread;
             if (element == AbilityType::FireSpread || element == AbilityType::FireBolt)
             {
@@ -5239,7 +5337,7 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
             g->Init(Vector2{ centre.x + ox, centre.y + oy }, denom);
             _pickups.push_back(std::move(g));
         };
-        // 8× Ten + 6× Five + 3× Single = ~113g jackpot
+        // 8- Ten + 6- Five + 3- Single = ~113g jackpot
         spawnGold(GoldDenomination::Ten,      0.f,    0.f);
         spawnGold(GoldDenomination::Ten,    -55.f,  -60.f);
         spawnGold(GoldDenomination::Ten,     55.f,  -60.f);
@@ -5329,13 +5427,13 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
 
 void Engine::SpawnTimedPickup()
 {
-    // Boss fights are self-contained — no timed pickups during them.
+    // Boss fights are self-contained - no timed pickups during them.
     // The timer keeps ticking so a pickup is not immediately ready when
     // the boss dies; it resets naturally after kDefaultTimedPickupInterval.
     if (IsBossFightActive())
         return;
 
-    // Timed pickups are heals only. Mana gems removed from the timed pool —
+    // Timed pickups are heals only. Mana gems removed from the timed pool -
     // passive regen covers mana recovery between waves.
     float mapW = _map.width  * _mapScale;
     float mapH = _map.height * _mapScale;
@@ -5363,23 +5461,23 @@ void Engine::DrawHowToPlay()
     const float sh = (float)kVirtualHeight;
     const float dt = GetFrameTime();
 
-    // ── Font sizes ───────────────────────────────────────────────────────────
+    // -- Font sizes -----------------------------------------------------------
     const int titleSz  = (int)(sh * 0.062f);
     const int headerSz = (int)(sh * 0.034f);
     const int labelSz  = (int)(sh * 0.027f);
     const int descSz   = (int)(sh * 0.022f);
     const int tabSz    = (int)(sh * 0.026f);
 
-    // ── Slide animation ──────────────────────────────────────────────────────
+    // -- Slide animation ------------------------------------------------------
     _htpSlideOffset *= (1.f - std::min(dt * 14.f, 1.f));
 
-    // ── Background ───────────────────────────────────────────────────────────
+    // -- Background -----------------------------------------------------------
     DrawScrollingCheckerboard(sw, sh,
         Color{ 96, 34, 86, 255 },
         Color{ 132, 54, 116, 255 },
         22.f, 12.f);
 
-    // ── Title bar ────────────────────────────────────────────────────────────
+    // -- Title bar ------------------------------------------------------------
     const float titleBarH = sh * 0.095f;
     DrawRectangle(0, 0, (int)sw, (int)titleBarH, Fade(Color{ 50, 14, 56, 255 }, 0.88f));
     const char* title = "HOW TO PLAY";
@@ -5392,7 +5490,7 @@ void Engine::DrawHowToPlay()
     DrawText(title, (int)(sw / 2.f - titleW / 2.f),
         (int)(titleBarH / 2.f - titleSz / 2.f), titleSz, Color{ 255, 194, 92, 255 });
 
-    // ── Tab bar ──────────────────────────────────────────────────────────────
+    // -- Tab bar --------------------------------------------------------------
     const char* tabLabels[] = { "BASICS", "ELEMENTS", "THE WORLD", "TOUCH" };
     const int   tabCount    = 4;
     const float tabBarY     = titleBarH + sh * 0.008f;
@@ -5436,7 +5534,7 @@ void Engine::DrawHowToPlay()
         }
     }
 
-    // ── Content panel ────────────────────────────────────────────────────────
+    // -- Content panel --------------------------------------------------------
     const float panelX = sw * 0.04f;
     const float panelY = tabBarY + tabBarH + sh * 0.010f;
     const float panelW = sw * 0.92f;
@@ -5455,9 +5553,9 @@ void Engine::DrawHowToPlay()
 
     BeginScissorMode((int)panelX + 2, (int)panelY + 2, (int)panelW - 4, (int)panelH - 4);
 
-    // ════════════════════════════════════════════════════════════════════════
-    // TAB 0 — BASICS
-    // ════════════════════════════════════════════════════════════════════════
+    // ------------------------------------------------------------------------
+    // TAB 0 - BASICS
+    // ------------------------------------------------------------------------
     if (_htpTab == 0)
     {
         const float colW   = cw * 0.45f;
@@ -5540,9 +5638,9 @@ void Engine::DrawHowToPlay()
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // TAB 1 — ELEMENTS
-    // ════════════════════════════════════════════════════════════════════════
+    // ------------------------------------------------------------------------
+    // TAB 1 - ELEMENTS
+    // ------------------------------------------------------------------------
     else if (_htpTab == 1)
     {
         const char* elemTitle = "THE MAGIC SYSTEM";
@@ -5560,19 +5658,19 @@ void Engine::DrawHowToPlay()
         };
         ElemEntry elems[] = {
             { "FIRE",
-              "BURN  —  Damage over time",
+              "BURN  -  Damage over time",
               "Enemies ignite and take periodic damage",
               "for several seconds after being hit.",
               Color{ 255, 120, 40, 255 },
               &_abilityIconFireTex },
             { "ICE",
-              "FREEZE  —  Stuns the enemy",
+              "FREEZE  -  Stuns the enemy",
               "Frozen enemies cannot move or attack.",
               "Break the freeze with a melee hit for bonus damage.",
               Color{ 100, 210, 255, 255 },
               &_abilityIconIceTex },
             { "ELECTRIC",
-              "SHOCK  —  Amplifies melee damage",
+              "SHOCK  -  Amplifies melee damage",
               "Shocked enemies take greatly increased damage",
               "from your next melee strike.",
               Color{ 220, 220, 50, 255 },
@@ -5617,9 +5715,9 @@ void Engine::DrawHowToPlay()
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // TAB 2 — THE WORLD
-    // ════════════════════════════════════════════════════════════════════════
+    // ------------------------------------------------------------------------
+    // TAB 2 - THE WORLD
+    // ------------------------------------------------------------------------
     else if (_htpTab == 2)
     {
         const float colW   = cw * 0.45f;
@@ -5676,8 +5774,8 @@ void Engine::DrawHowToPlay()
             { "Cost increases with each reroll.",              false },
             { "",                                              false },
             { "POTIONS",                                       true  },
-            { "Health Potion  —  restore HP instantly.",       false },
-            { "Mana Potion  —  restore Mana instantly.",       false },
+            { "Health Potion  -  restore HP instantly.",       false },
+            { "Mana Potion  -  restore Mana instantly.",       false },
             { "",                                              false },
             { "DAILY DEAL",                                    true  },
             { "One item each visit is 25% off.",               false },
@@ -5694,9 +5792,9 @@ void Engine::DrawHowToPlay()
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // TAB 3 — TOUCH CONTROLS
-    // ════════════════════════════════════════════════════════════════════════
+    // ------------------------------------------------------------------------
+    // TAB 3 - TOUCH CONTROLS
+    // ------------------------------------------------------------------------
     else if (_htpTab == 3)
     {
         const char* touchTitle = "TOUCH CONTROLS";
@@ -5714,7 +5812,7 @@ void Engine::DrawHowToPlay()
         DrawRectangleRounded({ diagX, diagY, diagW, diagH }, 0.06f, 8, Fade(Color{ 30, 10, 36, 255 }, 0.90f));
         DrawRectangleRoundedLines({ diagX, diagY, diagW, diagH }, 0.06f, 8, Fade(Color{ 220, 160, 240, 255 }, 0.55f));
 
-        // Left half — movement
+        // Left half - movement
         DrawRectangleRounded({ diagX, diagY, halfW, diagH }, 0.06f, 8, Fade(Color{ 40, 80, 120, 255 }, 0.35f));
         float jsX = diagX + halfW / 2.f;
         float jsY = diagY + diagH / 2.f;
@@ -5729,7 +5827,7 @@ void Engine::DrawHowToPlay()
         DrawLineEx({ diagX + halfW, diagY + sh * 0.015f },
             { diagX + halfW, diagY + diagH - sh * 0.015f }, 1.5f, Fade(WHITE, 0.30f));
 
-        // Right half — buttons
+        // Right half - buttons
         DrawRectangleRounded({ diagX + halfW, diagY, halfW, diagH }, 0.06f, 8, Fade(Color{ 100, 40, 80, 255 }, 0.35f));
         float btnR  = diagH * 0.18f;
         float b1X   = diagX + halfW + halfW * 0.32f;
@@ -5775,7 +5873,7 @@ void Engine::DrawHowToPlay()
 
     EndScissorMode();
 
-    // ── Back button ──────────────────────────────────────────────────────────
+    // -- Back button ----------------------------------------------------------
     const float btnW = sw * 0.14f;
     const float btnH = sh * 0.055f;
     const float btnX = sw / 2.f - btnW / 2.f;
@@ -5811,11 +5909,11 @@ Vector2 Engine::GetRandomPropPosition()
     Vector2 playerStart{ mapW * 0.5f, mapH * 0.5f };
 
     // One full player unit of clearance from every map edge.
-    // Player sprite is 32 px wide at draw scale 6 → 192 world-space pixels.
+    // Player sprite is 32 px wide at draw scale 6 ? 192 world-space pixels.
     // The bottom margin is larger because prop positions are top-left corners,
     // so tall props (trees) would otherwise hang off the bottom edge.
-    const float margin       = 32.f * 6.f;         // 192 px — sides and top
-    const float bottomMargin = margin * 1.5f;       // 288 px — bottom
+    const float margin       = 32.f * 6.f;         // 192 px - sides and top
+    const float bottomMargin = margin * 1.5f;       // 288 px - bottom
     float minX = margin;
     float maxX = mapW - margin;
     float minY = margin;
@@ -5893,7 +5991,7 @@ void Engine::PopulatePropsForBiome(Biome biome)
 {
     _props.clear();
 
-    // Boss and Store rooms are open arenas — no props
+    // Boss and Store rooms are open arenas - no props
     if (_currentRoomType == RoomType::Boss || _currentRoomType == RoomType::Store)
         return;
 
@@ -6124,7 +6222,7 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
         return false;
 
     // Reject tiles that are completely cut off from the player by walls.
-    // HasReachablePath checks the flow-field cost — max_int means the BFS
+    // HasReachablePath checks the flow-field cost - max_int means the BFS
     // wave never reached this cell, so no path exists.
     if (!_nav.HasReachablePath(pos))
         return false;
@@ -6165,7 +6263,7 @@ void Engine::ResetRunState()
     _eliteRewardGranted       = false;
     _debug.Deactivate();
 
-    // ── Room / act progression reset ──────────────────────────────────────
+    // -- Room / act progression reset --------------------------------------
     _currentAct        = 1;
     _currentRoom       = 0;
     _currentRoomType   = RoomType::Standard;
@@ -6349,7 +6447,7 @@ bool Engine::TryGetPooledCyclopsSpawn(Vector2 pos)
 
 int Engine::GetCyclopsSpawnCountForWave(int wave) const
 {
-    // Superseded by the curated wave table in SpawnEnemies — kept for
+    // Superseded by the curated wave table in SpawnEnemies - kept for
     // any legacy call sites that may still reference it.
     (void)wave;
     return 0;
@@ -6395,7 +6493,7 @@ bool Engine::TryGetPooledMolarbeastSpawn(Vector2 pos)
 
 int Engine::GetOgreSpawnCountForWave(int wave) const
 {
-    // Superseded by the curated wave table in SpawnEnemies — kept for
+    // Superseded by the curated wave table in SpawnEnemies - kept for
     // any legacy call sites that may still reference it.
     (void)wave;
     return 0;
@@ -6416,9 +6514,9 @@ int Engine::GetEnemyPowerLevelForWave(int wave) const
 void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
 {
     // All enemy types share the same spawn-tuning path:
-    // 1. SetWaveScale — fixed base stats + behavioural timing for this room.
-    // 2. ApplyEnemyPowerLevel — single global multiplier, advances every 10 rooms.
-    // 3. SetTarget — restore player pointer so pooled enemies rejoin the run.
+    // 1. SetWaveScale - fixed base stats + behavioural timing for this room.
+    // 2. ApplyEnemyPowerLevel - single global multiplier, advances every 10 rooms.
+    // 3. SetTarget - restore player pointer so pooled enemies rejoin the run.
     // _wave = total rooms entered this run, used here for scaling only.
     enemy.SetWaveScale(_wave);
     enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
@@ -6622,12 +6720,17 @@ void Engine::UpdateCyclopsLasers(float dt)
 
 void Engine::UpdateLavaBallProjectiles(float dt)
 {
-    const float mapW = _map.width * _mapScale;
-    const float mapH = _map.height * _mapScale;
-    const float marginLeft = 76.f;
-    const float marginRight = 96.f;
-    const float marginTop = 42.f;
-    const float marginBottom = 320.f;
+    // In DungeonRun mode _map is not loaded, so fall back to the virtual
+    // canvas size with one tile-cell of clearance on each side.
+    const float cellW = (float)kVirtualWidth  / (float)RoomLayout::kCols;
+    const float cellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
+    const bool hasTileMap = (_map.width > 0 && _map.height > 0);
+    const float mapW        = hasTileMap ? _map.width  * _mapScale : (float)kVirtualWidth;
+    const float mapH        = hasTileMap ? _map.height * _mapScale : (float)kVirtualHeight;
+    const float marginLeft   = hasTileMap ? 76.f  : cellW;
+    const float marginRight  = hasTileMap ? 96.f  : cellW;
+    const float marginTop    = hasTileMap ? 42.f  : cellH;
+    const float marginBottom = hasTileMap ? 320.f : cellH;
 
     for (auto& projectile : _lavaBalls)
     {
@@ -6675,7 +6778,7 @@ void Engine::UpdateLavaBallProjectiles(float dt)
             }
         }
 
-        // Player collision — only register once per projectile (HasHitPlayer guard).
+        // Player collision - only register once per projectile (HasHitPlayer guard).
         if (_player.IsAlive() &&
             !projectile.HasHitPlayer() &&
             CheckCollisionRecs(collisionRec, _player.GetCollisionRec()))
@@ -6760,14 +6863,14 @@ void Engine::LoadKeybindings()
     _gamepadBindingsEdit = g;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Touch Controls
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 // Returns the screen-space centre of touch-mode ability arc button for `slot`.
 // Buttons are arranged in a quarter-circle arc above the ATK button.
-// Screen angles: 270° = straight up, 210° = upper-left.
-// Free helper — computes the bounding rect for touch-mode ability slot `slot`.
+// Screen angles: 270- = straight up, 210- = upper-left.
+// Free helper - computes the bounding rect for touch-mode ability slot `slot`.
 // 4 square slots in a right-aligned row, above the ATK/DASH buttons.
 // `offset` is a per-slot drag offset applied on top of the computed base position.
 static Rectangle TouchAbilityRect(int slot, int screenW, int screenH,
@@ -6820,9 +6923,9 @@ bool Engine::HandleDebugToggleTabInput()
     return false;
 }
 
-// ── Hitbox debug editor ───────────────────────────────────────────────────────
+// -- Hitbox debug editor -------------------------------------------------------
 
-// ── Dungeon run combat helpers ──────────────────────────────────────────────────────
+// -- Dungeon run combat helpers ------------------------------------------------------
 
 Vector2 Engine::GetDungeonSpawnPos(float cellW, float cellH) const
 {
@@ -6877,7 +6980,7 @@ void Engine::SpawnDungeonRoomEnemies()
     int bossIdx  = _dungeonGen.GetBossIndex();
     RoomType type = rooms[i].type;
 
-    // Non-combat start room — pre-clear so we never try to spawn here again.
+    // Non-combat start room - pre-clear so we never try to spawn here again.
     if (i == startIdx || type == RoomType::Rest)
     {
         _dungeonRoomStates[i].cleared = true;
@@ -6907,7 +7010,7 @@ void Engine::SpawnDungeonRoomEnemies()
     }
     else if (type == RoomType::Treasure)
     {
-        // Small combat encounter — players must fight before the chest appears.
+        // Small combat encounter - players must fight before the chest appears.
         spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, GetRandomValue(1, tier == 0 ? 2 : 3));
         if (tier >= 1 || GetRandomValue(0, 1) == 0)
             SpawnCyclops(GetDungeonSpawnPos(cellW, cellH));
@@ -6928,22 +7031,22 @@ void Engine::SpawnDungeonRoomEnemies()
 
         switch (_eliteMechanic)
         {
-        case 0:  // Cage — centred on screen
+        case 0:  // Cage - centred on screen
             _eliteCageCenter     = { sw * 0.5f, sh * 0.5f };
             _eliteCageRadius     = kEliteCageRadius;
             _eliteCageDamageTimer = kEliteCageDamageInterval;
             break;
-        case 1:  // Bodyguard — miniboss immune until fodder die
+        case 1:  // Bodyguard - miniboss immune until fodder die
             if (miniboss) miniboss->SetInvulnerable(true);
             break;
-        case 2:  // Enrage — miniboss powered up immediately
+        case 2:  // Enrage - miniboss powered up immediately
             if (miniboss) miniboss->ApplyEnrage();
             _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
             break;
-        case 3:  // Leap — miniboss leaps at the player periodically
+        case 3:  // Leap - miniboss leaps at the player periodically
             _eliteLeapCooldown = kLeapInterval;
             break;
-        case 4:  // Hazards — periodic lava volley
+        case 4:  // Hazards - periodic lava volley
             _eliteHazardSpawnTimer = (float)GetRandomValue(
                 (int)(kHazardVolleyMinInterval * 100.f),
                 (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
@@ -6954,7 +7057,7 @@ void Engine::SpawnDungeonRoomEnemies()
     }
     else  // Standard
     {
-        // Basic count: 1–2 early, 2–3 mid, 2–4 late.
+        // Basic count: 1-2 early, 2-3 mid, 2-4 late.
         int minBasics = tier == 0 ? 1 : 2;
         int maxBasics = tier == 0 ? 2 : (tier == 1 ? 3 : 4);
 
@@ -7304,10 +7407,12 @@ void Engine::RebuildDungeonNav()
     float sh    = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
+    float pxSX  = cellW / 16.f;
+    float pxSY  = cellH / 16.f;
 
     std::vector<Rectangle> solids;
 
-    // Wall tiles — every non-floor, non-void tile blocks a full cell.
+    // Wall tiles - every non-floor, non-void tile blocks a full cell.
     for (int r = 0; r < RoomLayout::kRows; r++)
     {
         for (int c = 0; c < RoomLayout::kCols; c++)
@@ -7321,11 +7426,29 @@ void Engine::RebuildDungeonNav()
         }
     }
 
-    // Props (full cell approximation is accurate enough for nav pathfinding).
+    // Props use their TileMapper collision AABBs. Some props are wider/taller
+    // than one tile, so blocking only the placement cell lets A* route through
+    // part of the physical collider.
     for (const SpritePlacement& p : _dungeonRoomLayout.props)
-        solids.push_back({ p.col * cellW, p.row * cellH, cellW, cellH });
+    {
+        if (p.defIdx < 0 || p.defIdx >= (int)_tileDefs.props.size()) continue;
+        const Rectangle& coll = _tileDefs.props[p.defIdx].collision;
+        solids.push_back({
+            p.col * cellW + coll.x * pxSX,
+            p.row * cellH + coll.y * pxSY,
+            coll.width * pxSX,
+            coll.height * pxSY });
+    }
     for (const SpritePlacement& p : _dungeonRoomLayout.animProps)
-        solids.push_back({ p.col * cellW, p.row * cellH, cellW, cellH });
+    {
+        if (p.defIdx < 0 || p.defIdx >= (int)_tileDefs.animProps.size()) continue;
+        const Rectangle& coll = _tileDefs.animProps[p.defIdx].collision;
+        solids.push_back({
+            p.col * cellW + coll.x * pxSX,
+            p.row * cellH + coll.y * pxSY,
+            coll.width * pxSX,
+            coll.height * pxSY });
+    }
 
     _nav.CancelAndReset();
     _nav.Rebuild(sw, sh, solids);
@@ -7345,7 +7468,7 @@ void Engine::ResolveDungeonEnemyCollisions()
     {
         if (!e->IsActive()) continue;
 
-        // ── Wall tiles — only check the 5×5 neighbourhood around the enemy ────
+        // -- Wall tiles - only check the 5-5 neighbourhood around the enemy ----
         Vector2 ePos = e->GetWorldPos();
         int ec = std::max(0, std::min((int)(ePos.x / cellW), RoomLayout::kCols - 1));
         int er = std::max(0, std::min((int)(ePos.y / cellH), RoomLayout::kRows - 1));
@@ -7374,6 +7497,21 @@ void Engine::ResolveDungeonEnemyCollisions()
                 else if (Molarbeast* mb = e->AsMolarbeast())
                 {
                     if (mb->IsDashing()) { mb->OnDashBlocked(); rushStopHandled = true; break; }
+
+                    Vector2 mtv{};
+                    if (CheckCapsuleRect(mb->GetCapsule(), wallRect, mtv))
+                    {
+                        if (e->IsBeingForcedPushed())
+                        {
+                            e->OnForcedPushCollision();
+                        }
+                        else
+                        {
+                            Vector2 p = e->GetWorldPos();
+                            e->Teleport({ p.x + mtv.x, p.y + mtv.y });
+                        }
+                    }
+                    continue;
                 }
 
                 if (e->IsBeingForcedPushed())
@@ -7395,17 +7533,27 @@ void Engine::ResolveDungeonEnemyCollisions()
             }
         }
 
-        // ── Props — precise collision rect ────────────────────────────────────
+        // -- Props - precise collision rect ------------------------------------
         if (!rushStopHandled)
         {
             auto resolveEnemyVsPropRect = [&](Rectangle propRect) {
+                if (Molarbeast* mb = e->AsMolarbeast())
+                {
+                    Vector2 mtv{};
+                    if (!CheckCapsuleRect(mb->GetCapsule(), propRect, mtv)) return;
+                    if (mb->IsDashing()) { mb->OnDashBlocked(); return; }
+                    if (e->IsBeingForcedPushed()) { e->OnForcedPushCollision(); return; }
+
+                    Vector2 p = e->GetWorldPos();
+                    e->Teleport({ p.x + mtv.x, p.y + mtv.y });
+                    return;
+                }
+
                 Rectangle eRect = e->GetCollisionRec();
                 if (!CheckCollisionRecs(eRect, propRect)) return;
 
                 if (Ogre* ogre = e->AsOgre())
                     { if (ogre->IsRushing()) { ogre->OnRushBlocked(); return; } }
-                else if (Molarbeast* mb = e->AsMolarbeast())
-                    { if (mb->IsDashing()) { mb->OnDashBlocked(); return; } }
 
                 if (e->IsBeingForcedPushed()) { e->OnForcedPushCollision(); return; }
 
@@ -7616,7 +7764,7 @@ void Engine::DrawMagicGemHudIcon() const
     DrawTexturePro(_magicGemTex, src, dst, {}, 0.f, WHITE);
     DrawText("x1", (int)(dst.x + dst.width + 4.f), (int)(dst.y + 18.f), 18, GOLD);
 }
-// ── Settings ──────────────────────────────────────────────────────────────────
+// -- Settings ------------------------------------------------------------------
 
 void Engine::ApplySfxVolume()
 {
@@ -7630,7 +7778,7 @@ void Engine::ApplySfxVolume()
     SetSoundVolume(_fireballCastSound,       1.0f  * sfx);
 }
 
-// ── Helpers used by the settings screen ──────────────────────────────────────
+// -- Helpers used by the settings screen --------------------------------------
 namespace
 {
     float DrawSettingsSlider(const char* label, float value, float trackX, float trackY,
@@ -7752,6 +7900,196 @@ void Engine::UpdateSettings(float dt)
         return;
     }
 
+    // ── Gamepad cursor navigation ─────────────────────────────────────────────
+    if (IsGamepadAvailable(GamepadInput::kGamepad))
+    {
+        float axisX = GetGamepadAxisMovement(GamepadInput::kGamepad, GAMEPAD_AXIS_LEFT_X);
+        float axisY = GetGamepadAxisMovement(GamepadInput::kGamepad, GAMEPAD_AXIS_LEFT_Y);
+        _settingsGpCooldown -= dt;
+        constexpr float kGpCooldown = 0.18f;
+        bool gpLeft  = IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || (axisX < -0.5f && _settingsGpCooldown <= 0.f);
+        bool gpRight = IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || (axisX >  0.5f && _settingsGpCooldown <= 0.f);
+        bool gpUp    = IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_LEFT_FACE_UP)    || (axisY < -0.5f && _settingsGpCooldown <= 0.f);
+        bool gpDown  = IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || (axisY >  0.5f && _settingsGpCooldown <= 0.f);
+        bool gpA     = IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+        bool gpB     = IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT);
+
+        // B cancels rebind first; if no rebind active it exits settings
+        if (gpB)
+        {
+            if (_settingsRebindSlot >= 0)   { _settingsRebindSlot   = -1; return; }
+            if (_settingsGpRebindSlot >= 0) { _settingsGpRebindSlot = -1; return; }
+            _player.SetBindings(_keybindingsEdit);
+            SaveKeybindings();
+            _settingsMgr.Save();
+            _settingsMgr.ApplyWindow();
+            _settingsMgr.ApplyVolumes(_audio);
+            ApplySfxVolume();
+            _gameState          = _stateBeforeSettings;
+            _settingsDragSlider = -1;
+            return;
+        }
+
+        // Don't navigate while waiting for a key/button input during rebind
+        if (_settingsRebindSlot < 0 && _settingsGpRebindSlot < 0)
+        {
+            // Helper: sync the cursor column with the actual current display option
+            auto syncDisplayCol = [&]()
+            {
+                if (_settingsTab != 0) { _settingsGpContentCol = 0; return; }
+                if (_settingsGpContentRow == 0)
+                    _settingsGpContentCol = (int)s.windowMode;
+                else if (_settingsGpContentRow == 1)
+                    _settingsGpContentCol = (s.windowedWidth == 1280) ? 0 : (s.windowedWidth == 2560) ? 2 : 1;
+                else
+                    _settingsGpContentCol = s.vsync ? 0 : 1;
+            };
+
+            // Row count per tab for content section
+            int maxContentRows = (_settingsTab == 0) ? 3
+                               : (_settingsTab == 1) ? 3
+                               : (_keybindSubTab == 0) ? 10 : 7;
+
+            switch (_settingsGpSection)
+            {
+            case 0: // Main tab strip (Display / Audio / Keybindings)
+                if (gpLeft)  { _settingsGpTabCursor = (_settingsGpTabCursor + 2) % 3; _settingsGpCooldown = kGpCooldown; }
+                if (gpRight) { _settingsGpTabCursor = (_settingsGpTabCursor + 1) % 3; _settingsGpCooldown = kGpCooldown; }
+                if (gpA)
+                {
+                    _settingsTab          = _settingsGpTabCursor;
+                    _settingsRebindSlot   = -1;
+                    _settingsGpRebindSlot = -1;
+                    _settingsGpSection    = 2;
+                    _settingsGpContentRow = 0;
+                    syncDisplayCol();
+                }
+                if (gpDown)
+                {
+                    _settingsGpSection    = (_settingsTab == 2) ? 1 : 2;
+                    _settingsGpContentRow = 0;
+                    syncDisplayCol();
+                    _settingsGpCooldown = kGpCooldown;
+                }
+                break;
+
+            case 1: // Keybindings sub-tab strip (M&K / Gamepad)
+                if (gpLeft || gpRight) { _settingsGpSubCursor ^= 1; _settingsGpCooldown = kGpCooldown; }
+                if (gpA)
+                {
+                    _keybindSubTab        = _settingsGpSubCursor;
+                    _settingsRebindSlot   = -1;
+                    _settingsGpRebindSlot = -1;
+                    _settingsGpSection    = 2;
+                    _settingsGpContentRow = 0;
+                }
+                if (gpUp)   { _settingsGpSection = 0; _settingsGpTabCursor = _settingsTab; _settingsGpCooldown = kGpCooldown; }
+                if (gpDown) { _settingsGpSection = 2; _settingsGpContentRow = 0; _settingsGpCooldown = kGpCooldown; }
+                break;
+
+            case 2: // Content rows
+                if (gpUp)
+                {
+                    if (_settingsGpContentRow > 0)
+                    {
+                        _settingsGpContentRow--;
+                        syncDisplayCol();
+                        _settingsGpCooldown = kGpCooldown;
+                    }
+                    else if (_settingsTab == 2)
+                    {
+                        // Keybind: go back to sub-tab strip, sync cursor with active sub-tab
+                        _settingsGpSection    = 1;
+                        _settingsGpSubCursor  = _keybindSubTab;
+                        _settingsGpCooldown   = kGpCooldown;
+                    }
+                    else
+                    {
+                        // Other tabs: go to main tab strip, sync cursor with active tab
+                        _settingsGpSection   = 0;
+                        _settingsGpTabCursor = _settingsTab;
+                        _settingsGpCooldown  = kGpCooldown;
+                    }
+                }
+                if (gpDown)
+                {
+                    if (_settingsGpContentRow < maxContentRows - 1)
+                    {
+                        _settingsGpContentRow++;
+                        syncDisplayCol();
+                        _settingsGpCooldown = kGpCooldown;
+                    }
+                    else { _settingsGpSection = 3; _settingsGpCooldown = kGpCooldown; }
+                }
+
+                if (_settingsTab == 0) // Display options: left/right changes selection
+                {
+                    static const int kDisplayColCount[3] = { 3, 3, 2 };
+                    int maxCols = kDisplayColCount[_settingsGpContentRow];
+                    if (gpLeft  && _settingsGpContentCol > 0)           { _settingsGpContentCol--; _settingsGpCooldown = kGpCooldown; }
+                    if (gpRight && _settingsGpContentCol < maxCols - 1) { _settingsGpContentCol++; _settingsGpCooldown = kGpCooldown; }
+                    if (gpLeft || gpRight)
+                    {
+                        int col = _settingsGpContentCol;
+                        if      (_settingsGpContentRow == 0) { s.windowMode = (GameSettings::WindowMode)col; _settingsMgr.ApplyWindow(); }
+                        else if (_settingsGpContentRow == 1 && s.windowMode == GameSettings::WindowMode::Windowed)
+                        {
+                            static const int kResW[] = { 1280, 1920, 2560 };
+                            static const int kResH[] = { 720,  1080, 1440 };
+                            s.windowedWidth  = kResW[col];
+                            s.windowedHeight = kResH[col];
+                            _settingsMgr.ApplyWindow();
+                        }
+                        else if (_settingsGpContentRow == 2) { s.vsync = (col == 0); _settingsMgr.ApplyWindow(); }
+                    }
+                }
+                else if (_settingsTab == 1) // Audio sliders: left/right adjusts value
+                {
+                    float* sliders[3] = { &s.masterVolume, &s.musicVolume, &s.sfxVolume };
+                    if (_settingsGpContentRow >= 0 && _settingsGpContentRow <= 2)
+                    {
+                        if (gpLeft)  { *sliders[_settingsGpContentRow] = std::max(0.f, *sliders[_settingsGpContentRow] - 0.05f); _settingsGpCooldown = kGpCooldown; }
+                        if (gpRight) { *sliders[_settingsGpContentRow] = std::min(1.f, *sliders[_settingsGpContentRow] + 0.05f); _settingsGpCooldown = kGpCooldown; }
+                        if (gpLeft || gpRight)
+                        {
+                            SetMasterVolume(s.masterVolume);
+                            _audio.SetMusicVolumeScale(s.musicVolume);
+                            _audio.SetSfxVolumeScale(s.sfxVolume);
+                            ApplySfxVolume();
+                        }
+                    }
+                }
+                else // Keybindings: A starts rebind for focused row
+                {
+                    if (gpA)
+                    {
+                        if (_keybindSubTab == 0) _settingsRebindSlot   = _settingsGpContentRow;
+                        else                     _settingsGpRebindSlot = _settingsGpContentRow;
+                    }
+                }
+                break;
+
+            case 3: // Back button
+                if (gpA)
+                {
+                    _player.SetBindings(_keybindingsEdit);
+                    SaveKeybindings();
+                    _settingsMgr.Save();
+                    _settingsMgr.ApplyWindow();
+                    _settingsMgr.ApplyVolumes(_audio);
+                    ApplySfxVolume();
+                    _gameState          = _stateBeforeSettings;
+                    _settingsDragSlider = -1;
+                    _settingsRebindSlot   = -1;
+                    _settingsGpRebindSlot = -1;
+                    return;
+                }
+                if (gpUp) { _settingsGpSection = 2; _settingsGpContentRow = maxContentRows - 1; _settingsGpCooldown = kGpCooldown; }
+                break;
+            }
+        }
+    }
+
     // Tab strip
     const float tabY   = panelY + 85.f;
     const float tabH   = 52.f;
@@ -7769,7 +8107,7 @@ void Engine::UpdateSettings(float dt)
         tabX += kTabW[tabIdx] + tabGap;
     }
 
-    // Back button — sits below the nine-slice border PNG (borderPad=24 + 8 gap)
+    // Back button - sits below the nine-slice border PNG (borderPad=24 + 8 gap)
     float backBtnX = panelX + panelW * 0.5f - 140.f;
     float backBtnY = panelY + panelH + 32.f;
     if (mousePressed && CheckCollisionPointRec(mouse, { backBtnX, backBtnY, 280.f, 55.f }))
@@ -7793,7 +8131,7 @@ void Engine::UpdateSettings(float dt)
 
     if (_settingsTab == 0)
     {
-        // ── Display ─────────────────────────────────────────────────────────
+        // -- Display ---------------------------------------------------------
         static const char* kModes[] = { "Fullscreen", "Borderless", "Windowed" };
         int modeIdx = (int)s.windowMode;
         int newMode = DrawOptionRow("Window Mode", kModes, 3, modeIdx,
@@ -7834,7 +8172,7 @@ void Engine::UpdateSettings(float dt)
     }
     else if (_settingsTab == 1)
     {
-        // ── Audio ────────────────────────────────────────────────────────────
+        // -- Audio ------------------------------------------------------------
         const float trackX = contentX;
         const float trackW = 600.f;
 
@@ -7867,9 +8205,9 @@ void Engine::UpdateSettings(float dt)
     }
     else
     {
-        // ── Keybindings ──────────────────────────────────────────────────────
+        // -- Keybindings ------------------------------------------------------
 
-        // Sub-tab click (M&K vs Gamepad) — same geometry as DrawSettingsKeybindings
+        // Sub-tab click (M&K vs Gamepad) - same geometry as DrawSettingsKeybindings
         const float subTabH   = 40.f;
         const float subTabW   = 160.f;
         const float subTabGap = 10.f;
@@ -7895,7 +8233,7 @@ void Engine::UpdateSettings(float dt)
 
         if (_keybindSubTab == 0)
         {
-            // ── M&K sub-tab ──────────────────────────────────────────────────
+            // -- M&K sub-tab --------------------------------------------------
             if (_settingsRebindSlot >= 0)
             {
                 for (int k = 32; k <= 348; k++)
@@ -7946,7 +8284,7 @@ void Engine::UpdateSettings(float dt)
         }
         else
         {
-            // ── Gamepad sub-tab ──────────────────────────────────────────────
+            // -- Gamepad sub-tab ----------------------------------------------
             if (_settingsGpRebindSlot >= 0)
             {
                 // Scan for any gamepad button press and assign it
@@ -8008,7 +8346,7 @@ void Engine::DrawSettings() const
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
 
-    // Scrolling checkerboard background — blue-navy tones
+    // Scrolling checkerboard background - blue-navy tones
     DrawScrollingCheckerboard(sw, sh,
         Color{14, 28, 52, 255}, Color{20, 42, 76, 255}, 20.f, 11.f);
 
@@ -8046,12 +8384,17 @@ void Engine::DrawSettings() const
     const float tabGap = 14.f;
     const float kTabW[3]           = { 195.f, 175.f, 225.f };
     static const char* kTabLabels[3] = { "DISPLAY", "AUDIO", "KEYBINDINGS" };
+    bool gpAvail = IsGamepadAvailable(0);
     float tabX = panelX + 40.f;
     for (int tabIdx = 0; tabIdx < 3; tabIdx++)
     {
         bool   active     = (_settingsTab == tabIdx);
+        bool   gpCursor   = gpAvail && (_settingsGpSection == 0) && (_settingsGpTabCursor == tabIdx);
         Color  tabFill    = active ? Color{130, 235, 255, 200} : Color{30, 55, 70, 180};
         Color  tabBorder  = active ? Color{130, 235, 255, 255} : Color{70, 120, 150, 140};
+        if (gpCursor && !active)
+            DrawRectangleRoundedLines({ tabX - 3.f, tabY - 3.f, kTabW[tabIdx] + 6.f, tabH + 6.f },
+                                      0.25f, 6, Color{255, 200, 0, 255});
         DrawRectangleRounded    ({ tabX, tabY, kTabW[tabIdx], tabH }, 0.25f, 6, tabFill);
         DrawRectangleRoundedLines({ tabX, tabY, kTabW[tabIdx], tabH }, 0.25f, 6, tabBorder);
         int tabFs = 30;
@@ -8103,15 +8446,25 @@ void Engine::DrawSettings() const
         const float trackW = 600.f;
         bool mouseDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON) || (GetTouchPointCount() > 0);
         bool mouseRel  = IsMouseButtonReleased(MOUSE_LEFT_BUTTON);
+        bool gpInAudio = gpAvail && (_settingsGpSection == 2);
+        if (gpInAudio && _settingsGpContentRow == 0)
+            DrawRectangleRoundedLines({ trackX - 330.f, contentY - 24.f, trackX + trackW + 80.f - (trackX - 330.f), 52.f },
+                                      0.1f, 4, Color{255, 200, 0, 160});
         DrawSettingsSlider("Master Volume", s.masterVolume,
                            trackX, contentY, trackW,
-                           _settingsDragSlider == 0, mouse, mouseDown, mouseRel);
+                           (_settingsDragSlider == 0) || (gpInAudio && _settingsGpContentRow == 0), mouse, mouseDown, mouseRel);
+        if (gpInAudio && _settingsGpContentRow == 1)
+            DrawRectangleRoundedLines({ trackX - 330.f, contentY + rowSpacing - 24.f, trackX + trackW + 80.f - (trackX - 330.f), 52.f },
+                                      0.1f, 4, Color{255, 200, 0, 160});
         DrawSettingsSlider("Music Volume", s.musicVolume,
                            trackX, contentY + rowSpacing, trackW,
-                           _settingsDragSlider == 1, mouse, mouseDown, mouseRel);
+                           (_settingsDragSlider == 1) || (gpInAudio && _settingsGpContentRow == 1), mouse, mouseDown, mouseRel);
+        if (gpInAudio && _settingsGpContentRow == 2)
+            DrawRectangleRoundedLines({ trackX - 330.f, contentY + rowSpacing * 2.f - 24.f, trackX + trackW + 80.f - (trackX - 330.f), 52.f },
+                                      0.1f, 4, Color{255, 200, 0, 160});
         DrawSettingsSlider("SFX Volume", s.sfxVolume,
                            trackX, contentY + rowSpacing * 2.f, trackW,
-                           _settingsDragSlider == 2, mouse, mouseDown, mouseRel);
+                           (_settingsDragSlider == 2) || (gpInAudio && _settingsGpContentRow == 2), mouse, mouseDown, mouseRel);
     }
     else
     {
@@ -8119,13 +8472,16 @@ void Engine::DrawSettings() const
         DrawSettingsKeybindings(contentY, panelX, panelW, mouse);
     }
 
-    // Back button — sits below the nine-slice border PNG (borderPad=24 + 8 gap)
+    // Back button - sits below the nine-slice border PNG (borderPad=24 + 8 gap)
     float backX = panelX + panelW * 0.5f - 140.f;
     float backY = panelY + panelH + 32.f;
     Rectangle backBtn = { backX, backY, 280.f, 55.f };
-    bool backHov = CheckCollisionPointRec(mouse, backBtn);
+    bool backHov    = CheckCollisionPointRec(mouse, backBtn);
+    bool gpBackFocus = IsGamepadAvailable(0) && (_settingsGpSection == 3);
+    if (gpBackFocus)
+        DrawRectangleRoundedLines({ backX - 4.f, backY - 4.f, 288.f, 63.f }, 0.25f, 6, Color{255, 200, 0, 255});
     DrawRectangleRounded(backBtn, 0.25f, 6,
-        backHov ? Color{60, 110, 140, 240} : Color{20, 40, 55, 200});
+        (backHov || gpBackFocus) ? Color{60, 110, 140, 240} : Color{20, 40, 55, 200});
     DrawRectangleRoundedLines(backBtn, 0.25f, 6, Color{130, 235, 255, 160});
     int bfs = 32;
     int bw  = MeasureText("BACK", bfs);
@@ -8147,7 +8503,7 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
     const float badgeH = rowH * 0.72f;
     const float badgeX = rowX + rowW - badgeW - 16.f;
 
-    // ── Sub-tab strip (M&K / GAMEPAD) ────────────────────────────────────────
+    // -- Sub-tab strip (M&K / GAMEPAD) ----------------------------------------
     const float subTabH   = 40.f;
     const float subTabW   = 160.f;
     const float subTabGap = 10.f;
@@ -8155,11 +8511,16 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
 
     static const char* kSubTabs[2] = { "M&K", "GAMEPAD" };
     float stX = panelX + 40.f;
+    bool gpSubAvail = IsGamepadAvailable(0);
     for (int st = 0; st < 2; st++)
     {
         bool active      = (_keybindSubTab == st);
+        bool gpSubCursor = gpSubAvail && (_settingsGpSection == 1) && (_settingsGpSubCursor == st);
         Color fill       = active ? Color{130, 235, 255, 200} : Color{30, 55, 70, 180};
         Color border     = active ? Color{130, 235, 255, 255} : Color{70, 120, 150, 140};
+        if (gpSubCursor && !active)
+            DrawRectangleRoundedLines({ stX - 3.f, subTabY - 3.f, subTabW + 6.f, subTabH + 6.f },
+                                      0.25f, 6, Color{255, 200, 0, 255});
         DrawRectangleRounded     ({ stX, subTabY, subTabW, subTabH }, 0.25f, 6, fill);
         DrawRectangleRoundedLines({ stX, subTabY, subTabW, subTabH }, 0.25f, 6, border);
         int stFs = 28;
@@ -8181,7 +8542,7 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
 
     if (_keybindSubTab == 0)
     {
-        // ── M&K ──────────────────────────────────────────────────────────────
+        // -- M&K --------------------------------------------------------------
         struct SlotDef { const char* groupLabel; const char* name; };
         static const SlotDef mkSlots[10] = {
             { "MOVEMENT",  "Move Up"    },
@@ -8226,9 +8587,13 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
                      nameFsz, Color{200, 225, 240, 220});
 
             bool  awaiting   = (_settingsRebindSlot == i);
+            bool  gpRowFocus = IsGamepadAvailable(0) && (_settingsGpSection == 2) && (_settingsGpContentRow == i);
             float badgeY     = curY + rowH * 0.5f - badgeH * 0.5f;
             bool  hovered    = CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH });
-            Color badgeFill  = awaiting ? Color{255, 200, 60, 230} : hovered ? Color{80, 180, 80, 220} : Color{40, 130, 70, 200};
+            if (gpRowFocus)
+                DrawRectangleRoundedLines({ rowX - 2.f, curY - 2.f, rowW + 4.f, rowH + 4.f },
+                                          0.2f, 4, Color{255, 200, 0, 200});
+            Color badgeFill  = awaiting ? Color{255, 200, 60, 230} : (gpRowFocus || hovered) ? Color{80, 180, 80, 220} : Color{40, 130, 70, 200};
             Color badgeBorder= awaiting ? Color{255, 230, 100, 255} : Color{80, 200, 80, 180};
             DrawRectangleRounded     ({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeFill);
             DrawRectangleRoundedLines({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeBorder);
@@ -8242,8 +8607,8 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
         }
 
         const char* hint = (_settingsRebindSlot >= 0)
-            ? "Press ESC to cancel  |  Press any key to assign"
-            : "Click a key badge to rebind";
+            ? "Press ESC / B to cancel  |  Press any key to assign"
+            : "Click a badge or press A to rebind";
         int hintFsz = 22;
         int hintTw  = MeasureText(hint, hintFsz);
         DrawText(hint, (int)(rowX + rowW * 0.5f - hintTw * 0.5f),
@@ -8252,7 +8617,7 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
     }
     else
     {
-        // ── Gamepad ───────────────────────────────────────────────────────────
+        // -- Gamepad -----------------------------------------------------------
         struct GpSlotDef { const char* groupLabel; const char* name; };
         static const GpSlotDef gpSlots[7] = {
             { "ACTIONS",   "Attack"    },
@@ -8303,9 +8668,13 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
                      nameFsz, Color{200, 225, 240, 220});
 
             bool  awaiting   = (_settingsGpRebindSlot == i);
+            bool  gpRowFocus = IsGamepadAvailable(0) && (_settingsGpSection == 2) && (_settingsGpContentRow == i);
             float badgeY     = curY + rowH * 0.5f - badgeH * 0.5f;
             bool  hovered    = CheckCollisionPointRec(mouse, { badgeX, badgeY, badgeW, badgeH });
-            Color badgeFill  = awaiting ? Color{255, 200, 60, 230} : hovered ? Color{80, 180, 80, 220} : Color{40, 130, 70, 200};
+            if (gpRowFocus)
+                DrawRectangleRoundedLines({ rowX - 2.f, curY - 2.f, rowW + 4.f, rowH + 4.f },
+                                          0.2f, 4, Color{255, 200, 0, 200});
+            Color badgeFill  = awaiting ? Color{255, 200, 60, 230} : (gpRowFocus || hovered) ? Color{80, 180, 80, 220} : Color{40, 130, 70, 200};
             Color badgeBorder= awaiting ? Color{255, 230, 100, 255} : Color{80, 200, 80, 180};
             DrawRectangleRounded     ({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeFill);
             DrawRectangleRoundedLines({ badgeX, badgeY, badgeW, badgeH }, 0.3f, 6, badgeBorder);
@@ -8320,8 +8689,8 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
         }
 
         const char* hint = (_settingsGpRebindSlot >= 0)
-            ? "Press ESC to cancel  |  Press any button to assign"
-            : "Click a badge to rebind  |  Left stick always moves";
+            ? "Press ESC / B to cancel  |  Press any button to assign"
+            : "Press A on a row to rebind  |  Left stick always moves";
         int hintFsz = 22;
         int hintTw  = MeasureText(hint, hintFsz);
         DrawText(hint, (int)(rowX + rowW * 0.5f - hintTw * 0.5f),
@@ -8329,7 +8698,7 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
     }
 }
 
-// ── World Map ──────────────────────────────────────────────────────────────────
+// -- World Map ------------------------------------------------------------------
 
 void Engine::OpenWorldMap()
 {
@@ -8341,7 +8710,7 @@ void Engine::OpenWorldMap()
         return;
     }
 
-    // Zone 4 boss just cleared → skip map, go straight to DemonsInsides.
+    // Zone 4 boss just cleared ? skip map, go straight to DemonsInsides.
     if (_worldZone >= 4)
     {
         _worldZone = 5;
@@ -8350,7 +8719,7 @@ void Engine::OpenWorldMap()
         _dungeonGen.Generate();
         int startIdx = _dungeonGen.GetStartIndex();
         EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
-        // FadingIn was already set by the fade handler — just reset the timer/alpha.
+        // FadingIn was already set by the fade handler - just reset the timer/alpha.
         _dungeonFadeState = DungeonFadeState::FadingIn;
         _dungeonFadeTimer = kDungeonFadeDuration;
         _dungeonFadeAlpha = 255.f;
@@ -8376,6 +8745,12 @@ void Engine::UpdateWorldMap(float dt)
         _gameState = GameState::Pause;
         return;
     }
+    if (IsGamepadAvailable(0) && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_MIDDLE_RIGHT))
+    {
+        _stateBeforePause = GameState::WorldMap;
+        _gameState        = GameState::Pause;
+        return;
+    }
 
     // Debug editor toggle (KEY_NINE, same as the act-map editor).
     if (_debug.IsActive() && IsKeyPressed(KEY_NINE))
@@ -8390,7 +8765,7 @@ void Engine::UpdateWorldMap(float dt)
     bool done = _worldMap.Update(dt);
     if (!done) return;
 
-    // Player confirmed a biome — advance zone and load the new dungeon.
+    // Player confirmed a biome - advance zone and load the new dungeon.
     Biome selectedBiome   = _worldMap.GetSelectedBiome();
     int   selectedTierIdx = _worldMap.GetSelectedTierIdx();
 
@@ -8608,7 +8983,7 @@ void Engine::DrawBiomeModifiers()
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
 
-    // World pos → screen pos in dungeon run (room fills the screen, camera at center).
+    // World pos ? screen pos in dungeon run (room fills the screen, camera at center).
     auto worldToScreen = [&](Vector2 worldPos) -> Vector2
     {
         return { worldPos.x + _shakeOffset.x, worldPos.y + _shakeOffset.y };
@@ -8634,7 +9009,7 @@ void Engine::DrawBiomeModifiers()
             }
             else if (_roomClearExplosionTex.id != 0)
             {
-                // Play Flame_Explosion.png — only the first 8 frames contain fire content.
+                // Play Flame_Explosion.png - only the first 8 frames contain fire content.
                 // Sprite bottom is anchored at the circle center so flames fill the circle.
                 static constexpr int   kExpFrameW = 64;
                 static constexpr int   kExpFrameH = 64;
@@ -8675,7 +9050,7 @@ void Engine::DrawBiomeModifiers()
 
     case Biome::TheSanctuary:
     {
-        // Gentle breathing fill + bright border — the whole disc is visible, not just an edge ring.
+        // Gentle breathing fill + bright border - the whole disc is visible, not just an edge ring.
         float fill  = sinf((float)GetTime() * 2.0f) * 0.08f + 0.22f;
         float border = 0.75f;
         for (const auto& zone : _sanctuaryZones)
@@ -8704,11 +9079,11 @@ void Engine::DrawBiomeModifiers()
         DrawRectangle(0, 0, (int)sw, (int)sh,
             Fade(Color{ 30, 0, 60, 255 }, 0.15f + 0.07f * sinf(t * 0.7f)));
 
-        // Floating dream wisps — stateless, positions driven by time + per-wisp phase.
+        // Floating dream wisps - stateless, positions driven by time + per-wisp phase.
         constexpr int kWisps = 12;
         for (int w = 0; w < kWisps; w++)
         {
-            float phase = w * 0.524f;   // 2π / 12
+            float phase = w * 0.524f;   // 2p / 12
             float px = sw * (0.06f + 0.88f * ((w + 0.5f) / kWisps))
                        + cosf(t * 0.38f + phase) * sw * 0.06f;
             float py = sh * 0.5f + sinf(t * 0.28f + phase * 1.4f) * sh * 0.33f;
@@ -8739,7 +9114,7 @@ void Engine::UpdateDreamFlicker(float dt)
 
         enemy->TickFlicker(dt);
 
-        // Complete a windup that just finished — teleport and restart cooldown.
+        // Complete a windup that just finished - teleport and restart cooldown.
         if (enemy->ConsumeFlickerComplete())
         {
             enemy->Teleport(enemy->GetFlickerTarget());
@@ -8774,12 +9149,12 @@ void Engine::UpdateDreamFlicker(float dt)
 
         if (!shouldFlicker)
         {
-            // Not far enough / close enough yet — check again soon.
+            // Not far enough / close enough yet - check again soon.
             enemy->SetFlickerCooldown(0.5f);
             continue;
         }
 
-        // Find a valid destination: random angle, 100–200 px away from current pos.
+        // Find a valid destination: random angle, 100-200 px away from current pos.
         Vector2 enemyPos  = enemy->GetWorldPos();
         Vector2 blinkDest{};
         bool    foundDest = false;
@@ -8812,7 +9187,7 @@ void Engine::UpdateDreamFlicker(float dt)
 
         if (!foundDest)
         {
-            // No valid spot this attempt — try again in a moment.
+            // No valid spot this attempt - try again in a moment.
             enemy->SetFlickerCooldown(0.8f);
             continue;
         }
@@ -8825,7 +9200,7 @@ void Engine::UpdateDreamFlicker(float dt)
 
 void Engine::UpdateDungeonRun(float dt)
 {
-    // ── Dungeon fade transition (Store enter / boss clear) ────────────────────
+    // -- Dungeon fade transition (Store enter / boss clear) --------------------
     if (_dungeonFadeState != DungeonFadeState::None)
     {
         _dungeonFadeTimer -= dt;
@@ -8855,11 +9230,11 @@ void Engine::UpdateDungeonRun(float dt)
                 _dungeonFadeAlpha = 0.f;
                 _dungeonFadeState = DungeonFadeState::None;
             }
-            // gameplay runs normally during fade-in — don't return
+            // gameplay runs normally during fade-in - don't return
         }
     }
 
-    // ── Play view — player walks around the room ──────────────────────────────
+    // -- Play view - player walks around the room ------------------------------
     if (_dungeonView == DungeonView::Play)
     {
         if (!_dungeonScrolling && IsKeyPressed(KEY_ESCAPE))
@@ -8885,7 +9260,7 @@ void Engine::UpdateDungeonRun(float dt)
         float sw = (float)kVirtualWidth;
         float sh = (float)kVirtualHeight;
 
-        // ── Scroll animation ─────────────────────────────────────────────────
+        // -- Scroll animation -------------------------------------------------
         if (_dungeonScrolling)
         {
             _dungeonScrollT += dt / kDungeonScrollDur;
@@ -8898,10 +9273,10 @@ void Engine::UpdateDungeonRun(float dt)
             return;
         }
 
-        // ── Cutscene ─────────────────────────────────────────────────────────
+        // -- Cutscene ---------------------------------------------------------
         if (_cutscene.IsActive())
         {
-            // F11 — toggle dialogue box designer even while a cutscene is running
+            // F11 - toggle dialogue box designer even while a cutscene is running
             if (_debug.IsActive() && IsKeyPressed(KEY_F11))
             {
                 _isDlgEditorActive = !_isDlgEditorActive;
@@ -8916,7 +9291,7 @@ void Engine::UpdateDungeonRun(float dt)
 
             if (_isDlgEditorActive)
             {
-                // Editor active — handle mouse drag but don't consume E/click for dialogue
+                // Editor active - handle mouse drag but don't consume E/click for dialogue
                 UpdateDialogueBoxEditor();
                 return;
             }
@@ -8938,7 +9313,7 @@ void Engine::UpdateDungeonRun(float dt)
                 _gameState                = GameState::LevelUpChoice;
             }
 
-            // Signal: player just chose an ability — resume cutscene
+            // Signal: player just chose an ability - resume cutscene
             if (_cutscene.WantsAbilitySelect() && _starterAbilityGiftClaimed)
                 _cutscene.OnAbilitySelected();
 
@@ -8949,8 +9324,14 @@ void Engine::UpdateDungeonRun(float dt)
                 SetStoreDoorTiles(TileType::DoorOpen);
             }
 
-            // Player advances dialogue with E or left-click
-            if (IsKeyPressed(KEY_E) || IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            // Poll gamepad here so controller buttons work even though the
+            // cutscene block returns early before the normal gamepad input block.
+            _gamepad.Update(_gamepadBindingsEdit);
+            bool gamepadAdvance = _gamepad.isActive &&
+                (_gamepad.attackPressed || _gamepad.dashPressed);
+
+            // Player advances dialogue with E, left-click, or a gamepad face button
+            if (IsKeyPressed(KEY_E) || IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || gamepadAdvance)
                 _cutscene.AdvanceOnInput();
 
             return;   // skip all normal dungeon input while cutscene is active
@@ -9052,7 +9433,7 @@ void Engine::UpdateDungeonRun(float dt)
             return;
         }
 
-        // F11 — toggle dialogue box designer (debug only)
+        // F11 - toggle dialogue box designer (debug only)
         if (_debug.IsActive() && IsKeyPressed(KEY_F11))
         {
             _isDlgEditorActive = !_isDlgEditorActive;
@@ -9075,7 +9456,7 @@ void Engine::UpdateDungeonRun(float dt)
             UpdateDialogueBoxEditor();
             return;
         }
-        // KEY_NINE — jump to world map with editor open (debug shortcut)
+        // KEY_NINE - jump to world map with editor open (debug shortcut)
         if (_debug.IsActive() && IsKeyPressed(KEY_NINE))
         {
             OpenWorldMap();
@@ -9083,7 +9464,7 @@ void Engine::UpdateDungeonRun(float dt)
                 _worldMap.ToggleEditor();
         }
 
-        // ── Normal player update ──────────────────────────────────────────────
+        // -- Normal player update ----------------------------------------------
         if (_player.GetHealthValue() <= 0.f && !_playerDying)
         {
             _playerDying   = true;
@@ -9102,14 +9483,19 @@ void Engine::UpdateDungeonRun(float dt)
         }
 
         _player.SetCombatLocked(false);
-        _player.SetTouchModeEnabled(false);
+
+        // Touch controls - must be set on player before Update() consumes them.
+        _player.SetTouchModeEnabled(_touchModeActive);
+        if (_touchModeActive)
+            UpdateTouchControls();
 
         // Gamepad input for dungeon run
         _gamepad.Update(_gamepadBindingsEdit);
         if (_gamepad.isActive)
         {
-            if (Vector2LengthSqr(_gamepad.moveDir) > 0.f)
-                _player.SetTouchDirection(_gamepad.moveDir);
+            // Always push the direction (including zero) so releasing the stick
+            // clears _touchMoveDir and the player stops instead of drifting.
+            _player.SetTouchDirection(_gamepad.moveDir);
             if (_gamepad.attackPressed)  _player.SetTouchAttack();
             if (_gamepad.dashPressed)    _player.SetTouchDash();
             for (int i = 0; i < 4; i++)
@@ -9195,7 +9581,7 @@ void Engine::UpdateDungeonRun(float dt)
         {
             if (_currentRoomType == RoomType::Store)
             {
-                // Fade to black before entering the first dungeon room — feels more intentional
+                // Fade to black before entering the first dungeon room - feels more intentional
                 // than a Zelda-style room scroll for this "entering the dungeon" moment.
                 int nextIdx = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx, -1, 0);
                 if (nextIdx >= 0)
@@ -9237,7 +9623,7 @@ void Engine::UpdateDungeonRun(float dt)
             if ((pos.x != posBefore.x || pos.y != posBefore.y) && _player.IsBeingForcedPushed())
                 _player.OnForcedPushCollision();
 
-            // Prop collision — resolve player out of each prop's stored collision rect.
+            // Prop collision - resolve player out of each prop's stored collision rect.
             float pxScaleX = cellW / 16.f;
             float pxScaleY = cellH / 16.f;
             auto resolvePlayerVsPropRect = [&](Rectangle propRect) {
@@ -9276,11 +9662,12 @@ void Engine::UpdateDungeonRun(float dt)
             }
         }
 
-        // ── Combat update ─────────────────────────────────────────────────────
+        // -- Combat update -----------------------------------------------------
         if (_currentRoomType == RoomType::Store)
         {
             Vector2 shopWorldOffset{ -_cameraPos.x, -_cameraPos.y };
-            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive))
+            bool gamepadInteract = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
+            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive, gamepadInteract))
             {
                 _levelUpReturnState = GameState::DungeonRun;
                 if (!_starterAbilityGiftClaimed)
@@ -9300,10 +9687,36 @@ void Engine::UpdateDungeonRun(float dt)
         _nav.TickRefresh(dt, _player.GetFeetWorldPos());
         _nav.ApplyPendingRefresh();
 
+        float dungeonPxScaleX = cellW / 16.f;
+        float dungeonPxScaleY = cellH / 16.f;
+        _dungeonPropCentersScratch.clear();
+        _dungeonPropCentersScratch.reserve(_dungeonRoomLayout.props.size() + _dungeonRoomLayout.animProps.size());
+        auto addDungeonPropCenter = [&](const SpritePlacement& prop, const Rectangle& coll)
+        {
+            Rectangle rec{
+                prop.col * cellW + coll.x * dungeonPxScaleX,
+                prop.row * cellH + coll.y * dungeonPxScaleY,
+                coll.width * dungeonPxScaleX,
+                coll.height * dungeonPxScaleY
+            };
+            _dungeonPropCentersScratch.push_back({ rec.x + rec.width * 0.5f, rec.y + rec.height * 0.5f });
+        };
+        for (const SpritePlacement& prop : _dungeonRoomLayout.props)
+        {
+            if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
+            addDungeonPropCenter(prop, _tileDefs.props[prop.defIdx].collision);
+        }
+        for (const SpritePlacement& prop : _dungeonRoomLayout.animProps)
+        {
+            if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.animProps.size()) continue;
+            addDungeonPropCenter(prop, _tileDefs.animProps[prop.defIdx].collision);
+        }
+
         EnemyRuntimeContext eCtx{};
         eCtx.player             = &_player;
         eCtx.nav                = &_nav;
-        eCtx.props              = &_props;   // empty in dungeon run mode
+        eCtx.props              = &_props;   // used by overworld rooms
+        eCtx.propCenters        = &_dungeonPropCentersScratch;
         eCtx.enemies            = &_enemies;
         eCtx.cyclopsLasers      = &_cyclopsLasers;
         eCtx.lavaBalls          = &_lavaBalls;
@@ -9318,7 +9731,7 @@ void Engine::UpdateDungeonRun(float dt)
         HandlePlayerMeleeDamage();
         ResolveDungeonEnemyCollisions();
 
-        // Player-enemy capsule separation — gives enemies physical presence.
+        // Player-enemy capsule separation - gives enemies physical presence.
         // Dash passes through enemies; on landing inside one, the player is ejected.
         if (!_player.IsDashing())
         {
@@ -9348,9 +9761,18 @@ void Engine::UpdateDungeonRun(float dt)
                 if (epos.y > roomBottom)         { epos.y = roomBottom;   clamped = true; }
                 if (clamped)
                 {
-                    if (Molarbeast* mb = enemy->AsMolarbeast()) { if (mb->IsDashing()) mb->OnDashBlocked(); }
-                    else if (Ogre*  og = enemy->AsOgre())       { if (og->IsRushing()) og->OnRushBlocked(); }
-                    enemy->Teleport(epos);
+                    bool specialStopHandled = false;
+                    if (Molarbeast* mb = enemy->AsMolarbeast())
+                    {
+                        if (mb->IsDashing()) { mb->OnDashBlocked(); specialStopHandled = true; }
+                    }
+                    else if (Ogre* og = enemy->AsOgre())
+                    {
+                        if (og->IsRushing()) { og->OnRushBlocked(); specialStopHandled = true; }
+                    }
+
+                    if (!specialStopHandled)
+                        enemy->Teleport(epos);
                 }
             }
         }
@@ -9408,7 +9830,7 @@ void Engine::UpdateDungeonRun(float dt)
         }
 
         // Drain pending EXP slowly (50/sec) so the HUD bar animates, then trigger
-        // a LevelUpChoice screen for each level the player gains — same as the
+        // a LevelUpChoice screen for each level the player gains - same as the
         // wave-based ExpTally flow but without the full overlay screen.
         if (!_dungeonScrolling && _pendingExp > 0.f)
         {
@@ -9442,7 +9864,7 @@ void Engine::UpdateDungeonRun(float dt)
             _gameState          = GameState::LevelUpChoice;
         }
 
-        // ── Room clear detection ───────────────────────────────────────────────
+        // -- Room clear detection -----------------------------------------------
         if (_dungeonEnemiesSpawned)
         {
             bool allDead = true;
@@ -9492,14 +9914,14 @@ void Engine::UpdateDungeonRun(float dt)
             }
         }
 
-        // ── Boss exit trigger ──────────────────────────────────────────────────
+        // -- Boss exit trigger --------------------------------------------------
         int bossIdx = _dungeonGen.GetBossIndex();
         if (_dungeonRoomIdx == bossIdx && _dungeonRoomStates[bossIdx].cleared)
         {
             Rectangle exitRect = GetDungeonBossExitTrigger();
             if (CheckCollisionPointRec(_player.GetWorldPos(), exitRect))
             {
-                // Boss cleared — fade to black, then show the world map so player picks next biome.
+                // Boss cleared - fade to black, then show the world map so player picks next biome.
                 // Note: the fade handler sets FadingIn after the action fires; that stale state
                 // is overwritten when UpdateWorldMap later calls EnterDungeonRoom.
                 ClearDungeonEnemies();
@@ -9510,7 +9932,7 @@ void Engine::UpdateDungeonRun(float dt)
             }
         }
 
-        // Treasure chest overlap — player walks over the chest to open it.
+        // Treasure chest overlap - player walks over the chest to open it.
         if (_treasureChestSpawned && !_treasureChestBroken)
         {
             if (CheckCollisionPointRec(_player.GetWorldPos(), GetTreasureChestRect()))
@@ -9521,12 +9943,12 @@ void Engine::UpdateDungeonRun(float dt)
             }
         }
 
-        // Room fills the screen — camera stays fixed at screen centre.
+        // Room fills the screen - camera stays fixed at screen centre.
         _cameraPos = { sw * 0.5f, sh * 0.5f };
         return;
     }
 
-    // ── Room view — static tile preview ──────────────────────────────────────
+    // -- Room view - static tile preview --------------------------------------
     if (_dungeonView == DungeonView::Room)
     {
         if (IsKeyPressed(KEY_ESCAPE))
@@ -9636,7 +10058,7 @@ void Engine::DrawDungeonRun()
     float scaleX = sw / (RoomLayout::kCols * 16.f);
     float scaleY = sh / (RoomLayout::kRows * 16.f);
 
-    // ── Room type label helper ────────────────────────────────────────────────
+    // -- Room type label helper ------------------------------------------------
     auto drawRoomLabel = [&]()
     {
         const auto& rooms = _dungeonGen.GetRooms();
@@ -9658,7 +10080,7 @@ void Engine::DrawDungeonRun()
         DrawText(label, (int)(sw * 0.5f - lw * 0.5f), 16, 24, GOLD);
     };
 
-    // ── Play view — tile room with live player ────────────────────────────────
+    // -- Play view - tile room with live player --------------------------------
     if (_dungeonView == DungeonView::Play)
     {
         ClearBackground(Color{ 8, 6, 10, 255 });
@@ -9683,12 +10105,15 @@ void Engine::DrawDungeonRun()
                 DrawDungeonMagicGemAndBarrier();
                 DrawBiomeModifiers();
 
-                // Enemies, projectiles, VFX — world == screen in dungeon run mode.
+                // Enemies, projectiles, VFX - world == screen in dungeon run mode.
                 // _shakeOffset shifts everything together so the screen-shake effect is visible.
                 Vector2 worldOffset{ -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
                 Vector2 shakenCamRef{ _cameraPos.x - _shakeOffset.x, _cameraPos.y - _shakeOffset.y };
                 for (const auto& proj : _spreadProjectiles)
                     proj.Draw(worldOffset);
+                for (const auto& proj : _lavaBalls)
+                    if (proj.IsActive())
+                        proj.Draw(worldOffset);
                 DrawCyclopsLasers(worldOffset);
                 _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
                 for (auto& pickup : _pickups)
@@ -9713,7 +10138,7 @@ void Engine::DrawDungeonRun()
                     enemy->DrawEnemy(shakenCamRef);
                 }
 
-                // Dream Realm flicker — pulsing ring at windup position + destination marker.
+                // Dream Realm flicker - pulsing ring at windup position + destination marker.
                 if (_currentBiome == Biome::DreamRealm)
                 {
                     float pulse = sinf((float)GetTime() * 18.f) * 0.35f + 0.65f;
@@ -9762,7 +10187,7 @@ void Engine::DrawDungeonRun()
             DrawMagicGemHudIcon();
             drawRoomLabel();
 
-            // Small biome name reminder in the bottom-right corner — useful when
+            // Small biome name reminder in the bottom-right corner - useful when
             // cycling biomes in the pregen map test without losing track of which one is active.
             {
                 const char* biomeTag = TextFormat("[ %s ]", GetBiomeName(_currentBiome));
@@ -9793,7 +10218,7 @@ void Engine::DrawDungeonRun()
                 DrawDialogueBoxEditor();
         }
 
-        // ── Dungeon fade overlay (covers HUD, enemies, everything) ────────────
+        // -- Dungeon fade overlay (covers HUD, enemies, everything) ------------
         if (_dungeonFadeAlpha > 0.f)
         {
             unsigned char alpha = (unsigned char)std::clamp((int)_dungeonFadeAlpha, 0, 255);
@@ -9802,7 +10227,7 @@ void Engine::DrawDungeonRun()
         return;
     }
 
-    // ── Room view — static tile preview ──────────────────────────────────────
+    // -- Room view - static tile preview --------------------------------------
     if (_dungeonView == DungeonView::Room)
     {
         ClearBackground(Color{ 8, 6, 10, 255 });
@@ -9819,7 +10244,7 @@ void Engine::DrawDungeonRun()
         return;
     }
 
-    // ── Graph view ────────────────────────────────────────────────────────────
+    // -- Graph view ------------------------------------------------------------
     ClearBackground(Color{ 14, 14, 20, 255 });
 
     const auto& rooms = _dungeonGen.GetRooms();
@@ -10231,7 +10656,7 @@ void Engine::UpdateTouchControls()
     _touch.kDashLabelFs   = _hudCfg.touchDashFs;
     _touch.kDashBotPad    = _hudCfg.touchDashBotPad;
 
-    // ── Ability slot drag (only when HUD editor is open) ─────────────────────
+    // -- Ability slot drag (only when HUD editor is open) ---------------------
     if (_hudEditorActive)
     {
         const Vector2 mousePos = GetVirtualMousePos();
@@ -10272,7 +10697,7 @@ void Engine::UpdateTouchControls()
         }
     }
 
-    // ── Zeph tap priority ─────────────────────────────────────────────────────
+    // -- Zeph tap priority -----------------------------------------------------
     // If a new press lands near Zeph's sprite, skip _touch.Update() so the
     // joystick never activates. UpdateNpc() (called later in UpdateGamePlay)
     // will handle the tap independently.
@@ -10317,7 +10742,7 @@ void Engine::UpdateTouchControls()
 
     ScanAbilityArcTaps();
 
-    // Pause button (top-right corner) — same rect as DrawHUD draws it
+    // Pause button (top-right corner) - same rect as DrawHUD draws it
     const Rectangle pauseRec{ (float)screenW - _hudCfg.touchPauseW - _hudCfg.touchPausePad,
                                _hudCfg.touchPausePad, _hudCfg.touchPauseW, _hudCfg.touchPauseH };
 
@@ -10333,7 +10758,7 @@ void Engine::UpdateTouchControls()
     }
     else
     {
-        // Real touch — check any new touch ID not already owned by other controls
+        // Real touch - check any new touch ID not already owned by other controls
         int joyId  = _touch.GetJoyTouchId();
         int atkId  = _touch.GetAtkTouchId();
         int dashId = _touch.GetDashTouchId();
@@ -10367,15 +10792,25 @@ void Engine::ScanAbilityArcTaps()
     auto hitSlot = [&](Vector2 pos) -> int
     {
         for (int s = 0; s < totalSlots; s++)
-            if (CheckCollisionPointRec(pos, TouchAbilityRect(s, screenW, screenH,
-                    _touch.kBtnBotPad, _touch.kBtnRadius,
-                    _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
-                    _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
-                    _touchSlotOffset[s]))) return s;
+        {
+            Rectangle r = TouchAbilityRect(s, screenW, screenH,
+                _touch.kBtnBotPad, _touch.kBtnRadius,
+                _hudCfg.touchSlotSz, _hudCfg.touchSlotGap,
+                _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
+                _touchSlotOffset[s]);
+
+            const float pad = _hudCfg.touchSlotSz * 0.18f;
+            r.x -= pad;
+            r.y -= pad;
+            r.width += pad * 2.f;
+            r.height += pad * 2.f;
+
+            if (CheckCollisionPointRec(pos, r)) return s;
+        }
         return -1;
     };
 
-    // ── Mouse simulation path ─────────────────────────────────────────────────
+    // -- Mouse simulation path -------------------------------------------------
     if (tc == 0)
     {
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -10386,7 +10821,7 @@ void Engine::ScanAbilityArcTaps()
         return;
     }
 
-    // ── Real touch path ───────────────────────────────────────────────────────
+    // -- Real touch path -------------------------------------------------------
     // Remove IDs that have lifted
     _abilityTapSeenIds.erase(
         std::remove_if(_abilityTapSeenIds.begin(), _abilityTapSeenIds.end(),
@@ -10411,13 +10846,16 @@ void Engine::ScanAbilityArcTaps()
         for (int sid : _abilityTapSeenIds) if (sid == id) { seen = true; break; }
         if (seen) continue;
 
-        _abilityTapSeenIds.push_back(id);
         int slot = hitSlot(GetVirtualTouchPos(i));
-        if (slot >= 0) _player.TriggerAbilityCast(slot);
+        if (slot >= 0)
+        {
+            _abilityTapSeenIds.push_back(id);
+            _player.TriggerAbilityCast(slot);
+        }
     }
 }
 
-// Draws touch-mode ability slots as square icons — same visual language as the
+// Draws touch-mode ability slots as square icons - same visual language as the
 // desktop bar, just repositioned and slightly larger for thumb tapping.
 void Engine::DrawTouchAbilityArc()
 {
@@ -10556,9 +10994,9 @@ void Engine::DrawTouchAbilityArc()
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 // Touch Button Mapping Screen
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------------
 
 float Engine::GetTouchMappingRadius(int idx) const
 {
@@ -10596,7 +11034,7 @@ void Engine::EnterTouchButtonMapping()
             _touchMappingPos[2+s] = { r.x + r.width * 0.5f, r.y + r.height * 0.5f };
         }
 
-        // Capture the baked-in defaults exactly once — before any Save can dirty _hudCfg
+        // Capture the baked-in defaults exactly once - before any Save can dirty _hudCfg
         if (!_touchDefaults.captured)
         {
             _touchDefaults.atkPadR    = _hudCfg.touchAtkPadR;
@@ -10704,7 +11142,7 @@ int Engine::DrawTouchButtonMapping()
         }
     }
 
-    // ── ATK button ───────────────────────────────────────────────────────────
+    // -- ATK button -----------------------------------------------------------
     {
         bool drag = (_touchMappingDragIdx == 0);
         DrawCircleV(_touchMappingPos[0], _hudCfg.touchAtkR,
@@ -10718,7 +11156,7 @@ int Engine::DrawTouchButtonMapping()
             (int)(_touchMappingPos[0].y - fs * 0.5f), fs, RAYWHITE);
     }
 
-    // ── DASH button ──────────────────────────────────────────────────────────
+    // -- DASH button ----------------------------------------------------------
     {
         bool drag = (_touchMappingDragIdx == 1);
         DrawCircleV(_touchMappingPos[1], _hudCfg.touchDashR,
@@ -10732,7 +11170,7 @@ int Engine::DrawTouchButtonMapping()
             (int)(_touchMappingPos[1].y - fs * 0.5f), fs, RAYWHITE);
     }
 
-    // ── Ability slots ─────────────────────────────────────────────────────────
+    // -- Ability slots ---------------------------------------------------------
     static const Color kSlotColors[4] = {
         {220,120, 60,255}, {60,160,220,255}, {120,200,80,255}, {180,80,200,255}
     };
@@ -10756,7 +11194,7 @@ int Engine::DrawTouchButtonMapping()
             nfs, RAYWHITE);
     }
 
-    // ── Center UI buttons ─────────────────────────────────────────────────────
+    // -- Center UI buttons -----------------------------------------------------
     const float btnW   = 230.f;
     const float btnH   = 72.f;
     const float bGap   = 18.f;
@@ -10792,7 +11230,7 @@ int Engine::DrawTouchButtonMapping()
     return result;
 }
 
-// ── Dialogue Box Designer (F11 in debug mode) ─────────────────────────────────
+// -- Dialogue Box Designer (F11 in debug mode) ---------------------------------
 // Eight drag handles: four panel corners + portrait centre + portrait scale knob.
 // Handle IDs:
 //   0-3  = panel corners (TL, TR, BL, BR)
@@ -10827,7 +11265,7 @@ void Engine::UpdateDialogueBoxEditor()
         return;
     }
 
-    // S — print all current values to the VS output console in paste-ready format.
+    // S - print all current values to the VS output console in paste-ready format.
     if (IsKeyPressed(KEY_S))
     {
         const Rectangle& p = box.panelRect;
@@ -10848,7 +11286,7 @@ void Engine::UpdateDialogueBoxEditor()
     Vector2 delta = GetMouseDelta();
     Rectangle& p  = box.panelRect;
 
-    // ── Panel handles (release on mouse-up) ───────────────────────────────────
+    // -- Panel handles (release on mouse-up) -----------------------------------
     if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
         _dlgEditorHandle = -1;
 
@@ -10872,12 +11310,12 @@ void Engine::UpdateDialogueBoxEditor()
     if (p.width  < 80.f) p.width  = 80.f;
     if (p.height < 40.f) p.height = 40.f;
 
-    // ── Font-size drag controls ────────────────────────────────────────────────
+    // -- Font-size drag controls ------------------------------------------------
     // These hit rects match the positions drawn in DrawDialogueBoxEditor's readout.
     // Drag left = smaller, drag right = larger (0.15 px per font-size unit).
     const float kFontDragSpeed = 0.15f;
 
-    // Speaker font size — readout row 5 (after Panel X/Y/W/H)
+    // Speaker font size - readout row 5 (after Panel X/Y/W/H)
     Rectangle speakerHit{ 0.f, 88.f, 260.f, 22.f };
     if (!_dlgSpeakerFsDrag && CheckCollisionPointRec(mouse, speakerHit)
         && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -10896,7 +11334,7 @@ void Engine::UpdateDialogueBoxEditor()
         else { _dlgSpeakerFsDrag = false; }
     }
 
-    // Body font size — readout row 6
+    // Body font size - readout row 6
     Rectangle bodyHit{ 0.f, 112.f, 260.f, 22.f };
     if (!_dlgBodyFsDrag && CheckCollisionPointRec(mouse, bodyHit)
         && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -10915,7 +11353,7 @@ void Engine::UpdateDialogueBoxEditor()
         else { _dlgBodyFsDrag = false; }
     }
 
-    // Text left inset — how far from left edge text starts (row 7)
+    // Text left inset - how far from left edge text starts (row 7)
     const float kInsetDragSpeed = 0.5f;
     Rectangle insetLeftHit{ 0.f, 132.f, 260.f, 22.f };
     if (!_dlgInsetLeftDrag && CheckCollisionPointRec(mouse, insetLeftHit)
@@ -10935,7 +11373,7 @@ void Engine::UpdateDialogueBoxEditor()
         else { _dlgInsetLeftDrag = false; }
     }
 
-    // Text top inset — vertical gap from panel top to first text row (row 8)
+    // Text top inset - vertical gap from panel top to first text row (row 8)
     Rectangle insetTopHit{ 0.f, 154.f, 260.f, 22.f };
     if (!_dlgInsetTopDrag && CheckCollisionPointRec(mouse, insetTopHit)
         && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -10962,7 +11400,7 @@ void Engine::DrawDialogueBoxEditor()
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
 
-    // ── Background: dungeon tiles for context ─────────────────────────────────
+    // -- Background: dungeon tiles for context ---------------------------------
     ClearBackground(Color{ 8, 6, 10, 255 });
     if (_tileRenderer.IsLoaded())
     {
@@ -10971,13 +11409,13 @@ void Engine::DrawDialogueBoxEditor()
         _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
     }
 
-    // ── Live dialogue box preview (no portrait) ───────────────────────────────
+    // -- Live dialogue box preview (no portrait) -------------------------------
     {
         std::string previewText = "The dungeon will still be there. Take a breath.";
         box.Draw(_shopBorderTex, {}, "Zeph", previewText, true);
     }
 
-    // ── Panel drag handles ────────────────────────────────────────────────────
+    // -- Panel drag handles ----------------------------------------------------
     const Rectangle& p = box.panelRect;
 
     auto drawHandle = [&](Vector2 pos, Color col, int id)
@@ -10993,7 +11431,7 @@ void Engine::DrawDialogueBoxEditor()
     drawHandle({ p.x + p.width,                p.y + p.height }, YELLOW,  3);
     drawHandle({ p.x + p.width * 0.5f, p.y + p.height * 0.5f }, SKYBLUE, 4);
 
-    // ── Value readout panel ───────────────────────────────────────────────────
+    // -- Value readout panel ---------------------------------------------------
     const int readoutFs = 18;
     const int rowH      = readoutFs + 4;
     DrawRectangle(0, 0, 262, 184, Fade(BLACK, 0.60f));
@@ -11012,7 +11450,7 @@ void Engine::DrawDialogueBoxEditor()
     staticLine("Panel W", p.width);
     staticLine("Panel H", p.height);
 
-    // Speaker font size — draggable (highlighted when active)
+    // Speaker font size - draggable (highlighted when active)
     {
         bool active = _dlgSpeakerFsDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
@@ -11025,7 +11463,7 @@ void Engine::DrawDialogueBoxEditor()
         ry += rowH;
     }
 
-    // Body font size — draggable
+    // Body font size - draggable
     {
         bool active = _dlgBodyFsDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
@@ -11038,7 +11476,7 @@ void Engine::DrawDialogueBoxEditor()
         ry += rowH;
     }
 
-    // Text left inset — draggable
+    // Text left inset - draggable
     {
         bool active = _dlgInsetLeftDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
@@ -11051,7 +11489,7 @@ void Engine::DrawDialogueBoxEditor()
         ry += rowH;
     }
 
-    // Text top inset — draggable
+    // Text top inset - draggable
     {
         bool active = _dlgInsetTopDrag;
         Rectangle hit{ 0.f, (float)ry, 260.f, (float)rowH };
@@ -11064,7 +11502,7 @@ void Engine::DrawDialogueBoxEditor()
         ry += rowH;
     }
 
-    // ── Instructions banner ───────────────────────────────────────────────────
+    // -- Instructions banner ---------------------------------------------------
     const char* banner = "Drag handles to resize panel  |  Drag rows to change font/inset  |  [S] Print values  |  ESC close";
     int bfs = 18;
     DrawRectangle(0, (int)sh - bfs - 10, (int)sw, bfs + 10, Fade(BLACK, 0.65f));

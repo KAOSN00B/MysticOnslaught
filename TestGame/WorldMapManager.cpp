@@ -364,13 +364,62 @@ bool WorldMapManager::Update(float dt)
             }
         }
 
-        if (IsKeyPressed(KEY_ESCAPE))
+        if (IsKeyPressed(KEY_ESCAPE) ||
+            (IsGamepadAvailable(0) && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)))
         {
             _confirmActive = false;
             _confirmIdx    = -1;
         }
+        // Gamepad A = confirm Yes
+        if (IsGamepadAvailable(0) && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) && _confirmIdx >= 0)
+        {
+            _selectedBiome   = _nodes[_confirmIdx].biome;
+            _selectedTierIdx = _nodes[_confirmIdx].tierIdx;
+            _fadingOut       = true;
+            _confirmActive   = false;
+            _lastTouchCount  = 0;
+        }
 
         return false;
+    }
+
+    // ── Gamepad navigation ────────────────────────────────────────────────────
+    if (IsGamepadAvailable(0))
+    {
+        // Build ordered list of reachable node indices (left to right by tierIdx)
+        std::vector<int> reachable;
+        for (int i = 0; i < (int)_nodes.size(); ++i)
+            if (_nodes[i].isReachable && !_nodes[i].isLocked)
+                reachable.push_back(i);
+
+        // Auto-focus the first reachable node on open
+        if (_gpFocusIdx == -1 && !reachable.empty())
+            _gpFocusIdx = reachable[0];
+
+        if (_gpCooldown > 0.f) _gpCooldown -= GetFrameTime();
+
+        float axisX = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+        bool gpLeft  = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || (axisX < -0.5f && _gpCooldown <= 0.f);
+        bool gpRight = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || (axisX >  0.5f && _gpCooldown <= 0.f);
+
+        if (!reachable.empty())
+        {
+            int focusPos = 0;
+            for (int i = 0; i < (int)reachable.size(); ++i)
+                if (reachable[i] == _gpFocusIdx) { focusPos = i; break; }
+
+            if (gpLeft  && focusPos > 0)                        { _gpFocusIdx = reachable[focusPos - 1]; _gpCooldown = 0.18f; }
+            if (gpRight && focusPos < (int)reachable.size() - 1){ _gpFocusIdx = reachable[focusPos + 1]; _gpCooldown = 0.18f; }
+        }
+
+        // A = open confirm popup on focused node
+        bool gpConfirm = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+        if (!_confirmActive && gpConfirm && _gpFocusIdx >= 0)
+        {
+            _confirmIdx    = _gpFocusIdx;
+            _confirmActive = true;
+        }
+
     }
 
     // ── Node hover and click ───────────────────────────────────────────────────
@@ -411,6 +460,10 @@ bool WorldMapManager::Update(float dt)
             break;
         }
     }
+
+    // Gamepad focus drives the hover ring when mouse isn't over anything
+    if (_hoveredIdx < 0 && IsGamepadAvailable(0) && _gpFocusIdx >= 0)
+        _hoveredIdx = _gpFocusIdx;
 
     return false;
 }

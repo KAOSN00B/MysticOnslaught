@@ -1,4 +1,4 @@
-
+﻿
 #pragma once
 
 #include "raylib.h"
@@ -212,6 +212,13 @@ private:
     int   _keybindSubTab        = 0;   // 0=M&K  1=Gamepad  (sub-tab inside KEYBINDINGS tab)
     int   _settingsGpRebindSlot = -1;  // -1=none; 0=attack 1=dash 2-5=ability[0-3] 6=pause
     GamepadBindings _gamepadBindingsEdit;
+    // Settings screen gamepad cursor
+    int   _settingsGpSection    = 0;   // 0=main tabs  1=sub-tabs  2=content rows  3=back button
+    int   _settingsGpTabCursor  = 0;   // 0=Display  1=Audio  2=Keybindings
+    int   _settingsGpSubCursor  = 0;   // 0=M&K  1=Gamepad
+    int   _settingsGpContentRow = 0;   // row index within active tab content
+    int   _settingsGpContentCol = 0;   // column (Display option buttons; unused elsewhere)
+    float _settingsGpCooldown   = 0.f;
 
     RunStateController _runState;
     GameState& _gameState;
@@ -507,6 +514,11 @@ private:
     UpgradeType _abilityChoiceSwapTarget  = UpgradeType::AttackPower;
     int         _lastAbilityChoiceWave    = -1;
     float       _abilityChoiceOpenTimer   = 0.f;
+    int         _abilityChoiceGpCursor   = 0;
+    float       _abilityChoiceGpCooldown = 0.f;
+    int         _levelUpGpCursor         = 0;
+    int         _levelUpGpRow            = 1;   // 0 = ultimate row, 1 = regular row
+    float       _levelUpGpCooldown       = 0.f;
 
     // Upgrade icon textures (loaded once, never reloaded)
     Texture2D _upgradeAttackPowerTex{};
@@ -652,6 +664,7 @@ private:
         bool hasGlow = false;
     };
     std::vector<DungeonClearEffect> _dungeonClearEffects;
+    std::vector<Vector2> _dungeonPropCentersScratch;
 
     std::unordered_map<int, DungeonRoomState> _dungeonRoomStates;
     bool _dungeonEnemiesSpawned = false;

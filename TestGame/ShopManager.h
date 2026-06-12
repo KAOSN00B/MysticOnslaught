@@ -48,7 +48,7 @@ public:
     // ── Per-frame (Store room, GameState::Play) ───────────────────────────
     // Handles NPC collision push and proximity. Returns true if the player
     // pressed E to open the shop this frame.
-    bool UpdateNpc(Character& player, Vector2 worldOffset, bool touchMode);
+    bool UpdateNpc(Character& player, Vector2 worldOffset, bool touchMode, bool gamepadInteractPressed = false);
 
     // Draw the NPC sprite at its world position.
     void DrawNpc(Vector2 worldOffset) const;
@@ -59,6 +59,11 @@ public:
 
     // Render the full shop screen.
     void Draw(const Character& player, bool debugActive = false) const;
+
+    // Gamepad cursor navigation for the shop grid.
+    // Call every frame while GameState == Shop, before Update().
+    // Returns true if B / Circle was pressed (leave shop).
+    bool UpdateGamepadNav(float dt, const Character& player);
 
     // ── Inventory ─────────────────────────────────────────────────────────
     void GenerateInventory(const Character& player);
@@ -90,6 +95,26 @@ private:
     int         _dailyDealIndex = -1;   // index of discounted item (-1 = none)
 
     ShopTextures _tex;
+
+    // ── Gamepad cursor navigation ──────────────────────────────────────────
+    int   _gamepadCursorIdx      = 0;   // 0-5, item grid cursor
+    bool  _gamepadNavActive      = false;
+    bool  _gamepadConfirmPending = false;
+    float _gamepadNavCooldown    = 0.f;
+    // Bottom section (potions / reroll / leave): 0=HP Pot 1=MP Pot 2=Reroll 3=Leave
+    bool  _gamepadBottomActive   = false;
+    int   _gamepadBottomIdx      = 0;
+    bool  _gamepadRerollPending  = false;
+    bool  _gamepadHPotPending    = false;
+    bool  _gamepadMPotPending    = false;
+    // Tab-row cursor (highlight tab first, A to switch)
+    bool  _gamepadTabActive      = false;
+    int   _gamepadTabCursor      = 0;      // 0=Wares 1=Abilities
+    // Left-panel ability Upg/Rem cursor
+    bool  _gamepadLPActive       = false;
+    int   _gamepadLPIdx          = 0;      // flat index: slot0_upg=0, slot0_rem=1, slot1_upg=2, ...
+    int   _gamepadLPUpgSlot      = -1;     // pending upgrade: slot index (-1=none)
+    int   _gamepadLPRemSlot      = -1;     // pending remove:  slot index (-1=none)
 
     // ── Shop intro animation ───────────────────────────────────────────────
     enum class IntroPhase { Off, PanelSettle, ZephReveal, ContentReveal, Done };

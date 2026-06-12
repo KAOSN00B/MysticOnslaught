@@ -61,7 +61,7 @@ void Ogre::ResetForSpawn(Vector2 pos)
     // Keep ogre scale aligned with the rest of the enemy cast so it feels like
     // part of the same world. The ogre still reads larger because its sprite
     // art itself is larger, so it does not need extra scale on top.
-    _scale       = 6.f;
+    _scale       = 4.8f;
     _speed       = _walkSpeed;
     _health      = 8.f;
     _maxHealth   = 8.f;
@@ -279,8 +279,8 @@ Rectangle Ogre::GetCollisionRec() const
     if (_collisionSize.x == 0.f)
     {
         auto* s = const_cast<Ogre*>(this);
-        s->_collisionSize   = { 232.00f, 136.00f };
-        s->_collisionOffset = { 38.00f, 14.00f };
+        s->_collisionSize   = { 186.00f, 109.00f };
+        s->_collisionOffset = { 30.00f, 11.00f };
     }
     float stableHalfW = _visualFrameWidth  * _scale * 0.5f;
     float stableHalfH = _visualFrameHeight * _scale * 0.5f;
@@ -296,8 +296,8 @@ Capsule2D Ogre::GetCapsule() const
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<Ogre*>(this);
-        s->_capsuleRadius     = 65.f;
-        s->_capsuleHalfHeight = 15.f;
+        s->_capsuleRadius     = 52.f;
+        s->_capsuleHalfHeight = 12.f;
         s->_capsuleOffset     = { 0.f, 0.f };
     }
     return Capsule2D{
@@ -485,7 +485,9 @@ void Ogre::SetDeathAnimation(bool resetFrame)
 
 void Ogre::HandleRepositioning(float dt, Vector2 navigationTarget, bool hasNavigationTarget)
 {
-    Vector2 targetPos = hasNavigationTarget ? navigationTarget : _target->GetFeetWorldPos();
+    // Use the shared waypoint path helper so the ogre navigates around
+    // obstacles the same way the grunt does.
+    Vector2 targetPos = ResolveNavTarget(dt, _target->GetFeetWorldPos(), navigationTarget, hasNavigationTarget);
     Vector2 toTarget  = Vector2Subtract(targetPos, _worldPos);
     float directDist  = Vector2Distance(_worldPos, _target->GetFeetWorldPos());
 
@@ -500,6 +502,19 @@ void Ogre::HandleRepositioning(float dt, Vector2 navigationTarget, bool hasNavig
     if (Vector2Length(toTarget) > 0.01f && !IsFrozen())
     {
         Vector2 moveDir = Vector2Normalize(toTarget);
+
+        // Blend 30% toward the player when following waypoints so path refreshes
+        // don't cause a sharp direction snap (same smoothing the grunt uses).
+        bool usingWaypoints = (!_waypoints.empty() && _waypointIndex < (int)_waypoints.size());
+        if (usingWaypoints && !hasNavigationTarget)
+        {
+            Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+            if (Vector2Length(toPlayer) > 0.01f)
+                moveDir = Vector2Add(moveDir, Vector2Scale(Vector2Normalize(toPlayer), 0.3f));
+            if (Vector2Length(moveDir) > 0.01f)
+                moveDir = Vector2Normalize(moveDir);
+        }
+
         _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
 
         if (moveDir.x < -0.01f) _rightLeft = -1.f;

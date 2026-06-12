@@ -117,6 +117,7 @@ protected:
 
     void HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
         const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters);
+    Vector2 ResolveNavTarget(float dt, Vector2 playerFeet, Vector2 navigationTarget, bool hasNavigationTarget);
     void HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies);
     void PickApproachOffset();
     bool CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies) const;

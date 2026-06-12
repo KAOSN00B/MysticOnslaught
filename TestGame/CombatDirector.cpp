@@ -1,4 +1,4 @@
-#include "CombatDirector.h"
+﻿#include "CombatDirector.h"
 
 #include "Character.h"
 #include "Cyclops.h"
@@ -340,7 +340,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
     Vector2 playerFeet = ctx.player->GetFeetWorldPos();
 
     _propCentersScratch.clear();
-    if (ctx.props != nullptr && !ctx.props->empty())
+    if (ctx.propCenters != nullptr && !ctx.propCenters->empty())
+    {
+        _propCentersScratch = *ctx.propCenters;
+    }
+    else if (ctx.props != nullptr && !ctx.props->empty())
     {
         _propCentersScratch.reserve(ctx.props->size());
         for (const auto& prop : *ctx.props)

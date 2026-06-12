@@ -180,10 +180,11 @@ void Molarbeast::DrawEnemy(Vector2 cameraRef)
     screenPos.x += kVirtualWidth * 0.5f;
     screenPos.y += kVirtualHeight * 0.5f;
 
-    // The boss uses the same bottom-centred draw anchor across every state so
-    // its oversized sheets still feel planted in one world position.
-    float drawWidth = _width * _scale;
-    float drawHeight = _height * _scale;
+    // Use the stable idle-sheet dimensions for the draw rect so the anchor
+    // stays in exactly the same world position regardless of which animation
+    // sheet is active. Sheets of different pixel sizes are scaled to fit.
+    float drawWidth  = _stableFrameW * _scale;
+    float drawHeight = _stableFrameH * _scale;
 
     Color tint = WHITE;
     if (_takingDamage)

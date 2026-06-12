@@ -174,13 +174,28 @@ void ShopManager::Init(const ShopTextures& tex)
 
 void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
 {
-    _npcPos          = npcWorldPos;
-    _nearNpc         = false;
-    _touchPromptMode = false;
-    _npcTouchHeld    = false;
-    _tab             = 0;
-    _rerollCost      = 20;
-    _act             = std::max(1, act);
+    _npcPos               = npcWorldPos;
+    _nearNpc              = false;
+    _touchPromptMode      = false;
+    _npcTouchHeld         = false;
+    _tab                  = 0;
+    _rerollCost           = 20;
+    _act                  = std::max(1, act);
+    _gamepadCursorIdx      = 0;
+    _gamepadNavActive      = false;
+    _gamepadConfirmPending = false;
+    _gamepadNavCooldown    = 0.f;
+    _gamepadBottomActive   = false;
+    _gamepadBottomIdx      = 0;
+    _gamepadRerollPending  = false;
+    _gamepadHPotPending    = false;
+    _gamepadMPotPending    = false;
+    _gamepadTabActive      = false;
+    _gamepadTabCursor      = 0;
+    _gamepadLPActive       = false;
+    _gamepadLPIdx          = 0;
+    _gamepadLPUpgSlot      = -1;
+    _gamepadLPRemSlot      = -1;
     _dialogue        = "Welcome to Zeph's Wares! What do you need?";
     _introFirstEntry = true;
     _introPhase      = IntroPhase::Off;
@@ -189,7 +204,7 @@ void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
 
 // ── Per-frame (Store room) ────────────────────────────────────────────────────
 
-bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMode)
+bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMode, bool gamepadInteractPressed)
 {
     _touchPromptMode = touchMode;
     // Collision push (MTV against a 40×60 world-unit box)
@@ -237,7 +252,7 @@ bool ShopManager::UpdateNpc(Character& player, Vector2 worldOffset, bool touchMo
     bool openPressed = false;
     if (_nearNpc)
     {
-        if (!touchMode && IsKeyPressed(KEY_E))
+        if (!touchMode && (IsKeyPressed(KEY_E) || gamepadInteractPressed))
         {
             openPressed = true;
         }
@@ -363,9 +378,10 @@ bool ShopManager::Update(Character& player, bool debugActive)
                            (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
                             IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) ||
                             IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ESCAPE) ||
-                            touchTap);
+                            touchTap || _gamepadConfirmPending);
         if (skipPressed)
         {
+            _gamepadConfirmPending = false;
             _introPhase        = IntroPhase::Done;
             _introSkipLock     = 0.08f;
             _introFullAlpha    = 0.f;
@@ -549,11 +565,88 @@ bool ShopManager::Update(Character& player, bool debugActive)
             player.AddGold(-_rerollCost);
             _rerollCost += 20;
             GenerateInventory(player);
+            _gamepadCursorIdx = 0;
             _dialogue = "Fresh stock, just for you!";
         }
         else
         {
             _dialogue = "You don't have enough gold for a reroll!";
+        }
+        return false;
+    }
+
+    // Gamepad bottom-section pending actions
+    if (_gamepadRerollPending)
+    {
+        _gamepadRerollPending = false;
+        if (player.GetGold() >= _rerollCost)
+        {
+            player.AddGold(-_rerollCost);
+            _rerollCost += 20;
+            GenerateInventory(player);
+            _gamepadCursorIdx = 0;
+            _dialogue = "Fresh stock, just for you!";
+        }
+        else { _dialogue = "You don't have enough gold for a reroll!"; }
+        return false;
+    }
+    if (_gamepadHPotPending)
+    {
+        _gamepadHPotPending = false;
+        if (player.GetGold() >= (int)kPotionPrice)
+        {
+            player.AddGold(-(int)kPotionPrice);
+            player.Heal((int)(player.GetMaxHealthValue() * 0.25f));
+            _dialogue = "Drink up! That's 25% HP back.";
+        }
+        else { _dialogue = "You can't afford that right now."; }
+        return false;
+    }
+    if (_gamepadMPotPending)
+    {
+        _gamepadMPotPending = false;
+        if (player.GetGold() >= (int)kPotionPrice)
+        {
+            player.AddGold(-(int)kPotionPrice);
+            player.RestoreMana(player.GetMaxMana() / 2);
+            _dialogue = "Your mana flows freely again.";
+        }
+        else { _dialogue = "You can't afford that right now."; }
+        return false;
+    }
+    if (_gamepadLPUpgSlot >= 0)
+    {
+        int slotIdx = _gamepadLPUpgSlot;
+        _gamepadLPUpgSlot = -1;
+        AbilityType ab = player.GetLearnedAbility(slotIdx);
+        if (ab != AbilityType::None)
+        {
+            int upgCost = player.GetAbilityLevel(ab) * 100;
+            if (!player.CanUpgradeAbility(ab))
+                _dialogue = "That ability is already at its peak.";
+            else if (player.GetGold() < upgCost)
+                _dialogue = "Not enough gold to upgrade that.";
+            else
+            {
+                player.AddGold(-upgCost);
+                player.UpgradeAbility(ab);
+                _dialogue = "Power flows through you. A worthy investment!";
+            }
+        }
+        return false;
+    }
+    if (_gamepadLPRemSlot >= 0)
+    {
+        int slotIdx = _gamepadLPRemSlot;
+        _gamepadLPRemSlot = -1;
+        if (player.GetGold() < 100)
+            _dialogue = "You need 100g to remove an ability.";
+        else
+        {
+            player.AddGold(-100);
+            player.RemoveAbilityAtSlot(slotIdx);
+            _gamepadLPIdx = 0;
+            _dialogue = "That power is gone. Choose wisely next time.";
         }
         return false;
     }
@@ -692,8 +785,11 @@ bool ShopManager::Update(Character& player, bool debugActive)
             float iy   = contentY + row * (itemH + gap);
 
             Rectangle cardRect = { ix, iy, itemW, itemH };
-            if (clicked && CheckCollisionPointRec(mouse, cardRect))
+            bool cardActivated = (clicked && CheckCollisionPointRec(mouse, cardRect)) ||
+                                 (_gamepadConfirmPending && displayIdx == _gamepadCursorIdx);
+            if (cardActivated)
             {
+                _gamepadConfirmPending = false;
                 if (item.isAbility && player.GetLearnedCount() >= 3)
                 {
                     _dialogue = "You can only hold 3 abilities. Remove one first.";
@@ -707,6 +803,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
                     else
                         player.ApplyUpgrade(item.upgradeType);
                     item.purchased = true;
+                    _gamepadCursorIdx = 0;
                     _dialogue      = "Pleasure doing business with you!";
                 }
                 else
@@ -737,8 +834,11 @@ bool ShopManager::Update(Character& player, bool debugActive)
             float iy   = contentY + row * (itemH + gap);
 
             Rectangle cardRect = { ix, iy, itemW, itemH };
-            if (clicked && CheckCollisionPointRec(mouse, cardRect))
+            bool cardActivated = (clicked && CheckCollisionPointRec(mouse, cardRect)) ||
+                                 (_gamepadConfirmPending && displayIdx == _gamepadCursorIdx);
+            if (cardActivated)
             {
+                _gamepadConfirmPending = false;
                 if (player.GetLearnedCount() >= 3)
                 {
                     _dialogue = "You can only hold 3 abilities. Remove one first.";
@@ -748,6 +848,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
                     player.AddGold(-item.price);
                     player.LearnAbility(item.abilityType);
                     item.purchased = true;
+                    _gamepadCursorIdx = 0;
                     _dialogue = "A fine choice. Put it to good use!";
                 }
                 else
@@ -757,6 +858,172 @@ bool ShopManager::Update(Character& player, bool debugActive)
             }
             displayIdx++;
         }
+    }
+
+    return false;
+}
+
+bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
+{
+    _gamepadConfirmPending = false;
+    _gamepadRerollPending  = false;
+    _gamepadHPotPending    = false;
+    _gamepadMPotPending    = false;
+    _gamepadLPUpgSlot      = -1;
+    _gamepadLPRemSlot      = -1;
+
+    if (!IsGamepadAvailable(0))
+    {
+        _gamepadNavActive = false;
+        return false;
+    }
+    _gamepadNavActive = true;
+
+    // Count visible items in the current tab
+    int itemCount = 0;
+    for (const auto& item : _inventory)
+        if (!item.purchased && (_tab == 0 ? !item.isAbility : item.isAbility))
+            ++itemCount;
+    itemCount = std::min(itemCount, 6);
+    if (itemCount > 0) _gamepadCursorIdx = std::min(_gamepadCursorIdx, itemCount - 1);
+    else               _gamepadCursorIdx = 0;
+
+    if (_gamepadNavCooldown > 0.f) _gamepadNavCooldown -= dt;
+
+    float axisX = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X);
+    float axisY = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
+    constexpr float kNavCooldown = 0.18f;
+    bool navLeft  = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || (axisX < -0.5f && _gamepadNavCooldown <= 0.f);
+    bool navRight = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || (axisX >  0.5f && _gamepadNavCooldown <= 0.f);
+    bool navUp    = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP)    || (axisY < -0.5f && _gamepadNavCooldown <= 0.f);
+    bool navDown  = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)  || (axisY >  0.5f && _gamepadNavCooldown <= 0.f);
+    bool gpA      = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+
+    // Build left-panel button list (slot_idx, isRem) for occupied slots
+    int lpCount = 0;
+    int lpSlotIndex[6] = {};   // slot index for each flat entry pair
+    {
+        int slotTotal = player.GetMaxAbilitySlots();
+        for (int i = 0; i < slotTotal; i++)
+            if (player.GetLearnedAbility(i) != AbilityType::None)
+            {
+                lpSlotIndex[lpCount] = i;
+                ++lpCount;
+            }
+    }
+    int lpEntryCount = lpCount * 2; // upg + rem per occupied slot
+
+    if (_gamepadLPActive)
+    {
+        // Left panel: up/down navigates Upg/Rem buttons across occupied slots
+        if (navUp   && _gamepadLPIdx > 0)              { _gamepadLPIdx--; _gamepadNavCooldown = kNavCooldown; }
+        if (navDown && _gamepadLPIdx < lpEntryCount - 1){ _gamepadLPIdx++; _gamepadNavCooldown = kNavCooldown; }
+        if (navRight) { _gamepadLPActive = false; _gamepadNavCooldown = kNavCooldown; }
+
+        if (gpA && lpEntryCount > 0)
+        {
+            int pairIdx    = _gamepadLPIdx / 2;   // which occupied slot
+            bool isRem     = (_gamepadLPIdx % 2) == 1;
+            int  slotIdx   = lpSlotIndex[pairIdx];
+            if (isRem) _gamepadLPRemSlot = slotIdx;
+            else       _gamepadLPUpgSlot = slotIdx;
+        }
+    }
+    else if (_gamepadTabActive)
+    {
+        // Tab row: left/right cycles between WARES and ABILITIES tabs
+        if (navLeft || navRight) { _gamepadTabCursor ^= 1; _gamepadNavCooldown = kNavCooldown; }
+        if (gpA)
+        {
+            _tab              = _gamepadTabCursor;
+            _gamepadTabActive = false;
+            _gamepadCursorIdx = 0;
+            _gamepadNavCooldown = kNavCooldown;
+        }
+        if (navDown) { _gamepadTabActive = false; _gamepadNavCooldown = kNavCooldown; }
+    }
+    else if (_gamepadBottomActive)
+    {
+        // Bottom section: [HP Pot=0][MP Pot=1] (top row) / [Reroll=2][Leave=3] (bottom row)
+        int col = _gamepadBottomIdx % 2;
+        int row = _gamepadBottomIdx / 2;
+        if      (navLeft  && col > 0)  { col--; _gamepadNavCooldown = kNavCooldown; }
+        else if (navRight && col < 1)  { col++; _gamepadNavCooldown = kNavCooldown; }
+        else if (navDown  && row < 1)  { row++; _gamepadNavCooldown = kNavCooldown; }
+        else if (navUp    && row > 0)  { row--; _gamepadNavCooldown = kNavCooldown; }
+        else if (navUp    && row == 0) { _gamepadBottomActive = false; _gamepadNavCooldown = kNavCooldown; }
+        _gamepadBottomIdx = row * 2 + col;
+
+        if (gpA)
+        {
+            switch (_gamepadBottomIdx)
+            {
+            case 0: _gamepadHPotPending   = true; break;
+            case 1: _gamepadMPotPending   = true; break;
+            case 2: _gamepadRerollPending = true; break;
+            case 3:
+                _dialogue   = "Safe travels, adventurer.";
+                _introPhase = IntroPhase::Off;
+                return true;
+            }
+        }
+    }
+    else
+    {
+        // Item grid navigation
+        int col = _gamepadCursorIdx % 3;
+        int row = _gamepadCursorIdx / 3;
+
+        if      (navLeft  && col > 0)
+        {
+            --_gamepadCursorIdx;
+            _gamepadNavCooldown = kNavCooldown;
+        }
+        else if (navLeft  && col == 0 && lpEntryCount > 0)
+        {
+            // Enter left panel
+            _gamepadLPActive = true;
+            _gamepadLPIdx    = 0;
+            _gamepadNavCooldown = kNavCooldown;
+        }
+        else if (navRight && col < 2 && _gamepadCursorIdx + 1 < itemCount)
+        {
+            ++_gamepadCursorIdx;
+            _gamepadNavCooldown = kNavCooldown;
+        }
+        else if (navUp    && row > 0)
+        {
+            _gamepadCursorIdx -= 3;
+            _gamepadNavCooldown = kNavCooldown;
+        }
+        else if (navUp    && row == 0)
+        {
+            // Enter tab row — highlight tab first, A to switch
+            _gamepadTabActive  = true;
+            _gamepadTabCursor  = _tab;
+            _gamepadNavCooldown = kNavCooldown;
+        }
+        else if (navDown && _gamepadCursorIdx + 3 < itemCount)
+        {
+            _gamepadCursorIdx += 3;
+            _gamepadNavCooldown = kNavCooldown;
+        }
+        else if (navDown)
+        {
+            _gamepadBottomActive = true;
+            _gamepadBottomIdx    = 0;
+            _gamepadNavCooldown  = kNavCooldown;
+        }
+
+        if (gpA) _gamepadConfirmPending = true;
+    }
+
+    // B / Circle = leave the shop from anywhere
+    if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT))
+    {
+        _dialogue   = "Safe travels, adventurer.";
+        _introPhase = IntroPhase::Off;
+        return true;
     }
 
     return false;
@@ -890,6 +1157,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         for (int i = 0; i < slotCount; i++)
             if (player.GetLearnedAbility(i) != AbilityType::None) occupiedCount++;
 
+        int lpDrawEntry = 0;  // flat index into left-panel button list (for cursor highlight)
+
         const float btnH    = _uiSlotBtnFs + 12.f;
         const float btnGap  = 4.f;
         const float slotGap = 3.f;
@@ -972,11 +1241,18 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 Rectangle upgBtn = { lx + cp,              cy, btnW, btnH };
                 Rectangle remBtn = { lx + cp + btnW + 8.f, cy, btnW, btnH };
 
-                bool upgHov = CheckCollisionPointRec(mpLeft, upgBtn);
+                bool gpUpgFocus = (_gamepadLPActive && _gamepadLPIdx == lpDrawEntry);
+                bool gpRemFocus = (_gamepadLPActive && _gamepadLPIdx == lpDrawEntry + 1);
+                lpDrawEntry += 2;
+
+                bool upgHov = CheckCollisionPointRec(mpLeft, upgBtn) || gpUpgFocus;
                 Color upgBg = (canUpg && canAffUpg) ? (upgHov ? Color{45,90,45,240} : Color{30,60,30,220})
                                                     : Color{25,25,30,140};
                 Color upgBo = (canUpg && canAffUpg) ? (upgHov ? Color{120,220,120,255} : Color{80,180,80,220})
                                                     : Color{60,60,70,120};
+                if (gpUpgFocus)
+                    DrawRectangleRoundedLines({ upgBtn.x - 3.f, upgBtn.y - 3.f, upgBtn.width + 6.f, upgBtn.height + 6.f },
+                                             0.12f, 6, Color{255, 200, 0, 220});
                 smallBox(upgBtn, upgBg, upgBo);
                 const char* upgLbl = canUpg ? TextFormat("Upg %dg", upgCost) : "MAX";
                 int ulW = MeasureText(upgLbl, ubFs);
@@ -985,11 +1261,14 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                     (int)(upgBtn.y + upgBtn.height * 0.5f - ubFs * 0.5f),
                     ubFs, (canUpg && canAffUpg) ? Color{180,255,180,255} : Fade(RAYWHITE, 0.35f));
 
-                bool remHov = CheckCollisionPointRec(mpLeft, remBtn);
+                bool remHov = CheckCollisionPointRec(mpLeft, remBtn) || gpRemFocus;
                 Color remBg = canAffRem ? (remHov ? Color{110,30,30,240} : Color{70,20,20,200})
                                         : Color{25,25,30,140};
                 Color remBo = canAffRem ? (remHov ? Color{255,80,80,255} : Color{200,60,60,200})
                                         : Color{60,60,70,120};
+                if (gpRemFocus)
+                    DrawRectangleRoundedLines({ remBtn.x - 3.f, remBtn.y - 3.f, remBtn.width + 6.f, remBtn.height + 6.f },
+                                             0.12f, 6, Color{255, 200, 0, 220});
                 smallBox(remBtn, remBg, remBo);
                 const char* remLbl = "Rem 100g";
                 int rlW = MeasureText(remLbl, ubFs);
@@ -1058,12 +1337,15 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         Rectangle tabWares = { shopX + iPad,               tabY, tabW, tabH };
         Rectangle tabAb    = { shopX + iPad + tabW + 8.f,  tabY, tabW, tabH };
 
-        auto drawTab = [&](Rectangle r, const char* label, bool active)
+        auto drawTab = [&](Rectangle r, const char* label, bool active, bool gpCursor)
         {
             Vector2 mTab = GetVirtualMousePos();
-            bool hov = CheckCollisionPointRec(mTab, r);
+            bool hov = CheckCollisionPointRec(mTab, r) || gpCursor;
             Color bg = active ? Color{40,60,110,240} : (hov ? Color{30,38,65,220} : Color{20,25,40,180});
             Color bo = active ? Color{100,150,255,255} : (hov ? Color{120,150,220,240} : Color{80,100,140,180});
+            if (gpCursor && !active)
+                DrawRectangleRoundedLines({ r.x - 3.f, r.y - 3.f, r.width + 6.f, r.height + 6.f },
+                                         0.2f, 6, Color{255, 200, 0, 240});
             smallBox(r, bg, bo);
             float fs = std::min(_uiStatFs, r.height - 8.f);
             fs = std::max(8.f, fs);
@@ -1075,8 +1357,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 (int)(r.y + r.height * 0.5f - fs * 0.5f),
                 (int)fs, active ? RAYWHITE : (hov ? Color{200,210,230,255} : kDim));
         };
-        drawTab(tabWares, "WARES",     _tab == 0);
-        drawTab(tabAb,    "ABILITIES", _tab == 1);
+        drawTab(tabWares, "WARES",     _tab == 0, _gamepadTabActive && _gamepadTabCursor == 0);
+        drawTab(tabAb,    "ABILITIES", _tab == 1, _gamepadTabActive && _gamepadTabCursor == 1);
 
         const float contentY = tabY + tabH + iPad;
         const float contentH = shopH - titleH - tabH - iPad * 2.f;
@@ -1155,7 +1437,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 Color cardBgHov = { (uint8_t)(rarCol.r / 2), (uint8_t)(rarCol.g / 2), (uint8_t)(rarCol.b / 2), 240 };
                 Color cardBo    = Fade(rarCol, 0.55f);
                 Vector2 mouse = GetVirtualMousePos();
-                bool    hov   = CheckCollisionPointRec(mouse, { ix, iy, itemW, itemH });
+                bool    hov   = CheckCollisionPointRec(mouse, { ix, iy, itemW, itemH })
+                                || (_gamepadNavActive && displayIdx == _gamepadCursorIdx);
                 if (hov) { cardBo = Fade(rarCol, 0.90f); }
                 smallBox({ ix, iy, itemW, itemH }, hov ? cardBgHov : cardBg, cardBo);
 
@@ -1279,7 +1562,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 Color cardBg = Color{18, 20, 32, 220};
                 Color cardBo = Color{80, 60, 140, 140};
                 Vector2 mpos = GetVirtualMousePos();
-                bool    hov  = CheckCollisionPointRec(mpos, { ix, iy, itemW, itemH });
+                bool    hov  = CheckCollisionPointRec(mpos, { ix, iy, itemW, itemH })
+                               || (_gamepadNavActive && displayIdx == _gamepadCursorIdx);
                 if (hov && !slotsFull) { cardBg = Color{28,24,52,240}; cardBo = Color{120,80,200,220}; }
                 smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
 
@@ -1398,9 +1682,9 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         bool canAffordPot    = (player.GetGold() >= kPotionPriceDraw);
         Vector2 mpos2        = GetVirtualMousePos();
 
-        auto drawPotBtn = [&](Rectangle r, const char* label, Color baseBg, Color hovBg, Color border)
+        auto drawPotBtn = [&](Rectangle r, const char* label, Color baseBg, Color hovBg, Color border, bool gpSelected)
         {
-            bool hov = CheckCollisionPointRec(mpos2, r);
+            bool hov = CheckCollisionPointRec(mpos2, r) || gpSelected;
             Color bg = canAffordPot ? (hov ? hovBg : baseBg) : Color{25,25,30,180};
             Color bo = canAffordPot ? border : Color{70,70,80,140};
             smallBox(r, bg, bo);
@@ -1414,11 +1698,13 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
         drawPotBtn({ shopX,                   potionY, potBtnW, _uiPotionH },
             TextFormat("Health Potion  %dg   (Heals 25%% HP)", kPotionPriceDraw),
-            Color{55,18,18,220}, Color{80,25,25,240}, Color{220,70,70,220});
+            Color{55,18,18,220}, Color{80,25,25,240}, Color{220,70,70,220},
+            _gamepadBottomActive && _gamepadBottomIdx == 0);
 
         drawPotBtn({ shopX + potBtnW + 8.f,   potionY, potBtnW, _uiPotionH },
             TextFormat("Mana Potion  %dg   (Restores 50%% MP)", kPotionPriceDraw),
-            Color{18,25,65,220}, Color{25,38,95,240}, Color{80,120,255,220});
+            Color{18,25,65,220}, Color{25,38,95,240}, Color{80,120,255,220},
+            _gamepadBottomActive && _gamepadBottomIdx == 1);
     }
 
     // ── REROLL + LEAVE BUTTONS ────────────────────────────────────────────
@@ -1430,8 +1716,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     Rectangle rerollBtn = { rerollX, leaveY, rerollW, leaveH };
 
     Vector2 mpos = GetVirtualMousePos();
-    bool leaveHov  = CheckCollisionPointRec(mpos, leaveBtn);
-    bool rerollHov = CheckCollisionPointRec(mpos, rerollBtn);
+    bool leaveHov  = CheckCollisionPointRec(mpos, leaveBtn)  || (_gamepadBottomActive && _gamepadBottomIdx == 3);
+    bool rerollHov = CheckCollisionPointRec(mpos, rerollBtn) || (_gamepadBottomActive && _gamepadBottomIdx == 2);
     bool canReroll = (player.GetGold() >= _rerollCost);
 
     smallBox(leaveBtn,

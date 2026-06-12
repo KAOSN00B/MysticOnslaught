@@ -116,6 +116,8 @@ private:
     float _nodeBgPad      = 15.f;   // padding around each node for the semi-transparent bg box
 
     int   _lastTouchCount = 0;       // tracks touch-down edges for click detection
+    int   _gpFocusIdx    = -1;      // index into _nodes of the gamepad-focused reachable node
+    float _gpCooldown    = 0.f;
 
     // ── Debug editor ─────────────────────────────────────────────────────────
     bool  _editorActive   = false;

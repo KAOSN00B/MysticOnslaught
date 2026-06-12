@@ -6,7 +6,7 @@
 // Left stick is always move and is not remappable.
 struct GamepadBindings
 {
-    GamepadButton attack     = GAMEPAD_BUTTON_RIGHT_FACE_UP;    // Y / Triangle
+    GamepadButton attack     = GAMEPAD_BUTTON_RIGHT_FACE_LEFT;  // X / Square
     GamepadButton dash       = GAMEPAD_BUTTON_RIGHT_FACE_DOWN;  // A / Cross
     GamepadButton ability[4] = {
         GAMEPAD_BUTTON_LEFT_TRIGGER_1,   // LB / L1
@@ -54,8 +54,10 @@ struct GamepadInput
     bool    attackPressed    = false;
     bool    dashPressed      = false;
     bool    abilityPressed[4]{};
-    bool    pausePressed     = false;
-    bool    isActive         = false;
+    bool    pausePressed        = false;
+    bool    backPressed         = false;
+    bool    menuConfirmPressed  = false;  // always A / Cross — not remappable
+    bool    isActive            = false;
 
     static constexpr float kDeadZone = 0.2f;
     static constexpr int   kGamepad  = 0;

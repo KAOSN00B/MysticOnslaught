@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "raylib.h"
 #include "GameTypes.h"
@@ -86,6 +86,7 @@ struct EnemyRuntimeContext
     Character* player = nullptr;
     NavigationGrid* nav = nullptr;
     const std::vector<Prop>* props = nullptr;
+    const std::vector<Vector2>* propCenters = nullptr;
     std::vector<std::unique_ptr<Enemy>>* enemies = nullptr;
     std::vector<CyclopsLaserProjectile>* cyclopsLasers = nullptr;
     std::vector<LavaBallProjectile>* lavaBalls = nullptr;
