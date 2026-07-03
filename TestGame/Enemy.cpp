@@ -1,6 +1,7 @@
 ﻿#include "Enemy.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "CharacterTuning.h"
 #include "VirtualCanvas.h"
 
 #include "raymath.h"
@@ -54,6 +55,7 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _isEliteMiniboss  = false;
     _isInvulnerable   = false;
     _leapInvulnerable = false;
+    ResetTuningState();   // re-applied from file at the end of the reset
     _texture = _idleAnim;
     _updateTime = 1.f / 8.f;
 
@@ -146,6 +148,12 @@ void Enemy::ApplyEnrage()
 
 Rectangle Enemy::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+    if (_hasTunedCollision)
+        return GetTunedCollisionRec();
+
     // Stable idle-frame dimensions are the sprite-space reference.
     // _width is always 32 for the grunt idle sheet; _scale is set in ResetForSpawn.
     float stableHalfW = 32.f * _scale * 0.5f;
@@ -166,6 +174,10 @@ Rectangle Enemy::GetCollisionRec() const
 
 Capsule2D Enemy::GetCapsule() const
 {
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<Enemy*>(this);
@@ -180,8 +192,247 @@ Capsule2D Enemy::GetCapsule() const
     };
 }
 
+// =============================================================================
+// Character Animator (dev tool) + tuning interface
+// =============================================================================
+
+const char* Enemy::GetEditorAnimName(int index) const
+{
+    static const char* kStandardAnimNames[5] = { "Idle", "Walk", "Attack", "Hurt", "Death" };
+    return (index >= 0 && index < 5) ? kStandardAnimNames[index] : "";
+}
+
+void Enemy::PlayEditorAnim(int index)
+{
+    const Texture2D* sheets[5] = { &_idleAnim, &_walkAnim, &_attackAnim, &_takeDamageAnim, &_deathAnim };
+    if (index < 0 || index > 4)
+        return;
+
+    _texture = *sheets[index];
+    if (_width > 0.f)
+        _maxFrames = (int)(_texture.width / _width);
+    if (_maxFrames < 1)
+        _maxFrames = 1;
+    _frame       = 0;
+    _runningTime = 0.f;
+
+    float frameTimeOverride = _editorAnimFrameTimes[index];
+    if (frameTimeOverride > 0.f)
+        _updateTime = frameTimeOverride;
+}
+
+void Enemy::TickEditorAnimation(float dt)
+{
+    // Editor-only frame advance: always loops, ignores gameplay state.
+    _runningTime += dt;
+    if (_runningTime >= _updateTime && _maxFrames > 0)
+    {
+        _runningTime = 0.f;
+        _frame = (_frame + 1) % _maxFrames;
+    }
+}
+
+float Enemy::GetEditorAnimFrameTime(int index) const
+{
+    if (index < 0 || index >= 10)
+        return 0.f;
+    return _editorAnimFrameTimes[index];
+}
+
+void Enemy::SetEditorAnimFrameTime(int index, float frameTime)
+{
+    if (index < 0 || index >= 10)
+        return;
+    _editorAnimFrameTimes[index] = frameTime;
+}
+
+Rectangle Enemy::GetCollisionRecRelative() const
+{
+    Rectangle rect = GetCollisionRec();
+    return Rectangle{ rect.x - _worldPos.x, rect.y - _worldPos.y, rect.width, rect.height };
+}
+
+// =============================================================================
+// Per-animation tuning — body circle, melee box, sprite draw offset
+// =============================================================================
+
+int Enemy::GetCurrentAnimSlot() const
+{
+    // Derive the slot from whichever sheet is playing so no gameplay code has
+    // to remember to update it. Bosses override with their own sheet lists.
+    if (_texture.id == _idleAnim.id)       return 0;
+    if (_texture.id == _walkAnim.id)       return 1;
+    if (_texture.id == _attackAnim.id)     return 2;
+    if (_texture.id == _takeDamageAnim.id) return 3;
+    if (_texture.id == _deathAnim.id)      return 4;
+    return 0;
+}
+
+void Enemy::SetAnimBody(int slot, Vector2 offset, float radius)
+{
+    if (slot < 0 || slot >= kAnimSlots)
+        return;
+    _animBodySet[slot]    = true;
+    _animBodyOffset[slot] = offset;
+    _animBodyRadius[slot] = (radius < 4.f) ? 4.f : radius;
+}
+
+void Enemy::ClearAnimBody(int slot)
+{
+    if (slot >= 0 && slot < kAnimSlots)
+        _animBodySet[slot] = false;
+}
+
+void Enemy::SetAnimMelee(int slot, Rectangle relativeRect)
+{
+    if (slot < 0 || slot >= kAnimSlots)
+        return;
+    _animMeleeSet[slot] = true;
+    _animMeleeRel[slot] = relativeRect;
+}
+
+void Enemy::ClearAnimMelee(int slot)
+{
+    if (slot >= 0 && slot < kAnimSlots)
+        _animMeleeSet[slot] = false;
+}
+
+void Enemy::SetAnimDrawOffset(int slot, Vector2 offset)
+{
+    if (slot < 0 || slot >= kAnimSlots)
+        return;
+    _animDrawSet[slot]    = true;
+    _animDrawOffset[slot] = offset;
+}
+
+bool Enemy::GetAnimBodyCapsuleWorld(Capsule2D& out) const
+{
+    int slot = GetCurrentAnimSlot();
+    if (slot < 0 || slot >= kAnimSlots || !_animBodySet[slot])
+        return false;
+
+    // Offsets are authored facing right; mirror X with the sprite.
+    out = Capsule2D{
+        { _worldPos.x + _animBodyOffset[slot].x * _rightLeft,
+          _worldPos.y + _animBodyOffset[slot].y },
+        0.f,
+        _animBodyRadius[slot]
+    };
+    return true;
+}
+
+bool Enemy::GetAnimBodyRectWorld(Rectangle& out) const
+{
+    Capsule2D capsule;
+    if (!GetAnimBodyCapsuleWorld(capsule))
+        return false;
+
+    // The hurt rect is the circle's bounding square so rect-based systems
+    // (player melee, projectiles) match what the editor shows.
+    out = Rectangle{
+        capsule.center.x - capsule.radius,
+        capsule.center.y - capsule.radius,
+        capsule.radius * 2.f,
+        capsule.radius * 2.f
+    };
+    return true;
+}
+
+bool Enemy::GetAnimMeleeRectWorld(int slot, Rectangle& out) const
+{
+    if (slot < 0 || slot >= kAnimSlots || !_animMeleeSet[slot])
+        return false;
+
+    Rectangle rel = _animMeleeRel[slot];
+    if (_rightLeft < 0.f)
+        rel.x = -(rel.x + rel.width);   // mirror around the sprite centre
+
+    out = Rectangle{ _worldPos.x + rel.x, _worldPos.y + rel.y, rel.width, rel.height };
+    return true;
+}
+
+Vector2 Enemy::GetCurrentAnimDrawOffset() const
+{
+    int slot = GetCurrentAnimSlot();
+    if (slot < 0 || slot >= kAnimSlots || !_animDrawSet[slot])
+        return Vector2{};
+    return Vector2{ _animDrawOffset[slot].x * _rightLeft, _animDrawOffset[slot].y };
+}
+
+void Enemy::ResetTuningState()
+{
+    _hasTunedCollision = false;
+    for (int i = 0; i < kAnimSlots; i++)
+    {
+        _editorAnimFrameTimes[i] = 0.f;
+        _animBodySet[i]  = false;
+        _animMeleeSet[i] = false;
+        _animDrawSet[i]  = false;
+    }
+}
+
+void Enemy::ApplyStoredTuning()
+{
+    const char* tuningName = GetTuningName();
+    if (tuningName == nullptr)
+        return;
+
+    const CharacterTuning* tuning = CharacterTuningStore::Get(tuningName);
+    if (tuning == nullptr)
+        return;
+
+    if (tuning->hasScale)
+        _scale = tuning->scale;
+    if (tuning->hasCollision)
+        SetCollisionRecWorld(tuning->collisionRel);
+    if (tuning->hasCapsule)
+    {
+        SetCapsuleRadius(tuning->capsuleRadius);
+        SetCapsuleHalfHeight(tuning->capsuleHalfHeight);
+        SetCapsuleOffset(tuning->capsuleOffset);
+    }
+    if (tuning->hasAttackBox)
+    {
+        SetAttackBoxWidth(tuning->attackBoxWidth);
+        SetAttackBoxHeight(tuning->attackBoxHeight);
+        SetAttackBoxOffsetX(tuning->attackBoxOffsetX);
+        SetAttackBoxOffsetY(tuning->attackBoxOffsetY);
+    }
+    for (int i = 0; i < CharacterTuning::kMaxAnims && i < kAnimSlots; i++)
+    {
+        _editorAnimFrameTimes[i] = tuning->animFrameTime[i];
+
+        if (tuning->animBody[i].set)
+        {
+            _animBodySet[i]    = true;
+            _animBodyOffset[i] = Vector2{ tuning->animBody[i].x, tuning->animBody[i].y };
+            _animBodyRadius[i] = tuning->animBody[i].radius;
+        }
+        if (tuning->animMelee[i].set)
+        {
+            _animMeleeSet[i] = true;
+            _animMeleeRel[i] = tuning->animMelee[i].rect;
+        }
+        if (tuning->animDraw[i].set)
+        {
+            _animDrawSet[i]    = true;
+            _animDrawOffset[i] = Vector2{ tuning->animDraw[i].x, tuning->animDraw[i].y };
+        }
+    }
+
+    // Base grunt behaviour reads _attackUpdateTime directly, so the Attack
+    // anim override (slot 2) maps onto it for types using the shared attack.
+    if (_editorAnimFrameTimes[2] > 0.f)
+        _attackUpdateTime = _editorAnimFrameTimes[2];
+}
+
 Rectangle Enemy::GetAttackCollisionRec() const
 {
+    // Per-animation melee box (Character Animator) wins; slot 2 = Attack.
+    Rectangle animMeleeRect;
+    if (GetAnimMeleeRectWorld(2, animMeleeRect))
+        return animMeleeRect;
+
     // Attack box anchored to sprite center (_worldPos), independent of body offset.
     return Rectangle{
         _worldPos.x + _attackBoxOffsetX * _rightLeft - _attackBoxWidth  * 0.5f,
@@ -756,6 +1007,11 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
 
     float visualOffsetX = (_texture.id == _attackAnim.id) ? _attackVisualOffsetX * _rightLeft : 0.f;
     float visualOffsetY = (_texture.id == _attackAnim.id) ? _attackVisualOffsetY              : 0.f;
+
+    // Per-animation sprite offset authored in the Character Animator.
+    Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
+    visualOffsetX += animDrawOffset.x;
+    visualOffsetY += animDrawOffset.y;
 
     Rectangle dest{ screenPos.x - w / 2.f + visualOffsetX, screenPos.y - h / 2.f + visualOffsetY, w, h };
 

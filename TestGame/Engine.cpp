@@ -1396,6 +1396,11 @@ void Engine::Update(float dt)
             _nineSliceEditor.Init(kUIFolder);
             _gameState = GameState::NineSliceEditor;
         }
+        if (_menu.CharacterAnimatorPressed())
+        {
+            _charAnimator.Init();
+            _gameState = GameState::CharacterAnimator;
+        }
         if (_menu.SettingsPressed())
         {
             _stateBeforeSettings = GameState::Menu;
@@ -1429,6 +1434,16 @@ void Engine::Update(float dt)
         if (_tileMapper.WantsToExit())
         {
             _tileMapper.Unload();
+            _menu.Init();
+            _gameState = GameState::Menu;
+        }
+        break;
+
+    case GameState::CharacterAnimator:
+        _charAnimator.Update();
+        if (_charAnimator.WantsToExit())
+        {
+            _charAnimator.Unload();
             _menu.Init();
             _gameState = GameState::Menu;
         }
@@ -2045,6 +2060,10 @@ void Engine::Draw()
 
     case GameState::NineSliceEditor:
         _nineSliceEditor.Draw();
+        break;
+
+    case GameState::CharacterAnimator:
+        _charAnimator.Draw();
         break;
 
     case GameState::GameOver:
@@ -6932,6 +6951,13 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
     // _wave = total rooms entered this run, used here for scaling only.
     enemy.SetWaveScale(_wave);
     enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
+
+    // Colour-variant tier by world zone — later zones spawn recoloured,
+    // visibly tougher versions (their stats already scale via power level).
+    // Zones 0-1 = tier 0, zones 2-3 = tier 1, zone 4 = tier 2, zone 5 = tier 3.
+    int variantTier = (_worldZone <= 1) ? 0 : (_worldZone <= 3) ? 1 : (_worldZone == 4) ? 2 : 3;
+    enemy.SetVariantTier(variantTier);
+
     enemy.SetTarget(&_player);
     // Give every enemy its own pointer to the shared nav grid so it can
     // extract waypoints on its own staggered timer (see Enemy::HandleMovement).

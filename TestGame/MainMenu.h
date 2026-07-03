@@ -22,6 +22,7 @@ public:
     bool DungeonRunPressed()     const;
     bool TileMapperPressed()     const;
     bool NineSliceEditorPressed() const;
+    bool CharacterAnimatorPressed() const;
     bool SettingsPressed()        const;
     void SetDebugUnlocked(bool unlocked);
 
@@ -52,6 +53,7 @@ private:
     bool _dungeonRunPressed      = false;
     bool _tileMapperPressed      = false;
     bool _nineSliceEditorPressed = false;
+    bool _charAnimatorPressed    = false;
     bool _settingsPressed        = false;
     bool _debugUnlocked          = false;
     bool _devToolsVisible        = false; // toggled by \ key

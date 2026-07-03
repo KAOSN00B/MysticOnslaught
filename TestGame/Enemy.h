@@ -31,6 +31,59 @@ public:
     virtual void SetWaveScale(int wave);
     virtual void ApplyEnemyPowerLevel(int enemyPowerLevel);
 
+    // Colour-variant tier (0-3) — later world zones spawn recoloured, visibly
+    // tougher versions. Default is a no-op; types with variant art override.
+    virtual void SetVariantTier(int tier) { (void)tier; }
+
+    // ── Character Animator (dev tool) + tuning interface ─────────────────────
+    // GetTuningName() returns nullptr for types without tuning support; a name
+    // enables loading charactertuning_<Name>.txt at the end of ResetForSpawn.
+    virtual const char* GetTuningName() const { return nullptr; }
+
+    // Animation preview: the default implementation covers the five standard
+    // grunt sheets; bosses override with their own sheet lists.
+    virtual int         GetEditorAnimCount() const { return 5; }
+    virtual const char* GetEditorAnimName(int index) const;
+    virtual void        PlayEditorAnim(int index);
+    void  TickEditorAnimation(float dt);   // generic looping frame advance
+    float GetEditorAnimFrameTime(int index) const;
+    void  SetEditorAnimFrameTime(int index, float frameTime);
+
+    // Tuned solid hitbox — stored relative to _worldPos so it is convention-free.
+    // Every GetCollisionRec override returns this when set.
+    void      SetCollisionRecWorld(Rectangle relativeRect) { _tunedCollisionRel = relativeRect; _hasTunedCollision = true; }
+    void      ClearTunedCollision() { _hasTunedCollision = false; }
+    bool      HasTunedCollision() const { return _hasTunedCollision; }
+    Rectangle GetCollisionRecRelative() const;
+
+    void  SetDrawScale(float scale) { _scale = (scale < 0.5f) ? 0.5f : scale; }
+    float GetDrawScale() const { return _scale; }
+    void  SetEditorFacing(float direction) { _rightLeft = direction; }
+    float GetEditorFacing() const { return _rightLeft; }
+
+    // ── Per-animation tuning (Character Animator) ─────────────────────────────
+    // Each animation slot can carry its own body circle (drives BOTH the solid
+    // capsule and the hurt rect), melee box (facing right), and sprite draw
+    // offset. The active slot is derived from whichever sheet is playing.
+    virtual int GetCurrentAnimSlot() const;
+
+    bool    GetAnimBodySet(int slot)    const { return (slot >= 0 && slot < kAnimSlots) && _animBodySet[slot]; }
+    Vector2 GetAnimBodyOffset(int slot) const { return (slot >= 0 && slot < kAnimSlots) ? _animBodyOffset[slot] : Vector2{}; }
+    float   GetAnimBodyRadius(int slot) const { return (slot >= 0 && slot < kAnimSlots) ? _animBodyRadius[slot] : 0.f; }
+    void    SetAnimBody(int slot, Vector2 offset, float radius);
+    void    ClearAnimBody(int slot);
+
+    bool      GetAnimMeleeSet(int slot)     const { return (slot >= 0 && slot < kAnimSlots) && _animMeleeSet[slot]; }
+    Rectangle GetAnimMeleeRelRect(int slot) const { return (slot >= 0 && slot < kAnimSlots) ? _animMeleeRel[slot] : Rectangle{}; }
+    void      SetAnimMelee(int slot, Rectangle relativeRect);
+    void      ClearAnimMelee(int slot);
+
+    bool    GetAnimDrawSet(int slot)         const { return (slot >= 0 && slot < kAnimSlots) && _animDrawSet[slot]; }
+    Vector2 GetAnimDrawOffsetValue(int slot) const { return (slot >= 0 && slot < kAnimSlots) ? _animDrawOffset[slot] : Vector2{}; }
+    void    SetAnimDrawOffset(int slot, Vector2 offset);
+
+    static constexpr int kAnimSlots = 10;
+
     void SetTarget(Character* character)  { _target = character; }
 
     // Give each enemy a non-owning pointer to the shared nav grid so it can
@@ -126,6 +179,30 @@ public:
 
 protected:
     static void EnsureSharedResourcesLoaded();
+
+    // Applies charactertuning_<Name>.txt overrides (scale, hitboxes, anim
+    // speeds). Tunable classes call this at the END of their ResetForSpawn.
+    void ApplyStoredTuning();
+
+    // Clears all per-anim + whole-character tuning state; tunable classes call
+    // this at the start of their ResetForSpawn before re-applying from file.
+    void ResetTuningState();
+
+    // Gameplay helpers for the per-anim data (current facing applied):
+    bool    GetAnimBodyCapsuleWorld(Capsule2D& out) const;    // current slot's circle
+    bool    GetAnimBodyRectWorld(Rectangle& out) const;       // its bounding square
+    bool    GetAnimMeleeRectWorld(int slot, Rectangle& out) const;
+    Vector2 GetCurrentAnimDrawOffset() const;                 // sprite-only shift
+
+    Rectangle GetTunedCollisionRec() const
+    {
+        return Rectangle{
+            _worldPos.x + _tunedCollisionRel.x,
+            _worldPos.y + _tunedCollisionRel.y,
+            _tunedCollisionRel.width,
+            _tunedCollisionRel.height
+        };
+    }
 
     void HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
         const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters);
@@ -263,6 +340,20 @@ protected:
 
     Vector2 _homePos;
     std::vector<PendingBurn> _pendingBurns;
+
+    // ── Character Animator tuning state ──────────────────────────────────────
+    bool      _hasTunedCollision = false;
+    Rectangle _tunedCollisionRel{};              // relative to _worldPos
+    float     _editorAnimFrameTimes[10] = {};    // per-anim overrides; <=0 = default
+
+    // Per-animation body circle / melee box / draw offset (kAnimSlots entries).
+    bool      _animBodySet[10] = {};
+    Vector2   _animBodyOffset[10] = {};          // relative to _worldPos, facing right
+    float     _animBodyRadius[10] = {};
+    bool      _animMeleeSet[10] = {};
+    Rectangle _animMeleeRel[10] = {};            // relative to _worldPos, facing right
+    bool      _animDrawSet[10] = {};
+    Vector2   _animDrawOffset[10] = {};          // sprite-only shift, facing right
 
     static Texture2D _sharedIdleAnim;
     static Texture2D _sharedWalkAnim;

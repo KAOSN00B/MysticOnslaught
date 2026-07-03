@@ -5,16 +5,16 @@
 #include <algorithm>
 
 // ---- Static member definitions ----------------------------------------------
-Texture2D SlimeEnemy::_sharedBigIdleAnim{};
-Texture2D SlimeEnemy::_sharedBigWalkAnim{};
-Texture2D SlimeEnemy::_sharedBigAttackAnim{};
-Texture2D SlimeEnemy::_sharedBigHurtAnim{};
-Texture2D SlimeEnemy::_sharedBigDeathAnim{};
-Texture2D SlimeEnemy::_sharedSmallIdleAnim{};
-Texture2D SlimeEnemy::_sharedSmallWalkAnim{};
-Texture2D SlimeEnemy::_sharedSmallAttackAnim{};
-Texture2D SlimeEnemy::_sharedSmallHurtAnim{};
-Texture2D SlimeEnemy::_sharedSmallDeathAnim{};
+Texture2D SlimeEnemy::_sharedBigIdleAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedBigWalkAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedBigAttackAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedBigHurtAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedBigDeathAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedSmallIdleAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedSmallWalkAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedSmallAttackAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedSmallHurtAnim[SlimeEnemy::kVariantCount]{};
+Texture2D SlimeEnemy::_sharedSmallDeathAnim[SlimeEnemy::kVariantCount]{};
 Sound     SlimeEnemy::_sharedAttackSound{};
 Sound     SlimeEnemy::_sharedHurtSound{};
 Sound     SlimeEnemy::_sharedDeathSound{};
@@ -25,6 +25,10 @@ namespace
     // Both slime strips are stitched 6-frame rows: Big = 48x48, Small = 32x32.
     constexpr float kBigSlimeFrameWidth   = 48.f;
     constexpr float kSmallSlimeFrameWidth = 32.f;
+
+    // Tier escalation: blue -> green -> gold -> red.
+    // Pack letters: A blue, D green, C gold, B red.
+    const char* kSlimeVariantSuffixes[4] = { "", "_D", "_C", "_B" };
 }
 
 // =============================================================================
@@ -41,27 +45,43 @@ void SlimeEnemy::Init()
 {
     EnsureSharedResourcesLoaded();
 
-    if (_size == SlimeSize::Big)
-    {
-        _idleAnim       = _sharedBigIdleAnim;
-        _walkAnim       = _sharedBigWalkAnim;
-        _attackAnim     = _sharedBigAttackAnim;
-        _takeDamageAnim = _sharedBigHurtAnim;
-        _deathAnim      = _sharedBigDeathAnim;
-    }
-    else
-    {
-        _idleAnim       = _sharedSmallIdleAnim;
-        _walkAnim       = _sharedSmallWalkAnim;
-        _attackAnim     = _sharedSmallAttackAnim;
-        _takeDamageAnim = _sharedSmallHurtAnim;
-        _deathAnim      = _sharedSmallDeathAnim;
-    }
     _attackSound = _sharedAttackSound;
     _hurtSound   = _sharedHurtSound;
     _deathSound  = _sharedDeathSound;
+    SetVariantTier(_variantTier);
 
     ResetForSpawn(_worldPos);
+}
+
+void SlimeEnemy::SetVariantTier(int tier)
+{
+    EnsureSharedResourcesLoaded();
+
+    _variantTier = (tier < 0) ? 0 : (tier >= kVariantCount) ? kVariantCount - 1 : tier;
+
+    if (_size == SlimeSize::Big)
+    {
+        _idleAnim       = _sharedBigIdleAnim[_variantTier];
+        _walkAnim       = _sharedBigWalkAnim[_variantTier];
+        _attackAnim     = _sharedBigAttackAnim[_variantTier];
+        _takeDamageAnim = _sharedBigHurtAnim[_variantTier];
+        _deathAnim      = _sharedBigDeathAnim[_variantTier];
+    }
+    else
+    {
+        _idleAnim       = _sharedSmallIdleAnim[_variantTier];
+        _walkAnim       = _sharedSmallWalkAnim[_variantTier];
+        _attackAnim     = _sharedSmallAttackAnim[_variantTier];
+        _takeDamageAnim = _sharedSmallHurtAnim[_variantTier];
+        _deathAnim      = _sharedSmallDeathAnim[_variantTier];
+    }
+
+    // Repoint the live texture so an already-spawned slime swaps immediately.
+    // _width is 0 until the first ResetForSpawn, which recomputes this anyway.
+    _texture = _idleAnim;
+    _height  = _texture.height;
+    if (_width > 0.f)
+        _maxFrames = (int)(_texture.width / _width);
 }
 
 // =============================================================================
@@ -108,11 +128,21 @@ void SlimeEnemy::ResetForSpawn(Vector2 pos)
     _height    = _texture.height;
     _maxFrames = (int)(_texture.width / _width);
     _frame     = GetRandomValue(0, _maxFrames - 1);
+
+    // Character Animator overrides (scale, hitboxes, anim speeds) win last.
+    // Enemy::ResetForSpawn above already cleared the tuned-collision state.
+    ApplyStoredTuning();
 }
 
 // =============================================================================
 Rectangle SlimeEnemy::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+    if (_hasTunedCollision)
+        return GetTunedCollisionRec();
+
     // Solid rect centred on the body, sitting slightly low like the sprite.
     float rectWidth  = (_size == SlimeSize::Big) ? 110.f : 64.f;
     float rectHeight = (_size == SlimeSize::Big) ?  78.f : 48.f;
@@ -165,19 +195,23 @@ void SlimeEnemy::EnsureSharedResourcesLoaded()
     if (_sharedResourcesLoaded)
         return;
 
-    _sharedBigIdleAnim     = LoadTexture(AssetPath("Enemy/SlimeBigIdle.png").c_str());
-    _sharedBigWalkAnim     = LoadTexture(AssetPath("Enemy/SlimeBigWalk.png").c_str());
-    _sharedBigAttackAnim   = LoadTexture(AssetPath("Enemy/SlimeBigAttack.png").c_str());
-    _sharedBigHurtAnim     = LoadTexture(AssetPath("Enemy/SlimeBigHurt.png").c_str());
-    _sharedBigDeathAnim    = LoadTexture(AssetPath("Enemy/SlimeBigDeath.png").c_str());
-    _sharedSmallIdleAnim   = LoadTexture(AssetPath("Enemy/SlimeSmallIdle.png").c_str());
-    _sharedSmallWalkAnim   = LoadTexture(AssetPath("Enemy/SlimeSmallWalk.png").c_str());
-    _sharedSmallAttackAnim = LoadTexture(AssetPath("Enemy/SlimeSmallAttack.png").c_str());
-    _sharedSmallHurtAnim   = LoadTexture(AssetPath("Enemy/SlimeSmallHurt.png").c_str());
-    _sharedSmallDeathAnim  = LoadTexture(AssetPath("Enemy/SlimeSmallDeath.png").c_str());
-    _sharedAttackSound     = LoadSound(AssetPath("Sounds/SwordSwipe2.ogg").c_str());
-    _sharedHurtSound       = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
-    _sharedDeathSound      = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
+    for (int variant = 0; variant < kVariantCount; variant++)
+    {
+        const char* suffix = kSlimeVariantSuffixes[variant];
+        _sharedBigIdleAnim[variant]     = LoadTexture(AssetPath(TextFormat("Enemy/SlimeBigIdle%s.png",     suffix)).c_str());
+        _sharedBigWalkAnim[variant]     = LoadTexture(AssetPath(TextFormat("Enemy/SlimeBigWalk%s.png",     suffix)).c_str());
+        _sharedBigAttackAnim[variant]   = LoadTexture(AssetPath(TextFormat("Enemy/SlimeBigAttack%s.png",   suffix)).c_str());
+        _sharedBigHurtAnim[variant]     = LoadTexture(AssetPath(TextFormat("Enemy/SlimeBigHurt%s.png",     suffix)).c_str());
+        _sharedBigDeathAnim[variant]    = LoadTexture(AssetPath(TextFormat("Enemy/SlimeBigDeath%s.png",    suffix)).c_str());
+        _sharedSmallIdleAnim[variant]   = LoadTexture(AssetPath(TextFormat("Enemy/SlimeSmallIdle%s.png",   suffix)).c_str());
+        _sharedSmallWalkAnim[variant]   = LoadTexture(AssetPath(TextFormat("Enemy/SlimeSmallWalk%s.png",   suffix)).c_str());
+        _sharedSmallAttackAnim[variant] = LoadTexture(AssetPath(TextFormat("Enemy/SlimeSmallAttack%s.png", suffix)).c_str());
+        _sharedSmallHurtAnim[variant]   = LoadTexture(AssetPath(TextFormat("Enemy/SlimeSmallHurt%s.png",   suffix)).c_str());
+        _sharedSmallDeathAnim[variant]  = LoadTexture(AssetPath(TextFormat("Enemy/SlimeSmallDeath%s.png",  suffix)).c_str());
+    }
+    _sharedAttackSound = LoadSound(AssetPath("Sounds/SwordSwipe2.ogg").c_str());
+    _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
+    _sharedDeathSound  = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
     _sharedResourcesLoaded = true;
 }
 
@@ -186,32 +220,34 @@ void SlimeEnemy::UnloadSharedResources()
     if (!_sharedResourcesLoaded)
         return;
 
-    UnloadTexture(_sharedBigIdleAnim);
-    UnloadTexture(_sharedBigWalkAnim);
-    UnloadTexture(_sharedBigAttackAnim);
-    UnloadTexture(_sharedBigHurtAnim);
-    UnloadTexture(_sharedBigDeathAnim);
-    UnloadTexture(_sharedSmallIdleAnim);
-    UnloadTexture(_sharedSmallWalkAnim);
-    UnloadTexture(_sharedSmallAttackAnim);
-    UnloadTexture(_sharedSmallHurtAnim);
-    UnloadTexture(_sharedSmallDeathAnim);
+    for (int variant = 0; variant < kVariantCount; variant++)
+    {
+        UnloadTexture(_sharedBigIdleAnim[variant]);
+        UnloadTexture(_sharedBigWalkAnim[variant]);
+        UnloadTexture(_sharedBigAttackAnim[variant]);
+        UnloadTexture(_sharedBigHurtAnim[variant]);
+        UnloadTexture(_sharedBigDeathAnim[variant]);
+        UnloadTexture(_sharedSmallIdleAnim[variant]);
+        UnloadTexture(_sharedSmallWalkAnim[variant]);
+        UnloadTexture(_sharedSmallAttackAnim[variant]);
+        UnloadTexture(_sharedSmallHurtAnim[variant]);
+        UnloadTexture(_sharedSmallDeathAnim[variant]);
+        _sharedBigIdleAnim[variant]     = Texture2D{};
+        _sharedBigWalkAnim[variant]     = Texture2D{};
+        _sharedBigAttackAnim[variant]   = Texture2D{};
+        _sharedBigHurtAnim[variant]     = Texture2D{};
+        _sharedBigDeathAnim[variant]    = Texture2D{};
+        _sharedSmallIdleAnim[variant]   = Texture2D{};
+        _sharedSmallWalkAnim[variant]   = Texture2D{};
+        _sharedSmallAttackAnim[variant] = Texture2D{};
+        _sharedSmallHurtAnim[variant]   = Texture2D{};
+        _sharedSmallDeathAnim[variant]  = Texture2D{};
+    }
     UnloadSound(_sharedAttackSound);
     UnloadSound(_sharedHurtSound);
     UnloadSound(_sharedDeathSound);
-
-    _sharedBigIdleAnim     = Texture2D{};
-    _sharedBigWalkAnim     = Texture2D{};
-    _sharedBigAttackAnim   = Texture2D{};
-    _sharedBigHurtAnim     = Texture2D{};
-    _sharedBigDeathAnim    = Texture2D{};
-    _sharedSmallIdleAnim   = Texture2D{};
-    _sharedSmallWalkAnim   = Texture2D{};
-    _sharedSmallAttackAnim = Texture2D{};
-    _sharedSmallHurtAnim   = Texture2D{};
-    _sharedSmallDeathAnim  = Texture2D{};
-    _sharedAttackSound     = Sound{};
-    _sharedHurtSound       = Sound{};
-    _sharedDeathSound      = Sound{};
+    _sharedAttackSound = Sound{};
+    _sharedHurtSound   = Sound{};
+    _sharedDeathSound  = Sound{};
     _sharedResourcesLoaded = false;
 }

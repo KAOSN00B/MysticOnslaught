@@ -6,15 +6,30 @@
 #include <cmath>
 
 // ---- Static member definitions ----------------------------------------------
-Texture2D FlameWisp::_sharedIdleAnim{};
-Texture2D FlameWisp::_sharedWalkAnim{};
-Texture2D FlameWisp::_sharedAttackAnim{};
-Texture2D FlameWisp::_sharedTakeDamageAnim{};
-Texture2D FlameWisp::_sharedDeathAnim{};
+Texture2D FlameWisp::_sharedIdleAnim[FlameWisp::kVariantCount]{};
+Texture2D FlameWisp::_sharedWalkAnim[FlameWisp::kVariantCount]{};
+Texture2D FlameWisp::_sharedAttackAnim[FlameWisp::kVariantCount]{};
+Texture2D FlameWisp::_sharedTakeDamageAnim[FlameWisp::kVariantCount]{};
+Texture2D FlameWisp::_sharedDeathAnim[FlameWisp::kVariantCount]{};
 Sound     FlameWisp::_sharedAttackSound{};
 Sound     FlameWisp::_sharedHurtSound{};
 Sound     FlameWisp::_sharedDeathSound{};
 bool      FlameWisp::_sharedResourcesLoaded = false;
+
+namespace
+{
+    // Tier escalation by flame heat: orange -> blue -> eerie green -> magenta.
+    // Pack letters: A orange, B blue, D green, C magenta.
+    const char* kWispVariantSuffixes[4] = { "", "_B", "_D", "_C" };
+
+    // Glow / cast-telegraph colours matched to each flame variant.
+    const Color kWispGlowColors[4] = {
+        { 255, 120,  30, 255 },   // orange
+        {  80, 150, 255, 255 },   // blue
+        {  60, 220, 120, 255 },   // green
+        { 255,  70, 200, 255 },   // magenta
+    };
+}
 
 namespace
 {
@@ -37,16 +52,28 @@ void FlameWisp::Init()
 {
     EnsureSharedResourcesLoaded();
 
-    _idleAnim       = _sharedIdleAnim;
-    _walkAnim       = _sharedWalkAnim;
-    _attackAnim     = _sharedAttackAnim;
-    _takeDamageAnim = _sharedTakeDamageAnim;
-    _deathAnim      = _sharedDeathAnim;
-    _attackSound    = _sharedAttackSound;
-    _hurtSound      = _sharedHurtSound;
-    _deathSound     = _sharedDeathSound;
+    _attackSound = _sharedAttackSound;
+    _hurtSound   = _sharedHurtSound;
+    _deathSound  = _sharedDeathSound;
+    SetVariantTier(_variantTier);
 
     ResetForSpawn(_worldPos);
+}
+
+void FlameWisp::SetVariantTier(int tier)
+{
+    EnsureSharedResourcesLoaded();
+
+    _variantTier = (tier < 0) ? 0 : (tier >= kVariantCount) ? kVariantCount - 1 : tier;
+
+    _idleAnim       = _sharedIdleAnim[_variantTier];
+    _walkAnim       = _sharedWalkAnim[_variantTier];
+    _attackAnim     = _sharedAttackAnim[_variantTier];
+    _takeDamageAnim = _sharedTakeDamageAnim[_variantTier];
+    _deathAnim      = _sharedDeathAnim[_variantTier];
+
+    // Repoint the live texture so an already-spawned wisp swaps immediately.
+    SetIdleAnimation(false);
 }
 
 // =============================================================================
@@ -101,6 +128,10 @@ void FlameWisp::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _waypoints.clear();
     _waypointIndex = 0;
+
+    // Character Animator overrides (scale, hitboxes, anim speeds) win last.
+    ResetTuningState();
+    ApplyStoredTuning();
 }
 
 void FlameWisp::SetIdleAnimation(bool resetFrame)
@@ -108,7 +139,7 @@ void FlameWisp::SetIdleAnimation(bool resetFrame)
     _texture    = _idleAnim;
     _width      = kWispFrameWidth;
     _height     = _idleAnim.height;
-    _updateTime = kWispFrameTime;
+    _updateTime = (_editorAnimFrameTimes[0] > 0.f) ? _editorAnimFrameTimes[0] : kWispFrameTime;
     _maxFrames  = kWispFrameCount;
     if (resetFrame) { _frame = 0; _runningTime = 0.f; }
 }
@@ -299,19 +330,22 @@ void FlameWisp::DrawEnemy(Vector2 cameraRef)
                                   WHITE;
 
     // Casting glow telegraph — brightening ring before the fire bolt.
+    const Color glowColor = kWispGlowColors[_variantTier];
     if (_state == WispState::Casting)
     {
         float castRatio = _stateTimer / _castWindupInst;
         float pulse = sinf((float)GetTime() * 16.f) * 0.5f + 0.5f;
-        DrawCircleV(screenPos, 26.f + castRatio * 34.f, Fade(Color{ 255, 120, 30, 255 }, 0.20f + 0.15f * pulse));
-        DrawCircleV(screenPos, 12.f + castRatio * 18.f, Fade(Color{ 255, 210, 90, 255 }, 0.30f + 0.20f * pulse));
+        DrawCircleV(screenPos, 26.f + castRatio * 34.f, Fade(glowColor, 0.20f + 0.15f * pulse));
+        DrawCircleV(screenPos, 12.f + castRatio * 18.f, Fade(WHITE, 0.20f + 0.15f * pulse));
     }
 
     // Soft ember glow at all times so the wisp reads as a light source.
-    DrawCircleV(screenPos, drawWidth * 0.42f, Fade(Color{ 255, 120, 30, 255 }, 0.14f));
+    DrawCircleV(screenPos, drawWidth * 0.42f, Fade(glowColor, 0.14f));
 
+    Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
+    Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
+                    screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_graveReviveInvulTimer > 0.f)
@@ -328,6 +362,12 @@ void FlameWisp::DrawEnemy(Vector2 cameraRef)
 
 Rectangle FlameWisp::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+    if (_hasTunedCollision)
+        return GetTunedCollisionRec();
+
     float stableHalfW = kWispFrameWidth * _scale * 0.5f;
     float stableHalfH = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale * 0.5f;
 
@@ -346,6 +386,10 @@ Rectangle FlameWisp::GetCollisionRec() const
 
 Capsule2D FlameWisp::GetCapsule() const
 {
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<FlameWisp*>(this);
@@ -396,14 +440,18 @@ void FlameWisp::EnsureSharedResourcesLoaded()
     if (_sharedResourcesLoaded)
         return;
 
-    _sharedIdleAnim       = LoadTexture(AssetPath("Enemy/FlameWispIdle.png").c_str());
-    _sharedWalkAnim       = LoadTexture(AssetPath("Enemy/FlameWispWalk.png").c_str());
-    _sharedAttackAnim     = LoadTexture(AssetPath("Enemy/FlameWispAttack.png").c_str());
-    _sharedTakeDamageAnim = LoadTexture(AssetPath("Enemy/FlameWispHurt.png").c_str());
-    _sharedDeathAnim      = LoadTexture(AssetPath("Enemy/FlameWispDeath.png").c_str());
-    _sharedAttackSound    = LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
-    _sharedHurtSound      = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
-    _sharedDeathSound     = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
+    for (int variant = 0; variant < kVariantCount; variant++)
+    {
+        const char* suffix = kWispVariantSuffixes[variant];
+        _sharedIdleAnim[variant]       = LoadTexture(AssetPath(TextFormat("Enemy/FlameWispIdle%s.png",   suffix)).c_str());
+        _sharedWalkAnim[variant]       = LoadTexture(AssetPath(TextFormat("Enemy/FlameWispWalk%s.png",   suffix)).c_str());
+        _sharedAttackAnim[variant]     = LoadTexture(AssetPath(TextFormat("Enemy/FlameWispAttack%s.png", suffix)).c_str());
+        _sharedTakeDamageAnim[variant] = LoadTexture(AssetPath(TextFormat("Enemy/FlameWispHurt%s.png",   suffix)).c_str());
+        _sharedDeathAnim[variant]      = LoadTexture(AssetPath(TextFormat("Enemy/FlameWispDeath%s.png",  suffix)).c_str());
+    }
+    _sharedAttackSound = LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
+    _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
+    _sharedDeathSound  = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
     _sharedResourcesLoaded = true;
 }
 
@@ -412,22 +460,24 @@ void FlameWisp::UnloadSharedResources()
     if (!_sharedResourcesLoaded)
         return;
 
-    UnloadTexture(_sharedIdleAnim);
-    UnloadTexture(_sharedWalkAnim);
-    UnloadTexture(_sharedAttackAnim);
-    UnloadTexture(_sharedTakeDamageAnim);
-    UnloadTexture(_sharedDeathAnim);
+    for (int variant = 0; variant < kVariantCount; variant++)
+    {
+        UnloadTexture(_sharedIdleAnim[variant]);
+        UnloadTexture(_sharedWalkAnim[variant]);
+        UnloadTexture(_sharedAttackAnim[variant]);
+        UnloadTexture(_sharedTakeDamageAnim[variant]);
+        UnloadTexture(_sharedDeathAnim[variant]);
+        _sharedIdleAnim[variant]       = Texture2D{};
+        _sharedWalkAnim[variant]       = Texture2D{};
+        _sharedAttackAnim[variant]     = Texture2D{};
+        _sharedTakeDamageAnim[variant] = Texture2D{};
+        _sharedDeathAnim[variant]      = Texture2D{};
+    }
     UnloadSound(_sharedAttackSound);
     UnloadSound(_sharedHurtSound);
     UnloadSound(_sharedDeathSound);
-
-    _sharedIdleAnim       = Texture2D{};
-    _sharedWalkAnim       = Texture2D{};
-    _sharedAttackAnim     = Texture2D{};
-    _sharedTakeDamageAnim = Texture2D{};
-    _sharedDeathAnim      = Texture2D{};
-    _sharedAttackSound    = Sound{};
-    _sharedHurtSound      = Sound{};
-    _sharedDeathSound     = Sound{};
+    _sharedAttackSound = Sound{};
+    _sharedHurtSound   = Sound{};
+    _sharedDeathSound  = Sound{};
     _sharedResourcesLoaded = false;
 }

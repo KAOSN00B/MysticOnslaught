@@ -46,6 +46,7 @@ enum class GameState
     Settings,             // settings screen (display, audio)
     TileMapper,           // interactive tilesheet assignment tool (debug)
     NineSliceEditor,      // visual srcCorner/dstCorner editor for any PNG asset
+    CharacterAnimator,    // enemy hitbox + animation tuning tool (debug)
 };
 
 enum class MusicCue

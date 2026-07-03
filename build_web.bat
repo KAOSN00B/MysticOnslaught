@@ -54,6 +54,8 @@ call emcc ^
   %SRC%\GoldPickup.cpp ^
   %SRC%\CellPickup.cpp ^
   %SRC%\MetaProgression.cpp ^
+  %SRC%\CharacterTuning.cpp ^
+  %SRC%\CharacterAnimator.cpp ^
   %SRC%\AudioManager.cpp ^
   %SRC%\CombatDirector.cpp ^
   %SRC%\DebugPanel.cpp ^

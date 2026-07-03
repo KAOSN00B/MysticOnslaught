@@ -25,12 +25,14 @@ public:
     static void UnloadSharedResources();
 
     void SetWaveScale(int wave) override;
+    void SetVariantTier(int tier) override;
 
     // The base Enemy collision math assumes 32px grunt frames; the big slime
     // uses 48px frames, so both sizes compute their own centred rect here.
     Rectangle GetCollisionRec() const override;
 
     SlimeEnemy* AsSlime() override { return this; }
+    const char* GetTuningName() const override { return IsBig() ? "SlimeBig" : "SlimeSmall"; }
     SlimeSize   GetSize() const { return _size; }
     bool        IsBig()   const { return _size == SlimeSize::Big; }
 
@@ -40,18 +42,21 @@ private:
     static void EnsureSharedResourcesLoaded();
 
     SlimeSize _size = SlimeSize::Big;
+    int _variantTier = 0;   // 0 blue, 1 green, 2 gold, 3 red
 
-    // Big and small variants use separate stitched sprite strips.
-    static Texture2D _sharedBigIdleAnim;
-    static Texture2D _sharedBigWalkAnim;
-    static Texture2D _sharedBigAttackAnim;
-    static Texture2D _sharedBigHurtAnim;
-    static Texture2D _sharedBigDeathAnim;
-    static Texture2D _sharedSmallIdleAnim;
-    static Texture2D _sharedSmallWalkAnim;
-    static Texture2D _sharedSmallAttackAnim;
-    static Texture2D _sharedSmallHurtAnim;
-    static Texture2D _sharedSmallDeathAnim;
+    // Big and small sizes use separate stitched strips; each size has one
+    // texture set per colour-variant tier.
+    static constexpr int kVariantCount = 4;
+    static Texture2D _sharedBigIdleAnim[kVariantCount];
+    static Texture2D _sharedBigWalkAnim[kVariantCount];
+    static Texture2D _sharedBigAttackAnim[kVariantCount];
+    static Texture2D _sharedBigHurtAnim[kVariantCount];
+    static Texture2D _sharedBigDeathAnim[kVariantCount];
+    static Texture2D _sharedSmallIdleAnim[kVariantCount];
+    static Texture2D _sharedSmallWalkAnim[kVariantCount];
+    static Texture2D _sharedSmallAttackAnim[kVariantCount];
+    static Texture2D _sharedSmallHurtAnim[kVariantCount];
+    static Texture2D _sharedSmallDeathAnim[kVariantCount];
     static Sound     _sharedAttackSound;
     static Sound     _sharedHurtSound;
     static Sound     _sharedDeathSound;

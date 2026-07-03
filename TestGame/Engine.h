@@ -42,6 +42,7 @@
 #include "VirtualCanvas.h"
 #include "TileMapper.h"
 #include "NineSliceEditor.h"
+#include "CharacterAnimator.h"
 #include "DungeonGen.h"
 #include "TileDefs.h"
 #include "RoomLayout.h"
@@ -677,6 +678,7 @@ private:
     DebugPanel      _debug;
     TileMapper      _tileMapper;
     NineSliceEditor _nineSliceEditor;
+    CharacterAnimator _charAnimator;
     DungeonGen   _dungeonGen;
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;

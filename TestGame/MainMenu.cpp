@@ -8,7 +8,7 @@
 
 // -- 9-slice corner sizes ------------------------------------------------------
 static constexpr float BORDER_SRC_CORNER = 1.0f;
-static constexpr float BORDER_DST_CORNER = 20.0f; // screen px — raise/lower if corners look off
+static constexpr float BORDER_DST_CORNER = 20.0f; // screen px ï¿½ raise/lower if corners look off
 static constexpr float BTN_SRC_CORNER    = 8.f;
 static constexpr float BTN_DST_CORNER    = 16.f;
 
@@ -33,7 +33,7 @@ void MainMenu::Init()
 
     float startX = sw / 2.f - buttonWidth / 2.f;
 
-    // Y stored as offset from group top — draw adds _btnEdFirstY at runtime
+    // Y stored as offset from group top ï¿½ draw adds _btnEdFirstY at runtime
     _buttons.push_back({ "Start Game",  { startX, 0.f,                           buttonWidth, buttonHeight } });
     _buttons.push_back({ "How To Play", { startX, (buttonHeight + gap),           buttonWidth, buttonHeight } });
     _buttons.push_back({ "Settings",    { startX, (buttonHeight + gap) * 2.f,     buttonWidth, buttonHeight } });
@@ -46,10 +46,11 @@ void MainMenu::Init()
     float cornerPad = sw * 0.018f;
     float lbGap = sh * 0.008f;
 
-    // Bottom-left dev tools — always visible so you can test without finishing the demo
-    _buttons.push_back({ "Dungeon Run",   { cornerPad, sh - lbH * 3.f - lbGap * 2.f - sh * 0.018f, lbW, lbH } });
-    _buttons.push_back({ "Tile Editor",   { cornerPad, sh - lbH * 2.f - lbGap       - sh * 0.018f, lbW, lbH } });
-    _buttons.push_back({ "9-Slice Editor",{ cornerPad, sh - lbH                     - sh * 0.018f, lbW, lbH } });
+    // Bottom-left dev tools ï¿½ always visible so you can test without finishing the demo
+    _buttons.push_back({ "Dungeon Run",   { cornerPad, sh - lbH * 4.f - lbGap * 3.f - sh * 0.018f, lbW, lbH } });
+    _buttons.push_back({ "Tile Editor",   { cornerPad, sh - lbH * 3.f - lbGap * 2.f - sh * 0.018f, lbW, lbH } });
+    _buttons.push_back({ "9-Slice Editor",{ cornerPad, sh - lbH * 2.f - lbGap       - sh * 0.018f, lbW, lbH } });
+    _buttons.push_back({ "Char Animator", { cornerPad, sh - lbH                     - sh * 0.018f, lbW, lbH } });
 
     _startPressed          = false;
     _quitPressed           = false;
@@ -58,6 +59,7 @@ void MainMenu::Init()
     _dungeonRunPressed     = false;
     _tileMapperPressed     = false;
     _nineSliceEditorPressed = false;
+    _charAnimatorPressed    = false;
     _settingsPressed        = false;
 
     // Initialise editor rect from the computed border values.
@@ -89,6 +91,7 @@ void MainMenu::Update()
     _dungeonRunPressed      = false;
     _tileMapperPressed      = false;
     _nineSliceEditorPressed = false;
+    _charAnimatorPressed    = false;
     _settingsPressed        = false;
 
     float sw = (float)kVirtualWidth;
@@ -102,7 +105,7 @@ void MainMenu::Update()
     {
         if (button.text == "Debug Mode" && !_debugUnlocked)
             continue;
-        if ((button.text == "Dungeon Run" || button.text == "Tile Editor" || button.text == "9-Slice Editor")
+        if ((button.text == "Dungeon Run" || button.text == "Tile Editor" || button.text == "9-Slice Editor" || button.text == "Char Animator")
             && !_devToolsVisible)
             continue;
 
@@ -124,6 +127,7 @@ void MainMenu::Update()
             if (button.text == "Dungeon Run")    _dungeonRunPressed      = true;
             if (button.text == "Tile Editor")   _tileMapperPressed      = true;
             if (button.text == "9-Slice Editor") _nineSliceEditorPressed = true;
+            if (button.text == "Char Animator")  _charAnimatorPressed    = true;
             if (button.text == "Settings")       _settingsPressed        = true;
         }
     }
@@ -187,7 +191,7 @@ void MainMenu::Update()
 
     if (!_editorActive) return;
 
-    // -- Editor input — unified click priority ---------------------------------
+    // -- Editor input ï¿½ unified click priority ---------------------------------
     // Priority: edge handles > banner > button group > border interior
     const float hs = 10.f;
     auto handlePos = [&](int i) -> Vector2 {
@@ -231,7 +235,7 @@ void MainMenu::Update()
             // 2. Banner
             if (CheckCollisionPointRec(mouse, bannerRect))
             { _bannerDragging = true; _bannerDragStartMY = mouse.y; _bannerDragStartY = _bannerEdY; }
-            // 3. Button group (inside border — must be before interior check)
+            // 3. Button group (inside border ï¿½ must be before interior check)
             else if (CheckCollisionPointRec(mouse, btnGroupRect))
             { _btnDragging = true; _btnDragStartMY = mouse.y; _btnDragStartFY = _btnEdFirstY; }
             // 4. Border interior (anywhere else inside the border rect)
@@ -287,7 +291,7 @@ void MainMenu::Draw()
         float t      = (float)GetTime();
         int   offX   = (int)fmodf(t * 22.f, (float)period);
         int   offY   = (int)fmodf(t * 12.f, (float)period);
-        int   phaseX = offX / cell;       // 0 or 1 — which colour phase
+        int   phaseX = offX / cell;       // 0 or 1 ï¿½ which colour phase
         int   phaseY = offY / cell;
         int   pixX   = offX % cell;       // sub-cell pixel offset
         int   pixY   = offY % cell;
@@ -365,7 +369,7 @@ void MainMenu::Draw()
             { bannerX, bannerY, bannerW, bannerH },
             {}, 0.f, WHITE);
 
-    // Title text — centred in the flat body of the banner, with black outline
+    // Title text ï¿½ centred in the flat body of the banner, with black outline
     int         titleSz = (int)(sh * 0.058f);
     const char* title   = "Mystic Onslaught";
     int         titleW  = MeasureText(title, titleSz);
@@ -405,7 +409,7 @@ void MainMenu::Draw()
     {
         if (button.text == "Debug Mode" && !_debugUnlocked)
             continue;
-        if ((button.text == "Dungeon Run" || button.text == "Tile Editor" || button.text == "9-Slice Editor")
+        if ((button.text == "Dungeon Run" || button.text == "Tile Editor" || button.text == "9-Slice Editor" || button.text == "Char Animator")
             && !_devToolsVisible)
             continue;
 
@@ -436,7 +440,7 @@ void MainMenu::Draw()
             continue;
         }
 
-        // Dungeon Run button — teal
+        // Dungeon Run button ï¿½ teal
         if (button.text == "Dungeon Run")
         {
             Rectangle drawBounds = button.bounds;
@@ -464,7 +468,7 @@ void MainMenu::Draw()
             continue;
         }
 
-        // Tile Editor / 9-Slice Editor — orange
+        // Tile Editor / 9-Slice Editor ï¿½ orange
         if (button.text == "Tile Editor" || button.text == "Tile Mapper" || button.text == "9-Slice Editor")
         {
             Rectangle drawBounds = button.bounds;
@@ -509,7 +513,7 @@ void MainMenu::Draw()
         bool highlighted = button.hovered || button.selected;
         if (highlighted)
         {
-            // "Bloom bigger" — expand the button rect and draw a pulsing glow ring behind it
+            // "Bloom bigger" ï¿½ expand the button rect and draw a pulsing glow ring behind it
             float pulse  = 0.5f + 0.5f * sinf((float)GetTime() * 5.f);
             float expand = drawBounds.width * 0.04f;
             drawBounds = { drawBounds.x - expand, drawBounds.y - expand * 0.7f,
@@ -556,4 +560,5 @@ void MainMenu::SetDebugUnlocked(bool unlocked)
 bool MainMenu::DungeonRunPressed()       const { return _dungeonRunPressed;       }
 bool MainMenu::TileMapperPressed()       const { return _tileMapperPressed;       }
 bool MainMenu::NineSliceEditorPressed()  const { return _nineSliceEditorPressed;  }
+bool MainMenu::CharacterAnimatorPressed() const { return _charAnimatorPressed;     }
 bool MainMenu::SettingsPressed()         const { return _settingsPressed;          }

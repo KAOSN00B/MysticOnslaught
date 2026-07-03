@@ -107,6 +107,42 @@ void AbyssSlime::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _waypoints.clear();
     _waypointIndex = 0;
+
+    // Character Animator overrides (scale, hitboxes, anim speeds) win last.
+    ResetTuningState();
+    ApplyStoredTuning();
+}
+
+int AbyssSlime::GetCurrentAnimSlot() const
+{
+    if (_texture.id == _sharedIdleAnim.id)  return 0;
+    if (_texture.id == _sharedWalkAnim.id)  return 1;
+    if (_texture.id == _sharedMeleeAnim.id) return 2;
+    if (_texture.id == _sharedMagicAnim.id) return 3;
+    if (_texture.id == _sharedJumpAnim.id)  return 4;
+    if (_texture.id == _sharedFallAnim.id)  return 5;
+    if (_texture.id == _sharedHurtAnim.id)  return 6;
+    if (_texture.id == _sharedDeathAnim.id) return 7;
+    return 0;
+}
+
+const char* AbyssSlime::GetEditorAnimName(int index) const
+{
+    static const char* kAnimNames[8] = { "Idle", "Hop", "Melee", "Magic", "Jump", "Fall", "Hurt", "Death" };
+    return (index >= 0 && index < 8) ? kAnimNames[index] : "";
+}
+
+void AbyssSlime::PlayEditorAnim(int index)
+{
+    const Texture2D* sheets[8] = {
+        &_sharedIdleAnim, &_sharedWalkAnim, &_sharedMeleeAnim, &_sharedMagicAnim,
+        &_sharedJumpAnim, &_sharedFallAnim, &_sharedHurtAnim,  &_sharedDeathAnim
+    };
+    if (index < 0 || index > 7)
+        return;
+
+    float frameTimeOverride = _editorAnimFrameTimes[index];
+    SetAnimation(*sheets[index], (frameTimeOverride > 0.f) ? frameTimeOverride : 1.f / 8.f, true);
 }
 
 void AbyssSlime::SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame)
@@ -262,9 +298,14 @@ void AbyssSlime::HandleMelee()
     // Swing becomes live on frame 3 for a readable telegraph.
     if (!_damageApplied && _frame >= 3 && _target != nullptr)
     {
-        Rectangle attackRec = GetBodyContactRec();
-        attackRec.x -= 40.f; attackRec.y -= 30.f;
-        attackRec.width += 80.f; attackRec.height += 60.f;
+        // Per-animation melee box (Character Animator, slot 2) wins.
+        Rectangle attackRec;
+        if (!GetAnimMeleeRectWorld(2, attackRec))
+        {
+            attackRec = GetBodyContactRec();
+            attackRec.x -= 40.f; attackRec.y -= 30.f;
+            attackRec.width += 80.f; attackRec.height += 60.f;
+        }
 
         if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
         {
@@ -389,10 +430,10 @@ void AbyssSlime::DrawPuddles(Vector2 cameraRef) const
 
         DrawEllipse((int)screenPos.x, (int)screenPos.y,
             puddle.radius + wobble, (puddle.radius + wobble) * 0.55f,
-            Fade(Color{ 40, 120, 200, 255 }, 0.30f * alpha));
+            Fade(Color{ 100, 50, 190, 255 }, 0.30f * alpha));
         DrawEllipse((int)screenPos.x, (int)screenPos.y,
             (puddle.radius + wobble) * 0.72f, (puddle.radius + wobble) * 0.40f,
-            Fade(Color{ 80, 190, 255, 255 }, 0.28f * alpha));
+            Fade(Color{ 165, 110, 245, 255 }, 0.28f * alpha));
     }
 }
 
@@ -551,8 +592,8 @@ void AbyssSlime::DrawEnemy(Vector2 cameraRef)
         targetScreen.x += kVirtualWidth  / 2.f;
         targetScreen.y += kVirtualHeight / 2.f;
         float pulse = sinf((float)GetTime() * 12.f) * 0.5f + 0.5f;
-        DrawCircleLines((int)targetScreen.x, (int)targetScreen.y, _landingRadius, Fade(Color{ 60, 170, 255, 255 }, 0.5f + 0.3f * pulse));
-        DrawCircleV(targetScreen, _landingRadius * (0.35f + 0.25f * pulse), Fade(Color{ 60, 170, 255, 255 }, 0.14f));
+        DrawCircleLines((int)targetScreen.x, (int)targetScreen.y, _landingRadius, Fade(Color{ 160, 90, 245, 255 }, 0.5f + 0.3f * pulse));
+        DrawCircleV(targetScreen, _landingRadius * (0.35f + 0.25f * pulse), Fade(Color{ 160, 90, 245, 255 }, 0.14f));
     }
 
     // Parabolic lift while airborne sells the jump without real Z movement.
@@ -590,8 +631,10 @@ void AbyssSlime::DrawEnemy(Vector2 cameraRef)
         DrawCircleV(screenPos, drawWidth * (0.45f + 0.1f * pulse), Fade(Color{ 90, 60, 220, 255 }, 0.22f));
     }
 
+    Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f - airLift, drawWidth, drawHeight };
+    Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
+                    screenPos.y - drawHeight / 2.f - airLift + animDrawOffset.y, drawWidth, drawHeight };
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     DrawHealthBar(screenPos, drawWidth, drawHeight);
@@ -599,6 +642,12 @@ void AbyssSlime::DrawEnemy(Vector2 cameraRef)
 
 Rectangle AbyssSlime::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+    if (_hasTunedCollision)
+        return GetTunedCollisionRec();
+
     float halfW = _stableFrameW * _scale * 0.5f;
     float halfH = _stableFrameH * _scale * 0.5f;
     // The slime body fills most of the frame width but sits low.
@@ -612,6 +661,18 @@ Rectangle AbyssSlime::GetCollisionRec() const
 
 Capsule2D AbyssSlime::GetCapsule() const
 {
+    // Per-animation body circle wins, then the whole-character tuned capsule.
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
+    if (_capsuleRadius > 0.f)
+        return Capsule2D{
+            { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+            _capsuleHalfHeight,
+            _capsuleRadius
+        };
+
     return Capsule2D{
         { _worldPos.x, _worldPos.y + 16.f },
         0.f,

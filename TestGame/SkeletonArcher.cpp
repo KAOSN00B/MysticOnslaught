@@ -5,15 +5,22 @@
 #include <algorithm>
 
 // ---- Static member definitions ----------------------------------------------
-Texture2D SkeletonArcher::_sharedIdleAnim{};
-Texture2D SkeletonArcher::_sharedWalkAnim{};
-Texture2D SkeletonArcher::_sharedAttackAnim{};
-Texture2D SkeletonArcher::_sharedTakeDamageAnim{};
-Texture2D SkeletonArcher::_sharedDeathAnim{};
+Texture2D SkeletonArcher::_sharedIdleAnim[SkeletonArcher::kVariantCount]{};
+Texture2D SkeletonArcher::_sharedWalkAnim[SkeletonArcher::kVariantCount]{};
+Texture2D SkeletonArcher::_sharedAttackAnim[SkeletonArcher::kVariantCount]{};
+Texture2D SkeletonArcher::_sharedTakeDamageAnim[SkeletonArcher::kVariantCount]{};
+Texture2D SkeletonArcher::_sharedDeathAnim[SkeletonArcher::kVariantCount]{};
 Sound     SkeletonArcher::_sharedAttackSound{};
 Sound     SkeletonArcher::_sharedHurtSound{};
 Sound     SkeletonArcher::_sharedDeathSound{};
 bool      SkeletonArcher::_sharedResourcesLoaded = false;
+
+namespace
+{
+    // Tier escalation: bone-white -> gold -> onyx -> flaming red.
+    // "" is the original unsuffixed A-variant strip set.
+    const char* kArcherVariantSuffixes[4] = { "", "_B", "_C", "_D" };
+}
 
 namespace
 {
@@ -37,16 +44,28 @@ void SkeletonArcher::Init()
 {
     EnsureSharedResourcesLoaded();
 
-    _idleAnim       = _sharedIdleAnim;
-    _walkAnim       = _sharedWalkAnim;
-    _attackAnim     = _sharedAttackAnim;
-    _takeDamageAnim = _sharedTakeDamageAnim;
-    _deathAnim      = _sharedDeathAnim;
-    _attackSound    = _sharedAttackSound;
-    _hurtSound      = _sharedHurtSound;
-    _deathSound     = _sharedDeathSound;
+    _attackSound = _sharedAttackSound;
+    _hurtSound   = _sharedHurtSound;
+    _deathSound  = _sharedDeathSound;
+    SetVariantTier(_variantTier);
 
     ResetForSpawn(_worldPos);
+}
+
+void SkeletonArcher::SetVariantTier(int tier)
+{
+    EnsureSharedResourcesLoaded();
+
+    _variantTier = (tier < 0) ? 0 : (tier >= kVariantCount) ? kVariantCount - 1 : tier;
+
+    _idleAnim       = _sharedIdleAnim[_variantTier];
+    _walkAnim       = _sharedWalkAnim[_variantTier];
+    _attackAnim     = _sharedAttackAnim[_variantTier];
+    _takeDamageAnim = _sharedTakeDamageAnim[_variantTier];
+    _deathAnim      = _sharedDeathAnim[_variantTier];
+
+    // Repoint the live texture so an already-spawned archer swaps immediately.
+    SetIdleAnimation(false);
 }
 
 // =============================================================================
@@ -104,6 +123,10 @@ void SkeletonArcher::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _waypoints.clear();
     _waypointIndex = 0;
+
+    // Character Animator overrides (scale, hitboxes, anim speeds) win last.
+    ResetTuningState();
+    ApplyStoredTuning();
 }
 
 void SkeletonArcher::SetIdleAnimation(bool resetFrame)
@@ -111,7 +134,7 @@ void SkeletonArcher::SetIdleAnimation(bool resetFrame)
     _texture    = _idleAnim;
     _width      = kArcherFrameWidth;
     _height     = _idleAnim.height;
-    _updateTime = kArcherIdleFrameTime;
+    _updateTime = (_editorAnimFrameTimes[0] > 0.f) ? _editorAnimFrameTimes[0] : kArcherIdleFrameTime;
     _maxFrames  = kArcherFrameCount;
     if (resetFrame) { _frame = 0; _runningTime = 0.f; }
 }
@@ -121,7 +144,7 @@ void SkeletonArcher::SetWalkAnimation(bool resetFrame)
     _texture    = _walkAnim;
     _width      = kArcherFrameWidth;
     _height     = _walkAnim.height;
-    _updateTime = kArcherWalkFrameTime;
+    _updateTime = (_editorAnimFrameTimes[1] > 0.f) ? _editorAnimFrameTimes[1] : kArcherWalkFrameTime;
     _maxFrames  = kArcherFrameCount;
     if (resetFrame) { _frame = 0; _runningTime = 0.f; }
 }
@@ -132,8 +155,11 @@ void SkeletonArcher::SetAttackAnimation(bool resetFrame)
     _width      = kArcherFrameWidth;
     _height     = _attackAnim.height;
     // Spread the 6 attack frames across the full draw duration so the release
-    // frame lines up with the arrow actually spawning.
-    _updateTime = _drawDurationInst / (float)kArcherFrameCount;
+    // frame lines up with the arrow actually spawning. A tuned frame time
+    // takes priority when authored in the Character Animator.
+    _updateTime = (_editorAnimFrameTimes[2] > 0.f)
+        ? _editorAnimFrameTimes[2]
+        : _drawDurationInst / (float)kArcherFrameCount;
     _maxFrames  = kArcherFrameCount;
     if (resetFrame) { _frame = 0; _runningTime = 0.f; }
 }
@@ -402,8 +428,10 @@ void SkeletonArcher::DrawEnemy(Vector2 cameraRef)
         }
     }
 
+    Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
+    Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
+                    screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_graveReviveInvulTimer > 0.f)
@@ -420,6 +448,12 @@ void SkeletonArcher::DrawEnemy(Vector2 cameraRef)
 
 Rectangle SkeletonArcher::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+    if (_hasTunedCollision)
+        return GetTunedCollisionRec();
+
     float stableHalfW = kArcherFrameWidth * _scale * 0.5f;
     float stableHalfH = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale * 0.5f;
 
@@ -439,6 +473,10 @@ Rectangle SkeletonArcher::GetCollisionRec() const
 
 Capsule2D SkeletonArcher::GetCapsule() const
 {
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<SkeletonArcher*>(this);
@@ -514,14 +552,18 @@ void SkeletonArcher::EnsureSharedResourcesLoaded()
     if (_sharedResourcesLoaded)
         return;
 
-    _sharedIdleAnim       = LoadTexture(AssetPath("Enemy/SkeletonArcherIdle.png").c_str());
-    _sharedWalkAnim       = LoadTexture(AssetPath("Enemy/SkeletonArcherWalk.png").c_str());
-    _sharedAttackAnim     = LoadTexture(AssetPath("Enemy/SkeletonArcherAttack.png").c_str());
-    _sharedTakeDamageAnim = LoadTexture(AssetPath("Enemy/SkeletonArcherHurt.png").c_str());
-    _sharedDeathAnim      = LoadTexture(AssetPath("Enemy/SkeletonArcherDeath.png").c_str());
-    _sharedAttackSound    = LoadSound(AssetPath("Sounds/SwordSwipe2.ogg").c_str());
-    _sharedHurtSound      = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
-    _sharedDeathSound     = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
+    for (int variant = 0; variant < kVariantCount; variant++)
+    {
+        const char* suffix = kArcherVariantSuffixes[variant];
+        _sharedIdleAnim[variant]       = LoadTexture(AssetPath(TextFormat("Enemy/SkeletonArcherIdle%s.png",   suffix)).c_str());
+        _sharedWalkAnim[variant]       = LoadTexture(AssetPath(TextFormat("Enemy/SkeletonArcherWalk%s.png",   suffix)).c_str());
+        _sharedAttackAnim[variant]     = LoadTexture(AssetPath(TextFormat("Enemy/SkeletonArcherAttack%s.png", suffix)).c_str());
+        _sharedTakeDamageAnim[variant] = LoadTexture(AssetPath(TextFormat("Enemy/SkeletonArcherHurt%s.png",   suffix)).c_str());
+        _sharedDeathAnim[variant]      = LoadTexture(AssetPath(TextFormat("Enemy/SkeletonArcherDeath%s.png",  suffix)).c_str());
+    }
+    _sharedAttackSound = LoadSound(AssetPath("Sounds/SwordSwipe2.ogg").c_str());
+    _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
+    _sharedDeathSound  = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
     _sharedResourcesLoaded = true;
 }
 
@@ -530,22 +572,24 @@ void SkeletonArcher::UnloadSharedResources()
     if (!_sharedResourcesLoaded)
         return;
 
-    UnloadTexture(_sharedIdleAnim);
-    UnloadTexture(_sharedWalkAnim);
-    UnloadTexture(_sharedAttackAnim);
-    UnloadTexture(_sharedTakeDamageAnim);
-    UnloadTexture(_sharedDeathAnim);
+    for (int variant = 0; variant < kVariantCount; variant++)
+    {
+        UnloadTexture(_sharedIdleAnim[variant]);
+        UnloadTexture(_sharedWalkAnim[variant]);
+        UnloadTexture(_sharedAttackAnim[variant]);
+        UnloadTexture(_sharedTakeDamageAnim[variant]);
+        UnloadTexture(_sharedDeathAnim[variant]);
+        _sharedIdleAnim[variant]       = Texture2D{};
+        _sharedWalkAnim[variant]       = Texture2D{};
+        _sharedAttackAnim[variant]     = Texture2D{};
+        _sharedTakeDamageAnim[variant] = Texture2D{};
+        _sharedDeathAnim[variant]      = Texture2D{};
+    }
     UnloadSound(_sharedAttackSound);
     UnloadSound(_sharedHurtSound);
     UnloadSound(_sharedDeathSound);
-
-    _sharedIdleAnim       = Texture2D{};
-    _sharedWalkAnim       = Texture2D{};
-    _sharedAttackAnim     = Texture2D{};
-    _sharedTakeDamageAnim = Texture2D{};
-    _sharedDeathAnim      = Texture2D{};
-    _sharedAttackSound    = Sound{};
-    _sharedHurtSound      = Sound{};
-    _sharedDeathSound     = Sound{};
+    _sharedAttackSound = Sound{};
+    _sharedHurtSound   = Sound{};
+    _sharedDeathSound  = Sound{};
     _sharedResourcesLoaded = false;
 }

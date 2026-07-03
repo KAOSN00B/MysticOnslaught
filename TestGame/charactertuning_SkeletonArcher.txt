@@ -1,0 +1,16 @@
+scale=4.580
+anim_0_body_x=7.00
+anim_0_body_y=64.00
+anim_0_body_r=50.00
+anim_1_body_x=5.00
+anim_1_body_y=61.00
+anim_1_body_r=59.00
+anim_2_body_x=2.00
+anim_2_body_y=62.00
+anim_2_body_r=51.00
+anim_3_body_x=14.00
+anim_3_body_y=63.00
+anim_3_body_r=49.00
+anim_4_body_x=-6.00
+anim_4_body_y=53.00
+anim_4_body_r=60.00

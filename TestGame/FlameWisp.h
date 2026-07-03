@@ -27,11 +27,13 @@ public:
                 const std::vector<Vector2>& propCenters) override;
 
     void SetWaveScale(int wave) override;
+    void SetVariantTier(int tier) override;
     void DrawEnemy(Vector2 cameraRef) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule()      const override;
 
     FlameWisp* AsFlameWisp() override { return this; }
+    const char* GetTuningName() const override { return "FlameWisp"; }
     bool UsesDirectPursuit()      const override { return true; }
     bool IgnoresPropCollisions()  const override { return true; }
 
@@ -72,11 +74,15 @@ private:
     static constexpr float _teleportRadiusMin   = 260.f;
     static constexpr float _teleportRadiusMax   = 430.f;
 
-    static Texture2D _sharedIdleAnim;
-    static Texture2D _sharedWalkAnim;
-    static Texture2D _sharedAttackAnim;
-    static Texture2D _sharedTakeDamageAnim;
-    static Texture2D _sharedDeathAnim;
+    int _variantTier = 0;   // 0 orange, 1 blue flame, 2 eerie green, 3 magenta
+
+    // One texture set per colour-variant tier.
+    static constexpr int kVariantCount = 4;
+    static Texture2D _sharedIdleAnim[kVariantCount];
+    static Texture2D _sharedWalkAnim[kVariantCount];
+    static Texture2D _sharedAttackAnim[kVariantCount];
+    static Texture2D _sharedTakeDamageAnim[kVariantCount];
+    static Texture2D _sharedDeathAnim[kVariantCount];
     static Sound     _sharedAttackSound;
     static Sound     _sharedHurtSound;
     static Sound     _sharedDeathSound;

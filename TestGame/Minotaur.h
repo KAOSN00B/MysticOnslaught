@@ -44,6 +44,13 @@ public:
     bool IsBoss() const override { return true; }
     bool UsesDirectPursuit() const override { return true; }
 
+    // Character Animator support
+    const char* GetTuningName() const override { return "Minotaur"; }
+    int         GetEditorAnimCount() const override { return 6; }
+    const char* GetEditorAnimName(int index) const override;
+    void        PlayEditorAnim(int index) override;
+    int         GetCurrentAnimSlot() const override;
+
     bool ConsumeImpactShakeRequest();
 
 private:

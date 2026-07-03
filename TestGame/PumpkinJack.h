@@ -43,6 +43,13 @@ public:
     bool IsBoss() const override { return true; }
     bool UsesDirectPursuit() const override { return true; }
 
+    // Character Animator support
+    const char* GetTuningName() const override { return "PumpkinJack"; }
+    int         GetEditorAnimCount() const override { return 7; }
+    const char* GetEditorAnimName(int index) const override;
+    void        PlayEditorAnim(int index) override;
+    int         GetCurrentAnimSlot() const override;
+
     // Volley interface (read by CombatDirector after Update)
     bool    WantsToCastVolley() const { return _pendingVolley; }
     Vector2 GetVolleyDirection() const { return _volleyDirection; }

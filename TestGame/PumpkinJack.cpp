@@ -101,6 +101,41 @@ void PumpkinJack::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _waypoints.clear();
     _waypointIndex = 0;
+
+    // Character Animator overrides (scale, hitboxes, anim speeds) win last.
+    ResetTuningState();
+    ApplyStoredTuning();
+}
+
+int PumpkinJack::GetCurrentAnimSlot() const
+{
+    if (_texture.id == _sharedIdleAnim.id)   return 0;
+    if (_texture.id == _sharedWalkAnim.id)   return 1;
+    if (_texture.id == _sharedMeleeAnim.id)  return 2;
+    if (_texture.id == _sharedMagicAnim.id)  return 3;
+    if (_texture.id == _sharedDefendAnim.id) return 4;
+    if (_texture.id == _sharedHurtAnim.id)   return 5;
+    if (_texture.id == _sharedDeathAnim.id)  return 6;
+    return 0;
+}
+
+const char* PumpkinJack::GetEditorAnimName(int index) const
+{
+    static const char* kAnimNames[7] = { "Idle", "Walk", "Melee", "Magic", "Defend", "Hurt", "Death" };
+    return (index >= 0 && index < 7) ? kAnimNames[index] : "";
+}
+
+void PumpkinJack::PlayEditorAnim(int index)
+{
+    const Texture2D* sheets[7] = {
+        &_sharedIdleAnim, &_sharedWalkAnim, &_sharedMeleeAnim, &_sharedMagicAnim,
+        &_sharedDefendAnim, &_sharedHurtAnim, &_sharedDeathAnim
+    };
+    if (index < 0 || index > 6)
+        return;
+
+    float frameTimeOverride = _editorAnimFrameTimes[index];
+    SetAnimation(*sheets[index], (frameTimeOverride > 0.f) ? frameTimeOverride : 1.f / 8.f, true);
 }
 
 void PumpkinJack::SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame)
@@ -331,13 +366,18 @@ void PumpkinJack::HandleMelee()
 
     if (!_damageApplied && _frame >= 3 && _target != nullptr)
     {
-        Rectangle attackRec = GetBodyContactRec();
-        // Extend the swing toward the facing direction.
-        attackRec.width += 90.f;
-        if (_rightLeft < 0.f)
-            attackRec.x -= 90.f;
-        attackRec.y -= 20.f;
-        attackRec.height += 40.f;
+        // Per-animation melee box (Character Animator, slot 2) wins.
+        Rectangle attackRec;
+        if (!GetAnimMeleeRectWorld(2, attackRec))
+        {
+            attackRec = GetBodyContactRec();
+            // Extend the swing toward the facing direction.
+            attackRec.width += 90.f;
+            if (_rightLeft < 0.f)
+                attackRec.x -= 90.f;
+            attackRec.y -= 20.f;
+            attackRec.height += 40.f;
+        }
 
         if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
         {
@@ -580,8 +620,10 @@ void PumpkinJack::DrawEnemy(Vector2 cameraRef)
         DrawCircleV(screenPos, drawWidth * (0.34f + 0.08f * pulse), Fade(castColor, 0.22f));
     }
 
+    Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
+    Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
+                    screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     DrawHealthBar(screenPos, drawWidth, drawHeight);
@@ -589,6 +631,12 @@ void PumpkinJack::DrawEnemy(Vector2 cameraRef)
 
 Rectangle PumpkinJack::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+    if (_hasTunedCollision)
+        return GetTunedCollisionRec();
+
     float halfW = _stableFrameW * _scale * 0.5f;
     float halfH = _stableFrameH * _scale * 0.5f;
     return Rectangle{
@@ -601,6 +649,18 @@ Rectangle PumpkinJack::GetCollisionRec() const
 
 Capsule2D PumpkinJack::GetCapsule() const
 {
+    // Per-animation body circle wins, then the whole-character tuned capsule.
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
+    if (_capsuleRadius > 0.f)
+        return Capsule2D{
+            { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+            _capsuleHalfHeight,
+            _capsuleRadius
+        };
+
     return Capsule2D{
         { _worldPos.x, _worldPos.y + 12.f },
         18.f,

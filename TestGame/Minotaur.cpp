@@ -100,6 +100,40 @@ void Minotaur::ResetForSpawn(Vector2 pos)
     _pendingBurns.clear();
     _waypoints.clear();
     _waypointIndex = 0;
+
+    // Character Animator overrides (scale, hitboxes, anim speeds) win last.
+    ResetTuningState();
+    ApplyStoredTuning();
+}
+
+int Minotaur::GetCurrentAnimSlot() const
+{
+    if (_texture.id == _sharedIdleAnim.id)  return 0;
+    if (_texture.id == _sharedWalkAnim.id)  return 1;
+    if (_texture.id == _sharedMeleeAnim.id) return 2;
+    if (_texture.id == _sharedStompAnim.id) return 3;
+    if (_texture.id == _sharedHurtAnim.id)  return 4;
+    if (_texture.id == _sharedDeathAnim.id) return 5;
+    return 0;
+}
+
+const char* Minotaur::GetEditorAnimName(int index) const
+{
+    static const char* kAnimNames[6] = { "Idle", "Walk", "Melee", "Stomp", "Hurt", "Death" };
+    return (index >= 0 && index < 6) ? kAnimNames[index] : "";
+}
+
+void Minotaur::PlayEditorAnim(int index)
+{
+    const Texture2D* sheets[6] = {
+        &_sharedIdleAnim, &_sharedWalkAnim, &_sharedMeleeAnim,
+        &_sharedStompAnim, &_sharedHurtAnim, &_sharedDeathAnim
+    };
+    if (index < 0 || index > 5)
+        return;
+
+    float frameTimeOverride = _editorAnimFrameTimes[index];
+    SetAnimation(*sheets[index], (frameTimeOverride > 0.f) ? frameTimeOverride : 1.f / 8.f, true);
 }
 
 void Minotaur::SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame)
@@ -215,12 +249,17 @@ void Minotaur::HandleMelee()
 
     if (!_damageApplied && _frame >= 3 && _target != nullptr)
     {
-        Rectangle attackRec = GetBodyContactRec();
-        attackRec.width += 110.f;
-        if (_rightLeft < 0.f)
-            attackRec.x -= 110.f;
-        attackRec.y -= 24.f;
-        attackRec.height += 48.f;
+        // Per-animation melee box (Character Animator, slot 2) wins.
+        Rectangle attackRec;
+        if (!GetAnimMeleeRectWorld(2, attackRec))
+        {
+            attackRec = GetBodyContactRec();
+            attackRec.width += 110.f;
+            if (_rightLeft < 0.f)
+                attackRec.x -= 110.f;
+            attackRec.y -= 24.f;
+            attackRec.height += 48.f;
+        }
 
         if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
         {
@@ -547,8 +586,10 @@ void Minotaur::DrawEnemy(Vector2 cameraRef)
         DrawCircleLines((int)screenPos.x, (int)screenPos.y, _stompRadius, Fade(Color{ 255, 140, 40, 255 }, 0.35f + 0.3f * pulse));
     }
 
+    Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
+    Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
+                    screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     DrawHealthBar(screenPos, drawWidth, drawHeight);
@@ -556,6 +597,12 @@ void Minotaur::DrawEnemy(Vector2 cameraRef)
 
 Rectangle Minotaur::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+    if (_hasTunedCollision)
+        return GetTunedCollisionRec();
+
     float halfW = _stableFrameW * _scale * 0.5f;
     float halfH = _stableFrameH * _scale * 0.5f;
     return Rectangle{
@@ -568,6 +615,18 @@ Rectangle Minotaur::GetCollisionRec() const
 
 Capsule2D Minotaur::GetCapsule() const
 {
+    // Per-animation body circle wins, then the whole-character tuned capsule.
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
+    if (_capsuleRadius > 0.f)
+        return Capsule2D{
+            { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
+            _capsuleHalfHeight,
+            _capsuleRadius
+        };
+
     return Capsule2D{
         { _worldPos.x, _worldPos.y + 14.f },
         20.f,

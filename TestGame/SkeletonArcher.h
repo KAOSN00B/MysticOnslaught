@@ -27,12 +27,14 @@ public:
                 const std::vector<Vector2>& propCenters) override;
 
     void SetWaveScale(int wave) override;
+    void SetVariantTier(int tier) override;
     void DrawEnemy(Vector2 cameraRef) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule()      const override;
 
     void ApplyFreeze(float duration) override;
     SkeletonArcher* AsSkeletonArcher() override { return this; }
+    const char* GetTuningName() const override { return "SkeletonArcher"; }
 
     // Arrow firing interface (read by CombatDirector after Update)
     bool    WantsToFireArrow() const { return _wantsToFire; }
@@ -66,15 +68,19 @@ private:
     float _drawDurationInst  = 0.65f;
     float _shotCooldownInst  = 2.4f;
 
+    int _variantTier = 0;   // 0 bone-white, 1 gold, 2 onyx, 3 flaming red
+
     static constexpr float _kiteRetreatDistance  = 380.f;   // player closer -> back away
     static constexpr float _kiteAdvanceDistance  = 620.f;   // player farther -> approach
     static constexpr float _fireMaxRange         = 900.f;
 
-    static Texture2D _sharedIdleAnim;
-    static Texture2D _sharedWalkAnim;
-    static Texture2D _sharedAttackAnim;
-    static Texture2D _sharedTakeDamageAnim;
-    static Texture2D _sharedDeathAnim;
+    // One texture set per colour-variant tier.
+    static constexpr int kVariantCount = 4;
+    static Texture2D _sharedIdleAnim[kVariantCount];
+    static Texture2D _sharedWalkAnim[kVariantCount];
+    static Texture2D _sharedAttackAnim[kVariantCount];
+    static Texture2D _sharedTakeDamageAnim[kVariantCount];
+    static Texture2D _sharedDeathAnim[kVariantCount];
     static Sound     _sharedAttackSound;
     static Sound     _sharedHurtSound;
     static Sound     _sharedDeathSound;

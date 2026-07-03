@@ -44,6 +44,13 @@ public:
     bool IsBoss() const override { return true; }
     bool UsesDirectPursuit() const override { return true; }
 
+    // Character Animator support
+    const char* GetTuningName() const override { return "AbyssSlime"; }
+    int         GetEditorAnimCount() const override { return 8; }
+    const char* GetEditorAnimName(int index) const override;
+    void        PlayEditorAnim(int index) override;
+    int         GetCurrentAnimSlot() const override;
+
     // Summon interface (read by CombatDirector after Update):
     // returns how many small slimes to spawn this frame (0 = none).
     int  ConsumeSummonRequest();

@@ -69,6 +69,12 @@
     <ClCompile Include="MetaProgression.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="CharacterTuning.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="CharacterAnimator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="CellPickup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -201,6 +207,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="MetaProgression.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CharacterTuning.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CharacterAnimator.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CellPickup.h">
