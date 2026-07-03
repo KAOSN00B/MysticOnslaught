@@ -10,6 +10,13 @@
 #include "Cyclops.h"
 #include "Ogre.h"
 #include "Molarbeast.h"
+#include "SkeletonArcher.h"
+#include "FlameWisp.h"
+#include "SlimeEnemy.h"
+#include "AbyssSlime.h"
+#include "PumpkinJack.h"
+#include "Minotaur.h"
+#include "EnemyProjectile.h"
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
 #include "Pickup.h"
@@ -31,6 +38,7 @@
 #include "CutsceneManager.h"
 #include "WorldMapManager.h"
 #include "SettingsManager.h"
+#include "MetaProgression.h"
 #include "VirtualCanvas.h"
 #include "TileMapper.h"
 #include "NineSliceEditor.h"
@@ -76,6 +84,12 @@ private:
     Enemy* SpawnCyclops(Vector2 pos);
     Enemy* SpawnOgre(Vector2 pos);
     void SpawnMolarbeast(Vector2 pos);
+    Enemy* SpawnSkeletonArcher(Vector2 pos);
+    Enemy* SpawnFlameWisp(Vector2 pos);
+    Enemy* SpawnSlime(Vector2 pos, SlimeSize size);
+    void SpawnBossForBiome(Vector2 pos);      // picks the boss class for _currentBiome
+    void UpdateEnemyProjectiles(float dt);    // arrows + fire bolts (player collision)
+    void DrawEnemyProjectiles(Vector2 worldOffset) const;
     void UpdateCyclopsLasers(float dt);
     void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
@@ -111,6 +125,12 @@ private:
     void UpdateSpreadProjectiles(float dt);
     void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);
     void SpawnTimedPickup();
+
+    // -- Meta progression (Mystic Cells / Legacy Altar) ----------------------
+    Vector2 GetLegacyAltarPos() const;         // world pos of the altar in Zeph's room
+    void    HandlePlayerDeathMetaPenalty();    // gold retention + lose carried cells
+    void    UpdateMetaShop(float dt);          // GameState::MetaShop input handling
+    void    DrawMetaShop();                    // GameState::MetaShop rendering
     void SpawnBossSupportAdds();
     void UpdateBossSupportRespawns(float dt);
     void ClearBossSupportAdds();
@@ -222,6 +242,17 @@ private:
     int   _settingsGpContentRow = 0;   // row index within active tab content
     int   _settingsGpContentCol = 0;   // column (Display option buttons; unused elsewhere)
     float _settingsGpCooldown   = 0.f;
+
+    // -- Meta progression (Mystic Cells / Legacy Altar) --------------------------
+    MetaProgressionManager _meta;
+    bool  _nearLegacyAltar        = false;  // player in range of the altar this frame
+    bool  _deathPenaltyApplied    = false;  // guards double-applying gold retention
+    float _cellsBankedToastTimer  = 0.f;    // "+N Cells banked" HUD toast countdown
+    int   _cellsBankedToastAmount = 0;
+    float _legacyAltarBobTimer    = 0.f;    // altar orb floating animation
+    int   _metaShopCursor         = 0;      // keyboard/gamepad cursor into the unlock grid
+    float _metaShopNavCooldown    = 0.f;    // gamepad d-pad repeat cooldown
+    float _metaShopOpenTimer      = 0.f;    // brief input lock so the opening press isn't consumed
 
     RunStateController _runState;
     GameState& _gameState;
@@ -617,6 +648,7 @@ private:
     std::vector<std::unique_ptr<Enemy>>   _enemies;
     std::vector<CyclopsLaserProjectile>   _cyclopsLasers;
     std::vector<LavaBallProjectile>       _lavaBalls;
+    std::vector<EnemyProjectile>          _enemyProjectiles;   // arrows + fire bolts
     BossSupportState _bossCyclopsSupport;
     BossSupportState _bossOgreSupport;
 

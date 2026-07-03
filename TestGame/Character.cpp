@@ -123,6 +123,7 @@ void Character::Init()
 
     _exp            = 0;
     _gold           = 0;
+    _cells          = 0;
     _level          = 1;
     _expToNextLevel = 24;
     _pendingBurnTicks.clear();
@@ -142,6 +143,18 @@ void Character::Init()
     _frame = 0;
     _stepTimer = 0.f;
     _rightLeft = 1;
+}
+
+void Character::ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier, bool fifthAbilitySlot)
+{
+    // Permanent unlocks purchased at the Legacy Altar — applied once per run,
+    // right after Init(), so they stack cleanly with in-run upgrades.
+    _gold += startingGold;
+    _maxHealth += (float)vitalityBonus;
+    _health    += (float)vitalityBonus;
+    _manaRegenMultiplier *= manaRegenMultiplier;
+    if (fifthAbilitySlot && _maxAbilitySlots < 5)
+        _maxAbilitySlots = 5;
 }
 
 void Character::ReloadSounds()

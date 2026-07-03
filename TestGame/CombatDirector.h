@@ -7,6 +7,7 @@
 #include "Pickup.h"
 #include "HealPickup.h"
 #include "CyclopsLaserProjectile.h"
+#include "EnemyProjectile.h"
 #include "LavaBallProjectile.h"
 #include "NavigationGrid.h"
 #include "VFXManager.h"
@@ -90,7 +91,10 @@ struct EnemyRuntimeContext
     std::vector<std::unique_ptr<Enemy>>* enemies = nullptr;
     std::vector<CyclopsLaserProjectile>* cyclopsLasers = nullptr;
     std::vector<LavaBallProjectile>* lavaBalls = nullptr;
+    std::vector<EnemyProjectile>* enemyProjectiles = nullptr;   // arrows + fire bolts
     std::function<void(float, float)> triggerScreenShake;
+    std::function<void(Vector2)> spawnSmallSlime;               // Abyss Slime summons
+    std::function<Enemy*(Vector2)> spawnBasicEnemy;             // Pumpkin Jack summons
 };
 
 struct EnemyDeathContext
@@ -104,6 +108,7 @@ struct EnemyDeathContext
     bool* demoCompleted = nullptr;
     float* pendingExp = nullptr;
     std::function<void(Vector2, bool, bool)> spawnEnemyDrop;
+    std::function<void(Vector2)> spawnSmallSlime;   // big slime death split
 };
 
 struct BossSupportContext

@@ -1895,6 +1895,10 @@ void ShopManager::GenerateInventory(const Character& player)
     std::vector<ShopItem> abilityPool;
     for (auto a : kShopAbilities)
     {
+        // Meta progression gate: abilities still locked at the Legacy Altar
+        // never show up for sale.
+        if (_meta != nullptr && !_meta->IsAbilityUnlocked(a)) continue;
+
         bool owned = false;
         for (int i = 0; i < player.GetLearnedCount(); i++)
             if (player.GetLearnedAbility(i) == a) { owned = true; break; }

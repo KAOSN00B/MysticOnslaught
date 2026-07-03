@@ -9,6 +9,12 @@
 class Cyclops;
 class Ogre;
 class Molarbeast;
+class SkeletonArcher;
+class FlameWisp;
+class SlimeEnemy;
+class AbyssSlime;
+class PumpkinJack;
+class Minotaur;
 
 class Enemy : public BaseCharacter
 {
@@ -71,6 +77,12 @@ public:
     virtual Cyclops* AsCyclops() { return nullptr; }
     virtual Ogre* AsOgre() { return nullptr; }
     virtual Molarbeast* AsMolarbeast() { return nullptr; }
+    virtual SkeletonArcher* AsSkeletonArcher() { return nullptr; }
+    virtual FlameWisp* AsFlameWisp() { return nullptr; }
+    virtual SlimeEnemy* AsSlime() { return nullptr; }
+    virtual AbyssSlime* AsAbyssSlime() { return nullptr; }
+    virtual PumpkinJack* AsPumpkinJack() { return nullptr; }
+    virtual Minotaur* AsMinotaur() { return nullptr; }
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }

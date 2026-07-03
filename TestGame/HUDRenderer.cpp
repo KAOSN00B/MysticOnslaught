@@ -60,6 +60,8 @@ void HUDRenderer::DrawMiniMap(const MiniMapContext& ctx) const
         Vector2 dot = toMini(pickup->GetWorldPos());
         if (pickup->GetType() == PickupType::Gold)
             DrawCircleV(dot, 4.f, Fade(GOLD, 0.95f));
+        else if (pickup->GetType() == PickupType::Cell)
+            DrawCircleV(dot, 4.f, Fade(Color{ 255, 90, 200, 255 }, 0.95f));
         else
             DrawCircleV(dot, 4.f, Fade(GREEN, 0.9f));
     }
@@ -95,7 +97,9 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
     };
 
     drawLabelBox(("Gold: " + std::to_string(ctx.player->GetGold())).c_str(), 20.f, 16.f, 28, GOLD);
-    drawLabelBox(("Enemies Left: " + std::to_string(ctx.getActiveEnemyCount())).c_str(), 20.f, 58.f, 28, RAYWHITE);
+    // Carried Mystic Cells — banked with Zeph between zones, lost on death.
+    drawLabelBox(("Cells: " + std::to_string(ctx.player->GetCells())).c_str(), 20.f, 58.f, 28, Color{ 255, 120, 210, 255 });
+    drawLabelBox(("Enemies Left: " + std::to_string(ctx.getActiveEnemyCount())).c_str(), 20.f, 100.f, 28, RAYWHITE);
 
     {
         bool isBoss = (ctx.currentRoomType == RoomType::Boss);

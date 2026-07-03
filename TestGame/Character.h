@@ -132,6 +132,17 @@ public:
     void Heal(int amount);
     void AddGold(int amount) { _gold += amount; }
     int  GetGold()     const { return _gold; }
+
+    // ── Mystic Cells (meta progression currency) ─────────────────────────────
+    // Carried during the run; banked with Zeph between zones; lost on death.
+    void AddCells(int amount)  { _cells += amount; }
+    int  GetCells()      const { return _cells; }
+    int  TakeCells()           { int taken = _cells; _cells = 0; return taken; }
+
+    // Applies the permanent meta-progression bonuses at run start.
+    // Called by Engine right after Init() when a new run begins.
+    void ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier, bool fifthAbilitySlot);
+
     int  GetLevel()    const { return _level; }
     int  GetMaxLevel() const { return _maxLevel; }
     int  GetExp()      const { return _exp; }
@@ -258,6 +269,7 @@ private:
 
     int _exp  = 0;
     int _gold = 0;
+    int _cells = 0;   // carried Mystic Cells — reset every run, lost on death
     int _level = 1;
     int _expToNextLevel = 10;
     static constexpr int _maxLevel = 20;

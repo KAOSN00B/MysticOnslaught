@@ -155,6 +155,7 @@ MusicCue AudioManager::GetDesiredLoopMusicCue(const AudioContext& ctx) const
         return MusicCue::Pause;
 
     case GameState::Shop:
+    case GameState::MetaShop:
         return MusicCue::Shop;
 
     case GameState::Map:

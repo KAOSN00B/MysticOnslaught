@@ -1,10 +1,16 @@
 ﻿#include "CombatDirector.h"
 
+#include "AbyssSlime.h"
 #include "Character.h"
 #include "Cyclops.h"
+#include "FlameWisp.h"
 #include "GoldPickup.h"
+#include "Minotaur.h"
 #include "Molarbeast.h"
 #include "Ogre.h"
+#include "PumpkinJack.h"
+#include "SkeletonArcher.h"
+#include "SlimeEnemy.h"
 #include "raymath.h"
 
 #include <algorithm>
@@ -352,6 +358,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
     }
     const std::vector<Vector2>& propCenters = _propCentersScratch;
 
+    // Spawning during iteration would invalidate the loop when ctx.enemies
+    // reallocates, so boss summons are collected here and executed after.
+    std::vector<Vector2> pendingSmallSlimeSpawns;
+    std::vector<Vector2> pendingBasicEnemySpawns;
+
     for (auto& enemy : *ctx.enemies)
     {
         if (!enemy->IsActive())
@@ -390,6 +401,32 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                 ctx.triggerScreenShake(8.f, 0.14f);
         }
 
+        if (SkeletonArcher* archer = enemy->AsSkeletonArcher())
+        {
+            if (archer->WantsToFireArrow() && ctx.enemyProjectiles != nullptr)
+            {
+                EnemyProjectile arrow;
+                arrow.Init(archer->GetWorldPos(), archer->GetArrowDirection(),
+                    EnemyProjectileKind::Arrow, archer->GetAttackPower());
+                ctx.enemyProjectiles->push_back(arrow);
+                archer->OnArrowFired();
+                archer->PlayAttackSound();
+            }
+        }
+
+        if (FlameWisp* wisp = enemy->AsFlameWisp())
+        {
+            if (wisp->WantsToCastBolt() && ctx.enemyProjectiles != nullptr)
+            {
+                EnemyProjectile bolt;
+                bolt.Init(wisp->GetWorldPos(), wisp->GetBoltDirection(),
+                    EnemyProjectileKind::FireBolt, wisp->GetAttackPower());
+                ctx.enemyProjectiles->push_back(bolt);
+                wisp->OnBoltCast();
+                wisp->PlayAttackSound();
+            }
+        }
+
         if (Molarbeast* molarbeast = enemy->AsMolarbeast())
         {
             if (molarbeast->WantsToFireLavaBall())
@@ -404,11 +441,84 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (molarbeast->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
                 ctx.triggerScreenShake(8.f, 0.14f);
         }
+
+        if (AbyssSlime* abyssSlime = enemy->AsAbyssSlime())
+        {
+            // Abyss Call — small slimes burst out in a ring around the boss.
+            int summonCount = abyssSlime->ConsumeSummonRequest();
+            if (summonCount > 0 && ctx.spawnSmallSlime)
+            {
+                for (int i = 0; i < summonCount; i++)
+                {
+                    float angle = ((float)i / (float)summonCount) * 2.f * PI;
+                    pendingSmallSlimeSpawns.push_back(Vector2{
+                        abyssSlime->GetWorldPos().x + cosf(angle) * 190.f,
+                        abyssSlime->GetWorldPos().y + sinf(angle) * 150.f
+                    });
+                }
+            }
+
+            if (abyssSlime->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
+                ctx.triggerScreenShake(9.f, 0.16f);
+        }
+
+        if (PumpkinJack* pumpkinJack = enemy->AsPumpkinJack())
+        {
+            // Harvest Volley — fan of fire bolts aimed at the player.
+            if (pumpkinJack->WantsToCastVolley() && ctx.enemyProjectiles != nullptr)
+            {
+                int boltCount = pumpkinJack->GetVolleyBoltCount();
+                Vector2 aimDir = pumpkinJack->GetVolleyDirection();
+                float baseAngle = atan2f(aimDir.y, aimDir.x);
+                float fanSpread = 0.28f;   // radians between adjacent bolts
+
+                for (int i = 0; i < boltCount; i++)
+                {
+                    float angleOffset = ((float)i - (float)(boltCount - 1) * 0.5f) * fanSpread;
+                    Vector2 boltDir{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) };
+                    EnemyProjectile bolt;
+                    bolt.Init(pumpkinJack->GetWorldPos(), boltDir,
+                        EnemyProjectileKind::FireBolt, pumpkinJack->GetAttackPower());
+                    ctx.enemyProjectiles->push_back(bolt);
+                }
+                pumpkinJack->OnVolleyCast();
+            }
+
+            // Grave Call — shadow grunts crawl out near the boss.
+            int summonCount = pumpkinJack->ConsumeSummonRequest();
+            if (summonCount > 0 && ctx.spawnBasicEnemy)
+            {
+                for (int i = 0; i < summonCount; i++)
+                {
+                    float angle = ((float)i / (float)summonCount) * 2.f * PI + 0.6f;
+                    pendingBasicEnemySpawns.push_back(Vector2{
+                        pumpkinJack->GetWorldPos().x + cosf(angle) * 210.f,
+                        pumpkinJack->GetWorldPos().y + sinf(angle) * 160.f
+                    });
+                }
+            }
+        }
+
+        if (Minotaur* minotaur = enemy->AsMinotaur())
+        {
+            if (minotaur->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
+                ctx.triggerScreenShake(10.f, 0.18f);
+        }
     }
+
+    // Safe to grow the enemy vector now that the iteration is finished.
+    for (const Vector2& spawnPos : pendingSmallSlimeSpawns)
+        ctx.spawnSmallSlime(spawnPos);
+    for (const Vector2& spawnPos : pendingBasicEnemySpawns)
+        ctx.spawnBasicEnemy(spawnPos);
 }
 
 void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) const
 {
+    // Spawning during iteration would invalidate the loop when ctx.enemies
+    // reallocates, so slime splits are collected here and executed after.
+    std::vector<Vector2> pendingSmallSlimeSpawns;
+
     for (auto& enemy : *ctx.enemies)
     {
         if (!enemy->IsActive())
@@ -422,8 +532,20 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
             if (enemy.get() == ctx.bossOgreSupport->enemy && IsBossFightActive(*ctx.enemies))
                 ctx.bossOgreSupport->respawnTimer = kBossSupportRespawnDelay;
 
-            bool isBoss = (dynamic_cast<Molarbeast*>(enemy.get()) != nullptr);
+            bool isBoss = enemy->IsBoss();
             bool isOgre = (dynamic_cast<Ogre*>(enemy.get()) != nullptr);
+
+            // Splitting slime: a big slime bursts into two small ones where it
+            // died. The engine provides the spawn callback so the new slimes go
+            // through the normal pooled-spawn path.
+            if (SlimeEnemy* slime = enemy->AsSlime())
+            {
+                if (slime->IsBig() && ctx.spawnSmallSlime)
+                {
+                    pendingSmallSlimeSpawns.push_back(Vector2{ dropPos.x - 42.f, dropPos.y + 16.f });
+                    pendingSmallSlimeSpawns.push_back(Vector2{ dropPos.x + 42.f, dropPos.y + 16.f });
+                }
+            }
 
             if (isBoss)
             {
@@ -443,6 +565,10 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
             enemy->Teleport(Vector2{ -5000.f, -5000.f });
         }
     }
+
+    // Safe to grow the enemy vector now that the iteration is finished.
+    for (const Vector2& spawnPos : pendingSmallSlimeSpawns)
+        ctx.spawnSmallSlime(spawnPos);
 }
 
 void CombatDirector::SpawnBossSupportAdds(const BossSupportContext& ctx) const

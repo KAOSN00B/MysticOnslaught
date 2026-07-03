@@ -42,6 +42,7 @@ enum class GameState
     TouchButtonMapping,   // drag-to-place touch button layout editor
     DungeonRun,           // active procedural dungeon run
     WorldMap,             // biome selection map shown after each boss clear
+    MetaShop,             // Legacy Altar — spend banked Mystic Cells on permanent unlocks
     Settings,             // settings screen (display, audio)
     TileMapper,           // interactive tilesheet assignment tool (debug)
     NineSliceEditor,      // visual srcCorner/dstCorner editor for any PNG asset

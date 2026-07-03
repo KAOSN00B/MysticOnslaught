@@ -4,6 +4,7 @@
 #include "Character.h"
 #include "AbilityType.h"
 #include "InputPrompts.h"
+#include "MetaProgression.h"
 #include <vector>
 #include <string>
 
@@ -42,6 +43,10 @@ class ShopManager
 public:
     // ── Setup ────────────────────────────────────────────────────────────────
     void Init(const ShopTextures& tex);
+
+    // Non-owning pointer so GenerateInventory can hide abilities that are still
+    // locked behind Legacy Altar (meta progression) purchases.
+    void SetMetaProgression(const MetaProgressionManager* meta) { _meta = meta; }
 
     // Reset shop state and generate fresh inventory for this Store room.
     // act: 1-indexed act number, used to scale prices for inflation.
@@ -87,6 +92,7 @@ private:
     };
 
     std::vector<ShopItem> _inventory;
+    const MetaProgressionManager* _meta = nullptr;   // set once by Engine after Init
     int         _tab            = 0;    // 0 = wares, 1 = abilities
     std::string _dialogue;
     Vector2     _npcPos         = {};

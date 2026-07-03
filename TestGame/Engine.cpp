@@ -9,6 +9,7 @@
 #include "AnimationUtils.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "CellPickup.h"
 #include "VirtualCanvas.h"
 #include "CapsuleCollision.h"
 #include "VirtualCanvas.h"
@@ -134,10 +135,18 @@ Engine::~Engine()
     Cyclops::UnloadSharedResources();
     Ogre::UnloadSharedResources();
     Molarbeast::UnloadSharedResources();
+    SkeletonArcher::UnloadSharedResources();
+    FlameWisp::UnloadSharedResources();
+    SlimeEnemy::UnloadSharedResources();
+    AbyssSlime::UnloadSharedResources();
+    PumpkinJack::UnloadSharedResources();
+    Minotaur::UnloadSharedResources();
     HealPickup::UnloadSharedResources();
     GoldPickup::UnloadSharedResources();
+    CellPickup::UnloadSharedResources();
     SpreadProjectile::UnloadSharedResources();
     LavaBallProjectile::UnloadSharedResources();
+    EnemyProjectile::UnloadSharedResources();
     if (_audioInitialised)
     {
         UnloadSound(_pickupSound);
@@ -267,6 +276,9 @@ void Engine::Init()
     _settingsMgr.Load();
     _settingsMgr.ApplyWindow();
 
+    // Load meta progression (banked cells + permanent unlocks) from disk.
+    _meta.Load();
+
     // Virtual 1920x1080 canvas - everything draws here, then it is letterboxed onto the real window.
     _virtualCanvas = LoadRenderTexture(kVirtualWidth, kVirtualHeight);
 
@@ -326,6 +338,7 @@ void Engine::Init()
         &_abilityIconIceTex,
         &_abilityIconElectricTex
     });
+    _shop.SetMetaProgression(&_meta);
 
     _mapIconNormal   = LoadTexture(AssetPath("TileSet/MapIcons/NormalRoom.png").c_str());
     _mapIconElite    = LoadTexture(AssetPath("TileSet/MapIcons/EliteRoom.png").c_str());
@@ -346,6 +359,7 @@ void Engine::Init()
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
     _lavaBalls.clear();
+    _enemyProjectiles.clear();
     _vfx.Clear();
     _enemies.clear();
 
@@ -529,6 +543,16 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
 
     // Zeph heals the player fully when they arrive at the store.
     _player.Heal(_player.GetMaxHealthValue());
+
+    // Reaching Zeph banks all carried Mystic Cells — the Dead Cells "made it to
+    // the Collector" moment. Cells still carried when dying are lost instead.
+    int carriedCells = _player.TakeCells();
+    if (carriedCells > 0)
+    {
+        _meta.BankCells(carriedCells);
+        _cellsBankedToastAmount = carriedCells;
+        _cellsBankedToastTimer  = 4.f;
+    }
 }
 
 void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates)
@@ -760,6 +784,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _vfx.Clear();
     _cyclopsLasers.clear();
     _lavaBalls.clear();
+    _enemyProjectiles.clear();
     ClearBossSupportAdds();
     _bossCyclopsSupport.enemy = nullptr;
     _bossCyclopsSupport.respawnTimer = 0.f;
@@ -1387,6 +1412,10 @@ void Engine::Update(float dt)
         UpdateSettings(dt);
         break;
 
+    case GameState::MetaShop:
+        UpdateMetaShop(dt);
+        break;
+
     case GameState::DungeonRun:
         UpdateDungeonRun(dt);
         break;
@@ -1723,6 +1752,7 @@ void Engine::UpdateGamePlay(float dt)
 
         if (_gameOverTimer <= 0.f)
         {
+            HandlePlayerDeathMetaPenalty();
             _gameState = GameState::GameOver;
         }
 
@@ -1847,12 +1877,16 @@ void Engine::UpdateGamePlay(float dt)
         enemyRuntimeCtx.enemies = &_enemies;
         enemyRuntimeCtx.cyclopsLasers = &_cyclopsLasers;
         enemyRuntimeCtx.lavaBalls = &_lavaBalls;
+        enemyRuntimeCtx.enemyProjectiles = &_enemyProjectiles;
         enemyRuntimeCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
+        enemyRuntimeCtx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
+        enemyRuntimeCtx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
         _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
 
         HandlePlayerMeleeDamage();
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
+        UpdateEnemyProjectiles(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
@@ -1999,6 +2033,10 @@ void Engine::Draw()
 
     case GameState::Settings:
         DrawSettings();
+        break;
+
+    case GameState::MetaShop:
+        DrawMetaShop();
         break;
 
     case GameState::TileMapper:
@@ -2264,6 +2302,7 @@ void Engine::UpdateEnemyCount(float dt)
     ctx.demoCompleted = &_demoCompleted;
     ctx.pendingExp = &_pendingExp;
     ctx.spawnEnemyDrop = [&](Vector2 worldPos, bool isOgre, bool isBoss) { SpawnEnemyDrop(worldPos, isOgre, isBoss); };
+    ctx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
     _combatDirector.UpdateEnemyDeaths(ctx, dt);
 }
 
@@ -2294,6 +2333,27 @@ void Engine::DrawHUD()
     if (_currentRoomType != RoomType::Store)
         drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(),
             hc.enemiesX, hc.enemiesY, (int)hc.enemiesFs, RAYWHITE);
+
+    // Carried Mystic Cells — pink to match the pickup orbs; lost on death.
+    drawLabelBox(("Cells: " + std::to_string(_player.GetCells())).c_str(),
+        hc.goldX, hc.enemiesY + hc.enemiesFs + 24.f, (int)hc.goldFs, Color{ 255, 120, 210, 255 });
+
+    // "+N Cells banked" toast after reaching Zeph with carried cells.
+    if (_cellsBankedToastTimer > 0.f)
+    {
+        _cellsBankedToastTimer -= GetFrameTime();
+        float toastAlpha = std::min(1.f, _cellsBankedToastTimer / 0.75f);
+        const char* toastText = TextFormat("+%d Cells banked with Zeph", _cellsBankedToastAmount);
+        int toastFontSize = 40;
+        int toastWidth = MeasureText(toastText, toastFontSize);
+        float toastX = (float)kVirtualWidth * 0.5f - toastWidth * 0.5f;
+        float toastY = 150.f;
+        DrawRectangleRounded(
+            Rectangle{ toastX - 18.f, toastY - 10.f, toastWidth + 36.f, toastFontSize + 20.f },
+            0.3f, 6, Fade(BLACK, 0.55f * toastAlpha));
+        DrawText(toastText, (int)toastX, (int)toastY, toastFontSize,
+            Fade(Color{ 255, 120, 210, 255 }, toastAlpha));
+    }
 
 
     auto drawOrb = [&](Vector2 centre, float radius, float pct, Color fill, const char* label)
@@ -2876,21 +2936,36 @@ void Engine::DrawWaveIntro()
 
 void Engine::GenerateStartingAbilityOptions()
 {
-    _startingAbilityOptions[0] = UpgradeType::LearnFireSpread;
-    _startingAbilityOptions[1] = UpgradeType::LearnIceSpread;
-    _startingAbilityOptions[2] = UpgradeType::LearnElectricSpread;
-    _startingAbilityOptions[3] = UpgradeType::LearnFireBolt;
-    _startingAbilityOptions[4] = UpgradeType::LearnIceBolt;
-    _startingAbilityOptions[5] = UpgradeType::LearnElectricBolt;
+    // Spreads are always available; Bolts join the pool once purchased at the
+    // Legacy Altar (meta progression).
+    static const UpgradeType kStartingCandidates[6] = {
+        UpgradeType::LearnFireSpread, UpgradeType::LearnIceSpread, UpgradeType::LearnElectricSpread,
+        UpgradeType::LearnFireBolt,   UpgradeType::LearnIceBolt,   UpgradeType::LearnElectricBolt
+    };
+    static const AbilityType kStartingAbilities[6] = {
+        AbilityType::FireSpread, AbilityType::IceSpread, AbilityType::ElectricSpread,
+        AbilityType::FireBolt,   AbilityType::IceBolt,   AbilityType::ElectricBolt
+    };
 
+    int optionCount = 0;
     for (int i = 0; i < 6; i++)
+        if (_meta.IsAbilityUnlocked(kStartingAbilities[i]))
+            _startingAbilityOptions[optionCount++] = kStartingCandidates[i];
+
+    // Fill the remainder by repeating from the unlocked set so all 6 slots stay
+    // valid (only the first 3 are ever displayed).
+    for (int i = optionCount; i < 6; i++)
+        _startingAbilityOptions[i] = _startingAbilityOptions[i % optionCount];
+
+    for (int i = 0; i < optionCount; i++)
     {
-        int j = GetRandomValue(i, 5);
+        int j = GetRandomValue(i, optionCount - 1);
         UpgradeType tmp = _startingAbilityOptions[i];
         _startingAbilityOptions[i] = _startingAbilityOptions[j];
         _startingAbilityOptions[j] = tmp;
-        _startingAbilitySelected[i] = false;
     }
+    for (int i = 0; i < 6; i++)
+        _startingAbilitySelected[i] = false;
     _startingAbilityPickCount = 0;
 }
 
@@ -3012,6 +3087,10 @@ void Engine::GenerateAbilityChoiceOptions()
 
     for (int i = 0; i < 9; i++)
     {
+        // Meta progression gate: locked abilities never appear as offers.
+        if (!_meta.IsAbilityUnlocked(allAbilities[i]))
+            continue;
+
         if (!_player.HasLearnedAbility(allAbilities[i]))
             pool[poolSize++] = learnTypes[i];
         else if (_player.CanUpgradeAbility(allAbilities[i]))
@@ -3057,6 +3136,10 @@ void Engine::GenerateTreasureChestOptions()
     int abilityPoolSize = 0;
     for (int i = 0; i < 9; i++)
     {
+        // Meta progression gate: locked abilities never appear as offers.
+        if (!_meta.IsAbilityUnlocked(allAbilities[i]))
+            continue;
+
         if (!_player.HasLearnedAbility(allAbilities[i]))
             abilityPool[abilityPoolSize++] = learnTypes[i];
         else if (_player.CanUpgradeAbility(allAbilities[i]))
@@ -5409,6 +5492,17 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
         spawnGold(GoldDenomination::Single, -80.f, -110.f);
         spawnGold(GoldDenomination::Single,  80.f, -110.f);
         spawnGold(GoldDenomination::Single,   0.f, -150.f);
+
+        // Mystic Cells: bosses guarantee a big haul (1x Ten + 2x Five = 20 cells).
+        auto spawnCell = [&](CellDenomination denom, float ox, float oy)
+        {
+            auto c = std::make_unique<CellPickup>();
+            c->Init(Vector2{ centre.x + ox, centre.y + oy }, denom);
+            _pickups.push_back(std::move(c));
+        };
+        spawnCell(CellDenomination::Ten,    0.f,  -55.f);
+        spawnCell(CellDenomination::Five, -90.f,   80.f);
+        spawnCell(CellDenomination::Five,  90.f,   80.f);
         return;
     }
 
@@ -5470,6 +5564,21 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
     g->Init(dropPos, denom);
     _pickups.push_back(std::move(g));
 
+    // Mystic Cells (meta progression currency, Dead Cells style):
+    // Ogres/elites always drop a Five; regular enemies drop a Single 30% of the time.
+    if (isOgre)
+    {
+        auto c = std::make_unique<CellPickup>();
+        c->Init(Vector2{ dropPos.x + 30.f, dropPos.y - 20.f }, CellDenomination::Five);
+        _pickups.push_back(std::move(c));
+    }
+    else if (GetRandomValue(1, 100) <= 30)
+    {
+        auto c = std::make_unique<CellPickup>();
+        c->Init(Vector2{ dropPos.x + 26.f, dropPos.y - 14.f }, CellDenomination::Single);
+        _pickups.push_back(std::move(c));
+    }
+
     // Rare bonus heal drop (8% chance, unchanged from before).
     if (GetRandomValue(1, 100) <= kEnemyDropChancePercent)
     {
@@ -5507,6 +5616,229 @@ void Engine::SpawnTimedPickup()
     p->Init(pos);
     p->SetTimerSpawned(true);
     _pickups.push_back(std::move(p));
+}
+
+// =============================================================================
+// Meta progression — Mystic Cells, Legacy Altar, permanent unlocks
+// =============================================================================
+
+Vector2 Engine::GetLegacyAltarPos() const
+{
+    // West of Zeph (who stands at sw*0.5, sh*0.42) so both prompts never overlap.
+    return { (float)kVirtualWidth * 0.30f, (float)kVirtualHeight * 0.42f };
+}
+
+void Engine::HandlePlayerDeathMetaPenalty()
+{
+    if (_deathPenaltyApplied)
+        return;
+    _deathPenaltyApplied = true;
+
+    // Carried (unbanked) cells are lost — that's the Dead Cells deal. The gold
+    // retention unlock lets part of the gold survive into the next run.
+    float retention = _meta.GetGoldRetentionPercent();
+    if (retention > 0.f)
+        _meta.SetGoldCarryover((int)((float)_player.GetGold() * retention));
+    _player.TakeCells();
+}
+
+void Engine::UpdateMetaShop(float dt)
+{
+    const int unlockCount = (int)MetaUnlockType::Count;
+
+    // Brief input lock so the E/A press that opened the screen isn't consumed.
+    if (_metaShopOpenTimer > 0.f)
+    {
+        _metaShopOpenTimer -= dt;
+        return;
+    }
+
+    _gamepad.Update(_gamepadBindingsEdit);
+
+    // -- Leave ---------------------------------------------------------------
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_E) ||
+        (_gamepad.isActive && _gamepad.backPressed))
+    {
+        _gameState = GameState::DungeonRun;
+        return;
+    }
+
+    // -- Cursor navigation (keyboard arrows + d-pad), 6 cards per row ---------
+    const int columns = 6;
+    _metaShopNavCooldown -= dt;
+    auto moveCursor = [&](int dCol, int dRow)
+    {
+        int col = _metaShopCursor % columns;
+        int row = _metaShopCursor / columns;
+        col += dCol;
+        row += dRow;
+        int rowCount = (unlockCount + columns - 1) / columns;
+        if (row < 0) row = 0;
+        if (row >= rowCount) row = rowCount - 1;
+        if (col < 0) col = 0;
+        if (col >= columns) col = columns - 1;
+        int idx = row * columns + col;
+        if (idx >= unlockCount) idx = unlockCount - 1;
+        _metaShopCursor = idx;
+        _metaShopNavCooldown = 0.16f;
+    };
+
+    bool navReady = _metaShopNavCooldown <= 0.f;
+    bool gpLeft   = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT);
+    bool gpRight  = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT);
+    bool gpUp     = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP);
+    bool gpDown   = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN);
+    if (navReady && (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A) || gpLeft))  moveCursor(-1, 0);
+    if (navReady && (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D) || gpRight)) moveCursor( 1, 0);
+    if (navReady && (IsKeyPressed(KEY_UP)    || IsKeyPressed(KEY_W) || gpUp))    moveCursor(0, -1);
+    if (navReady && (IsKeyPressed(KEY_DOWN)  || IsKeyPressed(KEY_S) || gpDown))  moveCursor(0,  1);
+
+    // -- Mouse hover moves the cursor; click / Enter / A purchases ------------
+    // Card layout must match DrawMetaShop exactly.
+    const float sw = (float)kVirtualWidth;
+    const float cardW = 272.f, cardH = 200.f, cardGap = 18.f;
+    const float gridW = columns * cardW + (columns - 1) * cardGap;
+    const float gridX = (sw - gridW) * 0.5f;
+    const float gridY = 300.f;
+
+    Vector2 mouse = GetVirtualMousePos();
+    bool purchasePressed = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
+                           (_gamepad.isActive && _gamepad.menuConfirmPressed);
+
+    for (int i = 0; i < unlockCount; i++)
+    {
+        int col = i % columns;
+        int row = i / columns;
+        Rectangle card{ gridX + col * (cardW + cardGap), gridY + row * (cardH + cardGap), cardW, cardH };
+        if (CheckCollisionPointRec(mouse, card))
+        {
+            _metaShopCursor = i;
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+                purchasePressed = true;
+        }
+    }
+
+    if (purchasePressed)
+    {
+        MetaUnlockType selected = (MetaUnlockType)_metaShopCursor;
+        if (_meta.Purchase(selected))
+        {
+            if (_audioInitialised)
+                PlaySound(_pickupSound);
+        }
+    }
+}
+
+void Engine::DrawMetaShop()
+{
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+
+    // Dark mystical backdrop — same scrolling pattern as other full screens,
+    // tinted purple so the altar feels different from Zeph's shop.
+    DrawScrollingCheckerboard(sw, sh, Color{ 26, 16, 34, 255 }, Color{ 34, 22, 46, 255 }, 18.f, 12.f);
+
+    const Texture2D& cellTexture = CellPickup::GetMediumTexture();
+
+    // -- Title + banked cell balance -------------------------------------------
+    const char* title = "ZEPH'S LEGACY";
+    int titleFontSize = 74;
+    DrawText(title, (int)(sw * 0.5f - MeasureText(title, titleFontSize) * 0.5f), 70, titleFontSize, Color{ 255, 170, 230, 255 });
+
+    const char* subtitle = "Permanent unlocks. Death cannot take these from you.";
+    int subFontSize = 28;
+    DrawText(subtitle, (int)(sw * 0.5f - MeasureText(subtitle, subFontSize) * 0.5f), 160, subFontSize, Color{ 190, 160, 200, 255 });
+
+    // Banked balance with the cell orb icon
+    const char* balanceText = TextFormat("%d", _meta.GetBankedCells());
+    int balanceFontSize = 52;
+    float balanceWidth = (float)MeasureText(balanceText, balanceFontSize);
+    float orbSize = 52.f;
+    float balanceX = sw * 0.5f - (balanceWidth + orbSize + 14.f) * 0.5f;
+    Rectangle orbSrc{ 0.f, 0.f, (float)cellTexture.width, (float)cellTexture.height };
+    Rectangle orbDst{ balanceX, 212.f, orbSize, orbSize };
+    DrawTexturePro(cellTexture, orbSrc, orbDst, Vector2{ 0.f, 0.f }, 0.f, WHITE);
+    DrawText(balanceText, (int)(balanceX + orbSize + 14.f), 214, balanceFontSize, Color{ 255, 120, 210, 255 });
+
+    // -- Unlock cards -----------------------------------------------------------
+    const int columns = 6;
+    const int unlockCount = (int)MetaUnlockType::Count;
+    const float cardW = 272.f, cardH = 200.f, cardGap = 18.f;
+    const float gridW = columns * cardW + (columns - 1) * cardGap;
+    const float gridX = (sw - gridW) * 0.5f;
+    const float gridY = 300.f;
+
+    for (int i = 0; i < unlockCount; i++)
+    {
+        MetaUnlockType type = (MetaUnlockType)i;
+        const MetaUnlockInfo& info = GetMetaUnlockInfo(type);
+        bool owned        = _meta.IsUnlocked(type);
+        bool prereqOwned  = _meta.IsUnlocked(info.prerequisite);
+        bool affordable   = _meta.GetBankedCells() >= info.cost;
+        bool purchasable  = _meta.CanPurchase(type);
+        bool cursorHere   = (_metaShopCursor == i);
+
+        int col = i % columns;
+        int row = i / columns;
+        Rectangle card{ gridX + col * (cardW + cardGap), gridY + row * (cardH + cardGap), cardW, cardH };
+
+        // Card body
+        Color bodyColor = owned       ? Color{ 30, 62, 40, 235 }
+                        : purchasable ? Color{ 52, 34, 66, 235 }
+                        :               Color{ 34, 30, 40, 235 };
+        DrawRectangleRounded(card, 0.14f, 6, bodyColor);
+
+        // Border: gold = cursor, green = owned, purple = purchasable, grey = locked
+        Color borderColor = cursorHere  ? GOLD
+                          : owned       ? Color{ 90, 200, 120, 255 }
+                          : purchasable ? Color{ 200, 110, 220, 255 }
+                          :               Color{ 80, 75, 90, 255 };
+        if (cursorHere)
+        {
+            // Double outline so the cursor card pops without a thickness parameter.
+            Rectangle outerCard{ card.x - 3.f, card.y - 3.f, card.width + 6.f, card.height + 6.f };
+            DrawRectangleRoundedLines(outerCard, 0.14f, 6, borderColor);
+        }
+        DrawRectangleRoundedLines(card, 0.14f, 6, borderColor);
+
+        // Name
+        Color nameColor = (owned || purchasable) ? RAYWHITE : Color{ 140, 130, 150, 255 };
+        DrawText(info.name, (int)(card.x + 16.f), (int)(card.y + 14.f), 26, nameColor);
+
+        // Description (already contains \n line breaks)
+        DrawText(info.description, (int)(card.x + 16.f), (int)(card.y + 52.f), 20,
+            (owned || purchasable) ? Color{ 200, 195, 210, 255 } : Color{ 120, 112, 130, 255 });
+
+        // Bottom row: OWNED tag, price, or prerequisite hint
+        if (owned)
+        {
+            DrawText("OWNED", (int)(card.x + 16.f), (int)(card.y + cardH - 40.f), 24, Color{ 90, 200, 120, 255 });
+        }
+        else if (!prereqOwned)
+        {
+            const char* prereqText = TextFormat("Requires %s", GetMetaUnlockInfo(info.prerequisite).name);
+            DrawText(prereqText, (int)(card.x + 16.f), (int)(card.y + cardH - 38.f), 18, Color{ 170, 120, 120, 255 });
+        }
+        else
+        {
+            float priceOrbSize = 26.f;
+            Rectangle priceOrbDst{ card.x + 16.f, card.y + cardH - 42.f, priceOrbSize, priceOrbSize };
+            DrawTexturePro(cellTexture, orbSrc, priceOrbDst, Vector2{ 0.f, 0.f }, 0.f, WHITE);
+            const char* priceText = TextFormat("%d", info.cost);
+            DrawText(priceText, (int)(priceOrbDst.x + priceOrbSize + 10.f), (int)(card.y + cardH - 40.f), 24,
+                affordable ? Color{ 255, 120, 210, 255 } : Color{ 200, 80, 80, 255 });
+        }
+    }
+
+    // -- Footer hints -------------------------------------------------------------
+    const char* hint = _gamepad.isActive
+        ? "D-Pad: Navigate    A: Unlock    B: Back"
+        : "Arrows: Navigate    Enter / Click: Unlock    ESC / E: Back";
+    int hintFontSize = 24;
+    DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, hintFontSize) * 0.5f), (int)(sh - 60.f), hintFontSize, Color{ 170, 160, 180, 255 });
+
+    const char* lifetimeText = TextFormat("Lifetime cells banked: %d", _meta.GetLifetimeCells());
+    DrawText(lifetimeText, 40, (int)(sh - 60.f), 22, Color{ 130, 120, 140, 255 });
 }
 
 void Engine::DrawHowToPlay()
@@ -6370,10 +6702,22 @@ void Engine::ResetRunState()
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
     _lavaBalls.clear();
+    _enemyProjectiles.clear();
     _cyclopsLasers.clear();
     _pickups.clear();
     _vfx.Clear();
     _player.Init();
+
+    // Meta progression: permanent unlocks + gold retained from the last death.
+    _player.ApplyMetaBonuses(
+        _meta.GetStartingGoldBonus() + _meta.TakeGoldCarryover(),
+        _meta.GetVitalityBonus(),
+        _meta.GetManaRegenMultiplier(),
+        _meta.HasFifthAbilitySlot());
+    _deathPenaltyApplied   = false;
+    _nearLegacyAltar       = false;
+    _cellsBankedToastTimer = 0.f;
+
     _currentBiome = GetBiomeForAct(1);   // no initial biome transition
     _pendingBiome = _currentBiome;
     ApplyBiome(_currentBiome);
@@ -6465,11 +6809,20 @@ Enemy* Engine::SpawnBasicEnemy(Vector2 pos)
     {
         if (enemy->IsActive())
             continue;
+        // Only reuse plain grunts — every specialised type has its own pool.
         if (enemy->AsCyclops() != nullptr)
             continue;
         if (enemy->AsOgre() != nullptr)
             continue;
         if (enemy->AsMolarbeast() != nullptr)
+            continue;
+        if (enemy->AsSkeletonArcher() != nullptr)
+            continue;
+        if (enemy->AsFlameWisp() != nullptr)
+            continue;
+        if (enemy->AsSlime() != nullptr)
+            continue;
+        if (enemy->IsBoss())
             continue;
 
         enemy->ResetForSpawn(pos);
@@ -6647,6 +7000,211 @@ void Engine::SpawnMolarbeast(Vector2 pos)
     ConfigureSpawnedEnemy(*molarbeast);
     _enemies.push_back(std::move(molarbeast));
     _bossWarningTimer = 4.f;
+}
+
+Enemy* Engine::SpawnSkeletonArcher(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        SkeletonArcher* archer = enemy->AsSkeletonArcher();
+        if (archer == nullptr)
+            continue;
+
+        archer->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*archer);
+        return archer;
+    }
+
+    auto archer = std::make_unique<SkeletonArcher>(pos);
+    archer->Init();
+    ConfigureSpawnedEnemy(*archer);
+    Enemy* archerPtr = archer.get();
+    _enemies.push_back(std::move(archer));
+    return archerPtr;
+}
+
+Enemy* Engine::SpawnFlameWisp(Vector2 pos)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        FlameWisp* wisp = enemy->AsFlameWisp();
+        if (wisp == nullptr)
+            continue;
+
+        wisp->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*wisp);
+        return wisp;
+    }
+
+    auto wisp = std::make_unique<FlameWisp>(pos);
+    wisp->Init();
+    ConfigureSpawnedEnemy(*wisp);
+    Enemy* wispPtr = wisp.get();
+    _enemies.push_back(std::move(wisp));
+    return wispPtr;
+}
+
+Enemy* Engine::SpawnSlime(Vector2 pos, SlimeSize size)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        SlimeEnemy* slime = enemy->AsSlime();
+        if (slime == nullptr || slime->GetSize() != size)
+            continue;
+
+        slime->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*slime);
+        return slime;
+    }
+
+    auto slime = std::make_unique<SlimeEnemy>(pos, size);
+    slime->Init();
+    ConfigureSpawnedEnemy(*slime);
+    Enemy* slimePtr = slime.get();
+    _enemies.push_back(std::move(slime));
+    return slimePtr;
+}
+
+// =============================================================================
+// Boss selection per biome. Molarbeast keeps the Caverns (zone 1) crown; the
+// three new bosses split the remaining biomes by theme.
+// =============================================================================
+void Engine::SpawnBossForBiome(Vector2 pos)
+{
+    enum class BossKind { Molarbeast, AbyssSlime, PumpkinJack, Minotaur };
+
+    BossKind kind;
+    switch (_currentBiome)
+    {
+    case Biome::Graveyard:
+    case Biome::Forest:
+    case Biome::Jungle:
+        kind = BossKind::PumpkinJack;
+        break;
+
+    case Biome::AncientCastle:
+    case Biome::LostCity:
+        kind = BossKind::Minotaur;
+        break;
+
+    case Biome::DemonsInsides:
+    case Biome::Wastelands:
+    case Biome::DreamRealm:
+        kind = BossKind::AbyssSlime;
+        break;
+
+    case Biome::Caverns:
+    case Biome::TheSanctuary:
+    default:
+        kind = BossKind::Molarbeast;
+        break;
+    }
+
+    if (kind == BossKind::Molarbeast)
+    {
+        SpawnMolarbeast(pos);
+        return;
+    }
+
+    // Try pooled reuse first, mirroring the other boss spawn paths.
+    for (auto& enemy : _enemies)
+    {
+        if (enemy->IsActive())
+            continue;
+
+        bool matches =
+            (kind == BossKind::AbyssSlime  && enemy->AsAbyssSlime()  != nullptr) ||
+            (kind == BossKind::PumpkinJack && enemy->AsPumpkinJack() != nullptr) ||
+            (kind == BossKind::Minotaur    && enemy->AsMinotaur()    != nullptr);
+        if (!matches)
+            continue;
+
+        enemy->ResetForSpawn(pos);
+        ConfigureSpawnedEnemy(*enemy);
+        _bossWarningTimer = 4.f;
+        return;
+    }
+
+    std::unique_ptr<Enemy> boss;
+    switch (kind)
+    {
+    case BossKind::AbyssSlime:
+    {
+        auto abyssSlime = std::make_unique<AbyssSlime>(pos);
+        abyssSlime->Init();
+        boss = std::move(abyssSlime);
+        break;
+    }
+    case BossKind::PumpkinJack:
+    {
+        auto pumpkinJack = std::make_unique<PumpkinJack>(pos);
+        pumpkinJack->Init();
+        boss = std::move(pumpkinJack);
+        break;
+    }
+    default:
+    {
+        auto minotaur = std::make_unique<Minotaur>(pos);
+        minotaur->Init();
+        boss = std::move(minotaur);
+        break;
+    }
+    }
+
+    ConfigureSpawnedEnemy(*boss);
+    _enemies.push_back(std::move(boss));
+    _bossWarningTimer = 4.f;
+}
+
+// =============================================================================
+// Enemy projectiles (arrows + fire bolts) — flight, player hit, bounds cull.
+// =============================================================================
+void Engine::UpdateEnemyProjectiles(float dt)
+{
+    for (auto& projectile : _enemyProjectiles)
+    {
+        if (!projectile.IsActive())
+            continue;
+
+        projectile.Update(dt);
+
+        // Cull once fully off the room (rooms are exactly one virtual screen).
+        Vector2 pos = projectile.GetWorldPos();
+        if (pos.x < -120.f || pos.x > (float)kVirtualWidth  + 120.f ||
+            pos.y < -120.f || pos.y > (float)kVirtualHeight + 120.f)
+        {
+            projectile.Destroy();
+            continue;
+        }
+
+        if (CheckCollisionRecs(projectile.GetCollisionRec(), _player.GetCollisionRec()))
+        {
+            _player.TakeDamage(projectile.GetDamage(), projectile.GetWorldPos());
+            if (projectile.GetKind() == EnemyProjectileKind::FireBolt)
+                _vfx.SpawnHitEffect(Character::CastType::FireBolt, projectile.GetWorldPos(), Vector2{ 0.f, -1.f });
+            projectile.Destroy();
+        }
+    }
+
+    _enemyProjectiles.erase(
+        std::remove_if(_enemyProjectiles.begin(), _enemyProjectiles.end(),
+            [](const EnemyProjectile& p) { return !p.IsActive(); }),
+        _enemyProjectiles.end());
+}
+
+void Engine::DrawEnemyProjectiles(Vector2 worldOffset) const
+{
+    for (const auto& projectile : _enemyProjectiles)
+        projectile.Draw(worldOffset);
 }
 
 // =============================================================================
@@ -7061,9 +7619,11 @@ void Engine::SpawnDungeonRoomEnemies()
     {
         // Spawn the boss at the centre-top of the room so it's always in bounds
         // regardless of player entry point. Avoids wall-clip from random placement.
+        // The boss class is chosen per biome (Molarbeast, Abyss Slime,
+        // Pumpkin Jack, or Minotaur).
         float bossX = sw * 0.5f;
         float bossY = sh * 0.28f;
-        SpawnMolarbeast({ bossX, bossY });
+        SpawnBossForBiome({ bossX, bossY });
         if (tier >= 1)
             spawnAt([&](Vector2 p){ SpawnCyclops(p); }, 1);
     }
@@ -7126,6 +7686,21 @@ void Engine::SpawnDungeonRoomEnemies()
 
         int basicCount = GetRandomValue(minBasics, maxBasics);
 
+        // Each grunt slot rolls its enemy type. Early rooms lean heavily on the
+        // familiar shadow grunt; later rooms mix in archers, slimes, and wisps.
+        auto spawnMixedGrunt = [&](Vector2 p)
+        {
+            int roll = GetRandomValue(1, 100);
+            int archerChance = tier == 0 ? 10 : (tier == 1 ? 16 : 20);
+            int slimeChance  = tier == 0 ? 10 : (tier == 1 ? 14 : 16);
+            int wispChance   = tier == 0 ?  6 : (tier == 1 ? 12 : 16);
+
+            if      (roll <= archerChance)                             SpawnSkeletonArcher(p);
+            else if (roll <= archerChance + slimeChance)               SpawnSlime(p, SlimeSize::Big);
+            else if (roll <= archerChance + slimeChance + wispChance)  SpawnFlameWisp(p);
+            else                                                       SpawnBasicEnemy(p);
+        };
+
         // Ancient Castle: spawn in a tight cluster so enemies charge together.
         if (_currentBiome == Biome::AncientCastle && basicCount > 1)
         {
@@ -7144,7 +7719,7 @@ void Engine::SpawnDungeonRoomEnemies()
         }
         else
         {
-            spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, basicCount);
+            spawnAt([&](Vector2 p){ spawnMixedGrunt(p); }, basicCount);
         }
 
         // Cyclops: rare early, moderate mid, common late.
@@ -7176,6 +7751,7 @@ void Engine::ClearDungeonEnemies()
     _spreadProjectiles.clear();
     _cyclopsLasers.clear();
     _lavaBalls.clear();
+    _enemyProjectiles.clear();
     _pickups.clear();
     _vfx.Clear();
     _pendingExp    = 0.f;
@@ -9538,6 +10114,7 @@ void Engine::UpdateDungeonRun(float dt)
             if (_gameOverTimer <= 0.f)
             {
                 _playerDying = false;
+                HandlePlayerDeathMetaPenalty();
                 _gameState   = GameState::GameOver;
             }
             _cameraPos = { sw * 0.5f, sh * 0.5f };
@@ -9755,6 +10332,37 @@ void Engine::UpdateDungeonRun(float dt)
                 }
                 return;
             }
+
+            // -- Legacy Altar (meta progression unlocks) ---------------------
+            // A floating Mystic Cell orb west of Zeph. Standing near it and
+            // pressing the interact key opens the permanent unlock screen.
+            _legacyAltarBobTimer += dt;
+            Vector2 altarPos = GetLegacyAltarPos();
+            _nearLegacyAltar = Vector2Distance(_player.GetWorldPos(), altarPos) < 155.f;
+            if (_nearLegacyAltar && !_shop.IsNearNpc())
+            {
+                bool interactPressed = IsKeyPressed(KEY_E) || gamepadInteract;
+                if (_touchModeActive && IsGestureDetected(GESTURE_TAP))
+                {
+                    // Touch: tapping anywhere near the altar counts as interact.
+                    Vector2 tap = GetVirtualTouchPos(0);
+                    Vector2 altarScreen{ altarPos.x - _cameraPos.x + kVirtualWidth * 0.5f,
+                                         altarPos.y - _cameraPos.y + kVirtualHeight * 0.5f };
+                    if (Vector2Distance(tap, altarScreen) < 170.f)
+                        interactPressed = true;
+                }
+                if (interactPressed)
+                {
+                    _metaShopCursor      = 0;
+                    _metaShopOpenTimer   = 0.25f;
+                    _gameState           = GameState::MetaShop;
+                    return;
+                }
+            }
+        }
+        else
+        {
+            _nearLegacyAltar = false;
         }
         _nav.TickRefresh(dt, _player.GetFeetWorldPos());
         _nav.ApplyPendingRefresh();
@@ -9792,7 +10400,10 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.enemies            = &_enemies;
         eCtx.cyclopsLasers      = &_cyclopsLasers;
         eCtx.lavaBalls          = &_lavaBalls;
+        eCtx.enemyProjectiles   = &_enemyProjectiles;
         eCtx.triggerScreenShake = [&](float s, float d){ TriggerScreenShake(s, d); };
+        eCtx.spawnSmallSlime    = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
+        eCtx.spawnBasicEnemy    = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
         if (_currentBiome == Biome::DreamRealm)
@@ -9852,6 +10463,7 @@ void Engine::UpdateDungeonRun(float dt)
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         UpdateCyclopsLasers(dt);
+        UpdateEnemyProjectiles(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
@@ -10222,6 +10834,7 @@ void Engine::DrawDungeonRun()
                 for (const auto& proj : _lavaBalls)
                     if (proj.IsActive())
                         proj.Draw(worldOffset);
+                DrawEnemyProjectiles(worldOffset);
                 DrawCyclopsLasers(worldOffset);
                 _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
                 for (auto& pickup : _pickups)
@@ -10279,7 +10892,38 @@ void Engine::DrawDungeonRun()
                 }
 
                 if (_currentRoomType == RoomType::Store)
+                {
                     _shop.DrawNpc(worldOffset);
+
+                    // Legacy Altar — floating Mystic Cell orb west of Zeph.
+                    {
+                        const Texture2D& cellTexture = CellPickup::GetMediumTexture();
+                        Vector2 altarPos = GetLegacyAltarPos();
+                        float bobOffset  = sinf(_legacyAltarBobTimer * 2.2f) * 7.f;
+                        float altarScale = 7.f + sinf(_legacyAltarBobTimer * 1.4f) * 0.35f;
+                        Vector2 altarScreen{ altarPos.x + worldOffset.x + kVirtualWidth * 0.5f,
+                                             altarPos.y + worldOffset.y + kVirtualHeight * 0.5f };
+                        // Soft glow so the altar reads as important
+                        DrawCircleV(Vector2{ altarScreen.x, altarScreen.y + bobOffset }, 44.f,
+                            Fade(Color{ 235, 60, 180, 255 }, 0.16f + 0.06f * sinf(_legacyAltarBobTimer * 3.f)));
+                        Rectangle altarSrc{ 0.f, 0.f, (float)cellTexture.width, (float)cellTexture.height };
+                        Rectangle altarDst{ altarScreen.x, altarScreen.y + bobOffset,
+                                            cellTexture.width * altarScale, cellTexture.height * altarScale };
+                        DrawTexturePro(cellTexture, altarSrc, altarDst,
+                            Vector2{ altarDst.width * 0.5f, altarDst.height * 0.5f }, 0.f, WHITE);
+
+                        if (_nearLegacyAltar && !_shop.IsNearNpc())
+                        {
+                            const char* altarPrompt = "[E] Legacy";
+                            int promptFontSize = 26;
+                            int promptWidth = MeasureText(altarPrompt, promptFontSize);
+                            DrawText(altarPrompt,
+                                (int)(altarScreen.x - promptWidth * 0.5f),
+                                (int)(altarScreen.y - 92.f),
+                                promptFontSize, Color{ 255, 170, 230, 255 });
+                        }
+                    }
+                }
 
                 _player.DrawPlayer(shakenCamRef);
             }

@@ -35,6 +35,13 @@ call emcc ^
   %SRC%\Cyclops.cpp ^
   %SRC%\Ogre.cpp ^
   %SRC%\Molarbeast.cpp ^
+  %SRC%\SkeletonArcher.cpp ^
+  %SRC%\FlameWisp.cpp ^
+  %SRC%\SlimeEnemy.cpp ^
+  %SRC%\AbyssSlime.cpp ^
+  %SRC%\PumpkinJack.cpp ^
+  %SRC%\Minotaur.cpp ^
+  %SRC%\EnemyProjectile.cpp ^
   %SRC%\Prop.cpp ^
   %SRC%\Game.cpp ^
   %SRC%\MainMenu.cpp ^
@@ -45,6 +52,8 @@ call emcc ^
   %SRC%\SpreadProjectile.cpp ^
   %SRC%\HealPickup.cpp ^
   %SRC%\GoldPickup.cpp ^
+  %SRC%\CellPickup.cpp ^
+  %SRC%\MetaProgression.cpp ^
   %SRC%\AudioManager.cpp ^
   %SRC%\CombatDirector.cpp ^
   %SRC%\DebugPanel.cpp ^
