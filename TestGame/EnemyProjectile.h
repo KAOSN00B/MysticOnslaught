@@ -12,6 +12,7 @@ enum class EnemyProjectileKind
 {
     Arrow,      // fast, rotated static sprite
     FireBolt,   // slower, animated fireball sheet
+    Spit,       // toxic glob drawn with primitives (ChompBug / Toxic Vermin)
 };
 
 class EnemyProjectile
@@ -48,6 +49,7 @@ private:
 
     static constexpr float _arrowSpeed        = 780.f;
     static constexpr float _fireBoltSpeed     = 460.f;
+    static constexpr float _spitSpeed         = 540.f;
     static constexpr float _maxLife           = 5.f;
     static constexpr float _arrowScale        = 3.4f;
     static constexpr float _fireBoltScale     = 4.6f;

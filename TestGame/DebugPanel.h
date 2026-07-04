@@ -13,6 +13,8 @@ enum class DebugActionKind
     SpawnCyclops,
     SpawnOgre,
     SpawnBoss,
+    SpawnNewEnemy,   // value = enemy index (see kDebugEnemyList in Engine)
+    SpawnNewBoss,    // value = boss index  (see kDebugBossList  in Engine)
     Heal,
     RestoreMana,
     AddGold,

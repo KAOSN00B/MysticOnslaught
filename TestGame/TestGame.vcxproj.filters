@@ -99,6 +99,42 @@
     <ClCompile Include="Minotaur.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Sporeling.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Shieldbearer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Phantom.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="BomberImp.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Warchief.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="LivingBlade.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Werewolf.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ChompBug.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Osiris.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="TitanGuard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ToxicVermin.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="AncientBear.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Cyclops.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -237,6 +273,42 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Minotaur.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Sporeling.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Shieldbearer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Phantom.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BomberImp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Warchief.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LivingBlade.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Werewolf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ChompBug.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Osiris.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="TitanGuard.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ToxicVermin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="AncientBear.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AnimationUtils.h">

@@ -95,6 +95,7 @@ struct EnemyRuntimeContext
     std::function<void(float, float)> triggerScreenShake;
     std::function<void(Vector2)> spawnSmallSlime;               // Abyss Slime summons
     std::function<Enemy*(Vector2)> spawnBasicEnemy;             // Pumpkin Jack summons
+    std::function<void(Vector2)> spawnBossPoisonPool;           // Toxic Vermin pools
 };
 
 struct EnemyDeathContext
@@ -108,7 +109,8 @@ struct EnemyDeathContext
     bool* demoCompleted = nullptr;
     float* pendingExp = nullptr;
     std::function<void(Vector2, bool, bool)> spawnEnemyDrop;
-    std::function<void(Vector2)> spawnSmallSlime;   // big slime death split
+    std::function<void(Vector2)> spawnSmallSlime;    // big slime death split
+    std::function<void(Vector2)> spawnPoisonCloud;   // sporeling death burst
 };
 
 struct BossSupportContext

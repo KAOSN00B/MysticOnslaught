@@ -41,6 +41,18 @@ call emcc ^
   %SRC%\AbyssSlime.cpp ^
   %SRC%\PumpkinJack.cpp ^
   %SRC%\Minotaur.cpp ^
+  %SRC%\Sporeling.cpp ^
+  %SRC%\Shieldbearer.cpp ^
+  %SRC%\Phantom.cpp ^
+  %SRC%\BomberImp.cpp ^
+  %SRC%\Warchief.cpp ^
+  %SRC%\LivingBlade.cpp ^
+  %SRC%\Werewolf.cpp ^
+  %SRC%\ChompBug.cpp ^
+  %SRC%\Osiris.cpp ^
+  %SRC%\TitanGuard.cpp ^
+  %SRC%\ToxicVermin.cpp ^
+  %SRC%\AncientBear.cpp ^
   %SRC%\EnemyProjectile.cpp ^
   %SRC%\Prop.cpp ^
   %SRC%\Game.cpp ^

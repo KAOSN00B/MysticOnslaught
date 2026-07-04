@@ -138,9 +138,21 @@ Engine::~Engine()
     SkeletonArcher::UnloadSharedResources();
     FlameWisp::UnloadSharedResources();
     SlimeEnemy::UnloadSharedResources();
+    Sporeling::UnloadSharedResources();
+    Shieldbearer::UnloadSharedResources();
+    Phantom::UnloadSharedResources();
+    BomberImp::UnloadSharedResources();
+    Warchief::UnloadSharedResources();
+    LivingBlade::UnloadSharedResources();
     AbyssSlime::UnloadSharedResources();
     PumpkinJack::UnloadSharedResources();
     Minotaur::UnloadSharedResources();
+    Werewolf::UnloadSharedResources();
+    ChompBug::UnloadSharedResources();
+    Osiris::UnloadSharedResources();
+    TitanGuard::UnloadSharedResources();
+    ToxicVermin::UnloadSharedResources();
+    AncientBear::UnloadSharedResources();
     HealPickup::UnloadSharedResources();
     GoldPickup::UnloadSharedResources();
     CellPickup::UnloadSharedResources();
@@ -360,6 +372,7 @@ void Engine::Init()
     _ultimateBlasts.clear();
     _lavaBalls.clear();
     _enemyProjectiles.clear();
+    _poisonClouds.clear();
     _vfx.Clear();
     _enemies.clear();
 
@@ -785,6 +798,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _cyclopsLasers.clear();
     _lavaBalls.clear();
     _enemyProjectiles.clear();
+    _poisonClouds.clear();
     ClearBossSupportAdds();
     _bossCyclopsSupport.enemy = nullptr;
     _bossCyclopsSupport.respawnTimer = 0.f;
@@ -1638,6 +1652,10 @@ void Engine::UpdateGamePlay(float dt)
                 SpawnOgre(Vector2Add(spawnBase, Vector2{ -240.f, 50.f })); break;
             case DebugActionKind::SpawnBoss:
                 SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f })); break;
+            case DebugActionKind::SpawnNewEnemy:
+                DebugSpawnNewEnemy(cmd.value, Vector2Add(spawnBase, Vector2{ 260.f, -40.f })); break;
+            case DebugActionKind::SpawnNewBoss:
+                DebugSpawnNewBoss(cmd.value, Vector2Add(spawnBase, Vector2{ 0.f, -300.f })); break;
             case DebugActionKind::Heal:
                 _player.Heal(cmd.value); break;
             case DebugActionKind::RestoreMana:
@@ -1896,12 +1914,14 @@ void Engine::UpdateGamePlay(float dt)
         enemyRuntimeCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
         enemyRuntimeCtx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
         enemyRuntimeCtx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
+        enemyRuntimeCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
 
         HandlePlayerMeleeDamage();
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         UpdateEnemyProjectiles(dt);
+        UpdatePoisonClouds(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
@@ -2322,6 +2342,7 @@ void Engine::UpdateEnemyCount(float dt)
     ctx.pendingExp = &_pendingExp;
     ctx.spawnEnemyDrop = [&](Vector2 worldPos, bool isOgre, bool isBoss) { SpawnEnemyDrop(worldPos, isOgre, isBoss); };
     ctx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
+    ctx.spawnPoisonCloud = [&](Vector2 pos) { SpawnPoisonCloud(pos, Sporeling::kPoisonCloudRadius); };
     _combatDirector.UpdateEnemyDeaths(ctx, dt);
 }
 
@@ -6722,6 +6743,7 @@ void Engine::ResetRunState()
     _ultimateBlasts.clear();
     _lavaBalls.clear();
     _enemyProjectiles.clear();
+    _poisonClouds.clear();
     _cyclopsLasers.clear();
     _pickups.clear();
     _vfx.Clear();
@@ -6829,17 +6851,14 @@ Enemy* Engine::SpawnBasicEnemy(Vector2 pos)
         if (enemy->IsActive())
             continue;
         // Only reuse plain grunts — every specialised type has its own pool.
+        // All tunable types carry a tuning name; the legacy specials don't.
+        if (enemy->GetTuningName() != nullptr)
+            continue;
         if (enemy->AsCyclops() != nullptr)
             continue;
         if (enemy->AsOgre() != nullptr)
             continue;
         if (enemy->AsMolarbeast() != nullptr)
-            continue;
-        if (enemy->AsSkeletonArcher() != nullptr)
-            continue;
-        if (enemy->AsFlameWisp() != nullptr)
-            continue;
-        if (enemy->AsSlime() != nullptr)
             continue;
         if (enemy->IsBoss())
             continue;
@@ -6932,14 +6951,13 @@ int Engine::GetOgreSpawnCountForWave(int wave) const
 
 int Engine::GetEnemyPowerLevelForWave(int wave) const
 {
-    // Power level advances every 10 waves so stat growth is slower and more
-    // readable. Composition and behaviour scaling carry the early game feel.
-    // waves  1-9:  power 1   waves 10-19: power 2
-    // waves 20-29: power 3   etc.
+    // Power level advances every 5 rooms — roughly one tier per world zone —
+    // so enemies visibly toughen up as the run deepens (roguelite ramp).
+    // rooms 1-5: power 1   rooms 6-10: power 2   rooms 11-15: power 3   etc.
     if (wave <= 0)
         return 1;
 
-    return 1 + ((wave - 1) / 10);
+    return 1 + ((wave - 1) / 5);
 }
 
 void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
@@ -7100,94 +7118,161 @@ Enemy* Engine::SpawnSlime(Vector2 pos, SlimeSize size)
     return slimePtr;
 }
 
-// =============================================================================
-// Boss selection per biome. Molarbeast keeps the Caverns (zone 1) crown; the
-// three new bosses split the remaining biomes by theme.
-// =============================================================================
-void Engine::SpawnBossForBiome(Vector2 pos)
+// Shared pooled-spawn body for the wave-2 grunt types — identical flow to the
+// hand-written spawners above, parameterised on the concrete class.
+template <typename EnemyType>
+static Enemy* SpawnPooledType(std::vector<std::unique_ptr<Enemy>>& enemies, Vector2 pos,
+    EnemyType* (Enemy::*asType)(), const std::function<void(Enemy&)>& configure)
 {
-    enum class BossKind { Molarbeast, AbyssSlime, PumpkinJack, Minotaur };
-
-    BossKind kind;
-    switch (_currentBiome)
-    {
-    case Biome::Graveyard:
-    case Biome::Forest:
-    case Biome::Jungle:
-        kind = BossKind::PumpkinJack;
-        break;
-
-    case Biome::AncientCastle:
-    case Biome::LostCity:
-        kind = BossKind::Minotaur;
-        break;
-
-    case Biome::DemonsInsides:
-    case Biome::Wastelands:
-    case Biome::DreamRealm:
-        kind = BossKind::AbyssSlime;
-        break;
-
-    case Biome::Caverns:
-    case Biome::TheSanctuary:
-    default:
-        kind = BossKind::Molarbeast;
-        break;
-    }
-
-    if (kind == BossKind::Molarbeast)
-    {
-        SpawnMolarbeast(pos);
-        return;
-    }
-
-    // Try pooled reuse first, mirroring the other boss spawn paths.
-    for (auto& enemy : _enemies)
+    for (auto& enemy : enemies)
     {
         if (enemy->IsActive())
             continue;
 
-        bool matches =
-            (kind == BossKind::AbyssSlime  && enemy->AsAbyssSlime()  != nullptr) ||
-            (kind == BossKind::PumpkinJack && enemy->AsPumpkinJack() != nullptr) ||
-            (kind == BossKind::Minotaur    && enemy->AsMinotaur()    != nullptr);
-        if (!matches)
+        EnemyType* match = (enemy.get()->*asType)();
+        if (match == nullptr)
             continue;
 
-        enemy->ResetForSpawn(pos);
-        ConfigureSpawnedEnemy(*enemy);
-        _bossWarningTimer = 4.f;
-        return;
+        match->ResetForSpawn(pos);
+        configure(*match);
+        return match;
     }
 
-    std::unique_ptr<Enemy> boss;
-    switch (kind)
+    auto fresh = std::make_unique<EnemyType>(pos);
+    fresh->Init();
+    configure(*fresh);
+    Enemy* freshPtr = fresh.get();
+    enemies.push_back(std::move(fresh));
+    return freshPtr;
+}
+
+Enemy* Engine::SpawnSporeling(Vector2 pos)
+{
+    return SpawnPooledType<Sporeling>(_enemies, pos, &Enemy::AsSporeling,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnShieldbearer(Vector2 pos)
+{
+    return SpawnPooledType<Shieldbearer>(_enemies, pos, &Enemy::AsShieldbearer,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnPhantom(Vector2 pos)
+{
+    return SpawnPooledType<Phantom>(_enemies, pos, &Enemy::AsPhantom,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnBomberImp(Vector2 pos)
+{
+    return SpawnPooledType<BomberImp>(_enemies, pos, &Enemy::AsBomberImp,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnWarchief(Vector2 pos)
+{
+    return SpawnPooledType<Warchief>(_enemies, pos, &Enemy::AsWarchief,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnLivingBlade(Vector2 pos)
+{
+    return SpawnPooledType<LivingBlade>(_enemies, pos, &Enemy::AsLivingBlade,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+// =============================================================================
+// Boss selection per biome — every domain now has its own signature boss.
+// =============================================================================
+void Engine::SpawnBossForBiome(Vector2 pos)
+{
+    auto configure = [&](Enemy& e) { ConfigureSpawnedEnemy(e); };
+
+    switch (_currentBiome)
     {
-    case BossKind::AbyssSlime:
-    {
-        auto abyssSlime = std::make_unique<AbyssSlime>(pos);
-        abyssSlime->Init();
-        boss = std::move(abyssSlime);
+    case Biome::Caverns:
+        SpawnMolarbeast(pos);
+        return;   // SpawnMolarbeast already sets the warning timer
+
+    case Biome::Forest:
+        SpawnPooledType<Werewolf>(_enemies, pos, &Enemy::AsWerewolf, configure);
         break;
-    }
-    case BossKind::PumpkinJack:
-    {
-        auto pumpkinJack = std::make_unique<PumpkinJack>(pos);
-        pumpkinJack->Init();
-        boss = std::move(pumpkinJack);
+
+    case Biome::Jungle:
+        SpawnPooledType<ChompBug>(_enemies, pos, &Enemy::AsChompBug, configure);
         break;
-    }
+
+    case Biome::Graveyard:
+        SpawnPooledType<PumpkinJack>(_enemies, pos, &Enemy::AsPumpkinJack, configure);
+        break;
+
+    case Biome::AncientCastle:
+        SpawnPooledType<Minotaur>(_enemies, pos, &Enemy::AsMinotaur, configure);
+        break;
+
+    case Biome::LostCity:
+        SpawnPooledType<Osiris>(_enemies, pos, &Enemy::AsOsiris, configure);
+        break;
+
+    case Biome::TheSanctuary:
+        SpawnPooledType<TitanGuard>(_enemies, pos, &Enemy::AsTitanGuard, configure);
+        break;
+
+    case Biome::Wastelands:
+        SpawnPooledType<ToxicVermin>(_enemies, pos, &Enemy::AsToxicVermin, configure);
+        break;
+
+    case Biome::DreamRealm:
+        SpawnPooledType<AncientBear>(_enemies, pos, &Enemy::AsAncientBear, configure);
+        break;
+
+    case Biome::DemonsInsides:
     default:
-    {
-        auto minotaur = std::make_unique<Minotaur>(pos);
-        minotaur->Init();
-        boss = std::move(minotaur);
+        SpawnPooledType<AbyssSlime>(_enemies, pos, &Enemy::AsAbyssSlime, configure);
         break;
     }
-    }
 
-    ConfigureSpawnedEnemy(*boss);
-    _enemies.push_back(std::move(boss));
+    _bossWarningTimer = 4.f;
+}
+
+// =============================================================================
+// Debug-panel direct spawns — index order mirrors NewEnemyItems/NewBossItems
+// in DebugPanel.cpp. Used only from the debug panel for playtesting.
+// =============================================================================
+void Engine::DebugSpawnNewEnemy(int index, Vector2 pos)
+{
+    switch (index)
+    {
+    case 0: SpawnSkeletonArcher(pos);        break;
+    case 1: SpawnFlameWisp(pos);             break;
+    case 2: SpawnSlime(pos, SlimeSize::Big); break;
+    case 3: SpawnSporeling(pos);             break;
+    case 4: SpawnShieldbearer(pos);          break;
+    case 5: SpawnPhantom(pos);               break;
+    case 6: SpawnBomberImp(pos);             break;
+    case 7: SpawnWarchief(pos);              break;
+    case 8: SpawnLivingBlade(pos);           break;
+    default: break;
+    }
+}
+
+void Engine::DebugSpawnNewBoss(int index, Vector2 pos)
+{
+    auto configure = [&](Enemy& e) { ConfigureSpawnedEnemy(e); };
+    switch (index)
+    {
+    case 0: SpawnPooledType<Werewolf>(_enemies, pos, &Enemy::AsWerewolf, configure);       break;
+    case 1: SpawnPooledType<ChompBug>(_enemies, pos, &Enemy::AsChompBug, configure);       break;
+    case 2: SpawnPooledType<Osiris>(_enemies, pos, &Enemy::AsOsiris, configure);           break;
+    case 3: SpawnPooledType<TitanGuard>(_enemies, pos, &Enemy::AsTitanGuard, configure);   break;
+    case 4: SpawnPooledType<ToxicVermin>(_enemies, pos, &Enemy::AsToxicVermin, configure); break;
+    case 5: SpawnPooledType<AncientBear>(_enemies, pos, &Enemy::AsAncientBear, configure); break;
+    case 6: SpawnPooledType<AbyssSlime>(_enemies, pos, &Enemy::AsAbyssSlime, configure);   break;
+    case 7: SpawnPooledType<PumpkinJack>(_enemies, pos, &Enemy::AsPumpkinJack, configure); break;
+    case 8: SpawnPooledType<Minotaur>(_enemies, pos, &Enemy::AsMinotaur, configure);       break;
+    default: break;
+    }
     _bossWarningTimer = 4.f;
 }
 
@@ -7231,6 +7316,71 @@ void Engine::DrawEnemyProjectiles(Vector2 worldOffset) const
 {
     for (const auto& projectile : _enemyProjectiles)
         projectile.Draw(worldOffset);
+}
+
+// =============================================================================
+// Poison clouds — lingering ground hazards from Sporeling deaths and the
+// Toxic Vermin boss. Standing inside one chips the player's health.
+// =============================================================================
+void Engine::SpawnPoisonCloud(Vector2 pos, float radius)
+{
+    PoisonCloud cloud;
+    cloud.pos    = pos;
+    cloud.timer  = 5.5f;
+    cloud.radius = radius;
+    _poisonClouds.push_back(cloud);
+}
+
+void Engine::UpdatePoisonClouds(float dt)
+{
+    if (_poisonDamageCooldown > 0.f)
+        _poisonDamageCooldown -= dt;
+
+    for (int i = (int)_poisonClouds.size() - 1; i >= 0; --i)
+    {
+        _poisonClouds[i].timer -= dt;
+        if (_poisonClouds[i].timer <= 0.f)
+        {
+            _poisonClouds.erase(_poisonClouds.begin() + i);
+            continue;
+        }
+
+        if (_poisonDamageCooldown <= 0.f && _player.IsAlive() &&
+            Vector2Distance(_poisonClouds[i].pos, _player.GetFeetWorldPos()) < _poisonClouds[i].radius)
+        {
+            _player.TakeFractionalDamage(0.25f, _poisonClouds[i].pos);
+            _poisonDamageCooldown = 0.7f;
+        }
+    }
+}
+
+void Engine::DrawPoisonClouds(Vector2 worldOffset) const
+{
+    for (const PoisonCloud& cloud : _poisonClouds)
+    {
+        Vector2 screenPos{ cloud.pos.x + worldOffset.x + kVirtualWidth  / 2.f,
+                           cloud.pos.y + worldOffset.y + kVirtualHeight / 2.f };
+
+        float alpha  = (cloud.timer < 1.2f) ? (cloud.timer / 1.2f) : 1.f;
+        float wobble = sinf((float)GetTime() * 3.4f + cloud.pos.x * 0.013f) * 5.f;
+
+        DrawEllipse((int)screenPos.x, (int)screenPos.y,
+            cloud.radius + wobble, (cloud.radius + wobble) * 0.55f,
+            Fade(Color{ 70, 160, 40, 255 }, 0.28f * alpha));
+        DrawEllipse((int)screenPos.x, (int)screenPos.y,
+            (cloud.radius + wobble) * 0.68f, (cloud.radius + wobble) * 0.38f,
+            Fade(Color{ 130, 220, 70, 255 }, 0.26f * alpha));
+
+        // Rising spore bubbles.
+        for (int i = 0; i < 3; i++)
+        {
+            float bubblePhase = fmodf((float)GetTime() * 0.7f + i * 0.33f, 1.f);
+            DrawCircleV(Vector2{ screenPos.x + sinf((float)GetTime() * 2.f + i * 2.1f) * cloud.radius * 0.4f,
+                                 screenPos.y - bubblePhase * 40.f },
+                5.f - bubblePhase * 3.f,
+                Fade(Color{ 160, 240, 90, 255 }, 0.4f * (1.f - bubblePhase) * alpha));
+        }
+    }
 }
 
 // =============================================================================
@@ -7702,29 +7852,69 @@ void Engine::SpawnDungeonRoomEnemies()
     }
     else  // Standard
     {
-        // Basic count: 1-2 early, 2-3 mid, 2-4 late.
-        int minBasics = tier == 0 ? 1 : 2;
-        int maxBasics = tier == 0 ? 2 : (tier == 1 ? 3 : 4);
+        // Roguelite pacing: rooms get genuinely crowded as the run deepens.
+        // early 2-3, mid 3-5, late 4-6, plus a per-zone bump so zone 4-5 rooms
+        // are packed.
+        int minBasics = tier == 0 ? 2 : (tier == 1 ? 3 : 4);
+        int maxBasics = tier == 0 ? 3 : (tier == 1 ? 5 : 6);
 
-        // Demon Insides: significantly harder rooms.
+        // Later world zones add one extra body on top of the room-tier count.
+        int zoneBonus = _worldZone / 2;   // zones 0-1 = 0, 2-3 = +1, 4-5 = +2
+        minBasics += zoneBonus;
+        maxBasics += zoneBonus;
+
+        // Demon Insides: the gauntlet biome — significantly harder rooms.
         if (_currentBiome == Biome::DemonsInsides)
             maxBasics += 5;
 
         int basicCount = GetRandomValue(minBasics, maxBasics);
 
-        // Each grunt slot rolls its enemy type. Early rooms lean heavily on the
-        // familiar shadow grunt; later rooms mix in archers, slimes, and wisps.
+        // Each grunt slot rolls its enemy type from a weighted table. Early
+        // rooms lean on the familiar shadow grunt; later rooms mix in every
+        // specialised type. The Warchief is rare and capped at one per room.
+        bool warchiefSpawnedThisRoom = false;
         auto spawnMixedGrunt = [&](Vector2 p)
         {
-            int roll = GetRandomValue(1, 100);
-            int archerChance = tier == 0 ? 10 : (tier == 1 ? 16 : 20);
-            int slimeChance  = tier == 0 ? 10 : (tier == 1 ? 14 : 16);
-            int wispChance   = tier == 0 ?  6 : (tier == 1 ? 12 : 16);
+            struct TypeWeight { int weight; int typeId; };
+            // typeIds: 0 shadow, 1 archer, 2 slime, 3 wisp, 4 sporeling,
+            //          5 shieldbearer, 6 phantom, 7 bomber, 8 warchief, 9 blade
+            TypeWeight table[10] = {
+                { tier == 0 ? 40 : (tier == 1 ? 26 : 18), 0 },
+                { tier == 0 ?  9 : 11, 1 },
+                { tier == 0 ?  9 : 10, 2 },
+                { tier == 0 ?  6 : 10, 3 },
+                { tier == 0 ?  8 :  9, 4 },
+                { tier == 0 ?  7 :  9, 5 },
+                { tier == 0 ?  5 :  9, 6 },
+                { tier == 0 ?  5 :  8, 7 },
+                { (tier >= 1 && !warchiefSpawnedThisRoom) ? 4 : 0, 8 },
+                { tier == 0 ?  5 :  8, 9 },
+            };
 
-            if      (roll <= archerChance)                             SpawnSkeletonArcher(p);
-            else if (roll <= archerChance + slimeChance)               SpawnSlime(p, SlimeSize::Big);
-            else if (roll <= archerChance + slimeChance + wispChance)  SpawnFlameWisp(p);
-            else                                                       SpawnBasicEnemy(p);
+            int total = 0;
+            for (const TypeWeight& entry : table) total += entry.weight;
+            int roll = GetRandomValue(1, total);
+
+            int typeId = 0;
+            for (const TypeWeight& entry : table)
+            {
+                roll -= entry.weight;
+                if (roll <= 0) { typeId = entry.typeId; break; }
+            }
+
+            switch (typeId)
+            {
+            case 1: SpawnSkeletonArcher(p);           break;
+            case 2: SpawnSlime(p, SlimeSize::Big);    break;
+            case 3: SpawnFlameWisp(p);                break;
+            case 4: SpawnSporeling(p);                break;
+            case 5: SpawnShieldbearer(p);             break;
+            case 6: SpawnPhantom(p);                  break;
+            case 7: SpawnBomberImp(p);                break;
+            case 8: SpawnWarchief(p); warchiefSpawnedThisRoom = true; break;
+            case 9: SpawnLivingBlade(p);              break;
+            default: SpawnBasicEnemy(p);              break;
+            }
         };
 
         // Ancient Castle: spawn in a tight cluster so enemies charge together.
@@ -7778,6 +7968,7 @@ void Engine::ClearDungeonEnemies()
     _cyclopsLasers.clear();
     _lavaBalls.clear();
     _enemyProjectiles.clear();
+    _poisonClouds.clear();
     _pickups.clear();
     _vfx.Clear();
     _pendingExp    = 0.f;
@@ -10050,6 +10241,12 @@ void Engine::UpdateDungeonRun(float dt)
                 case DebugActionKind::SpawnBoss:
                     SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f }));
                     _dungeonEnemiesSpawned = true; break;
+                case DebugActionKind::SpawnNewEnemy:
+                    DebugSpawnNewEnemy(cmd.value, Vector2Add(spawnBase, Vector2{ 260.f, -40.f }));
+                    _dungeonEnemiesSpawned = true; break;
+                case DebugActionKind::SpawnNewBoss:
+                    DebugSpawnNewBoss(cmd.value, Vector2Add(spawnBase, Vector2{ 0.f, -300.f }));
+                    _dungeonEnemiesSpawned = true; break;
                 case DebugActionKind::Heal:
                     _player.Heal(cmd.value); break;
                 case DebugActionKind::RestoreMana:
@@ -10430,6 +10627,7 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.triggerScreenShake = [&](float s, float d){ TriggerScreenShake(s, d); };
         eCtx.spawnSmallSlime    = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
         eCtx.spawnBasicEnemy    = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
+        eCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
         if (_currentBiome == Biome::DreamRealm)
@@ -10490,6 +10688,7 @@ void Engine::UpdateDungeonRun(float dt)
         UpdateLavaBallProjectiles(dt);
         UpdateCyclopsLasers(dt);
         UpdateEnemyProjectiles(dt);
+        UpdatePoisonClouds(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
@@ -10860,6 +11059,7 @@ void Engine::DrawDungeonRun()
                 for (const auto& proj : _lavaBalls)
                     if (proj.IsActive())
                         proj.Draw(worldOffset);
+                DrawPoisonClouds(worldOffset);
                 DrawEnemyProjectiles(worldOffset);
                 DrawCyclopsLasers(worldOffset);
                 _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());

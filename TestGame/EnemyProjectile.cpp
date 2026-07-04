@@ -15,7 +15,8 @@ void EnemyProjectile::Init(Vector2 spawnPos, Vector2 direction, EnemyProjectileK
     _worldPos  = spawnPos;
     _kind      = kind;
     _damage    = damage;
-    _speed     = (kind == EnemyProjectileKind::Arrow) ? _arrowSpeed : _fireBoltSpeed;
+    _speed     = (kind == EnemyProjectileKind::Arrow)    ? _arrowSpeed :
+                 (kind == EnemyProjectileKind::FireBolt) ? _fireBoltSpeed : _spitSpeed;
     _direction = (Vector2LengthSqr(direction) > 0.0001f)
         ? Vector2Normalize(direction)
         : Vector2{ 1.f, 0.f };
@@ -60,6 +61,22 @@ void EnemyProjectile::Draw(Vector2 worldOffset) const
     screenPos.y += kVirtualHeight / 2.f;
 
     float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
+
+    if (_kind == EnemyProjectileKind::Spit)
+    {
+        // Toxic glob: layered green blobs with a short dripping trail.
+        float pulse = sinf(_lifeTimer * 22.f) * 2.f;
+        for (int i = 1; i <= 2; i++)
+        {
+            Vector2 trail = Vector2{ screenPos.x - _direction.x * i * 16.f,
+                                     screenPos.y - _direction.y * i * 16.f };
+            DrawCircleV(trail, 9.f - i * 3.f, Fade(Color{ 110, 200, 60, 255 }, 0.4f - i * 0.12f));
+        }
+        DrawCircleV(screenPos, 14.f + pulse, Color{ 80, 160, 40, 255 });
+        DrawCircleV(screenPos, 9.f + pulse,  Color{ 140, 230, 80, 255 });
+        DrawCircleV(Vector2{ screenPos.x - 3.f, screenPos.y - 3.f }, 3.5f, Fade(WHITE, 0.6f));
+        return;
+    }
 
     if (_kind == EnemyProjectileKind::Arrow)
     {

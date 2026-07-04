@@ -1,16 +1,24 @@
 ﻿#include "CombatDirector.h"
 
 #include "AbyssSlime.h"
+#include "AncientBear.h"
+#include "BomberImp.h"
 #include "Character.h"
+#include "ChompBug.h"
 #include "Cyclops.h"
 #include "FlameWisp.h"
 #include "GoldPickup.h"
 #include "Minotaur.h"
 #include "Molarbeast.h"
 #include "Ogre.h"
+#include "Osiris.h"
 #include "PumpkinJack.h"
 #include "SkeletonArcher.h"
 #include "SlimeEnemy.h"
+#include "Sporeling.h"
+#include "TitanGuard.h"
+#include "ToxicVermin.h"
+#include "Werewolf.h"
 #include "raymath.h"
 
 #include <algorithm>
@@ -504,6 +512,123 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (minotaur->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
                 ctx.triggerScreenShake(10.f, 0.18f);
         }
+
+        if (BomberImp* bomber = enemy->AsBomberImp())
+        {
+            if (bomber->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
+                ctx.triggerScreenShake(7.f, 0.14f);
+        }
+
+        if (Werewolf* werewolf = enemy->AsWerewolf())
+        {
+            if (werewolf->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
+                ctx.triggerScreenShake(8.f, 0.14f);
+        }
+
+        if (ChompBug* chompBug = enemy->AsChompBug())
+        {
+            // Acid Barrage — fan of toxic globs.
+            if (chompBug->WantsToSpit() && ctx.enemyProjectiles != nullptr)
+            {
+                int globCount = chompBug->GetSpitCount();
+                Vector2 aimDir = chompBug->GetSpitDirection();
+                float baseAngle = atan2f(aimDir.y, aimDir.x);
+                for (int i = 0; i < globCount; i++)
+                {
+                    float angleOffset = ((float)i - (float)(globCount - 1) * 0.5f) * 0.24f;
+                    EnemyProjectile glob;
+                    glob.Init(chompBug->GetWorldPos(),
+                        Vector2{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) },
+                        EnemyProjectileKind::Spit, chompBug->GetAttackPower());
+                    ctx.enemyProjectiles->push_back(glob);
+                }
+                chompBug->OnSpitFired();
+            }
+        }
+
+        if (Osiris* osiris = enemy->AsOsiris())
+        {
+            // Judgement Nova — a full ring of bolts.
+            if (osiris->WantsToCastNova() && ctx.enemyProjectiles != nullptr)
+            {
+                int boltCount = osiris->GetNovaBoltCount();
+                for (int i = 0; i < boltCount; i++)
+                {
+                    float angle = ((float)i / (float)boltCount) * 2.f * PI;
+                    EnemyProjectile bolt;
+                    bolt.Init(osiris->GetWorldPos(), Vector2{ cosf(angle), sinf(angle) },
+                        EnemyProjectileKind::FireBolt, osiris->GetAttackPower());
+                    ctx.enemyProjectiles->push_back(bolt);
+                }
+                osiris->OnNovaCast();
+            }
+            // Wrath Volley — tight aimed fan.
+            if (osiris->WantsToCastVolley() && ctx.enemyProjectiles != nullptr)
+            {
+                int boltCount = osiris->GetVolleyBoltCount();
+                Vector2 aimDir = osiris->GetVolleyDirection();
+                float baseAngle = atan2f(aimDir.y, aimDir.x);
+                for (int i = 0; i < boltCount; i++)
+                {
+                    float angleOffset = ((float)i - (float)(boltCount - 1) * 0.5f) * 0.18f;
+                    EnemyProjectile bolt;
+                    bolt.Init(osiris->GetWorldPos(),
+                        Vector2{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) },
+                        EnemyProjectileKind::FireBolt, osiris->GetAttackPower());
+                    ctx.enemyProjectiles->push_back(bolt);
+                }
+                osiris->OnVolleyCast();
+            }
+        }
+
+        if (TitanGuard* titanGuard = enemy->AsTitanGuard())
+        {
+            // Bomb Lob — reuses the lavaball projectile like Molarbeast.
+            if (titanGuard->WantsToThrowBomb() && ctx.lavaBalls != nullptr)
+            {
+                LavaBallProjectile bomb;
+                Vector2 toTarget = Vector2Subtract(titanGuard->GetBombTarget(), titanGuard->GetBombSpawnPos());
+                bomb.Init(titanGuard->GetBombSpawnPos(), toTarget);
+                ctx.lavaBalls->push_back(bomb);
+                titanGuard->OnBombThrown();
+            }
+            if (titanGuard->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
+                ctx.triggerScreenShake(11.f, 0.2f);
+        }
+
+        if (ToxicVermin* vermin = enemy->AsToxicVermin())
+        {
+            // Toxic spit fan.
+            if (vermin->WantsToSpit() && ctx.enemyProjectiles != nullptr)
+            {
+                int globCount = vermin->GetSpitCount();
+                Vector2 aimDir = vermin->GetSpitDirection();
+                float baseAngle = atan2f(aimDir.y, aimDir.x);
+                for (int i = 0; i < globCount; i++)
+                {
+                    float angleOffset = ((float)i - (float)(globCount - 1) * 0.5f) * 0.26f;
+                    EnemyProjectile glob;
+                    glob.Init(vermin->GetWorldPos(),
+                        Vector2{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) },
+                        EnemyProjectileKind::Spit, vermin->GetAttackPower());
+                    ctx.enemyProjectiles->push_back(glob);
+                }
+                vermin->OnSpitFired();
+            }
+            // Poison pools left by burrows and eruptions.
+            Vector2 poolPos;
+            if (vermin->ConsumePoisonPoolRequest(poolPos) && ctx.spawnBossPoisonPool)
+                ctx.spawnBossPoisonPool(poolPos);
+
+            if (vermin->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
+                ctx.triggerScreenShake(9.f, 0.16f);
+        }
+
+        if (AncientBear* bear = enemy->AsAncientBear())
+        {
+            if (bear->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
+                ctx.triggerScreenShake(12.f, 0.22f);
+        }
     }
 
     // Safe to grow the enemy vector now that the iteration is finished.
@@ -516,8 +641,10 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
 void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) const
 {
     // Spawning during iteration would invalidate the loop when ctx.enemies
-    // reallocates, so slime splits are collected here and executed after.
+    // reallocates, so slime splits / death clouds are collected here and
+    // executed after the loop.
     std::vector<Vector2> pendingSmallSlimeSpawns;
+    std::vector<Vector2> pendingPoisonClouds;
 
     for (auto& enemy : *ctx.enemies)
     {
@@ -547,6 +674,10 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
                 }
             }
 
+            // Sporeling: bursts into a lingering poison cloud where it fell.
+            if (enemy->AsSporeling() != nullptr && ctx.spawnPoisonCloud)
+                pendingPoisonClouds.push_back(dropPos);
+
             if (isBoss)
             {
                 *ctx.pendingExp += 10.f * ctx.wave;
@@ -569,6 +700,8 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
     // Safe to grow the enemy vector now that the iteration is finished.
     for (const Vector2& spawnPos : pendingSmallSlimeSpawns)
         ctx.spawnSmallSlime(spawnPos);
+    for (const Vector2& cloudPos : pendingPoisonClouds)
+        ctx.spawnPoisonCloud(cloudPos);
 }
 
 void CombatDirector::SpawnBossSupportAdds(const BossSupportContext& ctx) const

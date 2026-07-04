@@ -3,9 +3,21 @@
 #include "SkeletonArcher.h"
 #include "FlameWisp.h"
 #include "SlimeEnemy.h"
+#include "Sporeling.h"
+#include "Shieldbearer.h"
+#include "Phantom.h"
+#include "BomberImp.h"
+#include "Warchief.h"
+#include "LivingBlade.h"
 #include "AbyssSlime.h"
 #include "PumpkinJack.h"
 #include "Minotaur.h"
+#include "Werewolf.h"
+#include "ChompBug.h"
+#include "Osiris.h"
+#include "TitanGuard.h"
+#include "ToxicVermin.h"
+#include "AncientBear.h"
 #include "raymath.h"
 
 #include <algorithm>
@@ -44,14 +56,26 @@ void CharacterAnimator::Init()
 {
     _entries.clear();
     // meleeSlot: which animation carries a melee box (2 = the attack anim for
-    // every current melee character); -1 marks ranged characters.
-    _entries.push_back({ "SkeletonArcher", -1, []() -> Enemy* { return new SkeletonArcher({ 0.f, 0.f }); } });
-    _entries.push_back({ "SlimeBig",        2, []() -> Enemy* { return new SlimeEnemy({ 0.f, 0.f }, SlimeSize::Big); } });
-    _entries.push_back({ "SlimeSmall",      2, []() -> Enemy* { return new SlimeEnemy({ 0.f, 0.f }, SlimeSize::Small); } });
-    _entries.push_back({ "FlameWisp",      -1, []() -> Enemy* { return new FlameWisp({ 0.f, 0.f }); } });
-    _entries.push_back({ "AbyssSlime",      2, []() -> Enemy* { return new AbyssSlime({ 0.f, 0.f }); } });
-    _entries.push_back({ "PumpkinJack",     2, []() -> Enemy* { return new PumpkinJack({ 0.f, 0.f }); } });
-    _entries.push_back({ "Minotaur",        2, []() -> Enemy* { return new Minotaur({ 0.f, 0.f }); } });
+    // every current melee character); -1 marks ranged / contact-only characters.
+    _entries.push_back({ "SkeletonArcher", -1, []() -> Enemy* { auto* e = new SkeletonArcher({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "SlimeBig",        2, []() -> Enemy* { auto* e = new SlimeEnemy({ 0.f, 0.f }, SlimeSize::Big); e->Init(); return e; } });
+    _entries.push_back({ "SlimeSmall",      2, []() -> Enemy* { auto* e = new SlimeEnemy({ 0.f, 0.f }, SlimeSize::Small); e->Init(); return e; } });
+    _entries.push_back({ "FlameWisp",      -1, []() -> Enemy* { auto* e = new FlameWisp({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "Sporeling",       2, []() -> Enemy* { auto* e = new Sporeling({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "Shieldbearer",    2, []() -> Enemy* { auto* e = new Shieldbearer({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "Phantom",        -1, []() -> Enemy* { auto* e = new Phantom({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "BomberImp",      -1, []() -> Enemy* { auto* e = new BomberImp({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "Warchief",        2, []() -> Enemy* { auto* e = new Warchief({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "LivingBlade",    -1, []() -> Enemy* { auto* e = new LivingBlade({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "AbyssSlime",      2, []() -> Enemy* { auto* e = new AbyssSlime({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "PumpkinJack",     2, []() -> Enemy* { auto* e = new PumpkinJack({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "Minotaur",        2, []() -> Enemy* { auto* e = new Minotaur({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "Werewolf",        2, []() -> Enemy* { auto* e = new Werewolf({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "ChompBug",        2, []() -> Enemy* { auto* e = new ChompBug({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "Osiris",          2, []() -> Enemy* { auto* e = new Osiris({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "TitanGuard",      2, []() -> Enemy* { auto* e = new TitanGuard({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "ToxicVermin",     2, []() -> Enemy* { auto* e = new ToxicVermin({ 0.f, 0.f }); e->Init(); return e; } });
+    _entries.push_back({ "AncientBear",     2, []() -> Enemy* { auto* e = new AncientBear({ 0.f, 0.f }); e->Init(); return e; } });
 
     _screen      = Screen::Select;
     _selectedIdx = -1;
@@ -74,15 +98,9 @@ void CharacterAnimator::OpenCharacter(int index)
     _selectedIdx = index;
 
     // A real, live instance — every hitbox getter and animation sheet behaves
-    // exactly like it will in the game. Init() applies any saved tuning too.
-    Enemy* instance = _entries[index].createInstance();
-    if (SkeletonArcher* archer = instance->AsSkeletonArcher()) archer->Init();
-    else if (SlimeEnemy* slime = instance->AsSlime())          slime->Init();
-    else if (FlameWisp* wisp = instance->AsFlameWisp())        wisp->Init();
-    else if (AbyssSlime* abyss = instance->AsAbyssSlime())     abyss->Init();
-    else if (PumpkinJack* jack = instance->AsPumpkinJack())    jack->Init();
-    else if (Minotaur* minotaur = instance->AsMinotaur())      minotaur->Init();
-    _enemy.reset(instance);
+    // exactly like it will in the game. The factory lambda already calls Init()
+    // (which loads textures and applies any saved tuning).
+    _enemy.reset(_entries[index].createInstance());
 
     _enemy->Teleport({ 0.f, 0.f });
     _enemy->SetEditorFacing(1.f);
@@ -211,16 +229,18 @@ void CharacterAnimator::Update()
         }
 
         Vector2 mouse = GetVirtualMousePos();
-        float rowY = 260.f;
         for (int i = 0; i < (int)_entries.size(); i++)
         {
-            Rectangle row{ kVirtualWidth * 0.5f - 260.f, rowY, 520.f, 56.f };
+            // Two-column layout: 10 rows on the left, the rest on the right.
+            int column = i / 10;
+            int rowInColumn = i % 10;
+            Rectangle row{ kVirtualWidth * 0.5f - 480.f + column * 500.f,
+                           250.f + rowInColumn * 74.f, 460.f, 62.f };
             if (CheckCollisionPointRec(mouse, row) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             {
                 OpenCharacter(i);
                 return;
             }
-            rowY += 66.f;
         }
         return;
     }
@@ -500,18 +520,21 @@ void CharacterAnimator::DrawSelectScreen()
     DrawText(subtitle, (int)(kVirtualWidth * 0.5f - MeasureText(subtitle, 26) * 0.5f), 190, 26, LIGHTGRAY);
 
     Vector2 mouse = GetVirtualMousePos();
-    float rowY = 260.f;
-    for (const CharacterEntry& entry : _entries)
+    for (int i = 0; i < (int)_entries.size(); i++)
     {
-        Rectangle row{ kVirtualWidth * 0.5f - 260.f, rowY, 520.f, 56.f };
+        const CharacterEntry& entry = _entries[i];
+        // Two-column layout: must match the rects in Update exactly.
+        int column = i / 10;
+        int rowInColumn = i % 10;
+        Rectangle row{ kVirtualWidth * 0.5f - 480.f + column * 500.f,
+                       250.f + rowInColumn * 74.f, 460.f, 62.f };
         bool hovered = CheckCollisionPointRec(mouse, row);
         DrawRectangleRounded(row, 0.3f, 6, hovered ? Color{ 70, 70, 92, 255 } : Color{ 52, 52, 66, 255 });
         DrawRectangleRoundedLines(row, 0.3f, 6, hovered ? GOLD : Color{ 90, 90, 110, 255 });
 
         bool tuned = (CharacterTuningStore::Get(entry.displayName) != nullptr);
         const char* label = tuned ? TextFormat("%s   [tuned]", entry.displayName.c_str()) : entry.displayName.c_str();
-        DrawText(label, (int)(row.x + 24.f), (int)(row.y + 14.f), 28, tuned ? Color{ 140, 235, 160, 255 } : RAYWHITE);
-        rowY += 66.f;
+        DrawText(label, (int)(row.x + 24.f), (int)(row.y + 17.f), 28, tuned ? Color{ 140, 235, 160, 255 } : RAYWHITE);
     }
 
     DrawText("ESC: back to menu", 24, kVirtualHeight - 44, 24, LIGHTGRAY);

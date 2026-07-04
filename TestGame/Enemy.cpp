@@ -703,7 +703,9 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     bool intentionalMove = false;
     if (!_takingDamage && !IsFrozen() && !inAttackRange)
     {
-        _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, _speed * dt));
+        // Warchief banner: allies inside the aura move noticeably faster.
+        float moveSpeed = HasWarAura() ? _speed * kWarAuraSpeedMultiplier : _speed;
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, moveSpeed * dt));
         intentionalMove = true;
     }
 
@@ -1332,16 +1334,18 @@ void Enemy::SetWaveScale(int /*wave*/)
 
 void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
 {
-    // Single growth system: advances every 10 waves.
-    // +10% HP, +5% damage, +3% speed per power level above 1.
+    // Single growth system: advances every few rooms (see
+    // GetEnemyPowerLevelForWave). Steeper scaling gives the run a real
+    // roguelite ramp — late-zone grunts are genuine threats, not fodder.
+    // +16% HP, +8% damage, +4% speed per power level above 1.
     if (enemyPowerLevel <= 1)
         return;
 
     const float t = (float)(enemyPowerLevel - 1);
-    _maxHealth   = std::ceil(_maxHealth   * (1.f + 0.10f * t));
+    _maxHealth   = std::ceil(_maxHealth   * (1.f + 0.16f * t));
     _health      = _maxHealth;
-    _attackPower *= (1.f + 0.05f * t);
-    _speed       *= (1.f + 0.03f * t);
+    _attackPower *= (1.f + 0.08f * t);
+    _speed       *= (1.f + 0.04f * t);
     _expValue    += (enemyPowerLevel - 1);
 }
 
@@ -1359,6 +1363,11 @@ void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)
 
 void Enemy::UpdateBurns(float dt)
 {
+    // Warchief aura decay lives here because every enemy type calls
+    // UpdateBurns each frame regardless of its custom Update logic.
+    if (_warAuraTimer > 0.f)
+        _warAuraTimer -= dt;
+
     int writeIndex = 0;
 
     for (int i = 0; i < static_cast<int>(_pendingBurns.size()); ++i)

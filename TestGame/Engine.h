@@ -16,6 +16,18 @@
 #include "AbyssSlime.h"
 #include "PumpkinJack.h"
 #include "Minotaur.h"
+#include "Sporeling.h"
+#include "Shieldbearer.h"
+#include "Phantom.h"
+#include "BomberImp.h"
+#include "Warchief.h"
+#include "LivingBlade.h"
+#include "Werewolf.h"
+#include "ChompBug.h"
+#include "Osiris.h"
+#include "TitanGuard.h"
+#include "ToxicVermin.h"
+#include "AncientBear.h"
 #include "EnemyProjectile.h"
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
@@ -88,9 +100,24 @@ private:
     Enemy* SpawnSkeletonArcher(Vector2 pos);
     Enemy* SpawnFlameWisp(Vector2 pos);
     Enemy* SpawnSlime(Vector2 pos, SlimeSize size);
+    Enemy* SpawnSporeling(Vector2 pos);
+    Enemy* SpawnShieldbearer(Vector2 pos);
+    Enemy* SpawnPhantom(Vector2 pos);
+    Enemy* SpawnBomberImp(Vector2 pos);
+    Enemy* SpawnWarchief(Vector2 pos);
+    Enemy* SpawnLivingBlade(Vector2 pos);
     void SpawnBossForBiome(Vector2 pos);      // picks the boss class for _currentBiome
+
+    // Debug-panel direct spawns (index maps to kDebugEnemyList / kDebugBossList).
+    void DebugSpawnNewEnemy(int index, Vector2 pos);
+    void DebugSpawnNewBoss(int index, Vector2 pos);
     void UpdateEnemyProjectiles(float dt);    // arrows + fire bolts (player collision)
     void DrawEnemyProjectiles(Vector2 worldOffset) const;
+
+    // -- Poison clouds (Sporeling deaths + ToxicVermin pools) ----------------
+    void SpawnPoisonCloud(Vector2 pos, float radius);
+    void UpdatePoisonClouds(float dt);
+    void DrawPoisonClouds(Vector2 worldOffset) const;
     void UpdateCyclopsLasers(float dt);
     void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
@@ -650,6 +677,16 @@ private:
     std::vector<CyclopsLaserProjectile>   _cyclopsLasers;
     std::vector<LavaBallProjectile>       _lavaBalls;
     std::vector<EnemyProjectile>          _enemyProjectiles;   // arrows + fire bolts
+
+    // Lingering poison pools (Sporeling deaths, Toxic Vermin spit).
+    struct PoisonCloud
+    {
+        Vector2 pos{};
+        float   timer  = 0.f;
+        float   radius = 120.f;
+    };
+    std::vector<PoisonCloud> _poisonClouds;
+    float _poisonDamageCooldown = 0.f;
     BossSupportState _bossCyclopsSupport;
     BossSupportState _bossOgreSupport;
 

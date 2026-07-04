@@ -62,6 +62,38 @@ namespace
 
     using ItemList = std::vector<std::pair<std::string, std::pair<DebugActionKind, int>>>;
 
+    // New enemy / boss spawn lists — indices must match kDebugEnemyList and
+    // kDebugBossList in Engine.cpp exactly.
+    ItemList NewEnemyItems()
+    {
+        return {
+            { "Sk. Archer",  { DebugActionKind::SpawnNewEnemy, 0 } },
+            { "Flame Wisp",  { DebugActionKind::SpawnNewEnemy, 1 } },
+            { "Slime",       { DebugActionKind::SpawnNewEnemy, 2 } },
+            { "Sporeling",   { DebugActionKind::SpawnNewEnemy, 3 } },
+            { "Shieldbearer",{ DebugActionKind::SpawnNewEnemy, 4 } },
+            { "Phantom",     { DebugActionKind::SpawnNewEnemy, 5 } },
+            { "Bomber Imp",  { DebugActionKind::SpawnNewEnemy, 6 } },
+            { "Warchief",    { DebugActionKind::SpawnNewEnemy, 7 } },
+            { "Living Blade",{ DebugActionKind::SpawnNewEnemy, 8 } },
+        };
+    }
+
+    ItemList NewBossItems()
+    {
+        return {
+            { "Werewolf",    { DebugActionKind::SpawnNewBoss, 0 } },
+            { "ChompBug",    { DebugActionKind::SpawnNewBoss, 1 } },
+            { "Osiris",      { DebugActionKind::SpawnNewBoss, 2 } },
+            { "Titan Guard", { DebugActionKind::SpawnNewBoss, 3 } },
+            { "Toxic Vermin",{ DebugActionKind::SpawnNewBoss, 4 } },
+            { "Ancient Bear",{ DebugActionKind::SpawnNewBoss, 5 } },
+            { "Abyss Slime", { DebugActionKind::SpawnNewBoss, 6 } },
+            { "Pumpkin Jack",{ DebugActionKind::SpawnNewBoss, 7 } },
+            { "Minotaur",    { DebugActionKind::SpawnNewBoss, 8 } },
+        };
+    }
+
     void AppendDebugButtons(std::vector<DebugButtonSpec>& out, float padX, float contentW,
                             float& cursorY, int cols, Color fill, const ItemList& items)
     {
@@ -130,6 +162,12 @@ namespace
             { "Add Ogre",    { DebugActionKind::SpawnOgre,    0 } },
             { "Add Boss",    { DebugActionKind::SpawnBoss,    0 } },
         });
+
+        skip(38.f);  // "New Enemies" section header
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 70, 108, 120, 220 }, NewEnemyItems());
+
+        skip(38.f);  // "New Bosses" section header
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 132, 70, 60, 220 }, NewBossItems());
 
         skip(38.f);  // "Resources" section header
         AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {
@@ -306,6 +344,12 @@ void DebugPanel::Draw(int act, int room, const char* roomTypeName) const
         { "Add Ogre",    { DebugActionKind::SpawnOgre,    0 } },
         { "Add Boss",    { DebugActionKind::SpawnBoss,    0 } },
     });
+
+    section("New Enemies");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 70, 108, 120, 220 }, NewEnemyItems());
+
+    section("New Bosses");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 132, 70, 60, 220 }, NewBossItems());
 
     section("Resources");
     AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {

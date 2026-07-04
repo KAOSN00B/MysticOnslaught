@@ -15,6 +15,18 @@ class SlimeEnemy;
 class AbyssSlime;
 class PumpkinJack;
 class Minotaur;
+class Sporeling;
+class Shieldbearer;
+class Phantom;
+class BomberImp;
+class Warchief;
+class LivingBlade;
+class Werewolf;
+class ChompBug;
+class Osiris;
+class TitanGuard;
+class ToxicVermin;
+class AncientBear;
 
 class Enemy : public BaseCharacter
 {
@@ -136,6 +148,26 @@ public:
     virtual AbyssSlime* AsAbyssSlime() { return nullptr; }
     virtual PumpkinJack* AsPumpkinJack() { return nullptr; }
     virtual Minotaur* AsMinotaur() { return nullptr; }
+    virtual Sporeling* AsSporeling() { return nullptr; }
+    virtual Shieldbearer* AsShieldbearer() { return nullptr; }
+    virtual Phantom* AsPhantom() { return nullptr; }
+    virtual BomberImp* AsBomberImp() { return nullptr; }
+    virtual Warchief* AsWarchief() { return nullptr; }
+    virtual LivingBlade* AsLivingBlade() { return nullptr; }
+    virtual ChompBug* AsChompBug() { return nullptr; }
+    virtual Osiris* AsOsiris() { return nullptr; }
+    virtual TitanGuard* AsTitanGuard() { return nullptr; }
+    virtual ToxicVermin* AsToxicVermin() { return nullptr; }
+    virtual AncientBear* AsAncientBear() { return nullptr; }
+    virtual Werewolf* AsWerewolf() { return nullptr; }
+
+    // ── Warchief aura ─────────────────────────────────────────────────────────
+    // Nearby allies move faster while inside the warchief's banner radius.
+    // The warchief refreshes this every frame; it decays within half a second
+    // of leaving the aura. Ticked inside UpdateBurns (which every type calls).
+    void  GrantWarAura(float duration) { if (duration > _warAuraTimer) _warAuraTimer = duration; }
+    bool  HasWarAura() const { return _warAuraTimer > 0.f; }
+    static constexpr float kWarAuraSpeedMultiplier = 1.3f;
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
@@ -265,6 +297,8 @@ protected:
     Vector2 _burnPanicDir = {};
     float   _burnPanicTurnTimer = 0.f;
     float   _burnSoundTimer = 0.f;
+
+    float   _warAuraTimer = 0.f;   // > 0 while buffed by a Warchief banner
 
     float   _freezeTimer        = 0.f;
 
