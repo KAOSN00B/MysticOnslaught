@@ -144,6 +144,7 @@ MusicCue AudioManager::GetDesiredLoopMusicCue(const AudioContext& ctx) const
     {
     case GameState::Menu:
     case GameState::DemoEnd:
+    case GameState::ClassSelect:
         return MusicCue::Title;
 
     case GameState::HowToPlay:

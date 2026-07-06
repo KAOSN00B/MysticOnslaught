@@ -56,7 +56,6 @@ private:
     void HandleCharging(float dt);
     void HandleRush(float dt, const std::vector<std::unique_ptr<Enemy>>& enemies);
     void HandleAnimation(float dt);
-    void DrawHealthBar(Vector2 screenPos, float w, float h) override;
     void ScatterEnemy(Enemy& enemy) const;
     bool HasAlreadyRushedEnemy(const Enemy* enemy) const;
     void FinishRush(bool stunnedOnImpact);

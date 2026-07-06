@@ -24,6 +24,9 @@ AncientBear::~AncientBear() {}
 void AncientBear::Init()
 {
     EnsureSharedResourcesLoaded();
+    _healthBarHeight  = 8.f;
+    _healthBarYFrac   = 0.62f;
+    _healthBarYOffset = 14.f;
     _attackSound = _sharedAttackSound;
     _hurtSound   = _sharedHurtSound;
     _deathSound  = _sharedDeathSound;
@@ -71,12 +74,7 @@ void AncientBear::ResetForSpawn(Vector2 pos)
 
 void AncientBear::SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame)
 {
-    _texture = sheet;
-    _width  = (float)sheet.width / (float)_sheetFrameCount;
-    _height = (float)sheet.height;
-    _updateTime = frameTime;
-    _maxFrames  = _sheetFrameCount;
-    if (resetFrame) { _frame = 0; _runningTime = 0.f; }
+    SetSpriteSheet(sheet, _sheetFrameCount, frameTime, resetFrame);
 }
 
 int AncientBear::GetCurrentAnimSlot() const
@@ -410,17 +408,6 @@ Capsule2D AncientBear::GetCapsule() const
     return Capsule2D{ { _worldPos.x, _worldPos.y + 14.f }, 22.f, _stableFrameW * _scale * 0.26f };
 }
 
-void AncientBear::DrawHealthBar(Vector2 screenPos, float w, float h)
-{
-    if (_health <= 0.f) return;
-    float pct = _health / _maxHealth;
-    float barWidth = w * 0.8f, barHeight = 8.f;
-    float barX = screenPos.x - barWidth / 2.f;
-    float barY = screenPos.y - h * 0.62f - 14.f;
-    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
-    DrawRectangle((int)barX, (int)barY, (int)(barWidth * pct), (int)barHeight, GREEN);
-}
-
 void AncientBear::TakeDamage(int damage, Vector2 attackerPos)
 {
     (void)attackerPos;
@@ -459,7 +446,8 @@ void AncientBear::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue = _bossBaseExpValue;
-    _health = 75.f; _maxHealth = 75.f;
+    _health = Balance::Boss::kAncientBearHealth; _maxHealth = Balance::Boss::kAncientBearHealth;
+    _enrageThreshold = 0.35f;   // runes ignite below this HP fraction
     _speed = _moveSpeed; _attackPower = 1.f;
 }
 

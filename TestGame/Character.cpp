@@ -73,13 +73,40 @@ void Character::Init()
     if (_hurtSound.frameCount != 0) UnloadSound(_hurtSound);
     if (_deathSound.frameCount != 0) UnloadSound(_deathSound);
 
-    _idleAnim = LoadTexture(AssetPath("Hero/Hero_Idle.png").c_str());
-    _walkAnim = LoadTexture(AssetPath("Hero/Hero_Walk.png").c_str());
-    _attackAnim = LoadTexture(AssetPath("Hero/Hero_Slash.png").c_str());
-    _staffAnim = LoadTexture(AssetPath("Hero/Hero_Staff.png").c_str());
-    _dashAnim = LoadTexture(AssetPath("Hero/Hero_Dash.png").c_str());
-    _deathAnim = LoadTexture(AssetPath("Hero/Hero_Death.png").c_str());
-    _takeDamageAnim = LoadTexture(AssetPath("Hero/Hero_TakeDamage.png").c_str());
+    // Class-specific sprite set. The weapon "Attack" sheet doubles as both the
+    // melee swing and the spell-cast pose for now (Mage's is the staff).
+    // Appearance is independent of class: use the chosen hero sprite set if set,
+    // otherwise fall back to the class's default look.
+    const char* prefix = !_appearancePrefix.empty()
+                       ? _appearancePrefix.c_str()
+                       : GetPlayerClassInfo(_class).spritePrefix;
+    _idleAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Idle.png",   prefix)).c_str());
+    _walkAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Walk.png",   prefix)).c_str());
+    // The Rogue uses the forward-thrust (stab) animation instead of the big swing;
+    // fall back to the standard attack sheet if a stab sheet is missing. Load two
+    // independent copies so _attackAnim and _staffAnim can be unloaded separately.
+    auto loadAttackSheet = [&]() -> Texture2D {
+        Texture2D t{};
+        if (_class == PlayerClass::Rogue)
+            t = LoadTexture(AssetPath(TextFormat("Hero/%s_Stab.png", prefix)).c_str());
+        if (t.id == 0)
+            t = LoadTexture(AssetPath(TextFormat("Hero/%s_Attack.png", prefix)).c_str());
+        return t;
+    };
+    _attackAnim = loadAttackSheet();
+    _staffAnim  = loadAttackSheet();
+
+    // Per-class basic-attack tempo — heavy for the Warrior, snappy for the Rogue.
+    switch (_class)
+    {
+    case PlayerClass::Warrior: _attackUpdateTime = 1.f / 11.f; break;   // slower, weightier
+    case PlayerClass::Paladin: _attackUpdateTime = 1.f / 12.f; break;
+    case PlayerClass::Rogue:   _attackUpdateTime = 1.f / 19.f; break;   // rapid jabs
+    default:                   _attackUpdateTime = 1.f / 14.f; break;
+    }
+    _dashAnim   = LoadTexture(AssetPath("Hero/Hero_Dash.png").c_str());   // shared dash pose
+    _deathAnim  = LoadTexture(AssetPath(TextFormat("Hero/%s_Death.png",  prefix)).c_str());
+    _takeDamageAnim = LoadTexture(AssetPath(TextFormat("Hero/%s_Hurt.png", prefix)).c_str());
 
     _footStepSound = LoadSound(AssetPath("Sounds/FootSteps.ogg").c_str());
     _attackSound = LoadSound(AssetPath("Sounds/SwordSwipe.ogg").c_str());
@@ -91,11 +118,17 @@ void Character::Init()
     _width = 32.f;
     _height = _texture.height;
     _scale = 6.f;
-    _speed = 380.f;
 
-    _health = 8;
-    _maxHealth = 8;
-    _attackPower = 3.f;
+    // Colliders authored in the Character Animator (charactertuning_Player.txt).
+    // nullptr when the file doesn't exist → the procedural boxes are used instead.
+    _playerTuning = CharacterTuningStore::Get("Player");
+
+    // Class base stats define each class's feel before any upgrades.
+    const PlayerClassInfo& classInfo = GetPlayerClassInfo(_class);
+    _speed       = classInfo.baseMoveSpeed;
+    _health      = (float)classInfo.baseHealth;
+    _maxHealth   = (float)classInfo.baseHealth;
+    _attackPower = classInfo.baseAttackPower;
 
     _maxFrames = _texture.width / _width;
     _updateTime = 3.0f / (float)_maxFrames;
@@ -126,13 +159,19 @@ void Character::Init()
     _cells          = 0;
     _level          = 1;
     _expToNextLevel = 24;
+
+    // Relics are per-run — wipe the loadout on a fresh Init.
+    for (int i = 0; i < (int)RelicType::Count; i++)
+        _relicOwned[i] = false;
+    _relicCount     = 0;
+    _killsSinceHeal = 0;
     _pendingBurnTicks.clear();
 
     _mana                = 0;
-    _maxMana             = 10;
-    _manaRegenMultiplier = 1.0f;
+    _maxMana             = classInfo.baseMana;
+    _manaRegenMultiplier = classInfo.manaRegenMult;
     _abilityDamageMultiplier = 1.0f;
-    _armour    = 0;
+    _armour    = classInfo.startArmour;
     _maxArmour = kMaxArmour;  // reset max to base each run
     _attackRangeMultiplier = 1.5f;
 
@@ -145,7 +184,8 @@ void Character::Init()
     _rightLeft = 1;
 }
 
-void Character::ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier, bool fifthAbilitySlot)
+void Character::ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier,
+                                bool fifthAbilitySlot, bool sixthAbilitySlot, int startingArmour)
 {
     // Permanent unlocks purchased at the Legacy Altar — applied once per run,
     // right after Init(), so they stack cleanly with in-run upgrades.
@@ -155,6 +195,164 @@ void Character::ApplyMetaBonuses(int startingGold, int vitalityBonus, float mana
     _manaRegenMultiplier *= manaRegenMultiplier;
     if (fifthAbilitySlot && _maxAbilitySlots < 5)
         _maxAbilitySlots = 5;
+    if (sixthAbilitySlot && _maxAbilitySlots < 6)
+        _maxAbilitySlots = 6;
+    if (startingArmour > 0)
+        AddArmour(startingArmour);
+}
+
+// ── Relics ──────────────────────────────────────────────────────────────────
+void Character::AddRelic(RelicType type)
+{
+    int idx = (int)type;
+    if (idx < 0 || idx >= (int)RelicType::Count || _relicOwned[idx])
+        return;   // stacking the same relic does nothing
+
+    _relicOwned[idx] = true;
+    if (_relicCount < (int)RelicType::Count)
+        _relicOrder[_relicCount++] = type;
+
+    // Apply the passive stat effects immediately (on-hit / on-kill relics are
+    // handled by ScaleOutgoingDamage / OnEnemyKilled instead).
+    switch (type)
+    {
+    case RelicType::StoneSkin:
+        _maxArmour = std::min(6, _maxArmour + 1);
+        AddArmour(1);
+        break;
+    case RelicType::Bulwark:
+        _maxArmour = std::min(6, _maxArmour + 1);
+        AddArmour(1);
+        Heal(3);
+        break;
+    case RelicType::SecondWind:
+        _maxHealth = std::ceil(_maxHealth * 1.30f);
+        _health    = std::min(_health + _maxHealth * 0.30f, _maxHealth);
+        break;
+    case RelicType::ThornmailRunes:
+        _maxHealth += 2.f;
+        _health    += 2.f;
+        break;
+    case RelicType::GlassCannon:
+        _maxHealth = std::max(1.f, _maxHealth - 2.f);
+        _health    = std::min(_health, _maxHealth);
+        break;
+    case RelicType::ArcaneBattery:
+        _maxMana += 40;
+        _manaRegenMultiplier *= 1.40f;
+        break;
+    case RelicType::SwiftBoots:
+        _speed *= 1.14f;
+        break;
+    case RelicType::Momentum:
+        _speed *= 1.10f;
+        break;
+    default:
+        break;   // on-hit / on-kill relics carry no passive stat change
+    }
+}
+
+bool Character::HasRelic(RelicType type) const
+{
+    int idx = (int)type;
+    return idx >= 0 && idx < (int)RelicType::Count && _relicOwned[idx];
+}
+
+RelicType Character::GetRelicAt(int index) const
+{
+    if (index < 0 || index >= _relicCount)
+        return RelicType::Count;
+    return _relicOrder[index];
+}
+
+int Character::ScaleOutgoingDamage(bool targetFrozen, bool targetCharged, bool targetBurning,
+                                   float targetHpFraction, int baseDamage, bool& outCrit) const
+{
+    float mult = 1.f;
+
+    // Flat global damage boosts.
+    if (HasRelic(RelicType::KeenEdge))    mult += 0.15f;
+    if (HasRelic(RelicType::Bloodlust))   mult += 0.25f;
+    if (HasRelic(RelicType::GlassCannon)) mult += 0.80f;
+    if (HasRelic(RelicType::Momentum))    mult += 0.10f;
+    if (HasRelic(RelicType::Reaper))      mult += 0.15f;
+
+    // Berserker only while the player is hurting.
+    if (HasRelic(RelicType::Berserker) && _maxHealth > 0.f &&
+        (_health / _maxHealth) < 0.40f)
+        mult += 0.30f;
+
+    // Status synergies.
+    if (targetFrozen  && HasRelic(RelicType::Permafrost)) mult += 0.60f;
+    if (targetBurning && HasRelic(RelicType::EmberHeart)) mult += 0.40f;
+    if (targetCharged && HasRelic(RelicType::Overcharge)) mult += 0.50f;
+
+    // Executioner finisher on low-HP targets.
+    if (HasRelic(RelicType::Executioner) && targetHpFraction <= 0.25f)
+        mult += 1.20f;
+
+    // Deadeye crit — rolled per hit, doubles the final number.
+    outCrit = false;
+    if (HasRelic(RelicType::Deadeye) && GetRandomValue(1, 100) <= 20)
+    {
+        outCrit = true;
+        mult *= 2.0f;
+    }
+
+    int scaled = (int)std::ceil((float)baseDamage * mult);
+    return std::max(1, scaled);
+}
+
+int Character::OnEnemyKilled(bool eliteOrBoss)
+{
+    int healAmount = 0;
+
+    if (HasRelic(RelicType::Vampirism))
+    {
+        _killsSinceHeal++;
+        if (_killsSinceHeal >= 5)
+        {
+            _killsSinceHeal = 0;
+            healAmount += 1;
+        }
+    }
+    if (eliteOrBoss && HasRelic(RelicType::Reaper))
+        healAmount += 4;
+
+    if (healAmount > 0)
+        Heal(healAmount);
+    return healAmount;
+}
+
+int Character::GetHealDropBonusPercent() const
+{
+    return HasRelic(RelicType::Scavenger) ? 22 : 0;
+}
+
+void Character::AddGoldFromDrop(int amount)
+{
+    if (HasRelic(RelicType::MidasTouch))
+        amount = (int)std::ceil(amount * 1.60f);
+    _gold += amount;
+}
+
+void Character::ScaleMaxHealth(float mult)
+{
+    // Used by Cursed Shrine pacts. Keeps current health proportional and never
+    // drops max HP below 1.
+    if (mult <= 0.f) return;
+    _maxHealth = std::max(1.f, _maxHealth * mult);
+    _health    = std::min(_health * mult, _maxHealth);
+    if (_health < 1.f) _health = 1.f;
+}
+
+void Character::AddCellsFromDrop(int amount)
+{
+    if (_cellGainMultiplier > 1.f)                       // Cell Surge meta unlock
+        amount = (int)std::ceil(amount * _cellGainMultiplier);
+    if (HasRelic(RelicType::SoulSiphon))
+        amount = (int)std::ceil(amount * 1.60f);
+    _cells += amount;
 }
 
 void Character::ReloadSounds()
@@ -172,6 +370,10 @@ void Character::ReloadSounds()
 void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;
+
+    // Tick down temporary self-buffs (War Cry damage, Rampage lifesteal, etc.).
+    if (_damageBuffTimer > 0.f) _damageBuffTimer -= dt;
+    if (_lifestealTimer  > 0.f) _lifestealTimer  -= dt;
 
     // Passive mana regen — paused during ultimate sequences.
     if (!_manaRegenPaused && _mana < _maxMana)
@@ -429,7 +631,18 @@ void Character::TriggerAbilityCast(int slot)
     }
 
     if (castType == CastType::None)
+    {
+        // Non-elemental class ability (Warrior etc.): queue it for the engine and
+        // play the weapon (attack) swing rather than the staff-cast animation.
+        _castingAbility     = true;
+        _queuedClassAbility = ability;
+        _texture            = _attackAnim;
+        _frame              = 0;
+        _runningTime        = 0.f;
+        _maxFrames          = _texture.width / _width;
+        _updateTime         = _attackUpdateTime;
         return;
+    }
 
     _castingAbility = true;
     _queuedCast     = castType;
@@ -839,13 +1052,8 @@ void Character::PlayHurtSound()
     PlaySound(_hurtSound);
 }
 
-// Returns true if the given type is an ultimate ability.
-static bool IsUltimateAbility(AbilityType type)
-{
-    return type == AbilityType::FireUltimate ||
-           type == AbilityType::IceUltimate  ||
-           type == AbilityType::ElectricUltimate;
-}
+// IsUltimateAbility(AbilityType) is defined inline in AbilityType.h and now
+// covers every class's ultimates (including the Warrior kit).
 
 bool Character::CanCastAbility(AbilityType type) const
 {
@@ -924,6 +1132,38 @@ Character::CastType Character::ConsumeCastRequest()
     return queuedCast;
 }
 
+AbilityType Character::ConsumeClassAbility()
+{
+    AbilityType queued = _queuedClassAbility;
+    _queuedClassAbility = AbilityType::None;
+    return queued;
+}
+
+// ── Temporary self-buffs ──────────────────────────────────────────────────────
+float Character::GetClassDamageMult() const
+{
+    return _damageBuffTimer > 0.f ? _damageBuffMult : 1.f;
+}
+
+void Character::GrantDamageBuff(float mult, float duration)
+{
+    // Refresh with the stronger of the two so re-casting never weakens the buff.
+    _damageBuffMult  = std::max(_damageBuffTimer > 0.f ? _damageBuffMult : 1.f, mult);
+    _damageBuffTimer = std::max(_damageBuffTimer, duration);
+}
+
+void Character::GrantLifesteal(float fraction, float duration)
+{
+    _lifestealFraction = fraction;
+    _lifestealTimer    = std::max(_lifestealTimer, duration);
+}
+
+void Character::MoveTowardFacing(float distance)
+{
+    // Nudge the player forward in the facing direction, used by lunge abilities.
+    _worldPos.x += (_rightLeft > 0 ? 1.f : -1.f) * distance;
+}
+
 bool Character::CanApplyMeleeDamage() const
 {
     return _attacking && !_damageApplied && _frame >= 2 && _frame <= 4;
@@ -934,11 +1174,52 @@ void Character::ConsumeMeleeDamageFrame()
     _damageApplied = true;
 }
 
+Rectangle Character::GetCollisionRec() const
+{
+    // Prefer an authored body circle (Idle, then Walk) from the Player tuning.
+    if (_playerTuning)
+    {
+        for (int slot : { 0, 1 })
+        {
+            const auto& b = _playerTuning->animBody[slot];
+            if (b.set && b.radius > 0.f)
+            {
+                float sign = (_rightLeft > 0) ? 1.f : -1.f;
+                float cx = _worldPos.x + sign * b.x;
+                float cy = _worldPos.y + b.y;
+                return Rectangle{ cx - b.radius, cy - b.radius, b.radius * 2.f, b.radius * 2.f };
+            }
+        }
+    }
+    return BaseCharacter::GetCollisionRec();
+}
+
 Rectangle Character::GetAttackCollisionRec() const
 {
+    // Authored melee box (Swing slot) takes precedence — precise, no class scaling.
+    if (_playerTuning && _playerTuning->animMelee[2].set)
+    {
+        Rectangle m = _playerTuning->animMelee[2].rect;   // relative, facing right
+        float rx = (_rightLeft > 0) ? (_worldPos.x + m.x)
+                                    : (_worldPos.x - (m.x + m.width));   // mirror when facing left
+        return Rectangle{ rx, _worldPos.y + m.y, m.width, m.height };
+    }
+
     Rectangle body = GetCollisionRec();
     float attackWidth  = body.width  * 0.5f * _attackRangeMultiplier + _attackWidthAdjust;
     float attackHeight = std::max(4.f, body.height + _attackHeightAdjust);
+
+    // Per-class basic-attack shape — each melee class swings differently:
+    //   Warrior : wide sweeping cleave (tall arc, hits a cluster in front).
+    //   Paladin : solid holy strike (a bit taller & longer than default).
+    //   Rogue   : quick lunging stab (long reach, narrow vertical profile).
+    switch (_class)
+    {
+    case PlayerClass::Warrior: attackWidth *= 1.15f; attackHeight *= 1.75f; break;
+    case PlayerClass::Paladin: attackWidth *= 1.10f; attackHeight *= 1.35f; break;
+    case PlayerClass::Rogue:   attackWidth *= 1.55f; attackHeight *= 0.60f; break;
+    default: break;   // Mage/Ranger/Warlock fight at range; melee box stays default
+    }
 
     float swordX;
     if (_rightLeft > 0)
@@ -1191,6 +1472,18 @@ void Character::ApplyUpgrade(UpgradeType type)
     case UpgradeType::UpgradeIceUltimate:    UpgradeAbility(AbilityType::IceUltimate);     break;
     case UpgradeType::UpgradeElectricUltimate: UpgradeAbility(AbilityType::ElectricUltimate); break;
     default:
+        // Warrior (and future class) abilities are handled generically so each new
+        // class only needs its enum entries + the mapping helpers above.
+        if (AbilityType learn = AbilityForLearnType(type); learn != AbilityType::None)
+        {
+            if (IsUltimateAbility(learn))
+                RemoveUltimateIfPresent();   // ults are exclusive — swap out any held ult
+            LearnAbility(learn);
+        }
+        else if (AbilityType upg = AbilityForUpgradeType(type); upg != AbilityType::None)
+        {
+            UpgradeAbility(upg);
+        }
         break;
     }
 }
@@ -1227,6 +1520,239 @@ void Character::UpgradeAbility(AbilityType type)
             _abilityLevels[i]++;
             return;
         }
+    }
+}
+
+// ── Ability ⇄ card-type mapping ───────────────────────────────────────────────
+// Only the Warrior kit needs generic mapping; the elemental Mage cards keep their
+// explicit switch cases in ApplyUpgrade for clarity/back-compat.
+AbilityType AbilityForLearnType(UpgradeType type)
+{
+    switch (type)
+    {
+    case UpgradeType::LearnWarCleave:    return AbilityType::WarCleave;
+    case UpgradeType::LearnWhirlwind:    return AbilityType::Whirlwind;
+    case UpgradeType::LearnThrowingAxe:  return AbilityType::ThrowingAxe;
+    case UpgradeType::LearnRend:         return AbilityType::Rend;
+    case UpgradeType::LearnShieldBash:   return AbilityType::ShieldBash;
+    case UpgradeType::LearnWarCry:       return AbilityType::WarCry;
+    case UpgradeType::LearnGroundSlam:   return AbilityType::GroundSlam;
+    case UpgradeType::LearnRampage:      return AbilityType::Rampage;
+    case UpgradeType::LearnEarthshatter: return AbilityType::Earthshatter;
+    case UpgradeType::LearnFanOfKnives:  return AbilityType::FanOfKnives;
+    case UpgradeType::LearnShadowstep:   return AbilityType::Shadowstep;
+    case UpgradeType::LearnPoisonVial:   return AbilityType::PoisonVial;
+    case UpgradeType::LearnBackstab:     return AbilityType::Backstab;
+    case UpgradeType::LearnSmokeBomb:    return AbilityType::SmokeBomb;
+    case UpgradeType::LearnEviscerate:   return AbilityType::Eviscerate;
+    case UpgradeType::LearnDeathMark:    return AbilityType::DeathMark;
+    case UpgradeType::LearnBladeDance:   return AbilityType::BladeDance;
+    case UpgradeType::LearnRainOfBlades: return AbilityType::RainOfBlades;
+    case UpgradeType::LearnPiercingShot:    return AbilityType::PiercingShot;
+    case UpgradeType::LearnMultishot:       return AbilityType::Multishot;
+    case UpgradeType::LearnFrostTrap:       return AbilityType::FrostTrap;
+    case UpgradeType::LearnExplosiveArrow:  return AbilityType::ExplosiveArrow;
+    case UpgradeType::LearnRoll:            return AbilityType::Roll;
+    case UpgradeType::LearnVolley:          return AbilityType::Volley;
+    case UpgradeType::LearnArrowStorm:      return AbilityType::ArrowStorm;
+    case UpgradeType::LearnDeadeye:         return AbilityType::Deadeye;
+    case UpgradeType::LearnPiercingBarrage: return AbilityType::PiercingBarrage;
+    case UpgradeType::LearnSmite:           return AbilityType::Smite;
+    case UpgradeType::LearnConsecrate:      return AbilityType::Consecrate;
+    case UpgradeType::LearnShieldOfFaith:   return AbilityType::ShieldOfFaith;
+    case UpgradeType::LearnHolyBolt:        return AbilityType::HolyBolt;
+    case UpgradeType::LearnHammerThrow:     return AbilityType::HammerThrow;
+    case UpgradeType::LearnLayOnHands:      return AbilityType::LayOnHands;
+    case UpgradeType::LearnDivineStorm:     return AbilityType::DivineStorm;
+    case UpgradeType::LearnAvengingWrath:   return AbilityType::AvengingWrath;
+    case UpgradeType::LearnHammerOfJustice: return AbilityType::HammerOfJustice;
+    case UpgradeType::LearnShadowBolt:      return AbilityType::ShadowBolt;
+    case UpgradeType::LearnDrainLife:       return AbilityType::DrainLife;
+    case UpgradeType::LearnCurse:           return AbilityType::Curse;
+    case UpgradeType::LearnCorruptionPool:  return AbilityType::CorruptionPool;
+    case UpgradeType::LearnHellfire:        return AbilityType::Hellfire;
+    case UpgradeType::LearnSoulSiphon:      return AbilityType::SoulSiphon;
+    case UpgradeType::LearnCataclysm:       return AbilityType::Cataclysm;
+    case UpgradeType::LearnDemonForm:       return AbilityType::DemonForm;
+    case UpgradeType::LearnShadowNova:      return AbilityType::ShadowNova;
+    default:                             return AbilityType::None;
+    }
+}
+
+AbilityType AbilityForUpgradeType(UpgradeType type)
+{
+    switch (type)
+    {
+    case UpgradeType::UpgradeWarCleave:    return AbilityType::WarCleave;
+    case UpgradeType::UpgradeWhirlwind:    return AbilityType::Whirlwind;
+    case UpgradeType::UpgradeThrowingAxe:  return AbilityType::ThrowingAxe;
+    case UpgradeType::UpgradeRend:         return AbilityType::Rend;
+    case UpgradeType::UpgradeShieldBash:   return AbilityType::ShieldBash;
+    case UpgradeType::UpgradeWarCry:       return AbilityType::WarCry;
+    case UpgradeType::UpgradeGroundSlam:   return AbilityType::GroundSlam;
+    case UpgradeType::UpgradeRampage:      return AbilityType::Rampage;
+    case UpgradeType::UpgradeEarthshatter: return AbilityType::Earthshatter;
+    case UpgradeType::UpgradeFanOfKnives:  return AbilityType::FanOfKnives;
+    case UpgradeType::UpgradeShadowstep:   return AbilityType::Shadowstep;
+    case UpgradeType::UpgradePoisonVial:   return AbilityType::PoisonVial;
+    case UpgradeType::UpgradeBackstab:     return AbilityType::Backstab;
+    case UpgradeType::UpgradeSmokeBomb:    return AbilityType::SmokeBomb;
+    case UpgradeType::UpgradeEviscerate:   return AbilityType::Eviscerate;
+    case UpgradeType::UpgradeDeathMark:    return AbilityType::DeathMark;
+    case UpgradeType::UpgradeBladeDance:   return AbilityType::BladeDance;
+    case UpgradeType::UpgradeRainOfBlades: return AbilityType::RainOfBlades;
+    case UpgradeType::UpgradePiercingShot:    return AbilityType::PiercingShot;
+    case UpgradeType::UpgradeMultishot:       return AbilityType::Multishot;
+    case UpgradeType::UpgradeFrostTrap:       return AbilityType::FrostTrap;
+    case UpgradeType::UpgradeExplosiveArrow:  return AbilityType::ExplosiveArrow;
+    case UpgradeType::UpgradeRoll:            return AbilityType::Roll;
+    case UpgradeType::UpgradeVolley:          return AbilityType::Volley;
+    case UpgradeType::UpgradeArrowStorm:      return AbilityType::ArrowStorm;
+    case UpgradeType::UpgradeDeadeye:         return AbilityType::Deadeye;
+    case UpgradeType::UpgradePiercingBarrage: return AbilityType::PiercingBarrage;
+    case UpgradeType::UpgradeSmite:           return AbilityType::Smite;
+    case UpgradeType::UpgradeConsecrate:      return AbilityType::Consecrate;
+    case UpgradeType::UpgradeShieldOfFaith:   return AbilityType::ShieldOfFaith;
+    case UpgradeType::UpgradeHolyBolt:        return AbilityType::HolyBolt;
+    case UpgradeType::UpgradeHammerThrow:     return AbilityType::HammerThrow;
+    case UpgradeType::UpgradeLayOnHands:      return AbilityType::LayOnHands;
+    case UpgradeType::UpgradeDivineStorm:     return AbilityType::DivineStorm;
+    case UpgradeType::UpgradeAvengingWrath:   return AbilityType::AvengingWrath;
+    case UpgradeType::UpgradeHammerOfJustice: return AbilityType::HammerOfJustice;
+    case UpgradeType::UpgradeShadowBolt:      return AbilityType::ShadowBolt;
+    case UpgradeType::UpgradeDrainLife:       return AbilityType::DrainLife;
+    case UpgradeType::UpgradeCurse:           return AbilityType::Curse;
+    case UpgradeType::UpgradeCorruptionPool:  return AbilityType::CorruptionPool;
+    case UpgradeType::UpgradeHellfire:        return AbilityType::Hellfire;
+    case UpgradeType::UpgradeSoulSiphon:      return AbilityType::SoulSiphon;
+    case UpgradeType::UpgradeCataclysm:       return AbilityType::Cataclysm;
+    case UpgradeType::UpgradeDemonForm:       return AbilityType::DemonForm;
+    case UpgradeType::UpgradeShadowNova:      return AbilityType::ShadowNova;
+    default:                               return AbilityType::None;
+    }
+}
+
+UpgradeType LearnTypeForAbility(AbilityType ability)
+{
+    switch (ability)
+    {
+    case AbilityType::FireSpread:       return UpgradeType::LearnFireSpread;
+    case AbilityType::IceSpread:        return UpgradeType::LearnIceSpread;
+    case AbilityType::ElectricSpread:   return UpgradeType::LearnElectricSpread;
+    case AbilityType::FireBolt:         return UpgradeType::LearnFireBolt;
+    case AbilityType::IceBolt:          return UpgradeType::LearnIceBolt;
+    case AbilityType::ElectricBolt:     return UpgradeType::LearnElectricBolt;
+    case AbilityType::FireUltimate:     return UpgradeType::LearnFireUltimate;
+    case AbilityType::IceUltimate:      return UpgradeType::LearnIceUltimate;
+    case AbilityType::ElectricUltimate: return UpgradeType::LearnElectricUltimate;
+    case AbilityType::WarCleave:        return UpgradeType::LearnWarCleave;
+    case AbilityType::Whirlwind:        return UpgradeType::LearnWhirlwind;
+    case AbilityType::ThrowingAxe:      return UpgradeType::LearnThrowingAxe;
+    case AbilityType::Rend:             return UpgradeType::LearnRend;
+    case AbilityType::ShieldBash:       return UpgradeType::LearnShieldBash;
+    case AbilityType::WarCry:           return UpgradeType::LearnWarCry;
+    case AbilityType::GroundSlam:       return UpgradeType::LearnGroundSlam;
+    case AbilityType::Rampage:          return UpgradeType::LearnRampage;
+    case AbilityType::Earthshatter:     return UpgradeType::LearnEarthshatter;
+    case AbilityType::FanOfKnives:      return UpgradeType::LearnFanOfKnives;
+    case AbilityType::Shadowstep:       return UpgradeType::LearnShadowstep;
+    case AbilityType::PoisonVial:       return UpgradeType::LearnPoisonVial;
+    case AbilityType::Backstab:         return UpgradeType::LearnBackstab;
+    case AbilityType::SmokeBomb:        return UpgradeType::LearnSmokeBomb;
+    case AbilityType::Eviscerate:       return UpgradeType::LearnEviscerate;
+    case AbilityType::DeathMark:        return UpgradeType::LearnDeathMark;
+    case AbilityType::BladeDance:       return UpgradeType::LearnBladeDance;
+    case AbilityType::RainOfBlades:     return UpgradeType::LearnRainOfBlades;
+    case AbilityType::PiercingShot:     return UpgradeType::LearnPiercingShot;
+    case AbilityType::Multishot:        return UpgradeType::LearnMultishot;
+    case AbilityType::FrostTrap:        return UpgradeType::LearnFrostTrap;
+    case AbilityType::ExplosiveArrow:   return UpgradeType::LearnExplosiveArrow;
+    case AbilityType::Roll:             return UpgradeType::LearnRoll;
+    case AbilityType::Volley:           return UpgradeType::LearnVolley;
+    case AbilityType::ArrowStorm:       return UpgradeType::LearnArrowStorm;
+    case AbilityType::Deadeye:          return UpgradeType::LearnDeadeye;
+    case AbilityType::PiercingBarrage:  return UpgradeType::LearnPiercingBarrage;
+    case AbilityType::Smite:            return UpgradeType::LearnSmite;
+    case AbilityType::Consecrate:       return UpgradeType::LearnConsecrate;
+    case AbilityType::ShieldOfFaith:    return UpgradeType::LearnShieldOfFaith;
+    case AbilityType::HolyBolt:         return UpgradeType::LearnHolyBolt;
+    case AbilityType::HammerThrow:      return UpgradeType::LearnHammerThrow;
+    case AbilityType::LayOnHands:       return UpgradeType::LearnLayOnHands;
+    case AbilityType::DivineStorm:      return UpgradeType::LearnDivineStorm;
+    case AbilityType::AvengingWrath:    return UpgradeType::LearnAvengingWrath;
+    case AbilityType::HammerOfJustice:  return UpgradeType::LearnHammerOfJustice;
+    case AbilityType::ShadowBolt:       return UpgradeType::LearnShadowBolt;
+    case AbilityType::DrainLife:        return UpgradeType::LearnDrainLife;
+    case AbilityType::Curse:            return UpgradeType::LearnCurse;
+    case AbilityType::CorruptionPool:   return UpgradeType::LearnCorruptionPool;
+    case AbilityType::Hellfire:         return UpgradeType::LearnHellfire;
+    case AbilityType::SoulSiphon:       return UpgradeType::LearnSoulSiphon;
+    case AbilityType::Cataclysm:        return UpgradeType::LearnCataclysm;
+    case AbilityType::DemonForm:        return UpgradeType::LearnDemonForm;
+    case AbilityType::ShadowNova:       return UpgradeType::LearnShadowNova;
+    default:                            return UpgradeType::Count;
+    }
+}
+
+UpgradeType UpgradeTypeForAbility(AbilityType ability)
+{
+    switch (ability)
+    {
+    case AbilityType::FireSpread:       return UpgradeType::UpgradeFireSpread;
+    case AbilityType::IceSpread:        return UpgradeType::UpgradeIceSpread;
+    case AbilityType::ElectricSpread:   return UpgradeType::UpgradeElectricSpread;
+    case AbilityType::FireBolt:         return UpgradeType::UpgradeFireBolt;
+    case AbilityType::IceBolt:          return UpgradeType::UpgradeIceBolt;
+    case AbilityType::ElectricBolt:     return UpgradeType::UpgradeElectricBolt;
+    case AbilityType::FireUltimate:     return UpgradeType::UpgradeFireUltimate;
+    case AbilityType::IceUltimate:      return UpgradeType::UpgradeIceUltimate;
+    case AbilityType::ElectricUltimate: return UpgradeType::UpgradeElectricUltimate;
+    case AbilityType::WarCleave:        return UpgradeType::UpgradeWarCleave;
+    case AbilityType::Whirlwind:        return UpgradeType::UpgradeWhirlwind;
+    case AbilityType::ThrowingAxe:      return UpgradeType::UpgradeThrowingAxe;
+    case AbilityType::Rend:             return UpgradeType::UpgradeRend;
+    case AbilityType::ShieldBash:       return UpgradeType::UpgradeShieldBash;
+    case AbilityType::WarCry:           return UpgradeType::UpgradeWarCry;
+    case AbilityType::GroundSlam:       return UpgradeType::UpgradeGroundSlam;
+    case AbilityType::Rampage:          return UpgradeType::UpgradeRampage;
+    case AbilityType::Earthshatter:     return UpgradeType::UpgradeEarthshatter;
+    case AbilityType::FanOfKnives:      return UpgradeType::UpgradeFanOfKnives;
+    case AbilityType::Shadowstep:       return UpgradeType::UpgradeShadowstep;
+    case AbilityType::PoisonVial:       return UpgradeType::UpgradePoisonVial;
+    case AbilityType::Backstab:         return UpgradeType::UpgradeBackstab;
+    case AbilityType::SmokeBomb:        return UpgradeType::UpgradeSmokeBomb;
+    case AbilityType::Eviscerate:       return UpgradeType::UpgradeEviscerate;
+    case AbilityType::DeathMark:        return UpgradeType::UpgradeDeathMark;
+    case AbilityType::BladeDance:       return UpgradeType::UpgradeBladeDance;
+    case AbilityType::RainOfBlades:     return UpgradeType::UpgradeRainOfBlades;
+    case AbilityType::PiercingShot:     return UpgradeType::UpgradePiercingShot;
+    case AbilityType::Multishot:        return UpgradeType::UpgradeMultishot;
+    case AbilityType::FrostTrap:        return UpgradeType::UpgradeFrostTrap;
+    case AbilityType::ExplosiveArrow:   return UpgradeType::UpgradeExplosiveArrow;
+    case AbilityType::Roll:             return UpgradeType::UpgradeRoll;
+    case AbilityType::Volley:           return UpgradeType::UpgradeVolley;
+    case AbilityType::ArrowStorm:       return UpgradeType::UpgradeArrowStorm;
+    case AbilityType::Deadeye:          return UpgradeType::UpgradeDeadeye;
+    case AbilityType::PiercingBarrage:  return UpgradeType::UpgradePiercingBarrage;
+    case AbilityType::Smite:            return UpgradeType::UpgradeSmite;
+    case AbilityType::Consecrate:       return UpgradeType::UpgradeConsecrate;
+    case AbilityType::ShieldOfFaith:    return UpgradeType::UpgradeShieldOfFaith;
+    case AbilityType::HolyBolt:         return UpgradeType::UpgradeHolyBolt;
+    case AbilityType::HammerThrow:      return UpgradeType::UpgradeHammerThrow;
+    case AbilityType::LayOnHands:       return UpgradeType::UpgradeLayOnHands;
+    case AbilityType::DivineStorm:      return UpgradeType::UpgradeDivineStorm;
+    case AbilityType::AvengingWrath:    return UpgradeType::UpgradeAvengingWrath;
+    case AbilityType::HammerOfJustice:  return UpgradeType::UpgradeHammerOfJustice;
+    case AbilityType::ShadowBolt:       return UpgradeType::UpgradeShadowBolt;
+    case AbilityType::DrainLife:        return UpgradeType::UpgradeDrainLife;
+    case AbilityType::Curse:            return UpgradeType::UpgradeCurse;
+    case AbilityType::CorruptionPool:   return UpgradeType::UpgradeCorruptionPool;
+    case AbilityType::Hellfire:         return UpgradeType::UpgradeHellfire;
+    case AbilityType::SoulSiphon:       return UpgradeType::UpgradeSoulSiphon;
+    case AbilityType::Cataclysm:        return UpgradeType::UpgradeCataclysm;
+    case AbilityType::DemonForm:        return UpgradeType::UpgradeDemonForm;
+    case AbilityType::ShadowNova:       return UpgradeType::UpgradeShadowNova;
+    default:                            return UpgradeType::Count;
     }
 }
 

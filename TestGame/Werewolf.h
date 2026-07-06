@@ -34,7 +34,6 @@ public:
     void ApplyFreeze(float duration) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule() const override;
-    void DrawHealthBar(Vector2 screenPos, float w, float h) override;
 
     Werewolf* AsWerewolf() override { return this; }
     bool IsBoss() const override { return true; }

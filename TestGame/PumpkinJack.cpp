@@ -32,6 +32,9 @@ PumpkinJack::~PumpkinJack() {}
 void PumpkinJack::Init()
 {
     EnsureSharedResourcesLoaded();
+    _healthBarHeight  = 8.f;
+    _healthBarYFrac   = 0.62f;
+    _healthBarYOffset = 14.f;
 
     _idleAnim       = _sharedIdleAnim;
     _walkAnim       = _sharedWalkAnim;
@@ -140,12 +143,7 @@ void PumpkinJack::PlayEditorAnim(int index)
 
 void PumpkinJack::SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame)
 {
-    _texture    = sheet;
-    _width      = (float)sheet.width / (float)_sheetFrameCount;
-    _height     = (float)sheet.height;
-    _updateTime = frameTime;
-    _maxFrames  = _sheetFrameCount;
-    if (resetFrame) { _frame = 0; _runningTime = 0.f; }
+    SetSpriteSheet(sheet, _sheetFrameCount, frameTime, resetFrame);
 }
 
 // =============================================================================
@@ -668,21 +666,6 @@ Capsule2D PumpkinJack::GetCapsule() const
     };
 }
 
-void PumpkinJack::DrawHealthBar(Vector2 screenPos, float w, float h)
-{
-    if (_health <= 0.f)
-        return;
-
-    float healthPercent = _health / _maxHealth;
-    float barWidth      = w * 0.8f;
-    float barHeight     = 8.f;
-    float barX          = screenPos.x - barWidth / 2.f;
-    float barY          = screenPos.y - h * 0.62f - 14.f;
-
-    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
-    DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)barHeight, GREEN);
-}
-
 // =============================================================================
 void PumpkinJack::TakeDamage(int damage, Vector2 attackerPos)
 {
@@ -742,8 +725,9 @@ void PumpkinJack::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue    = _bossBaseExpValue;
-    _health      = 55.f;
-    _maxHealth   = 55.f;
+    _health      = Balance::Boss::kPumpkinJackHealth;
+    _maxHealth   = Balance::Boss::kPumpkinJackHealth;
+_enrageThreshold = 0.50f;
     _speed       = _moveSpeed;
     _attackPower = 1.f;
 }

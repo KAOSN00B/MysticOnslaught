@@ -45,6 +45,33 @@ void Enemy::Init()
     ResetForSpawn(_worldPos);
 }
 
+const char* Enemy::GetBestiaryName()
+{
+    if (AsCyclops())       return "Cyclops";
+    if (AsOgre())          return "Ogre";
+    if (AsMolarbeast())    return "Molarbeast";
+    if (AsSkeletonArcher())return "Skeleton Archer";
+    if (AsFlameWisp())     return "Flame Wisp";
+    if (AsAbyssSlime())    return "Abyss Slime";
+    if (AsSlime())         return "Slime";
+    if (AsPumpkinJack())   return "Pumpkin Jack";
+    if (AsMinotaur())      return "Minotaur";
+    if (AsSporeling())     return "Sporeling";
+    if (AsShieldbearer())  return "Shieldbearer";
+    if (AsPhantom())       return "Phantom";
+    if (AsBomberImp())     return "Bomber Imp";
+    if (AsWarchief())      return "Warchief";
+    if (AsLivingBlade())   return "Living Blade";
+    if (AsChompBug())      return "Chomp Bug";
+    if (AsOsiris())        return "Osiris";
+    if (AsTitanGuard())    return "Titan Guard";
+    if (AsToxicVermin())   return "Toxic Vermin";
+    if (AsAncientBear())   return "Ancient Bear";
+    if (AsWerewolf())      return "Werewolf";
+    const char* tn = GetTuningName();
+    return tn ? tn : "Grunt";
+}
+
 void Enemy::ResetForSpawn(Vector2 pos)
 {
     _worldPos = pos;
@@ -52,6 +79,7 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _homePos = pos;
     _velocity = Vector2Zero();
     _isActive         = true;
+    _bestiaryRecorded = false;
     _isEliteMiniboss  = false;
     _isInvulnerable   = false;
     _leapInvulnerable = false;
@@ -1117,13 +1145,22 @@ void Enemy::DrawHealthBar(Vector2 screenPos, float w, float h)
     float healthPercent = (float)_health / (float)_maxHealth;
 
     float barWidth = w * 0.8f;
-    float barHeight = 6.f;
 
     float barX = screenPos.x - barWidth / 2.f;
-    float barY = screenPos.y - h / 2.f - 12.f;
+    float barY = screenPos.y - h * _healthBarYFrac - _healthBarYOffset;
 
-    DrawRectangle(barX, barY, barWidth, barHeight, RED);
-    DrawRectangle(barX, barY, barWidth * healthPercent, barHeight, GREEN);
+    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)_healthBarHeight, RED);
+    DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)_healthBarHeight, GREEN);
+}
+
+void Enemy::SetSpriteSheet(const Texture2D& sheet, int frameCount, float frameTime, bool resetFrame)
+{
+    _texture    = sheet;
+    _width      = (float)sheet.width / (float)frameCount;
+    _height     = (float)sheet.height;
+    _updateTime = frameTime;
+    _maxFrames  = frameCount;
+    if (resetFrame) { _frame = 0; _runningTime = 0.f; }
 }
 
 void Enemy::DrawEliteLabel(Vector2 screenPos, float w, float h)
@@ -1324,12 +1361,12 @@ void Enemy::SetWaveScale(int /*wave*/)
 {
     // Fixed base profile — all stat growth comes from ApplyEnemyPowerLevel.
     // Wave parameter kept for virtual signature compatibility.
-    _expValue    = 3;
-    _health      = 4.f;
-    _maxHealth   = 4.f;
-    _attackPower = 1.f;
-    _speed       = 185.f;
-    _attackDelay = 1.5f;
+    _expValue    = Balance::Grunt::kBaseExpValue;
+    _health      = Balance::Grunt::kBaseHealth;
+    _maxHealth   = Balance::Grunt::kBaseHealth;
+    _attackPower = Balance::Grunt::kBaseAttack;
+    _speed       = Balance::Grunt::kBaseSpeed;
+    _attackDelay = Balance::Grunt::kBaseAttackDelay;
 }
 
 void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
@@ -1342,11 +1379,22 @@ void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
         return;
 
     const float t = (float)(enemyPowerLevel - 1);
-    _maxHealth   = std::ceil(_maxHealth   * (1.f + 0.16f * t));
+    _maxHealth   = std::ceil(_maxHealth   * (1.f + Balance::Curve::kHealthPerLevel * t));
     _health      = _maxHealth;
-    _attackPower *= (1.f + 0.08f * t);
-    _speed       *= (1.f + 0.04f * t);
+    _attackPower *= (1.f + Balance::Curve::kDamagePerLevel * t);
+    _speed       *= (1.f + Balance::Curve::kSpeedPerLevel  * t);
     _expValue    += (enemyPowerLevel - 1);
+}
+
+void Enemy::ApplyDifficultyScaling(float healthMult, float damageMult)
+{
+    if (healthMult > 1.f)
+    {
+        _maxHealth = std::ceil(_maxHealth * healthMult);
+        _health    = _maxHealth;
+    }
+    if (damageMult > 1.f)
+        _attackPower *= damageMult;
 }
 
 void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)
@@ -1361,12 +1409,49 @@ void Enemy::ApplyBurn(float delay, int damage, Vector2 sourcePos)
     _pendingBurns.push_back(PendingBurn{ delay, damage, sourcePos });
 }
 
+void Enemy::UpdateEnrageLatch(float dt)
+{
+    if (_enrageFlashTimer > 0.f)
+        _enrageFlashTimer -= dt;
+
+    if (_enrageThreshold <= 0.f)
+        return;
+
+    // Full HP → a fresh (or pooled-reused) spawn: clear the latch so last fight's
+    // enrage doesn't carry over.
+    if (_health >= _maxHealth)
+    {
+        _enrageLatched = false;
+        return;
+    }
+
+    // One-way transition into the enrage phase.
+    if (!_enrageLatched && IsAlive() && _health <= _maxHealth * _enrageThreshold)
+    {
+        _enrageLatched      = true;
+        _enrageShakePending = true;   // telegraph consumed by CombatDirector
+        _enrageFlashTimer   = 0.6f;
+    }
+}
+
+bool Enemy::ConsumeEnrageShakeRequest()
+{
+    bool r = _enrageShakePending;
+    _enrageShakePending = false;
+    return r;
+}
+
 void Enemy::UpdateBurns(float dt)
 {
     // Warchief aura decay lives here because every enemy type calls
     // UpdateBurns each frame regardless of its custom Update logic.
     if (_warAuraTimer > 0.f)
         _warAuraTimer -= dt;
+
+    // Same reasoning for the boss enrage latch — piggy-backs on the universal
+    // per-frame hook so no boss needs its own call (Molarbeast, which doesn't
+    // call UpdateBurns, invokes UpdateEnrageLatch directly).
+    UpdateEnrageLatch(dt);
 
     int writeIndex = 0;
 

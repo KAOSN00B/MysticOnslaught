@@ -1,6 +1,8 @@
 #pragma once
 
 #include "AbilityType.h"
+#include <map>
+#include <string>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // META PROGRESSION — Mystic Onslaught (Dead Cells style)
@@ -39,6 +41,12 @@ enum class MetaUnlockType
     Vitality1,          // +2 max HP at run start
     Vitality2,          // +2 more max HP (total +4)
     FifthAbilitySlot,   // unlock a 5th ability slot
+    // ── Deeper / transformative unlocks ──────────────────────────────────────
+    SixthAbilitySlot,   // unlock a 6th ability slot (needs the 5th)
+    Bulwark,            // +1 armour at run start
+    Heirloom,           // start each run with a random relic
+    CellSurge,          // +50% Mystic Cells from kills
+    SecondWind,         // revive once per run at 40% HP
     Count               // keep last
 };
 
@@ -78,6 +86,11 @@ public:
     float GetManaRegenMultiplier() const;    // 1.0 / 1.5 / 2.0
     int   GetVitalityBonus() const;          // 0 / 2 / 4 max HP
     bool  HasFifthAbilitySlot() const { return IsUnlocked(MetaUnlockType::FifthAbilitySlot); }
+    bool  HasSixthAbilitySlot() const { return IsUnlocked(MetaUnlockType::SixthAbilitySlot); }
+    int   GetStartingArmourBonus() const { return IsUnlocked(MetaUnlockType::Bulwark) ? 1 : 0; }
+    bool  HasStartingRelic() const { return IsUnlocked(MetaUnlockType::Heirloom); }
+    float GetCellGainMultiplier() const { return IsUnlocked(MetaUnlockType::CellSurge) ? 1.5f : 1.0f; }
+    bool  HasSecondWind() const { return IsUnlocked(MetaUnlockType::SecondWind); }
 
     // ── Gold retention across a death ─────────────────────────────────────────
     // Engine sets this when the player dies; the next run start consumes it.
@@ -87,9 +100,23 @@ public:
     // Total cells banked over the profile's lifetime (stat for the altar screen).
     int GetLifetimeCells() const { return _lifetimeCells; }
 
+    // ── Bestiary — persistent kill counts keyed by enemy display name ─────────
+    void RecordBestiaryKill(const char* name);
+    const std::map<std::string, int>& GetBestiary() const { return _bestiary; }
+
+    // ── Ascension (difficulty tiers unlocked by winning) ─────────────────────
+    static constexpr int kMaxAscension = 6;
+    int  GetSelectedAscension() const { return _selectedAscension; }
+    int  GetMaxAscensionUnlocked() const { return _maxAscensionUnlocked; }
+    void SetSelectedAscension(int tier);          // clamps to [0, maxUnlocked]; saves
+    void RecordAscensionCleared(int tier);        // unlocks tier+1 on a win; saves
+
 private:
     int  _bankedCells   = 0;
     int  _lifetimeCells = 0;
     int  _goldCarryover = 0;
     bool _unlocked[(int)MetaUnlockType::Count] = {};
+    int  _selectedAscension    = 0;   // difficulty chosen for the next run
+    int  _maxAscensionUnlocked = 0;   // highest tier the player may select
+    std::map<std::string, int> _bestiary;   // enemy name -> lifetime kills
 };

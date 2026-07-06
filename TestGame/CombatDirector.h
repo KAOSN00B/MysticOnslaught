@@ -111,6 +111,8 @@ struct EnemyDeathContext
     std::function<void(Vector2, bool, bool)> spawnEnemyDrop;
     std::function<void(Vector2)> spawnSmallSlime;    // big slime death split
     std::function<void(Vector2)> spawnPoisonCloud;   // sporeling death burst
+    // Relic on-kill effects: pos + (wasBurning, wasFrozen, wasCharged, eliteOrBoss).
+    std::function<void(Vector2, bool, bool, bool, bool)> onEnemyKilled;
 };
 
 struct BossSupportContext

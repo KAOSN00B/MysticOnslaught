@@ -15,6 +15,9 @@ enum class DebugActionKind
     SpawnBoss,
     SpawnNewEnemy,   // value = enemy index (see kDebugEnemyList in Engine)
     SpawnNewBoss,    // value = boss index  (see kDebugBossList  in Engine)
+    GrantRandomRelic,
+    GrantAllRelics,
+    UnlockAscension,
     Heal,
     RestoreMana,
     AddGold,

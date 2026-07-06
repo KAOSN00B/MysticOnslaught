@@ -403,6 +403,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             }
         }
 
+        // Boss enrage transition — any boss that just crossed into its enrage /
+        // ignite / final phase gets a big screen shake so the phase change reads.
+        if (enemy->IsBoss() && enemy->ConsumeEnrageShakeRequest() && ctx.triggerScreenShake)
+            ctx.triggerScreenShake(12.f, 0.35f);
+
         if (Ogre* ogre = enemy->AsOgre())
         {
             if (ogre->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
@@ -646,6 +651,11 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
     std::vector<Vector2> pendingSmallSlimeSpawns;
     std::vector<Vector2> pendingPoisonClouds;
 
+    // Relic on-kill effects iterate the enemy list, so defer them until after
+    // this loop finishes (same reason as the slime splits).
+    struct KillEvent { Vector2 pos; bool burning, frozen, charged, eliteOrBoss; };
+    std::vector<KillEvent> pendingKills;
+
     for (auto& enemy : *ctx.enemies)
     {
         if (!enemy->IsActive())
@@ -690,6 +700,12 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
                 *ctx.pendingExp += (float)enemy->GetExpValue();
             }
 
+            // Snapshot status for relic on-kill synergies before the body clears.
+            if (ctx.onEnemyKilled)
+                pendingKills.push_back(KillEvent{
+                    dropPos, enemy->IsBurning(), enemy->IsFrozen(), enemy->IsCharged(),
+                    isBoss || enemy->IsEliteMiniboss() });
+
             (*ctx.enemiesKilled)++;
             ctx.spawnEnemyDrop(dropPos, isOgre, isBoss);
             enemy->SetActive(false);
@@ -697,7 +713,9 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
         }
     }
 
-    // Safe to grow the enemy vector now that the iteration is finished.
+    // Safe to grow / re-damage the enemy vector now that iteration is finished.
+    for (const KillEvent& kill : pendingKills)
+        ctx.onEnemyKilled(kill.pos, kill.burning, kill.frozen, kill.charged, kill.eliteOrBoss);
     for (const Vector2& spawnPos : pendingSmallSlimeSpawns)
         ctx.spawnSmallSlime(spawnPos);
     for (const Vector2& cloudPos : pendingPoisonClouds)

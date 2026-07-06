@@ -24,6 +24,9 @@ Osiris::~Osiris() {}
 void Osiris::Init()
 {
     EnsureSharedResourcesLoaded();
+    _healthBarHeight  = 8.f;
+    _healthBarYFrac   = 0.62f;
+    _healthBarYOffset = 14.f;
     _attackSound = _sharedAttackSound;
     _hurtSound   = _sharedHurtSound;
     _deathSound  = _sharedDeathSound;
@@ -76,12 +79,7 @@ void Osiris::ResetForSpawn(Vector2 pos)
 
 void Osiris::SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame)
 {
-    _texture = sheet;
-    _width  = (float)sheet.width / (float)_sheetFrameCount;
-    _height = (float)sheet.height;
-    _updateTime = frameTime;
-    _maxFrames  = _sheetFrameCount;
-    if (resetFrame) { _frame = 0; _runningTime = 0.f; }
+    SetSpriteSheet(sheet, _sheetFrameCount, frameTime, resetFrame);
 }
 
 int Osiris::GetCurrentAnimSlot() const
@@ -457,17 +455,6 @@ Capsule2D Osiris::GetCapsule() const
     return Capsule2D{ { _worldPos.x, _worldPos.y + 14.f }, 20.f, _stableFrameW * _scale * 0.20f };
 }
 
-void Osiris::DrawHealthBar(Vector2 screenPos, float w, float h)
-{
-    if (_health <= 0.f) return;
-    float pct = _health / _maxHealth;
-    float barWidth = w * 0.8f, barHeight = 8.f;
-    float barX = screenPos.x - barWidth / 2.f;
-    float barY = screenPos.y - h * 0.62f - 14.f;
-    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
-    DrawRectangle((int)barX, (int)barY, (int)(barWidth * pct), (int)barHeight, GREEN);
-}
-
 void Osiris::TakeDamage(int damage, Vector2 attackerPos)
 {
     (void)attackerPos;
@@ -508,7 +495,8 @@ void Osiris::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue = _bossBaseExpValue;
-    _health = 58.f; _maxHealth = 58.f;
+    _health = Balance::Boss::kOsirisHealth; _maxHealth = Balance::Boss::kOsirisHealth;
+_enrageThreshold = 0.50f;
     _speed = _moveSpeed; _attackPower = 1.f;
 }
 

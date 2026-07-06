@@ -38,7 +38,6 @@ public:
     void ApplyFreeze(float duration) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule()      const override;
-    void DrawHealthBar(Vector2 screenPos, float w, float h) override;
 
     Minotaur* AsMinotaur() override { return this; }
     bool IsBoss() const override { return true; }
@@ -82,7 +81,6 @@ private:
     void EndRush(bool crashedIntoWall);
     Rectangle GetBodyContactRec() const;
     Vector2 GetPushDirectionToPlayer() const;
-    bool IsEnraged() const { return _health <= _maxHealth * 0.4f; }
 
     State _state = State::Chasing;
     float _stateTimer      = 0.f;

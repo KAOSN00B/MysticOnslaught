@@ -160,6 +160,8 @@
     <ClCompile Include="Leaderboard.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MetaProgression.cpp" />
+    <ClCompile Include="Relic.cpp" />
+    <ClCompile Include="PlayerClass.cpp" />
     <ClCompile Include="CharacterTuning.cpp" />
     <ClCompile Include="CharacterAnimator.cpp" />
     <ClCompile Include="CellPickup.cpp" />
@@ -182,6 +184,7 @@
     <ClCompile Include="TitanGuard.cpp" />
     <ClCompile Include="ToxicVermin.cpp" />
     <ClCompile Include="AncientBear.cpp" />
+    <ClCompile Include="PlayerPreview.cpp" />
     <ClCompile Include="Molarbeast.cpp" />
     <ClCompile Include="Ogre.cpp" />
     <ClCompile Include="OverlayRenderer.cpp" />
@@ -231,7 +234,11 @@
     <ClInclude Include="LavaBallProjectile.h" />
     <ClInclude Include="Leaderboard.h" />
     <ClInclude Include="MainMenu.h" />
+    <ClInclude Include="Ascension.h" />
+    <ClInclude Include="RoomAffix.h" />
     <ClInclude Include="MetaProgression.h" />
+    <ClInclude Include="Relic.h" />
+    <ClInclude Include="PlayerClass.h" />
     <ClInclude Include="CharacterTuning.h" />
     <ClInclude Include="CharacterAnimator.h" />
     <ClInclude Include="CellPickup.h" />
@@ -254,6 +261,7 @@
     <ClInclude Include="TitanGuard.h" />
     <ClInclude Include="ToxicVermin.h" />
     <ClInclude Include="AncientBear.h" />
+    <ClInclude Include="PlayerPreview.h" />
     <ClInclude Include="Molarbeast.h" />
     <ClInclude Include="NineSlice.h" />
     <ClInclude Include="Ogre.h" />

@@ -25,6 +25,18 @@ void SpreadProjectile::Init(Vector2 spawnPos, Vector2 direction, AbilityType ele
     _runningTime = 0.f;
     _frame      = 0;
     _isActive   = true;
+    _basic      = false;
+    _tint       = Color{ 255, 255, 255, 255 };
+    _radius     = 56.f;
+}
+
+void SpreadProjectile::InitBasic(Vector2 spawnPos, Vector2 direction, AbilityType element, Color tint)
+{
+    Init(spawnPos, direction, element);
+    _basic     = true;
+    _tint      = tint;
+    _radius    = 26.f;    // smaller hit box than a full spell
+    _lifeTimer = 1.4f;    // short range
 }
 
 void SpreadProjectile::Update(float dt)
@@ -70,7 +82,7 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
 
     float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
     Rectangle source = GetAnimationFrameRect(*tex, _frameWidth, _frameHeight, _frame);
-    float scale = 7.2f;
+    float scale = _basic ? 3.4f : 7.2f;   // basic shots are noticeably smaller
     Rectangle dest{
         screenPos.x,
         screenPos.y,
@@ -79,7 +91,7 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
     };
 
     DrawTexturePro(*tex, source, dest,
-        Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, WHITE);
+        Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, _tint);
 }
 
 void SpreadProjectile::Destroy()

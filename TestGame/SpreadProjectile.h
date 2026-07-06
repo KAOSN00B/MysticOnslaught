@@ -13,6 +13,9 @@ public:
     SpreadProjectile() = default;
 
     void Init(Vector2 spawnPos, Vector2 direction, AbilityType element);
+    // Lightweight class basic-attack shot: small, tinted, short-lived, low damage.
+    void InitBasic(Vector2 spawnPos, Vector2 direction, AbilityType element, Color tint);
+    bool IsBasic() const { return _basic; }
     void Update(float dt);
     void Draw(Vector2 worldOffset) const;
     void Destroy();
@@ -51,6 +54,8 @@ private:
     float _updateTime  = 1.f / 16.f;
     int   _frame       = 0;
     bool  _isActive    = false;
+    bool  _basic       = false;   // class basic attack (small, low damage)
+    Color _tint        { 255, 255, 255, 255 };
 
     static constexpr int _frameWidth  = 32;
     static constexpr int _frameHeight = 32;

@@ -47,7 +47,7 @@ void GoldPickup::Draw(Vector2 worldOffset)
 
 void GoldPickup::OnCollect(Character& player)
 {
-    player.AddGold((int)_denomination);
+    player.AddGoldFromDrop((int)_denomination);   // applies Midas Touch relic
     _isActive = false;
 }
 

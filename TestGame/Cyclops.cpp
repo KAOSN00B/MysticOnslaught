@@ -573,20 +573,6 @@ Rectangle Cyclops::GetHitCollisionRec() const
 }
 
 // =============================================================================
-void Cyclops::DrawHealthBar(Vector2 screenPos, float w, float h)
-{
-    if (_health <= 0)
-        return;
-
-    float healthPercent = _health / _maxHealth;
-    float barWidth      = w * 0.8f;
-    float barHeight     = 6.f;
-    float barX          = screenPos.x - barWidth / 2.f;
-    float barY          = screenPos.y - h / 2.f - 12.f;
-
-    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
-    DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)barHeight, GREEN);
-}
 
 // =============================================================================
 void Cyclops::ApplyFreeze(float duration)
@@ -695,8 +681,8 @@ void Cyclops::SetWaveScale(int wave)
 {
     // Fixed base profile — stat growth comes from ApplyEnemyPowerLevel.
     _expValue    = 5;
-    _health      = 7.f;
-    _maxHealth   = 7.f;
+    _health      = Balance::Elite::kCyclopsHealth;
+    _maxHealth   = Balance::Elite::kCyclopsHealth;
     _speed       = 190.f;
     _attackPower = 1.f;
 

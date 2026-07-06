@@ -51,6 +51,8 @@
 #include "WorldMapManager.h"
 #include "SettingsManager.h"
 #include "MetaProgression.h"
+#include "Ascension.h"
+#include "RoomAffix.h"
 #include "VirtualCanvas.h"
 #include "TileMapper.h"
 #include "NineSliceEditor.h"
@@ -108,6 +110,70 @@ private:
     Enemy* SpawnLivingBlade(Vector2 pos);
     void SpawnBossForBiome(Vector2 pos);      // picks the boss class for _currentBiome
 
+    // Class select + run start
+    void StartMainRun();                       // ResetRunState + enter Caverns
+    void UpdateClassSelect();
+    void DrawClassSelect();
+    int  _classSelectCursor = 0;
+    Texture2D _classPortraits[(int)PlayerClass::Count]{};   // idle sheets for the select cards
+    // Appearance selection (independent of class).
+    int  _appearanceCursor = 2;                 // default Hero03
+    Texture2D _appearancePortrait{};            // idle sheet of the selected look
+    void ReloadAppearancePortrait();
+    Texture2D _cellsMerchantTex{};              // NPC sprite for the cells (Legacy) shop
+    bool _secondWindAvailable = false;          // meta unlock: one free revive per run
+    float _secondWindToastTimer = 0.f;          // "SECOND WIND!" banner countdown
+
+    // ── Curse/blessing run modifiers (Cursed Shrine, #19) ──────────────────────
+    float _runPlayerDamageMult = 1.f;           // folded into ScalePlayerHit
+    float _runEnemyHealthMult  = 1.f;           // folded into ConfigureSpawnedEnemy
+    float _runEnemyDamageMult  = 1.f;
+    bool  _curseShrineUsed     = false;         // one shrine per run
+    bool  _nearCurseShrine     = false;
+    int   _shrineChoices[3]    = { 0, 0, 0 };   // indices into the pact table
+    int   _shrineCursor        = 0;
+    float _shrineOpenTimer     = 0.f;
+    float _curseShrineBobTimer = 0.f;
+    void  OpenCurseShrine();
+    void  UpdateCurseShrine();
+    void  DrawCurseShrine();
+    void  ApplyPactChoice(int pactIndex);
+    Vector2 GetCurseShrinePos() const;
+
+    // Bestiary (#20)
+    void  UpdateBestiary();
+    void  DrawBestiary();
+    GameState _bestiaryReturnState = GameState::Menu;
+    float _bestiaryScroll = 0.f;
+
+    // Daily runs (#20) — a seeded, reproducible dungeon shared by the calendar day.
+    bool _isDailyRun = false;
+    int  _dailySeed  = 0;
+    int  ComputeDailySeed() const;   // yyyymmdd from the local clock
+
+    // Relic choice (#22) — elite/boss kills owe a 3-card relic pick, deferred
+    // until the room is clear so it never interrupts combat.
+    int       _pendingRelicChoices = 0;
+    RelicType _relicChoices[3] = { RelicType::Count, RelicType::Count, RelicType::Count };
+    int       _relicChoiceCursor = 0;
+    float     _relicChoiceOpenTimer = 0.f;
+    void OpenRelicChoice();
+    void UpdateRelicChoice();
+    void DrawRelicChoice();
+
+    // Per-ability HUD/card icons for non-elemental abilities (PowerUps/Ability_*.png).
+    Texture2D _abilityIcons[(int)AbilityType::Count]{};
+    Texture2D* GetAbilityIcon(AbilityType type);   // nullptr => use procedural/element fallback
+
+    // Per-ability animated in-world FX strips (PowerUps/FX_*.png, 64px cells).
+    Texture2D _abilityFx[(int)AbilityType::Count]{};
+    int       _abilityFxFrames[(int)AbilityType::Count]{};
+    void SpawnAbilityFx(AbilityType type, Vector2 playerPos, Vector2 facing, float facingSign);
+
+    // Relic icons, one per archetype (PowerUps/Relic_<archetype>.png).
+    Texture2D _relicIcons[7]{};
+    const Texture2D* GetRelicIcon(RelicType type) const;
+
     // Debug-panel direct spawns (index maps to kDebugEnemyList / kDebugBossList).
     void DebugSpawnNewEnemy(int index, Vector2 pos);
     void DebugSpawnNewBoss(int index, Vector2 pos);
@@ -118,6 +184,18 @@ private:
     void SpawnPoisonCloud(Vector2 pos, float radius);
     void UpdatePoisonClouds(float dt);
     void DrawPoisonClouds(Vector2 worldOffset) const;
+
+    // -- Relics ---------------------------------------------------------------
+    // Scales a player hit by the owned damage relics, reading the target's
+    // status. Every enemy->TakeDamage call from the player routes through this.
+    int  ScalePlayerHit(const Enemy& target, int baseDamage, bool& outCrit) const;
+    // Fires on-kill relic effects (lifesteal, corpse explosions). Called from
+    // the enemy-death path with the dead enemy's status snapshot.
+    void ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
+                          bool wasCharged, bool eliteOrBoss);
+    void GrantRelic(RelicType type);              // adds relic + shows a toast
+    RelicType RollRandomRelic() const;            // weighted by rarity, unowned
+    void DrawOwnedRelics() const;                 // HUD strip
     void UpdateCyclopsLasers(float dt);
     void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
@@ -145,6 +223,47 @@ private:
     void UpdateUltimateSequence(float dt);
     void DrawUltimateSequence();
     void ApplyUltimateImpact();
+
+    // ── Class abilities (Warrior kit, and future non-elemental classes) ─────────
+    void HandleClassAbilityCast(AbilityType ability);
+    // Deals damage to every live enemy overlapping a world-space rectangle.
+    // Returns how many were hit. Optional knockback/stun/bleed on each victim.
+    int  DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback,
+                             float stunSeconds, float bleedSeconds, int bleedDmgPerTick);
+    void ApplyPlayerLifesteal(int damageDealt);
+    void UpdateWarriorEffects(float dt);
+    void DrawWarriorEffects(Vector2 camRef);
+    // Transient class-ability VFX (spins, waves, spikes, daggers, smoke...).
+    // Mostly visual — most abilities apply damage instantly on cast. A few kinds
+    // (e.g. the Rogue's poison pool) tick damage over their lifetime via tickDamage.
+    enum class WarriorVfxKind {
+        Whirl, Slam, Wave, Spikes, Axe, Bash, Cry,          // Warrior
+        Fan, Teleport, Smoke, Marks, Barrage, PoisonZone, Flurry  // Rogue
+    };
+    struct WarriorVfx
+    {
+        WarriorVfxKind kind;
+        Vector2 pos;          // world anchor
+        Vector2 dir;          // facing (for directional effects)
+        float   timer   = 0.f;
+        float   lifetime = 0.3f;
+        float   radius  = 0.f;
+        Color   tint    = WHITE;
+        // Optional lingering damage (0 = pure visual). Ticks enemies inside radius.
+        int     tickDamage   = 0;
+        float   tickInterval = 0.4f;
+        float   tickAccum    = 0.f;
+        // Optional flying sprite (e.g. the ability's icon as a thrown projectile).
+        Texture2D* sprite    = nullptr;
+        bool    spin         = false;   // rotate the sprite as it travels (axes)
+        // Optional animated FX strip (64px cells) that plays over the lifetime.
+        Texture2D* fxStrip   = nullptr;
+        int     fxFrames     = 0;
+        float   fxScale      = 1.f;
+        float   vy           = 0.f;   // vertical drift over lifetime (fan spreads)
+    };
+    std::vector<WarriorVfx> _warriorVfx;
+    float _lifestealAccum = 0.f;   // fractional HP banked from lifesteal hits
     void GenerateStartingAbilityOptions();
     void DrawStartingAbilityChoice();
     void EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates);
@@ -277,6 +396,18 @@ private:
     bool  _deathPenaltyApplied    = false;  // guards double-applying gold retention
     float _cellsBankedToastTimer  = 0.f;    // "+N Cells banked" HUD toast countdown
     int   _cellsBankedToastAmount = 0;
+
+    // Relic acquisition toast ("New Relic: <name>")
+    float _relicToastTimer = 0.f;
+    std::string _relicToastName;
+
+    // Ascension — difficulty tier captured at run start from _meta. The chosen
+    // tier's cumulative modifiers are resolved once (ResetRunState) and cached
+    // here; most effects fold into the run-wide multipliers, bossHpMult/heal
+    // penalty are read directly at their hook sites.
+    int  _ascensionTier     = 0;
+    bool _ascensionRecorded = false;
+    AscensionModifiers _ascensionMods;
     float _legacyAltarBobTimer    = 0.f;    // altar orb floating animation
     int   _metaShopCursor         = 0;      // keyboard/gamepad cursor into the unlock grid
     float _metaShopNavCooldown    = 0.f;    // gamepad d-pad repeat cooldown
@@ -332,6 +463,12 @@ private:
     int      _currentAct      = 1;                  // 1-indexed; advances after each boss clear
     int      _currentRoom     = 0;                  // 1-5 normal + 6 boss within the act
     RoomType _currentRoomType = RoomType::Standard; // drives SpawnEnemies and reward logic
+
+    // Room affixes — per-room modifier rolled on entry to a Standard combat room.
+    // Read at the spawn/drop/on-kill hooks; None is a pure no-op.
+    RoomAffix _currentRoomAffix    = RoomAffix::None;
+    float     _roomAffixBannerTimer = 0.f;   // HUD "AFFIX" banner fade countdown
+
     bool     _pendingRoomChoice  = false; // after AbilityChoice (boss clear), show new-act map
     bool     _roomClearPending   = false; // combat finished � waiting for player to click Continue
     float    _roomClearTimer     = 0.f;  // non-combat rooms wait before advancing (Rest/Store)
@@ -833,6 +970,8 @@ private:
 
     // Dungeon run
     void UpdateDungeonRun(float dt);
+    void RollRoomAffix(int roomIdx, RoomType type);  // pick this room's affix (or None)
+    void DrawRoomAffixBanner();                       // HUD banner when an affix is active
     void UpdateDreamFlicker(float dt);
     void InitBiomeModifierRoom();
     void UpdateBiomeModifiers(float dt);

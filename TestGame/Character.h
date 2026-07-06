@@ -2,7 +2,11 @@
 #include "BaseCharacter.h"
 #include "KeyBindings.h"
 #include "AbilityType.h"
+#include "Relic.h"
+#include "PlayerClass.h"
+#include "CharacterTuning.h"
 #include <vector>
+#include <string>
 
 enum class UpgradeRarity { Common, Rare, Epic };
 
@@ -31,8 +35,40 @@ enum class UpgradeType
     UpgradeFireSpread, UpgradeIceSpread, UpgradeElectricSpread,
     UpgradeFireBolt, UpgradeIceBolt, UpgradeElectricBolt,
     UpgradeFireUltimate, UpgradeIceUltimate, UpgradeElectricUltimate,
+    // ── Warrior ability learn / upgrade ────────────────────────────────────────
+    LearnWarCleave, LearnWhirlwind, LearnThrowingAxe, LearnRend, LearnShieldBash,
+    LearnWarCry, LearnGroundSlam, LearnRampage, LearnEarthshatter,
+    UpgradeWarCleave, UpgradeWhirlwind, UpgradeThrowingAxe, UpgradeRend, UpgradeShieldBash,
+    UpgradeWarCry, UpgradeGroundSlam, UpgradeRampage, UpgradeEarthshatter,
+    // ── Rogue ability learn / upgrade ──────────────────────────────────────────
+    LearnFanOfKnives, LearnShadowstep, LearnPoisonVial, LearnBackstab, LearnSmokeBomb,
+    LearnEviscerate, LearnDeathMark, LearnBladeDance, LearnRainOfBlades,
+    UpgradeFanOfKnives, UpgradeShadowstep, UpgradePoisonVial, UpgradeBackstab, UpgradeSmokeBomb,
+    UpgradeEviscerate, UpgradeDeathMark, UpgradeBladeDance, UpgradeRainOfBlades,
+    // ── Ranger ability learn / upgrade ─────────────────────────────────────────
+    LearnPiercingShot, LearnMultishot, LearnFrostTrap, LearnExplosiveArrow, LearnRoll,
+    LearnVolley, LearnArrowStorm, LearnDeadeye, LearnPiercingBarrage,
+    UpgradePiercingShot, UpgradeMultishot, UpgradeFrostTrap, UpgradeExplosiveArrow, UpgradeRoll,
+    UpgradeVolley, UpgradeArrowStorm, UpgradeDeadeye, UpgradePiercingBarrage,
+    // ── Paladin ability learn / upgrade ────────────────────────────────────────
+    LearnSmite, LearnConsecrate, LearnShieldOfFaith, LearnHolyBolt, LearnHammerThrow,
+    LearnLayOnHands, LearnDivineStorm, LearnAvengingWrath, LearnHammerOfJustice,
+    UpgradeSmite, UpgradeConsecrate, UpgradeShieldOfFaith, UpgradeHolyBolt, UpgradeHammerThrow,
+    UpgradeLayOnHands, UpgradeDivineStorm, UpgradeAvengingWrath, UpgradeHammerOfJustice,
+    // ── Warlock ability learn / upgrade ────────────────────────────────────────
+    LearnShadowBolt, LearnDrainLife, LearnCurse, LearnCorruptionPool, LearnHellfire,
+    LearnSoulSiphon, LearnCataclysm, LearnDemonForm, LearnShadowNova,
+    UpgradeShadowBolt, UpgradeDrainLife, UpgradeCurse, UpgradeCorruptionPool, UpgradeHellfire,
+    UpgradeSoulSiphon, UpgradeCataclysm, UpgradeDemonForm, UpgradeShadowNova,
     Count   // keep last
 };
+
+// Maps between an ability and its Learn/Upgrade card types (both directions).
+// Keeps the shop / reward screens data-driven instead of per-ability switches.
+AbilityType AbilityForLearnType(UpgradeType type);    // None if not a Learn card
+AbilityType AbilityForUpgradeType(UpgradeType type);  // None if not an Upgrade card
+UpgradeType LearnTypeForAbility(AbilityType ability);
+UpgradeType UpgradeTypeForAbility(AbilityType ability);
 
 class Character : public BaseCharacter
 {
@@ -57,6 +93,16 @@ public:
     void Init();
     void ReloadSounds();
     void Update(float dt);
+
+    // ── Class ─────────────────────────────────────────────────────────────────
+    // Set BEFORE Init() at run start; Init loads the class sprites + base stats.
+    void        SetClass(PlayerClass cls) { _class = cls; }
+    PlayerClass GetClass() const { return _class; }
+    // Appearance (hero sprite set) is chosen separately from class. Set BEFORE Init().
+    void        SetAppearance(const char* prefix) { _appearancePrefix = prefix ? prefix : ""; }
+    const std::string& GetAppearance() const { return _appearancePrefix; }
+    bool        ClassAllows(AbilityType ability) const { return ClassAllowsAbility(_class, ability); }
+    bool        UsesRangedBasic() const { return ClassUsesRangedBasic(_class); }
 
     void TakeDamage(int damage, Vector2 attackerPos) override;
     void TakeFractionalDamage(float damage, Vector2 attackerPos);
@@ -115,9 +161,23 @@ public:
     float GetUltimateManaWarningTimer() const { return _ultimateManaWarningTimer; }
 
     CastType ConsumeCastRequest();
+    // Non-elemental class abilities queue here instead of through CastType.
+    AbilityType ConsumeClassAbility();
+
+    // ── Temporary combat buffs (War Cry / Rampage etc.) ────────────────────────
+    // Damage output is multiplied by this everywhere the player deals damage.
+    float GetClassDamageMult() const;
+    bool  IsLifestealActive() const { return _lifestealTimer > 0.f; }
+    float GetLifestealFraction() const { return _lifestealTimer > 0.f ? _lifestealFraction : 0.f; }
+    void  GrantDamageBuff(float mult, float duration);
+    void  GrantLifesteal(float fraction, float duration);
+    void  MoveTowardFacing(float distance);   // short lunge/dash for melee abilities
+
     bool CanApplyMeleeDamage() const;
     void ConsumeMeleeDamageFrame();
     Rectangle GetAttackCollisionRec() const;
+    // Hurt/body box — uses the authored charactertuning_Player.txt when present.
+    Rectangle GetCollisionRec() const override;
     float GetAttackWidthAdjust()   const { return _attackWidthAdjust; }
     float GetAttackHeightAdjust()  const { return _attackHeightAdjust; }
     void  SetAttackWidthAdjust(float v)  { _attackWidthAdjust  = v; }
@@ -132,16 +192,44 @@ public:
     void Heal(int amount);
     void AddGold(int amount) { _gold += amount; }
     int  GetGold()     const { return _gold; }
+    // Gold from an enemy drop — applies the Midas Touch relic bonus.
+    void AddGoldFromDrop(int amount);
 
     // ── Mystic Cells (meta progression currency) ─────────────────────────────
     // Carried during the run; banked with Zeph between zones; lost on death.
     void AddCells(int amount)  { _cells += amount; }
+    void AddCellsFromDrop(int amount);   // applies the Soul Siphon relic bonus
+    void SetCellGainMultiplier(float m) { _cellGainMultiplier = m; }
+    void MultiplyCellGainMultiplier(float m) { _cellGainMultiplier *= m; }
+    void ScaleMaxHealth(float mult);     // Cursed Shrine pacts (blessing/curse)
     int  GetCells()      const { return _cells; }
     int  TakeCells()           { int taken = _cells; _cells = 0; return taken; }
 
+    // ── Relics (per-run build-defining passives) ─────────────────────────────
+    void      AddRelic(RelicType type);            // marks owned + applies passive
+    bool      HasRelic(RelicType type) const;
+    int       GetRelicCount() const { return _relicCount; }
+    RelicType GetRelicAt(int index) const;         // for HUD iteration
+
+    // Scales one outgoing hit by every damage-affecting relic the player owns,
+    // reading the target's status. Sets outCrit when Deadeye triggers.
+    int  ScaleOutgoingDamage(bool targetFrozen, bool targetCharged, bool targetBurning,
+                             float targetHpFraction, int baseDamage, bool& outCrit) const;
+
+    // Called by Engine when an enemy dies; returns HP to heal from kill relics
+    // (Vampirism cadence + Reaper elite/boss heal).
+    int  OnEnemyKilled(bool eliteOrBoss);
+
+    // On-kill synergy triggers (Engine reads these + the dead enemy's status).
+    bool WantsWildfire()      const { return HasRelic(RelicType::Wildfire); }
+    bool WantsShatterStrike() const { return HasRelic(RelicType::ShatterStrike); }
+    bool WantsStormsReach()   const { return HasRelic(RelicType::StormsReach); }
+    int  GetHealDropBonusPercent() const;          // Scavenger
+
     // Applies the permanent meta-progression bonuses at run start.
     // Called by Engine right after Init() when a new run begins.
-    void ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier, bool fifthAbilitySlot);
+    void ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier,
+                          bool fifthAbilitySlot, bool sixthAbilitySlot = false, int startingArmour = 0);
 
     int  GetLevel()    const { return _level; }
     int  GetMaxLevel() const { return _maxLevel; }
@@ -265,11 +353,29 @@ private:
     float _forcedPushImpactStunDuration = 0.35f;
 
     CastType _queuedCast = CastType::None;
+    AbilityType _queuedClassAbility = AbilityType::None;
     int _pendingHealEffects = 0;
+
+    // Temporary self-buffs (ticked down in Update).
+    float _damageBuffMult   = 1.f;   // active multiplier while _damageBuffTimer > 0
+    float _damageBuffTimer  = 0.f;
+    float _lifestealFraction = 0.f;  // fraction of damage dealt returned as HP
+    float _lifestealTimer    = 0.f;
+
+    PlayerClass _class = PlayerClass::Mage;   // chosen at run start
+    std::string _appearancePrefix;            // hero sprite set; empty = use class default
+    float _cellGainMultiplier = 1.f;          // Cell Surge meta unlock (1.0 / 1.5)
+    const CharacterTuning* _playerTuning = nullptr;   // authored hit/hurt colliders
 
     int _exp  = 0;
     int _gold = 0;
     int _cells = 0;   // carried Mystic Cells — reset every run, lost on death
+
+    // ── Relic loadout (reset each run in Init) ───────────────────────────────
+    bool _relicOwned[(int)RelicType::Count] = {};
+    RelicType _relicOrder[(int)RelicType::Count] = {};   // acquisition order for HUD
+    int  _relicCount    = 0;
+    int  _killsSinceHeal = 0;   // Vampirism cadence counter
     int _level = 1;
     int _expToNextLevel = 10;
     static constexpr int _maxLevel = 20;

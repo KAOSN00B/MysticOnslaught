@@ -1,5 +1,6 @@
 #include "CharacterAnimator.h"
 #include "VirtualCanvas.h"
+#include "PlayerPreview.h"
 #include "SkeletonArcher.h"
 #include "FlameWisp.h"
 #include "SlimeEnemy.h"
@@ -55,6 +56,9 @@ namespace
 void CharacterAnimator::Init()
 {
     _entries.clear();
+    // The player first — authors charactertuning_Player.txt (body + melee), which
+    // the live Character applies. Melee box lives on the Swing anim (slot 2).
+    _entries.push_back({ "Player", 2, []() -> Enemy* { auto* p = new PlayerPreview({ 0.f, 0.f }); p->Init(); return p; } });
     // meleeSlot: which animation carries a melee box (2 = the attack anim for
     // every current melee character); -1 marks ranged / contact-only characters.
     _entries.push_back({ "SkeletonArcher", -1, []() -> Enemy* { auto* e = new SkeletonArcher({ 0.f, 0.f }); e->Init(); return e; } });

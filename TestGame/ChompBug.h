@@ -34,7 +34,6 @@ public:
     void ApplyFreeze(float duration) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule() const override;
-    void DrawHealthBar(Vector2 screenPos, float w, float h) override;
 
     ChompBug* AsChompBug() override { return this; }
     bool IsBoss() const override { return true; }
@@ -70,7 +69,6 @@ private:
     Rectangle GetBodyContactRec() const;
     Vector2 GetPushDirectionToPlayer() const;
     void HandleAnimation(float dt);
-    bool IsEnraged() const { return _health <= _maxHealth * 0.4f; }
 
     State _state = State::Orbiting;
     float _stateTimer      = 0.f;

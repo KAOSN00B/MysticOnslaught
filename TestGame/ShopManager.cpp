@@ -1,4 +1,5 @@
 ﻿#include "ShopManager.h"
+#include "GameBalance.h"
 #include "VirtualCanvas.h"
 #include "NineSlice.h"
 #include "VirtualCanvas.h"
@@ -180,7 +181,7 @@ void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
     _touchPromptMode      = false;
     _npcTouchHeld         = false;
     _tab                  = 0;
-    _rerollCost           = 20;
+    _rerollCost           = Balance::Economy::kRerollBaseCost;
     _act                  = std::max(1, act);
     _gamepadCursorIdx      = 0;
     _gamepadNavActive      = false;
@@ -532,7 +533,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
 
     // ── Layout (must match Draw exactly) ─────────────────────────────────
     static constexpr float kBorderDst_u  = 32.f;
-    static constexpr float kPotionPrice  = 25;
+    static constexpr float kPotionPrice  = (float)Balance::Economy::kPotionPrice;
     const float leftW   = sw * _uiLeftPanelW;
     const float leaveH  = _uiBtnH;
     const float leaveY  = sh - pad - leaveH;
@@ -564,7 +565,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
         if (player.GetGold() >= _rerollCost)
         {
             player.AddGold(-_rerollCost);
-            _rerollCost += 20;
+            _rerollCost += Balance::Economy::kRerollStep;
             GenerateInventory(player);
             _gamepadCursorIdx = 0;
             _dialogue = "Fresh stock, just for you!";
@@ -583,7 +584,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
         if (player.GetGold() >= _rerollCost)
         {
             player.AddGold(-_rerollCost);
-            _rerollCost += 20;
+            _rerollCost += Balance::Economy::kRerollStep;
             GenerateInventory(player);
             _gamepadCursorIdx = 0;
             _dialogue = "Fresh stock, just for you!";
@@ -1058,7 +1059,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
     // ── Layout ───────────────────────────────────────────────────────────
     static constexpr float kBorderDst_layout = 32.f;
-    static constexpr int   kPotionPriceDraw  = 25;
+    static constexpr int   kPotionPriceDraw  = Balance::Economy::kPotionPrice;
     const float leftW   = sw * _uiLeftPanelW;
     const float leaveH  = _uiBtnH;
     const float leaveY  = sh - pad - leaveH + introYOff;
@@ -1378,7 +1379,14 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                     return _tex.abilityIce;
                 case AbilityType::ElectricSpread: case AbilityType::ElectricBolt: case AbilityType::ElectricUltimate:
                     return _tex.abilityElectric;
-                default: return nullptr;
+                default:
+                {
+                    int idx = (int)si.abilityType;
+                    if (_tex.abilityIcons && idx >= 0 && idx < _tex.abilityIconCount &&
+                        _tex.abilityIcons[idx].id != 0)
+                        return &_tex.abilityIcons[idx];
+                    return nullptr;
+                }
                 }
             }
             switch (si.upgradeType)
@@ -1883,21 +1891,21 @@ void ShopManager::GenerateInventory(const Character& player)
         UpgradeType::BladeStorm,  UpgradeType::Juggernaut,
         UpgradeType::ArcaneColossus
     };
-    static constexpr AbilityType kShopAbilities[] = {
-        AbilityType::FireSpread,     AbilityType::IceSpread,     AbilityType::ElectricSpread,
-        AbilityType::FireBolt,       AbilityType::IceBolt,       AbilityType::ElectricBolt
-    };
+    // The shop sells every learnable non-ultimate attack for the active class.
+    // (Ultimates are earned on the boss-reward screen, never bought here.)
 
-    // Price inflation: 25% per act above Act 1 (Act 1 = 1.0×, Act 2 = 1.25×, ...)
-    const float inflation = 1.0f + 0.25f * (float)(_act - 1);
+    // Price inflation per act above Act 1 (Act 1 = 1.0×, Act 2 = 1.25×, ...)
+    const float inflation = 1.0f + Balance::Economy::kActPriceInflation * (float)(_act - 1);
 
     // Build unowned ability pool
     std::vector<ShopItem> abilityPool;
-    for (auto a : kShopAbilities)
+    for (auto a : kAllAbilities)
     {
-        // Meta progression gate: abilities still locked at the Legacy Altar
-        // never show up for sale.
+        if (IsUltimateAbility(a)) continue;
+        // Meta + class gate: abilities locked at the Legacy Altar or outside
+        // this class's kit never show up for sale.
         if (_meta != nullptr && !_meta->IsAbilityUnlocked(a)) continue;
+        if (!player.ClassAllows(a)) continue;
 
         bool owned = false;
         for (int i = 0; i < player.GetLearnedCount(); i++)

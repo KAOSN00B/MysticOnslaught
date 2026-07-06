@@ -169,6 +169,13 @@ namespace
         skip(38.f);  // "New Bosses" section header
         AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 132, 70, 60, 220 }, NewBossItems());
 
+        skip(38.f);  // "Relics" section header
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 120, 60, 220 }, {
+            { "Grant Random", { DebugActionKind::GrantRandomRelic, 0 } },
+            { "Grant ALL",    { DebugActionKind::GrantAllRelics,   0 } },
+            { "Ascension +1", { DebugActionKind::UnlockAscension,  0 } },
+        });
+
         skip(38.f);  // "Resources" section header
         AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {
             { "HP +10",         { DebugActionKind::Heal,          10 } },
@@ -350,6 +357,13 @@ void DebugPanel::Draw(int act, int room, const char* roomTypeName) const
 
     section("New Bosses");
     AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 132, 70, 60, 220 }, NewBossItems());
+
+    section("Relics");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 120, 60, 220 }, {
+        { "Grant Random", { DebugActionKind::GrantRandomRelic, 0 } },
+        { "Grant ALL",    { DebugActionKind::GrantAllRelics,   0 } },
+        { "Ascension +1", { DebugActionKind::UnlockAscension,  0 } },
+    });
 
     section("Resources");
     AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 112, 92, 220 }, {

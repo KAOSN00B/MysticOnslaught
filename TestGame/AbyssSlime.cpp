@@ -33,6 +33,9 @@ AbyssSlime::~AbyssSlime() {}
 void AbyssSlime::Init()
 {
     EnsureSharedResourcesLoaded();
+    _healthBarHeight  = 8.f;
+    _healthBarYFrac   = 0.62f;
+    _healthBarYOffset = 14.f;
 
     _idleAnim       = _sharedIdleAnim;
     _walkAnim       = _sharedWalkAnim;
@@ -147,12 +150,7 @@ void AbyssSlime::PlayEditorAnim(int index)
 
 void AbyssSlime::SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame)
 {
-    _texture    = sheet;
-    _width      = (float)sheet.width / (float)_sheetFrameCount;
-    _height     = (float)sheet.height;
-    _updateTime = frameTime;
-    _maxFrames  = _sheetFrameCount;
-    if (resetFrame) { _frame = 0; _runningTime = 0.f; }
+    SetSpriteSheet(sheet, _sheetFrameCount, frameTime, resetFrame);
 }
 
 // =============================================================================
@@ -680,21 +678,6 @@ Capsule2D AbyssSlime::GetCapsule() const
     };
 }
 
-void AbyssSlime::DrawHealthBar(Vector2 screenPos, float w, float h)
-{
-    if (_health <= 0.f)
-        return;
-
-    float healthPercent = _health / _maxHealth;
-    float barWidth      = w * 0.8f;
-    float barHeight     = 8.f;
-    float barX          = screenPos.x - barWidth / 2.f;
-    float barY          = screenPos.y - h * 0.62f - 14.f;
-
-    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
-    DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)barHeight, GREEN);
-}
-
 // =============================================================================
 void AbyssSlime::TakeDamage(int damage, Vector2 attackerPos)
 {
@@ -753,8 +736,9 @@ void AbyssSlime::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue    = _bossBaseExpValue;
-    _health      = 60.f;
-    _maxHealth   = 60.f;
+    _health      = Balance::Boss::kAbyssSlimeHealth;
+    _maxHealth   = Balance::Boss::kAbyssSlimeHealth;
+_enrageThreshold = 0.33f;
     _speed       = _moveSpeed;
     _attackPower = 1.f;
 }

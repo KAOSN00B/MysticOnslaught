@@ -26,6 +26,7 @@ bool Molarbeast::_sharedResourcesLoaded = false;
 Molarbeast::Molarbeast(Vector2 pos)
     : Enemy(pos)
 {
+    _healthBarYFrac = 0.78f;   // sprite origin sits low (~78%)
 }
 
 Molarbeast::~Molarbeast()
@@ -117,6 +118,8 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
 {
     (void)heroWorldPos;
 
+    UpdateEnrageLatch(dt);   // Molarbeast doesn't use UpdateBurns, so drive it here
+
     _navTarget    = navigationTarget;
     _hasNavTarget = hasNavigationTarget;
 
@@ -161,8 +164,9 @@ void Molarbeast::SetWaveScale(int wave)
     // a per-5-wave stat jump on top of the slower every-10-wave scaling.
     // Wave only affects cadence/readability, not raw boss stats.
     _expValue = _bossBaseExpValue;
-    _health      = 22.f;
-    _maxHealth   = _health;
+    _health      = Balance::Boss::kMolarbeastHealth;
+    _maxHealth   = Balance::Boss::kMolarbeastHealth;
+    _enrageThreshold = 0.30f;   // speeds up below this HP fraction
     _speed       = _moveSpeed;
     _attackPower = 2.f;
 
@@ -376,22 +380,6 @@ Capsule2D Molarbeast::GetCapsule() const
         _capsuleHalfHeight,
         _capsuleRadius
     };
-}
-
-void Molarbeast::DrawHealthBar(Vector2 screenPos, float w, float h)
-{
-    if (_health <= 0.f)
-        return;
-
-    float healthPercent = _health / _maxHealth;
-    float barWidth      = w * 0.8f;
-    float barHeight     = 6.f;
-    float barX          = screenPos.x - barWidth / 2.f;
-    // Sprite draws with origin at 78% down — top of sprite is at screenPos.y - h*0.78f
-    float barY          = screenPos.y - h * 0.78f - 12.f;
-
-    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
-    DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)barHeight, GREEN);
 }
 
 Rectangle Molarbeast::GetBodyContactRec() const
@@ -1181,12 +1169,12 @@ float Molarbeast::GetSpecialCooldownMin() const
     // Boss pressure should stay high, but the player still needs short read
     // windows between specials so the fight doesn't feel like uninterrupted
     // dash/fireball spam.
-    return (_health <= _maxHealth * 0.3f) ? 3.5f : 4.5f;
+    return IsEnraged() ? 3.5f : 4.5f;
 }
 
 float Molarbeast::GetSpecialCooldownMax() const
 {
-    return (_health <= _maxHealth * 0.3f) ? 4.0f : 5.5f;
+    return IsEnraged() ? 4.0f : 5.5f;
 }
 
 float Molarbeast::GetChargeDuration() const

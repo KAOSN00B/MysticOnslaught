@@ -69,6 +69,12 @@
     <ClCompile Include="MetaProgression.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Relic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="PlayerClass.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="CharacterTuning.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -133,6 +139,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="AncientBear.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="PlayerPreview.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Cyclops.cpp">
@@ -242,7 +251,19 @@
     <ClInclude Include="Molarbeast.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Ascension.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RoomAffix.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="MetaProgression.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Relic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PlayerClass.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CharacterTuning.h">
@@ -309,6 +330,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AncientBear.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PlayerPreview.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AnimationUtils.h">

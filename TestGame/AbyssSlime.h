@@ -38,7 +38,6 @@ public:
     void ApplyFreeze(float duration) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule()      const override;
-    void DrawHealthBar(Vector2 screenPos, float w, float h) override;
 
     AbyssSlime* AsAbyssSlime() override { return this; }
     bool IsBoss() const override { return true; }
@@ -83,7 +82,6 @@ private:
     Rectangle GetBodyContactRec() const;
     Vector2 GetPushDirectionToPlayer() const;
     void BeginJump();
-    bool IsEnraged() const { return _health <= _maxHealth * 0.33f; }
 
     // Corrosive puddle left behind by hop/leap landings.
     struct SlimePuddle

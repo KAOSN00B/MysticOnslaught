@@ -2,6 +2,7 @@
 #include "BaseCharacter.h"
 #include "Character.h"
 #include "NavigationGrid.h"
+#include "GameBalance.h"
 #include "raymath.h"
 #include <vector>
 #include <memory>
@@ -43,6 +44,10 @@ public:
     virtual void SetWaveScale(int wave);
     virtual void ApplyEnemyPowerLevel(int enemyPowerLevel);
 
+    // Extra flat multipliers on top of power level — used by the ascension
+    // difficulty tiers. Called after ApplyEnemyPowerLevel in ConfigureSpawnedEnemy.
+    void ApplyDifficultyScaling(float healthMult, float damageMult);
+
     // Colour-variant tier (0-3) — later world zones spawn recoloured, visibly
     // tougher versions. Default is a no-op; types with variant art override.
     virtual void SetVariantTier(int tier) { (void)tier; }
@@ -51,6 +56,11 @@ public:
     // GetTuningName() returns nullptr for types without tuning support; a name
     // enables loading charactertuning_<Name>.txt at the end of ResetForSpawn.
     virtual const char* GetTuningName() const { return nullptr; }
+
+    // Human-readable type name for the bestiary. Records once per death.
+    const char* GetBestiaryName();
+    bool BestiaryRecorded() const { return _bestiaryRecorded; }
+    void SetBestiaryRecorded() { _bestiaryRecorded = true; }
 
     // Animation preview: the default implementation covers the five standard
     // grunt sheets; bosses override with their own sheet lists.
@@ -116,6 +126,9 @@ public:
     bool IsBeingForcedPushed() const { return _forcedPushActive; }
 
     virtual bool IsFrozen()        const { return _freezeTimer > 0.f; }
+    // Burning status for relic synergies (Ember Heart / Wildfire). Based on the
+    // shared base burn queue — covers grunts, new enemies, and the new bosses.
+    bool IsBurning()               const { return !_pendingBurns.empty(); }
 
     // Graveyard revive
     void SetGraveReviveAvailable(bool b)   { _graveReviveAvailable = b; }
@@ -182,6 +195,18 @@ public:
     bool IsInvulnerable()    const { return _isInvulnerable; }
     bool IsLeapFrozen()      const { return _leapInvulnerable; }
     void ApplyEnrage();            // +50% speed, half attack cooldown, called by Engine on elite spawn
+
+    // ── Boss enrage phase ──────────────────────────────────────────────────────
+    // A boss enters an enraged "final phase" once its HP drops below
+    // _enrageThreshold (a fraction of max HP; 0 = this enemy never enrages). The
+    // latch is ONE-WAY within a fight — healing back up will NOT un-enrage it —
+    // and auto-resets when the enemy is at full HP (i.e. on a fresh/pooled spawn).
+    // Driven every frame from UpdateBurns(); the transition requests a screen
+    // shake (ConsumeEnrageShakeRequest) so the phase change actually reads.
+    void UpdateEnrageLatch(float dt);
+    bool IsEnraged() const { return _enrageLatched; }
+    bool ConsumeEnrageShakeRequest();       // true once, on the frame enrage begins
+    bool IsEnrageFlashing() const { return _enrageFlashTimer > 0.f; }
     Rectangle GetCollisionRec()       const override;
     Capsule2D GetCapsule()            const override;
     virtual Rectangle GetAttackCollisionRec() const;
@@ -252,6 +277,17 @@ protected:
     virtual void DrawHealthBar(Vector2 screenPos, float w, float h);
     void DrawEliteLabel(Vector2 screenPos, float w, float h);
 
+    // Slice a horizontal sprite strip of `frameCount` frames into the active
+    // animation. Shared by every enemy/boss so the frame-math lives in one place;
+    // subclasses forward their own _sheetFrameCount.
+    void SetSpriteSheet(const Texture2D& sheet, int frameCount, float frameTime, bool resetFrame);
+
+    // Health-bar geometry, tunable per subclass. Defaults match the legacy
+    // melee bosses (Cyclops/Ogre); taller sprites override these in their ctor.
+    float _healthBarHeight  = 6.f;    // bar thickness in px
+    float _healthBarYFrac   = 0.5f;   // fraction of sprite height above the origin
+    float _healthBarYOffset = 12.f;   // extra px above that
+
     struct PendingBurn
     {
         float timer = 0.f;
@@ -273,6 +309,7 @@ protected:
     static constexpr float kPathRefreshMax = 0.70f;  // maximum refresh interval
     static constexpr int   kMaxWaypoints   = 14;     // path length cap
     bool _isActive        = true;
+    bool _bestiaryRecorded = false;   // has this death been counted in the bestiary
     bool _isEliteMiniboss = false;
     bool _isInvulnerable  = false;   // bodyguard shield (engine-driven)
     bool _leapInvulnerable = false;  // gap-closer wind-up (engine-driven)
@@ -299,6 +336,12 @@ protected:
     float   _burnSoundTimer = 0.f;
 
     float   _warAuraTimer = 0.f;   // > 0 while buffed by a Warchief banner
+
+    // Boss enrage phase (see UpdateEnrageLatch). _enrageThreshold set per boss.
+    float   _enrageThreshold  = 0.f;   // fraction of max HP; 0 = never enrages
+    bool    _enrageLatched    = false; // one-way once crossed (until full-HP respawn)
+    bool    _enrageShakePending = false; // transition telegraph, consumed by CombatDirector
+    float   _enrageFlashTimer = 0.f;   // brief visual flash window on transition
 
     float   _freezeTimer        = 0.f;
 

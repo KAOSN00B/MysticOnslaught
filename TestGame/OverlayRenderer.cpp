@@ -48,23 +48,23 @@ void OverlayRenderer::DrawDemoEnd(const DemoEndRenderContext& ctx) const
 
     float cy = sh * 0.12f;
 
-    const char* title = "THANKS FOR PLAYING!";
-    int titleSz = 64;
-    DrawText(title, (int)(sw * 0.5f - MeasureText(title, titleSz) * 0.5f), (int)cy, titleSz, Color{220, 180, 255, 255});
+    const char* title = "VICTORY!";
+    int titleSz = 72;
+    DrawText(title, (int)(sw * 0.5f - MeasureText(title, titleSz) * 0.5f), (int)cy, titleSz, Color{255, 220, 140, 255});
     cy += titleSz + 18.f;
 
-    const char* gameName = "Mystic Onslaught  -  DEMO";
+    const char* gameName = "Mystic Onslaught";
     int nameSz = 30;
-    DrawText(gameName, (int)(sw * 0.5f - MeasureText(gameName, nameSz) * 0.5f), (int)cy, nameSz, Color{160, 130, 210, 220});
+    DrawText(gameName, (int)(sw * 0.5f - MeasureText(gameName, nameSz) * 0.5f), (int)cy, nameSz, Color{200, 170, 235, 230});
     cy += nameSz + 50.f;
 
     DrawLineEx({ sw * 0.25f, cy }, { sw * 0.75f, cy }, 1.f, Color{120, 60, 200, 120});
     cy += 30.f;
 
     const char* lines[] = {
-        "You've completed the demo - thank you for your time!",
-        "The full game is currently in development.",
-        "Your feedback means the world.",
+        "You conquered all six domains and felled the Demon within.",
+        "The Onslaught is broken - for now.",
+        "Bank your Mystic Cells and dive again for a greater challenge.",
     };
     int msgSz = 26;
     for (auto& line : lines)

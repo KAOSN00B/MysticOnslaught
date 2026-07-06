@@ -1,0 +1,17 @@
+scale=4.400
+anim_0_body_x=-5.00
+anim_0_body_y=64.00
+anim_0_body_r=43.00
+anim_1_body_x=-2.00
+anim_1_body_y=60.00
+anim_1_body_r=49.00
+anim_2_body_x=21.00
+anim_2_body_y=68.00
+anim_2_body_r=43.00
+anim_2_melee_x=-35.00
+anim_2_melee_y=54.00
+anim_2_melee_w=118.00
+anim_2_melee_h=31.00
+anim_3_body_x=-4.00
+anim_3_body_y=67.00
+anim_3_body_r=30.00

@@ -32,6 +32,11 @@ static const MetaUnlockInfo kUnlockTable[(int)MetaUnlockType::Count] = {
     { "Vitality I",          "+2 max HP at the start\nof every run",           40, MetaUnlockType::Count },
     { "Vitality II",         "+4 max HP at the start\nof every run",           80, MetaUnlockType::Vitality1 },
     { "Arcane Attunement",   "Unlock a 5th ability\nslot every run",          100, MetaUnlockType::Count },
+    { "Ability Mastery",     "Unlock a 6th ability\nslot every run",          200, MetaUnlockType::FifthAbilitySlot },
+    { "Bulwark",             "+1 armour at the start\nof every run",           60, MetaUnlockType::Count },
+    { "Heirloom",            "Start each run with a\nrandom relic",           120, MetaUnlockType::Count },
+    { "Cell Surge",          "+50% Mystic Cells from\nevery kill",             90, MetaUnlockType::Count },
+    { "Second Wind",         "Revive once per run\nat 40% health",           160, MetaUnlockType::Count },
 };
 
 const MetaUnlockInfo& GetMetaUnlockInfo(MetaUnlockType type)
@@ -54,11 +59,17 @@ void MetaProgressionManager::Load()
         if      (strcmp(key, "banked_cells") == 0)   _bankedCells   = atoi(val);
         else if (strcmp(key, "lifetime_cells") == 0) _lifetimeCells = atoi(val);
         else if (strcmp(key, "gold_carryover") == 0) _goldCarryover = atoi(val);
+        else if (strcmp(key, "ascension_sel") == 0)  _selectedAscension = atoi(val);
+        else if (strcmp(key, "ascension_max") == 0)  _maxAscensionUnlocked = atoi(val);
         else if (strncmp(key, "unlock_", 7) == 0)
         {
             int index = atoi(key + 7);
             if (index >= 0 && index < (int)MetaUnlockType::Count)
                 _unlocked[index] = (atoi(val) != 0);
+        }
+        else if (strncmp(key, "beast_", 6) == 0)
+        {
+            _bestiary[std::string(key + 6)] = atoi(val);
         }
     }
     fclose(f);
@@ -66,6 +77,10 @@ void MetaProgressionManager::Load()
     if (_bankedCells < 0)   _bankedCells = 0;
     if (_lifetimeCells < 0) _lifetimeCells = 0;
     if (_goldCarryover < 0) _goldCarryover = 0;
+    if (_maxAscensionUnlocked < 0) _maxAscensionUnlocked = 0;
+    if (_maxAscensionUnlocked > kMaxAscension) _maxAscensionUnlocked = kMaxAscension;
+    if (_selectedAscension < 0) _selectedAscension = 0;
+    if (_selectedAscension > _maxAscensionUnlocked) _selectedAscension = _maxAscensionUnlocked;
 #endif
 }
 
@@ -81,11 +96,43 @@ void MetaProgressionManager::Save() const
     fprintf(f, "banked_cells=%d\n",   _bankedCells);
     fprintf(f, "lifetime_cells=%d\n", _lifetimeCells);
     fprintf(f, "gold_carryover=%d\n", _goldCarryover);
+    fprintf(f, "ascension_sel=%d\n",  _selectedAscension);
+    fprintf(f, "ascension_max=%d\n",  _maxAscensionUnlocked);
     for (int i = 0; i < (int)MetaUnlockType::Count; i++)
         if (_unlocked[i])
             fprintf(f, "unlock_%d=1\n", i);
+    for (const auto& kv : _bestiary)
+        fprintf(f, "beast_%s=%d\n", kv.first.c_str(), kv.second);
     fclose(f);
 #endif
+}
+
+// ── Ascension ───────────────────────────────────────────────────────────────
+void MetaProgressionManager::SetSelectedAscension(int tier)
+{
+    if (tier < 0) tier = 0;
+    if (tier > _maxAscensionUnlocked) tier = _maxAscensionUnlocked;
+    _selectedAscension = tier;
+    Save();
+}
+
+void MetaProgressionManager::RecordAscensionCleared(int tier)
+{
+    // Winning at a tier unlocks the next one.
+    int newMax = tier + 1;
+    if (newMax > kMaxAscension) newMax = kMaxAscension;
+    if (newMax > _maxAscensionUnlocked)
+    {
+        _maxAscensionUnlocked = newMax;
+        Save();
+    }
+}
+
+// ── Bestiary ────────────────────────────────────────────────────────────────
+void MetaProgressionManager::RecordBestiaryKill(const char* name)
+{
+    if (name == nullptr || name[0] == '\0') return;
+    _bestiary[std::string(name)]++;
 }
 
 // ── Banking ───────────────────────────────────────────────────────────────────

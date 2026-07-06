@@ -53,6 +53,7 @@ call emcc ^
   %SRC%\TitanGuard.cpp ^
   %SRC%\ToxicVermin.cpp ^
   %SRC%\AncientBear.cpp ^
+  %SRC%\PlayerPreview.cpp ^
   %SRC%\EnemyProjectile.cpp ^
   %SRC%\Prop.cpp ^
   %SRC%\Game.cpp ^
@@ -66,6 +67,8 @@ call emcc ^
   %SRC%\GoldPickup.cpp ^
   %SRC%\CellPickup.cpp ^
   %SRC%\MetaProgression.cpp ^
+  %SRC%\Relic.cpp ^
+  %SRC%\PlayerClass.cpp ^
   %SRC%\CharacterTuning.cpp ^
   %SRC%\CharacterAnimator.cpp ^
   %SRC%\AudioManager.cpp ^

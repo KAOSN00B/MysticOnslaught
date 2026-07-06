@@ -52,7 +52,7 @@ void CellPickup::Draw(Vector2 worldOffset)
 
 void CellPickup::OnCollect(Character& player)
 {
-    player.AddCells((int)_denomination);
+    player.AddCellsFromDrop((int)_denomination);   // applies Soul Siphon relic
     _isActive = false;
 }
 

@@ -168,8 +168,8 @@ void Ogre::SetWaveScale(int wave)
     // Fixed base profile — stat growth comes from ApplyEnemyPowerLevel.
     // Charge timing still tightens each 5-wave band for behavioural escalation.
     _expValue    = 5;
-    _health      = 10.f;
-    _maxHealth   = 10.f;
+    _health      = Balance::Elite::kOgreHealth;
+    _maxHealth   = Balance::Elite::kOgreHealth;
     _speed       = _walkSpeed;
     _attackPower = _rushDamage;
 
@@ -649,21 +649,6 @@ void Ogre::HandleAnimation(float dt)
     }
 
     _frame = 0;
-}
-
-void Ogre::DrawHealthBar(Vector2 screenPos, float w, float h)
-{
-    if (_health <= 0.f)
-        return;
-
-    float healthPercent = _health / _maxHealth;
-    float barWidth      = w * 0.8f;
-    float barHeight     = 6.f;
-    float barX          = screenPos.x - barWidth / 2.f;
-    float barY          = screenPos.y - h / 2.f - 12.f;
-
-    DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)barHeight, RED);
-    DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)barHeight, GREEN);
 }
 
 void Ogre::ScatterEnemy(Enemy& enemy) const

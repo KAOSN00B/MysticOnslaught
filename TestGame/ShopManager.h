@@ -36,6 +36,9 @@ struct ShopTextures
     Texture2D* abilityFire     = nullptr;
     Texture2D* abilityIce      = nullptr;
     Texture2D* abilityElectric = nullptr;
+    // Non-owning array indexed by AbilityType for non-elemental class abilities.
+    Texture2D* abilityIcons     = nullptr;
+    int        abilityIconCount = 0;
 };
 
 class ShopManager
