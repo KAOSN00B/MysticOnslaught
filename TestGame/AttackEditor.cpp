@@ -22,7 +22,7 @@ namespace
         if (idx < 9)  return "Mage";
         if (idx < 18) return "Warrior";
         if (idx < 27) return "Rogue";
-        if (idx < 36) return "Ranger";
+        if (idx < 36) return "Hunter";
         if (idx < 45) return "Paladin";
         return "Warlock";
     }
@@ -617,7 +617,7 @@ void AttackEditor::DrawEdit()
     if (it.owner == "Mage") attackerColor = Color{ 120, 150, 255, 255 };
     else if (it.owner == "Warrior") attackerColor = Color{ 220, 70, 60, 255 };
     else if (it.owner == "Rogue") attackerColor = Color{ 160, 85, 220, 255 };
-    else if (it.owner == "Ranger") attackerColor = Color{ 90, 190, 100, 255 };
+    else if (it.owner == "Hunter") attackerColor = Color{ 90, 190, 100, 255 };
     else if (it.owner == "Paladin") attackerColor = Color{ 245, 210, 110, 255 };
     else if (it.owner == "Warlock") attackerColor = Color{ 135, 75, 190, 255 };
 

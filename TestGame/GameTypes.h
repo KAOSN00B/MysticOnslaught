@@ -43,7 +43,7 @@ enum class GameState
     DungeonRun,           // active procedural dungeon run
     WorldMap,             // biome selection map shown after each boss clear
     ClassSelect,          // pick a class at the start of a run
-    MetaShop,             // Legacy Altar — spend banked Mystic Cells on permanent unlocks
+    MetaShop,             // Poe's Altar — spend banked Mystic Cells on permanent unlocks
     CurseShrine,          // risk/reward: pick a blessing paired with a curse
     RelicChoice,          // pick 1 of 3 relics after an elite/boss kill
     Bestiary,             // enemy kill-count catalogue

@@ -121,7 +121,7 @@ private:
     int  _appearanceCursor = 2;                 // default Hero03
     Texture2D _appearancePortrait{};            // idle sheet of the selected look
     void ReloadAppearancePortrait();
-    Texture2D _cellsMerchantTex{};              // NPC sprite for the cells (Legacy) shop
+    Texture2D _cellsMerchantTex{};              // NPC sprite for the cells (Poe) shop
     bool _secondWindAvailable = false;          // meta unlock: one free revive per run
     float _secondWindToastTimer = 0.f;          // "SECOND WIND!" banner countdown
 
@@ -287,7 +287,8 @@ private:
     // Deals damage to every live enemy overlapping a world-space rectangle.
     // Returns how many were hit. Optional knockback/stun/bleed on each victim.
     int  DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback,
-                             float stunSeconds, float bleedSeconds, int bleedDmgPerTick);
+                             float stunSeconds, float bleedSeconds, int bleedDmgPerTick,
+                             bool ignoreShield = false);
     void ApplyPlayerLifesteal(int damageDealt);
     void UpdateWarriorEffects(float dt);
     void DrawWarriorEffects(Vector2 camRef);
@@ -296,7 +297,8 @@ private:
     // (e.g. the Rogue's poison pool) tick damage over their lifetime via tickDamage.
     enum class WarriorVfxKind {
         Whirl, Slam, Wave, Spikes, Axe, Bash, Cry,          // Warrior
-        Fan, Teleport, Smoke, Marks, Barrage, PoisonZone, Flurry  // Rogue
+        Fan, Teleport, Smoke, Marks, Barrage, PoisonZone, Flurry,  // Rogue
+        Trap                                                // Hunter (armed ground trap)
     };
     struct WarriorVfx
     {
@@ -311,6 +313,16 @@ private:
         int     tickDamage   = 0;
         float   tickInterval = 0.4f;
         float   tickAccum    = 0.f;
+        // Hunter traps: sit dormant, arm after armDelay, then snap when an enemy
+        // enters triggerRadius — firing a one-shot burst (trapDamage + trapFreeze
+        // seconds of hard freeze). Untriggered traps expire at their long lifetime.
+        bool    isTrap        = false;
+        bool    triggered     = false;
+        float   armDelay      = 0.5f;   // seconds before the trap becomes live
+        float   triggerRadius = 70.f;   // enemy contact distance that snaps it
+        int     trapDamage    = 0;      // blast damage dealt inside radius on snap
+        float   trapFreeze    = 0.f;    // >0 = freeze foes in radius on snap (secs)
+        float   trapKnockback = 0.f;    // knockback strength on snap
         // Optional flying sprite (e.g. the ability's icon as a thrown projectile).
         Texture2D* sprite    = nullptr;
         bool    spin         = false;   // rotate the sprite as it travels (axes)
@@ -331,8 +343,8 @@ private:
     void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);
     void SpawnTimedPickup();
 
-    // -- Meta progression (Echoes / Legacy Altar) ----------------------
-    Vector2 GetLegacyAltarPos() const;         // world pos of the altar in Zeph's room
+    // -- Meta progression (Echoes / Poe's Altar) ----------------------
+    Vector2 GetPoeAltarPos() const;         // world pos of the altar in Zeph's room
     void    HandlePlayerDeathMetaPenalty();    // gold retention + lose carried cells
     void    UpdateMetaShop(float dt);          // GameState::MetaShop input handling
     void    DrawMetaShop();                    // GameState::MetaShop rendering
@@ -448,9 +460,9 @@ private:
     int   _settingsGpContentCol = 0;   // column (Display option buttons; unused elsewhere)
     float _settingsGpCooldown   = 0.f;
 
-    // -- Meta progression (Echoes / Legacy Altar) --------------------------
+    // -- Meta progression (Echoes / Poe's Altar) --------------------------
     MetaProgressionManager _meta;
-    bool  _nearLegacyAltar        = false;  // player in range of the altar this frame
+    bool  _nearPoeAltar        = false;  // player in range of the altar this frame
     bool  _deathPenaltyApplied    = false;  // guards double-applying gold retention
     float _cellsBankedToastTimer  = 0.f;    // "+N Echoes banked" HUD toast countdown
     int   _cellsBankedToastAmount = 0;
@@ -466,7 +478,7 @@ private:
     int  _ascensionTier     = 0;
     bool _ascensionRecorded = false;
     AscensionModifiers _ascensionMods;
-    float _legacyAltarBobTimer    = 0.f;    // altar orb floating animation
+    float _poeAltarBobTimer    = 0.f;    // altar orb floating animation
     int   _metaShopCursor         = 0;      // keyboard/gamepad cursor into the unlock grid
     float _metaShopNavCooldown    = 0.f;    // gamepad d-pad repeat cooldown
     int   _poeGreetingIdx         = 0;      // which of Poe's lines shows this visit

@@ -45,7 +45,7 @@ enum class UpgradeType
     LearnEviscerate, LearnDeathMark, LearnBladeDance, LearnRainOfBlades,
     UpgradeFanOfKnives, UpgradeShadowstep, UpgradePoisonVial, UpgradeBackstab, UpgradeSmokeBomb,
     UpgradeEviscerate, UpgradeDeathMark, UpgradeBladeDance, UpgradeRainOfBlades,
-    // ── Ranger ability learn / upgrade ─────────────────────────────────────────
+    // ── Hunter ability learn / upgrade ─────────────────────────────────────────
     LearnPiercingShot, LearnMultishot, LearnFrostTrap, LearnExplosiveArrow, LearnRoll,
     LearnVolley, LearnArrowStorm, LearnDeadeye, LearnPiercingBarrage,
     UpgradePiercingShot, UpgradeMultishot, UpgradeFrostTrap, UpgradeExplosiveArrow, UpgradeRoll,

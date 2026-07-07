@@ -48,7 +48,7 @@ public:
     void Init(const ShopTextures& tex);
 
     // Non-owning pointer so GenerateInventory can hide abilities that are still
-    // locked behind Legacy Altar (meta progression) purchases.
+    // locked behind Poe's Altar (meta progression) purchases.
     void SetMetaProgression(const MetaProgressionManager* meta) { _meta = meta; }
 
     // Reset shop state and generate fresh inventory for this Store room.

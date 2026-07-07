@@ -69,13 +69,13 @@ enum class AbilityType
     BladeDance,    // ULT: spinning blades around you + lifesteal buff (all mana)
     RainOfBlades,  // ULT: massive dagger barrage over a wide area ahead (all mana)
 
-    // ── RANGER — mobile ranged skirmisher (bow) ────────────────────────────────
+    // ── HUNTER — trap-laying skirmisher (bow + armed ground traps) ─────────────
     PiercingShot,   // long single piercing arrow
     Multishot,      // forward cone of arrows
-    FrostTrap,      // lingering slowing/damaging zone at your feet
-    ExplosiveArrow, // radial burst at a point ahead
+    FrostTrap,      // FREEZING TRAP — armed, snaps to freeze foes that trip it
+    ExplosiveArrow, // EXPLOSIVE TRAP — armed, snaps for an AoE blast + knockback
     Roll,           // quick dodge dash + brief aim buff
-    Volley,         // wide forward barrage
+    Volley,         // PUNCTURE SHOT — shield-piercing heavy arrow
     ArrowStorm,     // ULT: arrows rain across the whole arena (all mana)
     Deadeye,        // ULT: huge damage + speed buff for a while (all mana)
     PiercingBarrage,// ULT: devastating arena-long piercing line (all mana)
@@ -171,10 +171,10 @@ inline const char* GetAbilityName(AbilityType type)
     case AbilityType::RainOfBlades:    return "Rain of Blades";
     case AbilityType::PiercingShot:    return "Piercing Shot";
     case AbilityType::Multishot:       return "Multishot";
-    case AbilityType::FrostTrap:       return "Frost Trap";
-    case AbilityType::ExplosiveArrow:  return "Explosive Arrow";
+    case AbilityType::FrostTrap:       return "Freezing Trap";
+    case AbilityType::ExplosiveArrow:  return "Explosive Trap";
     case AbilityType::Roll:            return "Roll";
-    case AbilityType::Volley:          return "Volley";
+    case AbilityType::Volley:          return "Puncture Shot";
     case AbilityType::ArrowStorm:      return "Arrow Storm";
     case AbilityType::Deadeye:         return "Deadeye";
     case AbilityType::PiercingBarrage: return "Piercing Barrage";
@@ -233,10 +233,10 @@ inline const char* GetAbilityDesc(AbilityType type)
     case AbilityType::RainOfBlades:    return "Dagger storm over\na wide area, all MP";
     case AbilityType::PiercingShot:    return "Long arrow that\npierces enemies";
     case AbilityType::Multishot:       return "Cone of arrows\nsprayed ahead";
-    case AbilityType::FrostTrap:       return "Chilling pool at\nyour feet";
-    case AbilityType::ExplosiveArrow:  return "Bursting arrow\nAoE ahead";
+    case AbilityType::FrostTrap:       return "Armed trap:\nfreezes on trip";
+    case AbilityType::ExplosiveArrow:  return "Armed trap:\nbursts on trip";
     case AbilityType::Roll:            return "Dodge dash +\nbrief aim bonus";
-    case AbilityType::Volley:          return "Wide arrow\nbarrage ahead";
+    case AbilityType::Volley:          return "Pierces shields,\nheavy arrow";
     case AbilityType::ArrowStorm:      return "Arrows rain the\narena, all MP";
     case AbilityType::Deadeye:         return "+dmg & speed for\na while, all MP";
     case AbilityType::PiercingBarrage: return "Arena-long piercing\nvolley, all MP";
@@ -300,7 +300,7 @@ inline int GetAbilityManaCost(AbilityType type)
     case AbilityType::SmokeBomb:
     case AbilityType::Eviscerate:
         return 2;   // quick assassin tools
-    // ── Ranger / Paladin / Warlock ultimates: drain everything ────────────────
+    // ── Hunter / Paladin / Warlock ultimates: drain everything ────────────────
     case AbilityType::ArrowStorm:
     case AbilityType::Deadeye:
     case AbilityType::PiercingBarrage:

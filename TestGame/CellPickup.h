@@ -24,7 +24,7 @@ public:
 
     int GetValue() const { return (int)_denomination; }
 
-    // Shared cell texture is also used by the HUD counter and the Legacy Altar.
+    // Shared cell texture is also used by the HUD counter and the Poe's Altar.
     static const Texture2D& GetMediumTexture();
 
     static void UnloadSharedResources();

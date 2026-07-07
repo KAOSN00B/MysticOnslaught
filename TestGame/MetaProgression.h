@@ -11,7 +11,7 @@
 // them during the run; they are BANKED automatically when reaching Zeph's store
 // room at the start of each zone. Dying loses all carried (unbanked) cells.
 //
-// Banked cells are spent at the Legacy Altar (in Zeph's store room) on
+// Banked cells are spent at the Poe's Altar (in Zeph's store room) on
 // PERMANENT unlocks that persist across runs and deaths:
 //   - New abilities added to the run's ability pool (Bolts, Ultimates)
 //   - Starting gold, gold retention on death, mana flow, vitality,
@@ -71,7 +71,7 @@ public:
     int  GetBankedCells() const { return _bankedCells; }
     void BankCells(int amount);
 
-    // ── Unlock purchases (Legacy Altar) ───────────────────────────────────────
+    // ── Unlock purchases (Poe's Altar) ───────────────────────────────────────
     bool IsUnlocked(MetaUnlockType type) const;
     bool CanPurchase(MetaUnlockType type) const;   // affordable + prerequisite owned + not owned
     bool Purchase(MetaUnlockType type);            // deducts cells and saves on success

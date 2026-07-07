@@ -1902,7 +1902,7 @@ void ShopManager::GenerateInventory(const Character& player)
     for (auto a : kAllAbilities)
     {
         if (IsUltimateAbility(a)) continue;
-        // Meta + class gate: abilities locked at the Legacy Altar or outside
+        // Meta + class gate: abilities locked at the Poe's Altar or outside
         // this class's kit never show up for sale.
         if (_meta != nullptr && !_meta->IsAbilityUnlocked(a)) continue;
         if (!player.ClassAllows(a)) continue;

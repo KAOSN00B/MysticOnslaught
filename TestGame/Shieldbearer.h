@@ -22,6 +22,8 @@ public:
     void SetWaveScale(int wave) override;
     void SetVariantTier(int tier) override;
     void TakeDamage(int damage, Vector2 attackerPos) override;
+    // Puncture Shot ignores the raised shield — deal straight to the base HP.
+    void TakeDamageUnblockable(int damage, Vector2 attackerPos) override { Enemy::TakeDamage(damage, attackerPos); }
     void DrawEnemy(Vector2 heroWorldPos) override;
     Rectangle GetCollisionRec() const override;
 

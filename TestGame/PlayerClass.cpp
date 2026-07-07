@@ -8,7 +8,7 @@ static const PlayerClassInfo kClassTable[(int)PlayerClass::Count] = {
     // name        prefix      description                                   playstyle                    HP  MP  atk  spd   arm  regen
     { "Mage",     "Mage",    "Master of the elements. Spells for every foe.", "Ranged caster - fragile",     7, 12, 2.f, 380.f, 0, 1.4f },
     { "Warrior",  "Warrior", "A wall of steel. Wades in and cleaves.",        "Tanky bruiser - high HP",    11,  8, 5.f, 360.f, 1, 1.0f },
-    { "Ranger",   "Ranger",  "Swift hunter who never lets you close.",        "Mobile skirmisher - fast",    8,  9, 3.f, 415.f, 0, 1.0f },
+    { "Hunter",   "Hunter",  "Swift hunter who never lets you close.",        "Mobile skirmisher - fast",    8,  9, 3.f, 415.f, 0, 1.0f },
     { "Rogue",    "Rogue",   "Fragile blur of daggers and crits.",            "Glass assassin - burst",      6,  8, 3.f, 435.f, 0, 1.0f },
     // Paladin/Warlock reuse existing art (Warrior/Mage) but have their own stats.
     { "Paladin",  "Warrior", "Holy bulwark. Punishes those who strike it.",   "Armoured holy tank",         12,  9, 4.f, 350.f, 2, 1.1f },
@@ -57,7 +57,7 @@ static const std::vector<std::string>& AppearanceNames()
 
 bool ClassUsesRangedBasic(PlayerClass cls)
 {
-    return cls == PlayerClass::Mage || cls == PlayerClass::Warlock || cls == PlayerClass::Ranger;
+    return cls == PlayerClass::Mage || cls == PlayerClass::Warlock || cls == PlayerClass::Hunter;
 }
 
 int GetAppearanceCount() { return kAppearanceRosterCount; }
@@ -99,7 +99,7 @@ bool ClassAllowsAbility(PlayerClass cls, AbilityType ability)
                a == AbilityType::Backstab    || a == AbilityType::SmokeBomb  || a == AbilityType::Eviscerate ||
                a == AbilityType::DeathMark   || a == AbilityType::BladeDance || a == AbilityType::RainOfBlades;
     };
-    auto isRanger = [](AbilityType a) {
+    auto isHunter = [](AbilityType a) {
         return a == AbilityType::PiercingShot   || a == AbilityType::Multishot || a == AbilityType::FrostTrap ||
                a == AbilityType::ExplosiveArrow || a == AbilityType::Roll      || a == AbilityType::Volley ||
                a == AbilityType::ArrowStorm     || a == AbilityType::Deadeye   || a == AbilityType::PiercingBarrage;
@@ -121,8 +121,8 @@ bool ClassAllowsAbility(PlayerClass cls, AbilityType ability)
         return isFire(ability) || isIce(ability) || isElectric(ability); // full elemental arsenal
     case PlayerClass::Warrior:
         return isWarrior(ability);   // dedicated melee bruiser kit
-    case PlayerClass::Ranger:
-        return isRanger(ability);    // dedicated bow kit
+    case PlayerClass::Hunter:
+        return isHunter(ability);    // dedicated bow kit
     case PlayerClass::Rogue:
         return isRogue(ability);     // dedicated assassin kit
     case PlayerClass::Paladin:

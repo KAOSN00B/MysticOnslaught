@@ -82,12 +82,15 @@ void Character::Init()
                        : GetPlayerClassInfo(_class).spritePrefix;
     _idleAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Idle.png",   prefix)).c_str());
     _walkAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Walk.png",   prefix)).c_str());
-    // The Rogue uses the forward-thrust (stab) animation instead of the big swing;
-    // fall back to the standard attack sheet if a stab sheet is missing. Load two
-    // independent copies so _attackAnim and _staffAnim can be unloaded separately.
+    // The Rogue and Warrior use the forward-thrust (stab) sword animation instead
+    // of the big overhead swing (a hero appearance's _Attack sheet can be a wand /
+    // spell-cast pose, so melee classes force the _Stab sheet — always a blade).
+    // Fall back to the standard attack sheet if a stab sheet is missing (e.g. the
+    // default "Warrior" sprite set has no _Stab). Load two independent copies so
+    // _attackAnim and _staffAnim can be unloaded separately.
     auto loadAttackSheet = [&]() -> Texture2D {
         Texture2D t{};
-        if (_class == PlayerClass::Rogue)
+        if (_class == PlayerClass::Rogue || _class == PlayerClass::Warrior)
             t = LoadTexture(AssetPath(TextFormat("Hero/%s_Stab.png", prefix)).c_str());
         if (t.id == 0)
             t = LoadTexture(AssetPath(TextFormat("Hero/%s_Attack.png", prefix)).c_str());
@@ -187,7 +190,7 @@ void Character::Init()
 void Character::ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier,
                                 bool fifthAbilitySlot, bool sixthAbilitySlot, int startingArmour)
 {
-    // Permanent unlocks purchased at the Legacy Altar — applied once per run,
+    // Permanent unlocks purchased at the Poe's Altar — applied once per run,
     // right after Init(), so they stack cleanly with in-run upgrades.
     _gold += startingGold;
     _maxHealth += (float)vitalityBonus;
@@ -1239,7 +1242,7 @@ Rectangle Character::GetAttackCollisionRec() const
     case PlayerClass::Warrior: attackWidth *= 1.15f; attackHeight *= 1.75f; break;
     case PlayerClass::Paladin: attackWidth *= 1.10f; attackHeight *= 1.35f; break;
     case PlayerClass::Rogue:   attackWidth *= 1.55f; attackHeight *= 0.60f; break;
-    default: break;   // Mage/Ranger/Warlock fight at range; melee box stays default
+    default: break;   // Mage/Hunter/Warlock fight at range; melee box stays default
     }
 
     float swordX;

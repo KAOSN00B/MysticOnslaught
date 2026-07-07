@@ -388,7 +388,7 @@ void Engine::Init()
     }
 
     // Poe — the ghostly spirit who keeps your Echoes (not Zeph). A spectral
-    // Phantom sprite so he reads as a hovering spirit, matching the Legacy purple.
+    // Phantom sprite so he reads as a hovering spirit, matching Poe's purple.
     _cellsMerchantTex = LoadTexture(AssetPath("Enemy/PhantomIdle_B.png").c_str());
     _minionTex        = LoadTexture(AssetPath("Enemy/BomberImpIdle_B.png").c_str());   // Warlock imp
 
@@ -5246,7 +5246,7 @@ void Engine::HandlePlayerMeleeDamage()
     if (!_player.CanApplyMeleeDamage())
         return;
 
-    // Ranged classes (Mage/Warlock/Ranger) fire a projectile instead of swinging.
+    // Ranged classes (Mage/Warlock/Hunter) fire a projectile instead of swinging.
     if (_player.UsesRangedBasic())
     {
         AbilityType element; Color tint;
@@ -5254,7 +5254,7 @@ void Engine::HandlePlayerMeleeDamage()
         {
         case PlayerClass::Mage:    element = AbilityType::FireSpread; tint = Color{ 150, 205, 255, 255 }; break; // arcane orb
         case PlayerClass::Warlock: element = AbilityType::FireSpread; tint = Color{ 190, 100, 225, 255 }; break; // dark orb
-        case PlayerClass::Ranger:  element = AbilityType::IceSpread;  tint = Color{ 220, 245, 220, 255 }; break; // pale arrow-shard
+        case PlayerClass::Hunter:  element = AbilityType::IceSpread;  tint = Color{ 220, 245, 220, 255 }; break; // pale arrow-shard
         default:                   element = AbilityType::FireSpread; tint = WHITE; break;
         }
         SpreadProjectile shot;
@@ -5471,7 +5471,8 @@ void Engine::UpdateUltimateBlasts(float dt)
 // ability's learned level (1–3), and any active self-buff (War Cry / Rampage).
 // ═════════════════════════════════════════════════════════════════════════════
 int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback,
-                                float stunSeconds, float bleedSeconds, int bleedDmgPerTick)
+                                float stunSeconds, float bleedSeconds, int bleedDmgPerTick,
+                                bool ignoreShield)
 {
     (void)knockback;   // knockback comes from TakeDamage using the player position
     int hitCount = 0;
@@ -5486,7 +5487,10 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
 
         bool crit = false;
         int dmg = ScalePlayerHit(*enemy, std::max(1, damage), crit);
-        enemy->TakeDamage(dmg, playerPos);
+        // ignoreShield lets the Hunter's Puncture Shot bypass a Shieldbearer's
+        // frontal block (and any future block); normal hits respect the shield.
+        if (ignoreShield) enemy->TakeDamageUnblockable(dmg, playerPos);
+        else              enemy->TakeDamage(dmg, playerPos);
         ApplyPlayerLifesteal(dmg);
         RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
 
@@ -5711,7 +5715,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         break;
     }
 
-    // ── RANGER ───────────────────────────────────────────────────────────────
+    // ── HUNTER ───────────────────────────────────────────────────────────────
     case AbilityType::PiercingShot:
     {
         DamageEnemiesInRect(forwardRect(600.f, 70.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 0.f, 0);
@@ -5723,24 +5727,31 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         pushVfx(WarriorVfxKind::Fan, 0.3f, 380.f, Color{ 140, 235, 210, 255 });
         break;
     }
-    case AbilityType::FrostTrap:
+    case AbilityType::FrostTrap:   // Hunter FREEZING TRAP — armed, snaps to freeze
     {
-        WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = playerPos; z.dir = facing;
-        z.lifetime = 4.f; z.radius = 150.f; z.tint = Color{ 120, 210, 255, 255 };
-        z.tickDamage = dmgVal(1.f + atk * 0.15f); z.tickInterval = 0.5f;
-        _warriorVfx.push_back(z);
+        // Drop an armed trap at your feet. It arms after a beat, then snaps when a
+        // foe steps on it: a light burst plus a hard freeze on everything nearby.
+        WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = playerPos; trap.dir = facing;
+        trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = 15.f;   // sits armed up to 15s
+        trap.radius = 175.f;            // freeze / burst radius on snap
+        trap.triggerRadius = 72.f;      // enemy contact distance that trips it
+        trap.trapDamage = dmgVal(2.f + atk * 0.3f);
+        trap.trapFreeze = 2.2f;         // hard freeze duration on snap
+        trap.tint = Color{ 120, 210, 255, 255 };
+        _warriorVfx.push_back(trap);
         break;
     }
-    case AbilityType::ExplosiveArrow:
+    case AbilityType::ExplosiveArrow:   // Hunter EXPLOSIVE TRAP — armed, snaps for AoE
     {
-        Vector2 spot{ playerPos.x + facingSign * 320.f, playerPos.y };
-        Rectangle r{ spot.x - 170.f, spot.y - 170.f, 340.f, 340.f };
-        DamageEnemiesInRect(r, dmgVal(6.f + atk * 1.2f), 1.f, 0.f, 0.f, 0);
-        WarriorVfx b; b.kind = WarriorVfxKind::Slam; b.pos = spot; b.dir = facing;
-        b.lifetime = 0.4f; b.radius = 170.f; b.tint = Color{ 255, 170, 60, 255 };
-        _warriorVfx.push_back(b);
-        StopSound(_explosionSound); PlaySound(_explosionSound);
-        TriggerScreenShake(8.f, 0.2f);
+        // Armed trap at your feet: when a foe trips it, a big blast + knockback.
+        WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = playerPos; trap.dir = facing;
+        trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = 15.f;
+        trap.radius = 195.f;            // blast radius on snap
+        trap.triggerRadius = 72.f;
+        trap.trapDamage = dmgVal(7.f + atk * 1.3f);
+        trap.trapKnockback = 1.5f;
+        trap.tint = Color{ 255, 150, 60, 255 };
+        _warriorVfx.push_back(trap);
         break;
     }
     case AbilityType::Roll:
@@ -5750,10 +5761,12 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         pushVfx(WarriorVfxKind::Teleport, 0.3f, 40.f, Color{ 200, 235, 220, 255 });
         break;
     }
-    case AbilityType::Volley:
+    case AbilityType::Volley:   // Hunter PUNCTURE SHOT — shield-piercing heavy arrow
     {
-        DamageEnemiesInRect(forwardRect(520.f, 240.f), dmgVal(4.f + atk * 0.8f), 1.f, 0.f, 0.f, 0);
-        pushVfx(WarriorVfxKind::Barrage, 0.5f, 520.f, Color{ 140, 235, 210, 255 });
+        // A heavy armour-piercing arrow: ignores a Shieldbearer's frontal block and
+        // hits harder than a normal shot, so shielded foes can't wall you out.
+        DamageEnemiesInRect(forwardRect(660.f, 84.f), dmgVal(6.f + atk * 1.4f), 1.f, 0.f, 0.f, 0, true);
+        pushVfx(WarriorVfxKind::Spikes, 0.4f, 660.f, Color{ 235, 245, 205, 255 });
         break;
     }
     case AbilityType::ArrowStorm:
@@ -5934,7 +5947,7 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
     // matches the name (a cone of knives, a volley of arrows, a storm of blades).
     switch (a)
     {
-    case AbilityType::FanOfKnives: case AbilityType::Multishot: case AbilityType::Volley:
+    case AbilityType::FanOfKnives: case AbilityType::Multishot:
     case AbilityType::RainOfBlades: case AbilityType::ArrowStorm:
     {
         const int   n     = 5;
@@ -5967,6 +5980,8 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
     // Weapon throws keep their spinning icon — no FX overlay.
     case AbilityType::ThrowingAxe:
     case AbilityType::HammerThrow:
+    case AbilityType::ExplosiveArrow:   // Hunter traps draw their own armed marker
+    case AbilityType::FrostTrap:
         return;
 
     // Flying bolts — travel their comet/arrow FX forward.
@@ -5983,8 +5998,10 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
         mode = 1; scale = 8.f; life = 0.6f; break;
 
     // Lingering ground zones — FX sits at the thrown/impact point.
-    case AbilityType::PoisonVial:   case AbilityType::CorruptionPool: case AbilityType::FrostTrap:
-    case AbilityType::Consecrate:   case AbilityType::ExplosiveArrow:
+    // (FrostTrap / ExplosiveArrow are Hunter traps now — handled by the early
+    //  return above; they draw their own armed marker, no forward FX overlay.)
+    case AbilityType::PoisonVial:   case AbilityType::CorruptionPool:
+    case AbilityType::Consecrate:
         mode = 3; scale = 5.5f; life = 0.7f; break;
 
     default:  // forward melee / cone abilities
@@ -6010,6 +6027,37 @@ void Engine::UpdateWarriorEffects(float dt)
     for (auto& v : _warriorVfx)
     {
         v.timer += dt;
+
+        // Hunter traps: sit dormant, arm after armDelay, then snap the instant an
+        // enemy enters the trigger radius — one burst (+ optional freeze), then a
+        // brief detonation visual before removal. Untriggered traps expire at their
+        // long lifetime.
+        if (v.isTrap)
+        {
+            if (!v.triggered && v.timer >= v.armDelay)
+            {
+                for (auto& enemy : _enemies)
+                {
+                    if (!enemy->IsActive() || !enemy->IsAlive())
+                        continue;
+                    if (Vector2Distance(enemy->GetWorldPos(), v.pos) > v.triggerRadius)
+                        continue;
+
+                    // Snap: burst damage + optional hard freeze to everything in radius.
+                    Rectangle zone{ v.pos.x - v.radius, v.pos.y - v.radius,
+                                    v.radius * 2.f, v.radius * 2.f };
+                    DamageEnemiesInRect(zone, v.trapDamage, v.trapKnockback, v.trapFreeze, 0.f, 0);
+                    v.triggered = true;
+                    v.timer = 0.f;
+                    v.lifetime = 0.45f;   // brief detonation flash, then removed
+                    TriggerScreenShake(v.trapFreeze > 0.f ? 5.f : 9.f, 0.2f);
+                    StopSound(_explosionSound); PlaySound(_explosionSound);
+                    break;
+                }
+            }
+            continue;   // traps never use the lingering tick-zone path below
+        }
+
         // Lingering damage zones (Rogue poison pool) tick enemies inside them.
         if (v.tickDamage > 0)
         {
@@ -6092,6 +6140,36 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
             DrawCircleLines((int)c.x, (int)c.y, r, Fade(v.tint, fade));
             DrawCircleLines((int)c.x, (int)c.y, r * 0.85f, Fade(v.tint, fade * 0.6f));
             DrawCircle((int)c.x, (int)c.y, 26.f * fade, Fade(v.tint, fade * 0.5f));
+            break;
+        }
+        case WarriorVfxKind::Trap:
+        {
+            if (v.triggered)
+            {
+                // Detonation: expanding shockwave over the brief post-snap lifetime.
+                float r = v.radius * t;
+                DrawCircleLines((int)c.x, (int)c.y, r,        Fade(v.tint, fade));
+                DrawCircleLines((int)c.x, (int)c.y, r * 0.7f, Fade(v.tint, fade * 0.6f));
+                DrawCircle((int)c.x, (int)c.y, 26.f * fade,   Fade(v.tint, fade * 0.5f));
+            }
+            else
+            {
+                // Dormant/armed marker: a small trap on the ground. Faint while
+                // arming, then a steady pulsing ring with prongs once it's live.
+                bool  live  = v.timer >= v.armDelay;
+                float pulse = 0.5f + 0.5f * sinf(v.timer * 7.f);
+                Color mc    = live ? v.tint : Fade(v.tint, 0.45f);
+                float rr    = v.triggerRadius;
+                DrawCircleLines((int)c.x, (int)c.y, rr,        Fade(mc, live ? 0.4f + 0.5f * pulse : 0.4f));
+                DrawCircleLines((int)c.x, (int)c.y, rr * 0.45f, Fade(mc, 0.45f));
+                for (int i = 0; i < 4; i++)   // four little jaws around the centre
+                {
+                    float a = i * 1.5708f + v.timer * 0.6f;
+                    DrawLineEx({ c.x + cosf(a) * rr * 0.45f, c.y + sinf(a) * rr * 0.45f },
+                               { c.x + cosf(a) * rr * 0.8f,  c.y + sinf(a) * rr * 0.8f },
+                               2.f, Fade(mc, 0.75f));
+                }
+            }
             break;
         }
         case WarriorVfxKind::Wave:
@@ -6999,10 +7077,10 @@ void Engine::SpawnTimedPickup()
 }
 
 // =============================================================================
-// Meta progression — Echoes, Legacy Altar, permanent unlocks
+// Meta progression — Echoes, Poe's Altar, permanent unlocks
 // =============================================================================
 
-Vector2 Engine::GetLegacyAltarPos() const
+Vector2 Engine::GetPoeAltarPos() const
 {
     // West of Zeph (who stands at sw*0.5, sh*0.42) so both prompts never overlap.
     return { (float)kVirtualWidth * 0.30f, (float)kVirtualHeight * 0.42f };
@@ -7262,7 +7340,7 @@ static const int kPactCount = (int)(sizeof(kPacts) / sizeof(kPacts[0]));
 
 Vector2 Engine::GetCurseShrinePos() const
 {
-    // East of Zeph, mirroring the Legacy Altar on the west.
+    // East of Zeph, mirroring the Poe's Altar on the west.
     return { (float)kVirtualWidth * 0.70f, (float)kVirtualHeight * 0.42f };
 }
 
@@ -8553,7 +8631,7 @@ void Engine::ResetRunState()
     _pendingRelicChoices = 0;
 
     _deathPenaltyApplied   = false;
-    _nearLegacyAltar       = false;
+    _nearPoeAltar       = false;
     _cellsBankedToastTimer = 0.f;
 
     // Lock in the chosen ascension difficulty for this whole run and fold its
@@ -13002,10 +13080,10 @@ void Engine::UpdateDungeonRun(float dt)
             // -- Poe's altar (Echoes / meta progression unlocks) -------------
             // Poe, a hovering spirit west of Zeph. Standing near him and
             // pressing the interact key opens the permanent unlock screen.
-            _legacyAltarBobTimer += dt;
-            Vector2 altarPos = GetLegacyAltarPos();
-            _nearLegacyAltar = Vector2Distance(_player.GetWorldPos(), altarPos) < 155.f;
-            if (_nearLegacyAltar && !_shop.IsNearNpc())
+            _poeAltarBobTimer += dt;
+            Vector2 altarPos = GetPoeAltarPos();
+            _nearPoeAltar = Vector2Distance(_player.GetWorldPos(), altarPos) < 155.f;
+            if (_nearPoeAltar && !_shop.IsNearNpc())
             {
                 bool interactPressed = IsKeyPressed(KEY_E) || gamepadInteract;
                 if (_touchModeActive && IsGestureDetected(GESTURE_TAP))
@@ -13052,7 +13130,7 @@ void Engine::UpdateDungeonRun(float dt)
         }
         else
         {
-            _nearLegacyAltar = false;
+            _nearPoeAltar = false;
         }
         _nav.TickRefresh(dt, _player.GetFeetWorldPos());
         _nav.ApplyPendingRefresh();
@@ -13607,13 +13685,13 @@ void Engine::DrawDungeonRun()
                     // glow (a spirit), so there's no painted feet-circle — just a
                     // faint pale aura around him.
                     {
-                        Vector2 altarPos = GetLegacyAltarPos();
-                        float bobOffset  = sinf(_legacyAltarBobTimer * 2.2f) * 5.f;
+                        Vector2 altarPos = GetPoeAltarPos();
+                        float bobOffset  = sinf(_poeAltarBobTimer * 2.2f) * 5.f;
                         Vector2 altarScreen{ altarPos.x + worldOffset.x + kVirtualWidth * 0.5f,
                                              altarPos.y + worldOffset.y + kVirtualHeight * 0.5f };
 
                         // Faint pale-lavender spirit aura that breathes around Poe.
-                        float auraPulse = 0.10f + 0.05f * sinf(_legacyAltarBobTimer * 2.4f);
+                        float auraPulse = 0.10f + 0.05f * sinf(_poeAltarBobTimer * 2.4f);
                         DrawCircleV(Vector2{ altarScreen.x, altarScreen.y + bobOffset }, 48.f,
                             Fade(Color{ 184, 170, 236, 255 }, auraPulse));
 
@@ -13622,7 +13700,7 @@ void Engine::DrawDungeonRun()
                         {
                             const int frames = 6;
                             float fw = _cellsMerchantTex.width / (float)frames;
-                            int frame = ((int)(_legacyAltarBobTimer * 6.f)) % frames;
+                            int frame = ((int)(_poeAltarBobTimer * 6.f)) % frames;
                             float mScale = 3.2f;
                             Rectangle mSrc{ frame * fw, 0.f, fw, (float)_cellsMerchantTex.height };
                             Rectangle mDst{ altarScreen.x, altarScreen.y + bobOffset,
@@ -13646,7 +13724,7 @@ void Engine::DrawDungeonRun()
                         {
                             const Texture2D& cellTexture = CellPickup::GetMediumTexture();
                             float cellScale = 2.6f;
-                            float cellBob = sinf(_legacyAltarBobTimer * 2.6f) * 5.f;
+                            float cellBob = sinf(_poeAltarBobTimer * 2.6f) * 5.f;
                             Rectangle cSrc{ 0.f, 0.f, (float)cellTexture.width, (float)cellTexture.height };
                             Rectangle cDst{ altarScreen.x, altarScreen.y - 66.f + cellBob,
                                             cellTexture.width * cellScale, cellTexture.height * cellScale };
@@ -13654,9 +13732,9 @@ void Engine::DrawDungeonRun()
                                 Vector2{ cDst.width * 0.5f, cDst.height * 0.5f }, 0.f, WHITE);
                         }
 
-                        if (_nearLegacyAltar && !_shop.IsNearNpc())
+                        if (_nearPoeAltar && !_shop.IsNearNpc())
                         {
-                            const char* altarPrompt = "[E] Legacy";
+                            const char* altarPrompt = "[E] Poe";
                             int promptFontSize = 26;
                             int promptWidth = MeasureText(altarPrompt, promptFontSize);
                             DrawText(altarPrompt,

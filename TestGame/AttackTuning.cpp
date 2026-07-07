@@ -11,7 +11,7 @@ const char* AttackOwnerForAbility(int idx)
     if (idx < 9)  return "Mage";
     if (idx < 18) return "Warrior";
     if (idx < 27) return "Rogue";
-    if (idx < 36) return "Ranger";
+    if (idx < 36) return "Hunter";
     if (idx < 45) return "Paladin";
     return "Warlock";
 }

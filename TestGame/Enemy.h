@@ -135,6 +135,9 @@ public:
     bool IsGraveReviveAvailable()    const { return _graveReviveAvailable; }
     bool IsGraveReviveInvulnerable() const { return _graveReviveInvulTimer > 0.f; }
     void TakeDamage(int damage, Vector2 attackerPos) override;
+    // Unblockable variant — identical to TakeDamage for normal enemies, but a
+    // Shieldbearer overrides it to skip its frontal block (Hunter Puncture Shot).
+    virtual void TakeDamageUnblockable(int damage, Vector2 attackerPos) { TakeDamage(damage, attackerPos); }
 
     // Dream Realm flicker
     bool    IsFlickerInWindup()   const { return _flickerInWindup; }

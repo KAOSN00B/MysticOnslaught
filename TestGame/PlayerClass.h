@@ -17,7 +17,7 @@ enum class PlayerClass
 {
     Mage,       // staff — Fire/Ice/Electric spells (the original kit)
     Warrior,    // sword — heavy melee bruiser (tanky)
-    Ranger,     // bow   — mobile ranged skirmisher
+    Hunter,     // bow   — mobile ranged skirmisher
     Rogue,      // daggers — fast, fragile, high burst
     Paladin,    // sword+shield — holy tank (kit built in a later pass)
     Warlock,    // dark caster — curses & drain (kit built in a later pass)
@@ -45,7 +45,7 @@ const PlayerClassInfo& GetPlayerClassInfo(PlayerClass cls);
 // True if this class may be offered the ability in shops / level-up / treasure.
 bool ClassAllowsAbility(PlayerClass cls, AbilityType ability);
 
-// Mage/Warlock/Ranger fire a projectile as their basic attack instead of melee.
+// Mage/Warlock/Hunter fire a projectile as their basic attack instead of melee.
 bool ClassUsesRangedBasic(PlayerClass cls);
 
 // ─────────────────────────────────────────────────────────────────────────────
