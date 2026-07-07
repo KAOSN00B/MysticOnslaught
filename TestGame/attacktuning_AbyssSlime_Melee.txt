@@ -1,0 +1,5 @@
+fx=BossSlimeSplash
+box_x=82.00
+box_y=0.00
+box_w=165.00
+box_h=150.00

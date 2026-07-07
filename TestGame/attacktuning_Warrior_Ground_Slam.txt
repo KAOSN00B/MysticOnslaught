@@ -1,0 +1,5 @@
+fx=GroundSlam
+box_x=0.00
+box_y=0.00
+box_w=312.00
+box_h=278.00

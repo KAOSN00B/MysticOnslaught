@@ -1,0 +1,5 @@
+fx=BossHeavyStrike
+box_x=90.00
+box_y=0.00
+box_w=180.00
+box_h=155.00

@@ -683,6 +683,8 @@ void Character::DrawPlayer(Vector2 cameraPos)
     }
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
+    if (_damageBuffTimer > 0.f)
+        DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, Fade(Color{ 255, 45, 35, 255 }, 0.38f));
 
     // Dash recharge bar — only visible while cooling down
     if (_dashCooldown > 0.f)

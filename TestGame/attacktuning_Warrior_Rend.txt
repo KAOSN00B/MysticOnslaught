@@ -1,0 +1,5 @@
+fx=Rend
+box_x=58.00
+box_y=-10.00
+box_w=150.00
+box_h=140.00

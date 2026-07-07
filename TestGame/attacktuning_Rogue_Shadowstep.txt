@@ -1,0 +1,5 @@
+fx=Shadowstep
+box_x=101.00
+box_y=-10.00
+box_w=418.00
+box_h=120.00

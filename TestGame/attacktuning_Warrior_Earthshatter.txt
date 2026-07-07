@@ -1,0 +1,5 @@
+fx=Earthshatter
+box_x=150.00
+box_y=-1.00
+box_w=270.00
+box_h=106.00

@@ -1,0 +1,5 @@
+fx=Hellfire
+box_x=4.00
+box_y=9.00
+box_w=296.00
+box_h=330.00

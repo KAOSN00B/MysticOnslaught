@@ -1,0 +1,5 @@
+fx=FrostTrap
+box_x=0.00
+box_y=0.00
+box_w=300.00
+box_h=300.00

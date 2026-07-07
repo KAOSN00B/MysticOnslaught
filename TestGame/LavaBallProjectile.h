@@ -1,6 +1,7 @@
 #pragma once
 
 #include "raylib.h"
+#include <string>
 
 // The boss owns the attack timing, but the engine owns the active projectile
 // list so collision stays centralized with the other ability projectiles. This
@@ -12,7 +13,7 @@ public:
     LavaBallProjectile() = default;
     ~LavaBallProjectile() = default;
 
-    void Init(Vector2 spawnPos, Vector2 direction);
+    void Init(Vector2 spawnPos, Vector2 direction, const char* tuningKey = nullptr);
     void Update(float dt);
     void Draw(Vector2 worldOffset) const;
     void BeginHit();
@@ -41,6 +42,7 @@ private:
 
     Vector2 _worldPos{};
     Vector2 _direction{ 1.f, 0.f };
+    std::string _tuningKey;
     float _lifeTimer = 0.f;
     float _runningTime = 0.f;
     int _frame = 0;

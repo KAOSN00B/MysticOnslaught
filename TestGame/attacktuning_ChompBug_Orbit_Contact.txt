@@ -1,0 +1,5 @@
+fx=BossChitinBurst
+box_x=0.00
+box_y=0.00
+box_w=207.89
+box_h=207.89

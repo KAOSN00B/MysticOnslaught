@@ -2,19 +2,23 @@
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "AnimationUtils.h"
+#include "AttackTuning.h"
 #include "raymath.h"
+
+#include <algorithm>
 
 Texture2D EnemyProjectile::_sharedArrowTex{};
 Texture2D EnemyProjectile::_sharedFireBoltTex{};
 bool      EnemyProjectile::_sharedTexturesLoaded = false;
 
-void EnemyProjectile::Init(Vector2 spawnPos, Vector2 direction, EnemyProjectileKind kind, int damage)
+void EnemyProjectile::Init(Vector2 spawnPos, Vector2 direction, EnemyProjectileKind kind, int damage, const char* tuningKey)
 {
     EnsureTexturesLoaded();
 
     _worldPos  = spawnPos;
     _kind      = kind;
     _damage    = damage;
+    _tuningKey = tuningKey ? tuningKey : "";
     _speed     = (kind == EnemyProjectileKind::Arrow)    ? _arrowSpeed :
                  (kind == EnemyProjectileKind::FireBolt) ? _fireBoltSpeed : _spitSpeed;
     _direction = (Vector2LengthSqr(direction) > 0.0001f)
@@ -108,14 +112,28 @@ void EnemyProjectile::Draw(Vector2 worldOffset) const
 
 Rectangle EnemyProjectile::GetCollisionRec() const
 {
-    // Small centred hit box regardless of visual size so dodging feels fair.
-    const float halfSize = (_kind == EnemyProjectileKind::Arrow) ? 16.f : 26.f;
-    return Rectangle{
-        _worldPos.x - halfSize,
-        _worldPos.y - halfSize,
-        halfSize * 2.f,
-        halfSize * 2.f
-    };
+    float size = (_kind == EnemyProjectileKind::Arrow) ? 32.f : 52.f;
+    float offsetX = 0.f;
+    float offsetY = 0.f;
+
+    if (!_tuningKey.empty())
+    {
+        if (const AttackTuning* tuning = AttackTuningStore::Get(_tuningKey))
+        {
+            if (tuning->hasBox)
+            {
+                size = std::max(8.f, tuning->w);
+                offsetX = tuning->x;
+                offsetY = tuning->y;
+            }
+        }
+    }
+
+    Vector2 right = _direction;
+    Vector2 up{ -right.y, right.x };
+    Vector2 center = Vector2Add(_worldPos, Vector2Add(Vector2Scale(right, offsetX), Vector2Scale(up, offsetY)));
+    float halfSize = size * 0.5f;
+    return Rectangle{ center.x - halfSize, center.y - halfSize, size, size };
 }
 
 void EnemyProjectile::UnloadSharedResources()

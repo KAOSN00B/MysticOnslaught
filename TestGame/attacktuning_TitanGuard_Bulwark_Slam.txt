@@ -1,0 +1,5 @@
+fx=BossBulwarkSlam
+box_x=0.00
+box_y=0.00
+box_w=420.00
+box_h=420.00

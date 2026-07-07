@@ -1,0 +1,5 @@
+fx=PiercingShot
+box_x=257.00
+box_y=10.00
+box_w=600.00
+box_h=70.00

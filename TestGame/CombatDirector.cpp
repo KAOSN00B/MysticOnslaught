@@ -1,4 +1,4 @@
-﻿#include "CombatDirector.h"
+#include "CombatDirector.h"
 
 #include "AbyssSlime.h"
 #include "AncientBear.h"
@@ -446,7 +446,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             {
                 LavaBallProjectile projectile;
                 Vector2 toTarget = Vector2Subtract(molarbeast->GetQueuedLavaBallTarget(), molarbeast->GetLavaBallSpawnPos());
-                projectile.Init(molarbeast->GetLavaBallSpawnPos(), toTarget);
+                projectile.Init(molarbeast->GetLavaBallSpawnPos(), toTarget, "Molarbeast_Ranged_Volley");
                 ctx.lavaBalls->push_back(projectile);
                 molarbeast->OnLavaBallSpawned();
             }
@@ -491,7 +491,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                     Vector2 boltDir{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) };
                     EnemyProjectile bolt;
                     bolt.Init(pumpkinJack->GetWorldPos(), boltDir,
-                        EnemyProjectileKind::FireBolt, pumpkinJack->GetAttackPower());
+                        EnemyProjectileKind::FireBolt, pumpkinJack->GetAttackPower(), "PumpkinJack_Volley");
                     ctx.enemyProjectiles->push_back(bolt);
                 }
                 pumpkinJack->OnVolleyCast();
@@ -544,7 +544,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                     EnemyProjectile glob;
                     glob.Init(chompBug->GetWorldPos(),
                         Vector2{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) },
-                        EnemyProjectileKind::Spit, chompBug->GetAttackPower());
+                        EnemyProjectileKind::Spit, chompBug->GetAttackPower(), "ChompBug_Acid_Spit_Fan");
                     ctx.enemyProjectiles->push_back(glob);
                 }
                 chompBug->OnSpitFired();
@@ -562,7 +562,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                     float angle = ((float)i / (float)boltCount) * 2.f * PI;
                     EnemyProjectile bolt;
                     bolt.Init(osiris->GetWorldPos(), Vector2{ cosf(angle), sinf(angle) },
-                        EnemyProjectileKind::FireBolt, osiris->GetAttackPower());
+                        EnemyProjectileKind::FireBolt, osiris->GetAttackPower(), "Osiris_Judgement_Nova");
                     ctx.enemyProjectiles->push_back(bolt);
                 }
                 osiris->OnNovaCast();
@@ -579,7 +579,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                     EnemyProjectile bolt;
                     bolt.Init(osiris->GetWorldPos(),
                         Vector2{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) },
-                        EnemyProjectileKind::FireBolt, osiris->GetAttackPower());
+                        EnemyProjectileKind::FireBolt, osiris->GetAttackPower(), "Osiris_Wrath_Volley");
                     ctx.enemyProjectiles->push_back(bolt);
                 }
                 osiris->OnVolleyCast();
@@ -593,7 +593,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             {
                 LavaBallProjectile bomb;
                 Vector2 toTarget = Vector2Subtract(titanGuard->GetBombTarget(), titanGuard->GetBombSpawnPos());
-                bomb.Init(titanGuard->GetBombSpawnPos(), toTarget);
+                bomb.Init(titanGuard->GetBombSpawnPos(), toTarget, "TitanGuard_Bomb_Lob");
                 ctx.lavaBalls->push_back(bomb);
                 titanGuard->OnBombThrown();
             }
@@ -615,7 +615,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                     EnemyProjectile glob;
                     glob.Init(vermin->GetWorldPos(),
                         Vector2{ cosf(baseAngle + angleOffset), sinf(baseAngle + angleOffset) },
-                        EnemyProjectileKind::Spit, vermin->GetAttackPower());
+                        EnemyProjectileKind::Spit, vermin->GetAttackPower(), "ToxicVermin_Toxic_Spit_Fan");
                     ctx.enemyProjectiles->push_back(glob);
                 }
                 vermin->OnSpitFired();

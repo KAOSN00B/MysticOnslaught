@@ -1,0 +1,5 @@
+fx=PoisonVial
+box_x=12.00
+box_y=25.00
+box_w=260.00
+box_h=260.00

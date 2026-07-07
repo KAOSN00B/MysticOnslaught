@@ -1,0 +1,5 @@
+fx=Multishot
+box_x=31.00
+box_y=6.00
+box_w=180.00
+box_h=146.00

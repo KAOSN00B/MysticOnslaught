@@ -1,0 +1,5 @@
+fx=ThrowingAxe
+box_x=77.00
+box_y=1.00
+box_w=122.00
+box_h=94.00

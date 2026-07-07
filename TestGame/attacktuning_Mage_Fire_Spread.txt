@@ -1,0 +1,5 @@
+fx=none
+box_x=-2.00
+box_y=3.00
+box_w=61.22
+box_h=61.22

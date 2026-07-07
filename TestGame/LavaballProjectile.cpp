@@ -1,11 +1,13 @@
-﻿#include "LavaBallProjectile.h"
+#include "LavaBallProjectile.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "AttackTuning.h"
 #include "VirtualCanvas.h"
 
 #include "raymath.h"
 #include "VirtualCanvas.h"
 
+#include <algorithm>
 #include <cmath>
 
 Texture2D LavaBallProjectile::_sharedLavaBallTex{};
@@ -30,7 +32,7 @@ namespace
     }
 }
 
-void LavaBallProjectile::Init(Vector2 spawnPos, Vector2 direction)
+void LavaBallProjectile::Init(Vector2 spawnPos, Vector2 direction, const char* tuningKey)
 {
     EnsureSharedResourcesLoaded();
 
@@ -38,6 +40,7 @@ void LavaBallProjectile::Init(Vector2 spawnPos, Vector2 direction)
     _direction = (Vector2Length(direction) > 0.01f)
         ? Vector2Normalize(direction)
         : Vector2{ 1.f, 0.f };
+    _tuningKey = tuningKey ? tuningKey : "";
     _lifeTimer = _maxLife;
     _runningTime = 0.f;
     _frame = 0;
@@ -101,16 +104,28 @@ void LavaBallProjectile::Destroy()
 
 Rectangle LavaBallProjectile::GetCollisionRec() const
 {
-    // Keep the collision close to the visible core of a single lavaball frame.
-    // The sprite is large on screen, but only the central orb should be the
-    // damaging volume while travelling.
-    static constexpr float _hitboxSize = 64.f;
-    return Rectangle{
-        _worldPos.x - _hitboxSize * 0.5f,
-        _worldPos.y - _hitboxSize * 0.5f,
-        _hitboxSize,
-        _hitboxSize
-    };
+    float size = 64.f;
+    float offsetX = 0.f;
+    float offsetY = 0.f;
+
+    if (!_tuningKey.empty())
+    {
+        if (const AttackTuning* tuning = AttackTuningStore::Get(_tuningKey))
+        {
+            if (tuning->hasBox)
+            {
+                size = std::max(8.f, tuning->w);
+                offsetX = tuning->x;
+                offsetY = tuning->y;
+            }
+        }
+    }
+
+    Vector2 right = _direction;
+    Vector2 up{ -right.y, right.x };
+    Vector2 center = Vector2Add(_worldPos, Vector2Add(Vector2Scale(right, offsetX), Vector2Scale(up, offsetY)));
+    float halfSize = size * 0.5f;
+    return Rectangle{ center.x - halfSize, center.y - halfSize, size, size };
 }
 
 void LavaBallProjectile::UnloadSharedResources()

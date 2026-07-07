@@ -1,0 +1,5 @@
+fx=Backstab
+box_x=-1.00
+box_y=26.00
+box_w=150.00
+box_h=140.00

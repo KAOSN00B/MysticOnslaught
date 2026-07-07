@@ -1,0 +1,5 @@
+fx=HammerOfJustice
+box_x=265.00
+box_y=41.00
+box_w=660.00
+box_h=150.00

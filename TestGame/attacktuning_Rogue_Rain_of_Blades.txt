@@ -1,0 +1,5 @@
+fx=RainOfBlades
+box_x=-3.00
+box_y=11.00
+box_w=206.00
+box_h=196.00

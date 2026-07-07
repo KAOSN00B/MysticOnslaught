@@ -32,23 +32,24 @@ namespace
     // distinguishable per boss.
     // Per-move: name, circle? , size (w/h, or diameter for circles). Sensible
     // starting hitboxes only — Robert tunes them. Circle = ranged/AoE, rect = melee.
-    struct BossMove  { const char* name; bool circle; float w, h; };
+    enum PreviewKind { PreviewFx = 0, PreviewLava = 1, PreviewFireBolt = 2, PreviewSpit = 3, PreviewLaser = 4 };
+    struct BossMove  { const char* name; bool circle; float w, h; const char* fx; int preview; float scale; };
     struct BossMoves { const char* boss; std::vector<BossMove> moves; };
     const std::vector<BossMoves>& BossTable()
     {
         static const std::vector<BossMoves> table = {
-            { "Molarbeast",  { {"Dash Charge",false,200,120}, {"Ranged Volley",true,80,80}, {"Melee",false,160,140} } },
-            { "Werewolf",    { {"Swipe Combo",false,210,160}, {"Pounce",true,180,180}, {"Blood Howl",true,500,500} } },
-            { "ChompBug",    { {"Dive Bomb",true,160,160}, {"Acid Spit Fan",true,80,80}, {"Orbit Contact",true,140,140} } },
-            { "Osiris",      { {"Judgement Nova",true,440,440}, {"Wrath Volley",true,72,72}, {"Sand Step",true,120,120}, {"Melee",false,150,140} } },
-            { "TitanGuard",  { {"Bomb Lob",true,140,140}, {"Bulwark Slam",true,400,400}, {"Melee",false,170,150} } },
-            { "ToxicVermin", { {"Eruption",true,240,240}, {"Toxic Spit Fan",true,80,80}, {"Poison Pool",true,180,180} } },
-            { "AncientBear", { {"Crushing Slam",true,360,360}, {"Dream Pull",true,600,600}, {"Contact",false,180,160} } },
-            { "AbyssSlime",  { {"Jump Slam",true,300,300}, {"Summon",true,120,120}, {"Melee",false,160,150} } },
-            { "PumpkinJack", { {"Volley",true,72,72}, {"Summon",true,120,120}, {"Teleport Strike",false,150,140} } },
-            { "Minotaur",    { {"Rush",false,220,140}, {"Stomp",true,320,320}, {"Melee",false,170,150} } },
-            { "Cyclops",     { {"Laser Sweep",false,480,60}, {"Scatter Shot",true,80,80} } },
-            { "Ogre",        { {"Charge",false,200,130}, {"Ground Pound",true,300,300} } },
+            { "Molarbeast",  { {"Dash Charge",false,220,130,"BossDashDust",PreviewFx,4.2f}, {"Ranged Volley",true,72,72,"",PreviewLava,4.4f}, {"Melee",false,170,145,"BossClawSwipe",PreviewFx,3.9f} } },
+            { "Werewolf",    { {"Swipe Combo",false,220,165,"BossClawSwipe",PreviewFx,4.0f}, {"Pounce",true,190,190,"BossPounceImpact",PreviewFx,4.4f}, {"Blood Howl",true,500,500,"BossBloodHowl",PreviewFx,5.0f} } },
+            { "ChompBug",    { {"Dive Bomb",true,170,170,"BossDiveImpact",PreviewFx,4.5f}, {"Acid Spit Fan",true,52,52,"",PreviewSpit,3.8f}, {"Orbit Contact",true,140,140,"BossChitinBurst",PreviewFx,3.8f} } },
+            { "Osiris",      { {"Judgement Nova",true,52,52,"",PreviewFireBolt,4.6f}, {"Wrath Volley",true,52,52,"",PreviewFireBolt,4.6f}, {"Sand Step",true,130,130,"BossSandStep",PreviewFx,4.0f}, {"Melee",false,160,145,"BossDivineSlash",PreviewFx,4.0f} } },
+            { "TitanGuard",  { {"Bomb Lob",true,82,82,"",PreviewLava,4.4f}, {"Bulwark Slam",true,420,420,"BossBulwarkSlam",PreviewFx,5.0f}, {"Melee",false,180,155,"BossHeavyStrike",PreviewFx,4.2f} } },
+            { "ToxicVermin", { {"Eruption",true,250,250,"BossToxicEruption",PreviewFx,4.8f}, {"Toxic Spit Fan",true,52,52,"",PreviewSpit,3.8f}, {"Poison Pool",true,190,190,"BossPoisonPool",PreviewFx,4.5f} } },
+            { "AncientBear", { {"Crushing Slam",true,380,380,"BossCrushingSlam",PreviewFx,5.0f}, {"Dream Pull",true,620,620,"BossDreamPull",PreviewFx,5.4f}, {"Contact",false,190,165,"BossClawSwipe",PreviewFx,4.0f} } },
+            { "AbyssSlime",  { {"Jump Slam",true,320,320,"BossSlimeSlam",PreviewFx,4.8f}, {"Summon",true,130,130,"BossAbyssSummon",PreviewFx,4.4f}, {"Melee",false,165,150,"BossSlimeSplash",PreviewFx,4.0f} } },
+            { "PumpkinJack", { {"Volley",true,52,52,"",PreviewFireBolt,4.6f}, {"Summon",true,130,130,"BossPumpkinSummon",PreviewFx,4.5f}, {"Teleport Strike",false,165,145,"BossTeleportStrike",PreviewFx,4.2f} } },
+            { "Minotaur",    { {"Rush",false,240,150,"BossDashDust",PreviewFx,4.4f}, {"Stomp",true,340,340,"BossCrushingSlam",PreviewFx,5.0f}, {"Melee",false,180,155,"BossHeavyStrike",PreviewFx,4.2f} } },
+            { "Cyclops",     { {"Laser Sweep",false,520,56,"",PreviewLaser,1.0f}, {"Scatter Shot",true,64,64,"",PreviewLaser,1.0f} } },
+            { "Ogre",        { {"Charge",false,220,140,"BossDashDust",PreviewFx,4.2f}, {"Ground Pound",true,320,320,"BossCrushingSlam",PreviewFx,4.9f} } },
         };
         return table;
     }
@@ -62,6 +63,89 @@ namespace
     }
 
     std::string TuningPath(const std::string& key) { return "attacktuning_" + key + ".txt"; }
+
+    void ForwardBox(bool& circle, float& x, float& y, float& w, float& h, float length, float height)
+    {
+        circle = false;
+        x = length * 0.5f;
+        y = 0.f;
+        w = length;
+        h = height;
+    }
+
+    void RadialBox(bool& circle, float& x, float& y, float& w, float& h, float radius)
+    {
+        circle = false;
+        x = 0.f;
+        y = 0.f;
+        w = radius * 2.f;
+        h = radius * 2.f;
+    }
+
+    void CircleAt(bool& circle, float& x, float& y, float& w, float& h, float cx, float cy, float diameter)
+    {
+        circle = true;
+        x = cx;
+        y = cy;
+        w = diameter;
+        h = diameter;
+    }
+
+    void ApplyAbilityDefault(AbilityType ability, bool& circle, float& x, float& y, float& w, float& h)
+    {
+        switch (ability)
+        {
+        case AbilityType::FireSpread: case AbilityType::IceSpread: case AbilityType::ElectricSpread:
+            CircleAt(circle, x, y, w, h, 0.f, 0.f, 112.f); break;
+        case AbilityType::FireBolt: case AbilityType::IceBolt: case AbilityType::ElectricBolt:
+            CircleAt(circle, x, y, w, h, 280.f, 0.f, 52.f); break;
+        case AbilityType::FireUltimate: case AbilityType::IceUltimate: case AbilityType::ElectricUltimate:
+            RadialBox(circle, x, y, w, h, 600.f); break;
+        case AbilityType::WarCleave: case AbilityType::Smite: ForwardBox(circle, x, y, w, h, 210.f, 200.f); break;
+        case AbilityType::Whirlwind: RadialBox(circle, x, y, w, h, 170.f); break;
+        case AbilityType::ThrowingAxe: case AbilityType::Volley: ForwardBox(circle, x, y, w, h, 520.f, 90.f); break;
+        case AbilityType::Rend: case AbilityType::Backstab: ForwardBox(circle, x, y, w, h, 150.f, 140.f); break;
+        case AbilityType::ShieldBash: ForwardBox(circle, x, y, w, h, 150.f, 150.f); break;
+        case AbilityType::WarCry: RadialBox(circle, x, y, w, h, 160.f); break;
+        case AbilityType::GroundSlam: RadialBox(circle, x, y, w, h, 340.f); break;
+        case AbilityType::Rampage: RadialBox(circle, x, y, w, h, 180.f); break;
+        case AbilityType::Earthshatter: ForwardBox(circle, x, y, w, h, 640.f, 130.f); break;
+        case AbilityType::FanOfKnives: ForwardBox(circle, x, y, w, h, 360.f, 240.f); break;
+        case AbilityType::Shadowstep: ForwardBox(circle, x, y, w, h, 300.f, 110.f); break;
+        case AbilityType::PoisonVial: CircleAt(circle, x, y, w, h, 200.f, 0.f, 260.f); break;
+        case AbilityType::SmokeBomb: RadialBox(circle, x, y, w, h, 240.f); break;
+        case AbilityType::Eviscerate: ForwardBox(circle, x, y, w, h, 210.f, 130.f); break;
+        case AbilityType::DeathMark: RadialBox(circle, x, y, w, h, 1200.f); break;
+        case AbilityType::BladeDance: RadialBox(circle, x, y, w, h, 230.f); break;
+        case AbilityType::RainOfBlades: ForwardBox(circle, x, y, w, h, 680.f, 320.f); break;
+        case AbilityType::PiercingShot: ForwardBox(circle, x, y, w, h, 600.f, 70.f); break;
+        case AbilityType::Multishot: ForwardBox(circle, x, y, w, h, 380.f, 260.f); break;
+        case AbilityType::FrostTrap: CircleAt(circle, x, y, w, h, 0.f, 0.f, 300.f); break;
+        case AbilityType::ExplosiveArrow: CircleAt(circle, x, y, w, h, 320.f, 0.f, 340.f); break;
+        case AbilityType::Roll: CircleAt(circle, x, y, w, h, 240.f, 0.f, 80.f); break;
+        case AbilityType::ArrowStorm: RadialBox(circle, x, y, w, h, 1000.f); break;
+        case AbilityType::Deadeye: RadialBox(circle, x, y, w, h, 180.f); break;
+        case AbilityType::PiercingBarrage: ForwardBox(circle, x, y, w, h, 900.f, 150.f); break;
+        case AbilityType::Consecrate: CircleAt(circle, x, y, w, h, 0.f, 0.f, 340.f); break;
+        case AbilityType::ShieldOfFaith: RadialBox(circle, x, y, w, h, 160.f); break;
+        case AbilityType::HolyBolt: ForwardBox(circle, x, y, w, h, 560.f, 80.f); break;
+        case AbilityType::HammerThrow: ForwardBox(circle, x, y, w, h, 480.f, 110.f); break;
+        case AbilityType::LayOnHands: RadialBox(circle, x, y, w, h, 150.f); break;
+        case AbilityType::DivineStorm: RadialBox(circle, x, y, w, h, 320.f); break;
+        case AbilityType::AvengingWrath: RadialBox(circle, x, y, w, h, 180.f); break;
+        case AbilityType::HammerOfJustice: ForwardBox(circle, x, y, w, h, 660.f, 150.f); break;
+        case AbilityType::ShadowBolt: ForwardBox(circle, x, y, w, h, 560.f, 80.f); break;
+        case AbilityType::DrainLife: ForwardBox(circle, x, y, w, h, 220.f, 130.f); break;
+        case AbilityType::Curse: ForwardBox(circle, x, y, w, h, 260.f, 200.f); break;
+        case AbilityType::CorruptionPool: CircleAt(circle, x, y, w, h, 200.f, 0.f, 300.f); break;
+        case AbilityType::Hellfire: RadialBox(circle, x, y, w, h, 260.f); break;
+        case AbilityType::SoulSiphon: RadialBox(circle, x, y, w, h, 230.f); break;
+        case AbilityType::Cataclysm: RadialBox(circle, x, y, w, h, 1200.f); break;
+        case AbilityType::DemonForm: RadialBox(circle, x, y, w, h, 190.f); break;
+        case AbilityType::ShadowNova: ForwardBox(circle, x, y, w, h, 680.f, 200.f); break;
+        default: ForwardBox(circle, x, y, w, h, 140.f, 140.f); break;
+        }
+    }
 }
 
 void AttackEditor::Init()
@@ -112,11 +196,7 @@ void AttackEditor::BuildList()
         it.fxStem = it.isElemental ? "" : (GetAbilityIconStem((AbilityType)i) ? GetAbilityIconStem((AbilityType)i) : "");
         it.key    = Sanitise(it.owner + "_" + it.name);
         it.isBoss = false;
-        // Elemental spread(0-2)/bolt(3-5) = circle; ultimate(6-8) + class = rect.
-        if (i <= 2)      { it.circleHit = true;  it.defW = it.defH = 112.f; }   // spread r56
-        else if (i <= 5) { it.circleHit = true;  it.defW = it.defH = 52.f;  }   // bolt r26
-        else if (i <= 8) { it.circleHit = false; it.defW = 360.f; it.defH = 300.f; } // ult
-        else             { it.circleHit = false; it.defW = it.defH = 140.f; }   // class ability
+        ApplyAbilityDefault((AbilityType)i, it.circleHit, it.defX, it.defY, it.defW, it.defH);
         _items.push_back(std::move(it));
     }
 
@@ -127,12 +207,14 @@ void AttackEditor::BuildList()
             AttackItem it;
             it.owner     = b.boss;
             it.name      = mv.name;
-            it.fxStem    = "";
+            it.fxStem    = mv.fx ? mv.fx : "";
             it.key       = Sanitise(std::string(b.boss) + "_" + mv.name);
             it.isBoss    = true;
             it.circleHit = mv.circle;
             it.defW      = mv.w;
             it.defH      = mv.h;
+            it.previewKind = mv.preview;
+            it.previewScale = mv.scale;
             _items.push_back(std::move(it));
         }
 }
@@ -142,7 +224,7 @@ void AttackEditor::ReloadFx()
     if (_fx.id != 0 && _fxOwned) UnloadTexture(_fx);   // never unload borrowed elemental textures
     _fx = Texture2D{};
     _fxOwned = true;
-    _fxFrames = 0; _frameW = 0.f;
+    _fxFrames = 0; _frameW = 0.f; _frameH = 0.f;
     _frame = 0; _frameTimer = 0.f;
     if (_selectedIdx < 0) return;
     const AttackItem& it = _items[_selectedIdx];
@@ -156,10 +238,30 @@ void AttackEditor::ReloadFx()
         {
             _fxFrames = _fx.width / 64;                 // 64px cells
             _frameW   = _fxFrames > 0 ? (float)_fx.width / _fxFrames : (float)_fx.width;
+            _frameH   = 64.f;
         }
         return;
     }
 
+    // Boss projectile previews use the real projectile art where gameplay has one.
+    if (it.previewKind == PreviewLava)
+    {
+        _fx = LoadTexture(AssetPath("Bosses/Lavaball.png").c_str());
+        _fxOwned = true;
+        _fxFrames = (_fx.id != 0) ? 8 : 0;
+        _frameW = (_fxFrames > 0) ? (float)_fx.width / _fxFrames : 0.f;
+        _frameH = 64.f;
+        return;
+    }
+    if (it.previewKind == PreviewFireBolt)
+    {
+        _fx = LoadTexture(AssetPath("PowerUps/Fireball.png").c_str());
+        _fxOwned = true;
+        _fxFrames = (_fx.id != 0) ? std::max(1, _fx.width / 32) : 0;
+        _frameW = 32.f;
+                _frameH = 32.f;
+        return;
+    }
     // Elemental spells: borrow the real projectile / blast sprite (owned by
     // SpreadProjectile's static cache — do NOT unload it).
     if (it.isElemental)
@@ -169,9 +271,18 @@ void AttackEditor::ReloadFx()
         _fxOwned  = false;
         _fxFrames = SpreadProjectile::GetFrameCountFor(ab);
         _frameW   = (float)SpreadProjectile::GetFrameWFor(ab);
+        _frameH   = (float)SpreadProjectile::GetFrameHFor(ab);
     }
 }
 
+AttackEditor::HitBox AttackEditor::CurrentDefaultBox() const
+{
+    if (_selectedIdx < 0 || _selectedIdx >= (int)_items.size())
+        return HitBox{ 0.f, 0.f, 140.f, 140.f };
+
+    const AttackItem& it = _items[_selectedIdx];
+    return HitBox{ it.defX, it.defY, it.defW, it.defH };
+}
 void AttackEditor::OpenAttack(int index)
 {
     if (index < 0 || index >= (int)_items.size()) return;
@@ -183,7 +294,7 @@ void AttackEditor::OpenAttack(int index)
     // Per-attack default shape + size (projectile/AoE = circle, melee = rect).
     const AttackItem& it = _items[index];
     _circleHit = it.circleHit;
-    _box = HitBox{ 0.f, 0.f, it.defW, it.defH };
+    _box = CurrentDefaultBox();
 
     LoadCurrent();     // may override _box AND this item's fxStem
     ReloadFx();        // load the (possibly overridden) sprite
@@ -286,7 +397,7 @@ void AttackEditor::UpdateEdit()
     if (IsKeyPressed(KEY_ESCAPE)) { CloseAttack(); return; }
     if (IsKeyPressed(KEY_F))      { _fxPickerOpen = true; _fxPickerScroll = 0.f; return; }
     if (IsKeyPressed(KEY_SPACE))  _paused = !_paused;
-    if (IsKeyPressed(KEY_R))      { _box = DefaultBox(); _status = "Reset to default"; }
+    if (IsKeyPressed(KEY_R))      { _box = CurrentDefaultBox(); _status = "Reset to default"; }
     if (IsKeyPressed(KEY_S))      SaveCurrent();
 
     // FX playback
@@ -492,6 +603,7 @@ void AttackEditor::DrawSelect()
 void AttackEditor::DrawEdit()
 {
     const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    const AttackItem& it = _items[_selectedIdx];
     ClearBackground(Color{ 18, 20, 26, 255 });
 
     // Reference grid + origin (the attack source, facing right).
@@ -500,18 +612,71 @@ void AttackEditor::DrawEdit()
     for (float gy = 0.f; gy < sh; gy += 64.f) DrawLine(0, (int)gy, (int)sw, (int)gy, Color{ 30, 32, 40, 255 });
     DrawLine((int)originX, (int)(originY - 16.f), (int)originX, (int)(originY + 16.f), Color{ 90, 100, 120, 255 });
     DrawLine((int)(originX - 16.f), (int)originY, (int)(originX + 16.f), (int)originY, Color{ 90, 100, 120, 255 });
-    DrawText("origin (player) -> facing right", (int)(originX + 22.f), (int)(originY - 8.f), 16, Color{ 90, 100, 120, 255 });
+    DrawText("origin (attack source) -> facing right", (int)(originX + 22.f), (int)(originY - 8.f), 16, Color{ 90, 100, 120, 255 });
+    Color attackerColor = it.isBoss ? Color{ 210, 90, 90, 255 } : Color{ 120, 170, 255, 255 };
+    if (it.owner == "Mage") attackerColor = Color{ 120, 150, 255, 255 };
+    else if (it.owner == "Warrior") attackerColor = Color{ 220, 70, 60, 255 };
+    else if (it.owner == "Rogue") attackerColor = Color{ 160, 85, 220, 255 };
+    else if (it.owner == "Ranger") attackerColor = Color{ 90, 190, 100, 255 };
+    else if (it.owner == "Paladin") attackerColor = Color{ 245, 210, 110, 255 };
+    else if (it.owner == "Warlock") attackerColor = Color{ 135, 75, 190, 255 };
+
+    DrawCircleV({ originX - 18.f, originY - 34.f }, 16.f, Fade(attackerColor, 0.95f));
+    DrawRectangleRounded({ originX - 42.f, originY - 18.f, 48.f, 62.f }, 0.3f, 8, Fade(attackerColor, 0.78f));
+    DrawLineEx({ originX - 4.f, originY - 4.f }, { originX + 32.f, originY - 2.f }, 6.f, Fade(attackerColor, 0.95f));
+    DrawCircleV({ originX + 36.f, originY - 2.f }, 6.f, GOLD);
+    DrawText(it.owner.c_str(), (int)(originX - 70.f), (int)(originY + 54.f), 18, Fade(RAYWHITE, 0.85f));
+
+    bool travelPreview = it.previewKind == PreviewLava || it.previewKind == PreviewFireBolt ||
+                         it.previewKind == PreviewSpit || it.previewKind == PreviewLaser ||
+                         fabsf(_box.x) > 96.f || (!_circleHit && _box.w > 260.f);
+    if (travelPreview)
+    {
+        Vector2 start{ originX + 36.f, originY - 2.f };
+        Vector2 end{ originX + _box.x, originY + _box.y };
+        DrawLineEx(start, end, 3.f, Fade(Color{ 120, 210, 255, 255 }, 0.5f));
+        for (int i = 1; i <= 6; ++i)
+        {
+            float t = (float)i / 6.f;
+            Vector2 p{ start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t };
+            DrawCircleV(p, 5.f, Fade(Color{ 120, 210, 255, 255 }, 0.35f + 0.08f * i));
+        }
+        DrawText("travel path", (int)(start.x + 18.f), (int)(start.y - 26.f), 16, Color{ 120, 210, 255, 210 });
+    }
 
     // FX strip playing at the origin.
     if (_fx.id != 0 && _fxFrames > 0)
     {
         float fw = (_frameW > 0.f) ? _frameW : (float)_fx.width;
-        float scale = 4.0f;
-        Rectangle src{ _frame * fw, 0.f, fw, (float)_fx.height };
-        Rectangle dst{ originX, originY, fw * scale, _fx.height * scale };
+        float fh = (_frameH > 0.f) ? _frameH : (float)_fx.height;
+        float scale = it.previewScale;
+        Rectangle src{ _frame * fw, 0.f, fw, fh };
+        Rectangle dst{ originX, originY, fw * scale, fh * scale };
         DrawTexturePro(_fx, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, 0.f, Fade(WHITE, 0.9f));
     }
 
+    if (it.previewKind == PreviewSpit)
+    {
+        for (int i = 1; i <= 3; ++i)
+            DrawCircleV({ originX - i * 28.f, originY }, 18.f - i * 4.f, Fade(Color{ 110, 200, 60, 255 }, 0.42f - i * 0.09f));
+        DrawCircleV({ originX, originY }, 34.f, Color{ 80, 160, 40, 255 });
+        DrawCircleV({ originX, originY }, 22.f, Color{ 140, 230, 80, 255 });
+        DrawCircleV({ originX - 7.f, originY - 7.f }, 7.f, Fade(WHITE, 0.6f));
+    }
+    else if (it.previewKind == PreviewLaser)
+    {
+        const float len = (it.name == "Scatter Shot") ? 460.f : 780.f;
+        const int beams = (it.name == "Scatter Shot") ? 5 : 1;
+        for (int i = 0; i < beams; ++i)
+        {
+            float t = beams == 1 ? 0.5f : (float)i / (float)(beams - 1);
+            float ang = (t - 0.5f) * 70.f * DEG2RAD;
+            Vector2 end{ originX + cosf(ang) * len, originY + sinf(ang) * len };
+            DrawLineEx({ originX, originY }, end, beams == 1 ? 42.f : 25.f, Fade(Color{ 255, 80, 70, 255 }, 0.24f));
+            DrawLineEx({ originX, originY }, end, beams == 1 ? 22.f : 12.f, Color{ 255, 105, 90, 230 });
+            DrawLineEx({ originX, originY }, end, beams == 1 ? 7.f : 4.f, Color{ 255, 245, 235, 220 });
+        }
+    }
     // Hitbox (rect, or circle for projectiles) + corner handles.
     float cx = originX + _box.x, cy = originY + _box.y;
     Rectangle box{ cx - _box.w * 0.5f, cy - _box.h * 0.5f, _box.w, _box.h };
@@ -531,9 +696,7 @@ void AttackEditor::DrawEdit()
     };
     for (int i = 0; i < 4; i++)
         DrawCircleV(corners[i], 8.f, (_dragHandle == i) ? GOLD : Color{ 255, 160, 90, 255 });
-
     // Header + values.
-    const AttackItem& it = _items[_selectedIdx];
     DrawRectangle(0, 0, (int)sw, 40, Fade(BLACK, 0.75f));
     DrawText(TextFormat("%s  -  %s", it.owner.c_str(), it.name.c_str()), 12, 8, 26, GOLD);
     if (it.isElemental)

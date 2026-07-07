@@ -1,0 +1,5 @@
+fx=none
+box_x=8.00
+box_y=7.00
+box_w=83.55
+box_h=83.55

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "raylib.h"
+#include <string>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EnemyProjectile — generic straight-flying enemy shot.
@@ -21,7 +22,8 @@ public:
     EnemyProjectile() = default;
     ~EnemyProjectile() = default;
 
-    void Init(Vector2 spawnPos, Vector2 direction, EnemyProjectileKind kind, int damage);
+    void Init(Vector2 spawnPos, Vector2 direction, EnemyProjectileKind kind, int damage,
+              const char* tuningKey = nullptr);
     void Update(float dt);
     void Draw(Vector2 worldOffset) const;
     void Destroy() { _isActive = false; }
@@ -39,6 +41,7 @@ private:
 
     Vector2 _worldPos{};
     Vector2 _direction{ 1.f, 0.f };
+    std::string _tuningKey;
     EnemyProjectileKind _kind = EnemyProjectileKind::Arrow;
     int   _damage      = 1;
     float _speed       = 700.f;

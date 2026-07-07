@@ -1,0 +1,5 @@
+fx=Whirlwind
+box_x=-9.00
+box_y=-1.00
+box_w=206.00
+box_h=216.00

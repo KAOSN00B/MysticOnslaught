@@ -1,0 +1,5 @@
+fx=WarCry
+box_x=0.00
+box_y=0.00
+box_w=136.00
+box_h=132.00

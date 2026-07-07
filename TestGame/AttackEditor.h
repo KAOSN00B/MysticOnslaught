@@ -44,8 +44,12 @@ private:
         bool        isElemental = false;  // Fire/Ice/Electric Spread/Bolt/Ultimate
         int         abilityIdx  = -1;     // (int)AbilityType for player abilities
         bool        circleHit = false;    // default hitbox shape
+        float       defX = 0.f;           // default centre x, relative to attack origin
+        float       defY = 0.f;           // default centre y, relative to attack origin
         float       defW = 140.f;         // default box width  (or diameter for circle)
         float       defH = 140.f;         // default box height
+        int         previewKind = 0;       // 0 FX strip, 1 lava, 2 fire bolt, 3 spit, 4 laser
+        float       previewScale = 4.f;    // editor-only draw scale
     };
 
     struct HitBox { float x, y, w, h; };   // centre-relative, authored facing right
@@ -64,7 +68,7 @@ private:
     void DrawEdit();
     void DrawFxPicker();
 
-    static HitBox DefaultBox() { return HitBox{ 0.f, 0.f, 140.f, 140.f }; }
+    HitBox CurrentDefaultBox() const;
 
     std::vector<AttackItem> _items;
     Screen _screen        = Screen::Select;
@@ -77,12 +81,13 @@ private:
     Texture2D _fx{};            // FX strip / projectile sprite for the current attack
     bool      _fxOwned   = true;  // true = editor LoadTexture'd it; false = borrowed (elemental)
     float     _frameW    = 0.f;   // width of one animation frame
+    float     _frameH    = 0.f;   // height of one animation frame
     bool      _circleHit = false; // projectile hitboxes are circles, not rects
     int       _fxFrames  = 0;
     int       _frame     = 0;
     float     _frameTimer = 0.f;
     bool      _paused    = false;
-    HitBox    _box       = DefaultBox();
+    HitBox    _box       = { 0.f, 0.f, 140.f, 140.f };
     int       _dragHandle = -1;         // -1 none, 0..3 corners, 4 body
     Vector2   _dragMouseStart{};
     HitBox    _boxAtDragStart{};

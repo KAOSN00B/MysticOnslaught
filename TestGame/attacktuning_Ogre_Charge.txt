@@ -1,0 +1,5 @@
+fx=BossDashDust
+box_x=110.00
+box_y=0.00
+box_w=220.00
+box_h=140.00

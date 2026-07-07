@@ -1,0 +1,5 @@
+fx=BossDivineSlash
+box_x=80.00
+box_y=0.00
+box_w=160.00
+box_h=145.00

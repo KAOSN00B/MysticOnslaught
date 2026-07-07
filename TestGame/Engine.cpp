@@ -9141,8 +9141,8 @@ void Engine::UpdateClassSelect()
         if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) clsNext = true;
     }
     bool clickedNav = false;
-    if (click && (CheckCollisionPointRec(mouse, bigLeft)  || CheckCollisionPointRec(mouse, leftPeek)))  { clsPrev = true; clickedNav = true; }
-    if (click && (CheckCollisionPointRec(mouse, bigRight) || CheckCollisionPointRec(mouse, rightPeek))) { clsNext = true; clickedNav = true; }
+    if (click && !clickedLook && (CheckCollisionPointRec(mouse, bigLeft)  || CheckCollisionPointRec(mouse, leftPeek)))  { clsPrev = true; clickedNav = true; }
+    if (click && !clickedLook && (CheckCollisionPointRec(mouse, bigRight) || CheckCollisionPointRec(mouse, rightPeek))) { clsNext = true; clickedNav = true; }
     if (clsPrev) _classSelectCursor = (_classSelectCursor + count - 1) % count;
     if (clsNext) _classSelectCursor = (_classSelectCursor + 1) % count;
 
@@ -10394,6 +10394,7 @@ void Engine::ClearDungeonEnemies()
     _lavaBalls.clear();
     _enemyProjectiles.clear();
     _poisonClouds.clear();
+    _warriorVfx.clear();
     _pickups.clear();
     _vfx.Clear();
     _pendingExp    = 0.f;
@@ -13156,6 +13157,7 @@ void Engine::UpdateDungeonRun(float dt)
         UpdateEnemyProjectiles(dt);
         ApplyPendingReflect();
         UpdateWarlockMinions(dt);
+        UpdateWarriorEffects(dt);
         UpdatePoisonClouds(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);

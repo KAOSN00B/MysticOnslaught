@@ -1,0 +1,5 @@
+fx=BossToxicEruption
+box_x=0.00
+box_y=0.00
+box_w=250.00
+box_h=250.00

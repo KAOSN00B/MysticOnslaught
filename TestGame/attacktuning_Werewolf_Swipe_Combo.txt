@@ -1,0 +1,5 @@
+fx=BossClawSwipe
+box_x=5.00
+box_y=-4.00
+box_w=220.00
+box_h=165.00

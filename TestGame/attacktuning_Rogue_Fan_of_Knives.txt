@@ -1,0 +1,5 @@
+fx=FanOfKnives
+box_x=24.00
+box_y=12.00
+box_w=190.00
+box_h=192.00

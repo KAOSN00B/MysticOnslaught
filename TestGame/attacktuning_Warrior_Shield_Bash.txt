@@ -1,0 +1,5 @@
+fx=ShieldBash
+box_x=-7.00
+box_y=-2.00
+box_w=220.00
+box_h=224.00

@@ -8,8 +8,47 @@
 
 namespace
 {
-    const char* GetDebugUpgradeName(UpgradeType type)
+    AbilityType DebugAbilityForLearnType(UpgradeType type)
     {
+        switch (type)
+        {
+        case UpgradeType::LearnFireSpread:       return AbilityType::FireSpread;
+        case UpgradeType::LearnIceSpread:        return AbilityType::IceSpread;
+        case UpgradeType::LearnElectricSpread:   return AbilityType::ElectricSpread;
+        case UpgradeType::LearnFireBolt:         return AbilityType::FireBolt;
+        case UpgradeType::LearnIceBolt:          return AbilityType::IceBolt;
+        case UpgradeType::LearnElectricBolt:     return AbilityType::ElectricBolt;
+        case UpgradeType::LearnFireUltimate:     return AbilityType::FireUltimate;
+        case UpgradeType::LearnIceUltimate:      return AbilityType::IceUltimate;
+        case UpgradeType::LearnElectricUltimate: return AbilityType::ElectricUltimate;
+        default:                                 return AbilityForLearnType(type);
+        }
+    }
+
+    AbilityType DebugAbilityForUpgradeType(UpgradeType type)
+    {
+        switch (type)
+        {
+        case UpgradeType::UpgradeFireSpread:       return AbilityType::FireSpread;
+        case UpgradeType::UpgradeIceSpread:        return AbilityType::IceSpread;
+        case UpgradeType::UpgradeElectricSpread:   return AbilityType::ElectricSpread;
+        case UpgradeType::UpgradeFireBolt:         return AbilityType::FireBolt;
+        case UpgradeType::UpgradeIceBolt:          return AbilityType::IceBolt;
+        case UpgradeType::UpgradeElectricBolt:     return AbilityType::ElectricBolt;
+        case UpgradeType::UpgradeFireUltimate:     return AbilityType::FireUltimate;
+        case UpgradeType::UpgradeIceUltimate:      return AbilityType::IceUltimate;
+        case UpgradeType::UpgradeElectricUltimate: return AbilityType::ElectricUltimate;
+        default:                                   return AbilityForUpgradeType(type);
+        }
+    }
+
+    std::string GetDebugUpgradeName(UpgradeType type)
+    {
+        if (AbilityType ability = DebugAbilityForLearnType(type); ability != AbilityType::None)
+            return std::string("Learn ") + GetAbilityName(ability);
+        if (AbilityType ability = DebugAbilityForUpgradeType(type); ability != AbilityType::None)
+            return std::string(GetAbilityName(ability)) + " +";
+
         switch (type)
         {
         case UpgradeType::AttackPower:             return "Attack+";
@@ -29,28 +68,22 @@ namespace
         case UpgradeType::BladeStorm:              return "Blade Storm";
         case UpgradeType::Juggernaut:              return "Juggernaut";
         case UpgradeType::ArcaneColossus:          return "Arc Colossus";
-        case UpgradeType::LearnFireSpread:         return "Learn F Spread";
-        case UpgradeType::LearnIceSpread:          return "Learn I Spread";
-        case UpgradeType::LearnElectricSpread:     return "Learn E Spread";
-        case UpgradeType::LearnFireBolt:           return "Learn F Bolt";
-        case UpgradeType::LearnIceBolt:            return "Learn I Bolt";
-        case UpgradeType::LearnElectricBolt:       return "Learn E Bolt";
-        case UpgradeType::LearnFireUltimate:       return "Learn F Ult";
-        case UpgradeType::LearnIceUltimate:        return "Learn I Ult";
-        case UpgradeType::LearnElectricUltimate:   return "Learn E Ult";
-        case UpgradeType::UpgradeFireSpread:       return "Up F Spread";
-        case UpgradeType::UpgradeIceSpread:        return "Up I Spread";
-        case UpgradeType::UpgradeElectricSpread:   return "Up E Spread";
-        case UpgradeType::UpgradeFireBolt:         return "Up F Bolt";
-        case UpgradeType::UpgradeIceBolt:          return "Up I Bolt";
-        case UpgradeType::UpgradeElectricBolt:     return "Up E Bolt";
-        case UpgradeType::UpgradeFireUltimate:     return "Up F Ult";
-        case UpgradeType::UpgradeIceUltimate:      return "Up I Ult";
-        case UpgradeType::UpgradeElectricUltimate: return "Up E Ult";
         default:                                   return "Upgrade";
         }
     }
 
+    void DrawFittedButtonText(const std::string& label, Rectangle rect, int preferredSize, int minSize)
+    {
+        int fs = preferredSize;
+        const int maxW = (int)(rect.width - 10.f);
+        while (fs > minSize && MeasureText(label.c_str(), fs) > maxW)
+            --fs;
+
+        int tw = MeasureText(label.c_str(), fs);
+        int x = (int)(rect.x + rect.width * 0.5f - tw * 0.5f);
+        int y = (int)(rect.y + rect.height * 0.5f - fs * 0.5f - 1.f);
+        DrawText(label.c_str(), x, y, fs, RAYWHITE);
+    }
     struct DebugButtonSpec
     {
         std::string     label;
@@ -393,11 +426,7 @@ void DebugPanel::Draw(int act, int room, const char* roomTypeName) const
         DrawRectangleRounded(btn.rect, 0.20f, 6, btn.fill);
         DrawRectangleRoundedLines(btn.rect, 0.20f, 6, Fade(WHITE, 0.16f));
         int fs = (btn.rect.height > 31.f && btn.rect.width > contentW - 1.f) ? 18 : 15;
-        int tw = MeasureText(btn.label.c_str(), fs);
-        float textX = (fs == 18) ? (btn.rect.x + 10.f)
-                                 : (btn.rect.x + btn.rect.width * 0.5f - tw * 0.5f);
-        DrawText(btn.label.c_str(), (int)textX, (int)(btn.rect.y + (fs == 18 ? 6.f : 7.f)),
-                 fs, RAYWHITE);
+        DrawFittedButtonText(btn.label, btn.rect, fs, 10);
     }
 
     EndScissorMode();
