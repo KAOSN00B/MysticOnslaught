@@ -8803,8 +8803,8 @@ void Engine::UpdateClassSelect()
     Rectangle rightPeek { rightPeekX, sideY, sideW, sideH };
     Rectangle bigLeft   { 50.f,       centerY + centerH * 0.5f - 48.f, 72.f, 96.f };
     Rectangle bigRight  { sw - 122.f, centerY + centerH * 0.5f - 48.f, 72.f, 96.f };
-    Rectangle lookPrev  { portraitCX - 150.f, portraitCY - 26.f, 42.f, 52.f };
-    Rectangle lookNext  { portraitCX + 108.f, portraitCY - 26.f, 42.f, 52.f };
+    Rectangle lookPrev  { centerX + 38.f,           portraitCY - 22.f, 46.f, 60.f };
+    Rectangle lookNext  { centerX + centerW - 84.f, portraitCY - 22.f, 46.f, 60.f };
 
     // ---- Appearance ("look") cycling -- independent of class ------------------
     bool appPrev = IsKeyPressed(KEY_Q);
@@ -8922,12 +8922,22 @@ void Engine::DrawClassSelect()
     DrawText(info.name, (int)(portraitCX - MeasureText(info.name, nameFs) * 0.5f),
              (int)(centerY + 20.f), nameFs, GOLD);
 
-    drawHero(portraitCX, portraitCY, 5.5f, WHITE);
+    // Hero (appearance) sub-panel INSIDE the class card. The class card selects
+    // the CLASS; this labelled panel is explicitly where you pick your HERO look.
+    Rectangle heroPanel{ centerX + 26.f, centerY + 78.f, centerW - 52.f, 224.f };
+    DrawRectangleRounded(heroPanel, 0.10f, 8, Color{ 34, 30, 46, 235 });
+    DrawRectangleRoundedLines(heroPanel, 0.10f, 8, Color{ 100, 92, 120, 255 });
+    const char* heroLabel = "SELECT HERO";
+    DrawText(heroLabel, (int)(portraitCX - MeasureText(heroLabel, 18) * 0.5f),
+             (int)(heroPanel.y + 9.f), 18, Color{ 176, 168, 192, 255 });
 
-    Rectangle lookPrev{ portraitCX - 150.f, portraitCY - 26.f, 42.f, 52.f };
-    Rectangle lookNext{ portraitCX + 108.f, portraitCY - 26.f, 42.f, 52.f };
-    Color lpC = CheckCollisionPointRec(mouse, lookPrev) ? GOLD : Color{ 190, 185, 200, 255 };
-    Color lnC = CheckCollisionPointRec(mouse, lookNext) ? GOLD : Color{ 190, 185, 200, 255 };
+    drawHero(portraitCX, portraitCY, 4.6f, WHITE);
+
+    // Prominent hero arrows flanking the portrait (clearly the way to change look).
+    Rectangle lookPrev{ centerX + 38.f,           portraitCY - 22.f, 46.f, 60.f };
+    Rectangle lookNext{ centerX + centerW - 84.f, portraitCY - 22.f, 46.f, 60.f };
+    Color lpC = CheckCollisionPointRec(mouse, lookPrev) ? GOLD : Color{ 224, 214, 150, 255 };
+    Color lnC = CheckCollisionPointRec(mouse, lookNext) ? GOLD : Color{ 224, 214, 150, 255 };
     DrawTriangle({ lookPrev.x + lookPrev.width, lookPrev.y },
                  { lookPrev.x, lookPrev.y + lookPrev.height * 0.5f },
                  { lookPrev.x + lookPrev.width, lookPrev.y + lookPrev.height }, lpC);
@@ -8935,7 +8945,8 @@ void Engine::DrawClassSelect()
                  { lookNext.x, lookNext.y + lookNext.height },
                  { lookNext.x + lookNext.width, lookNext.y + lookNext.height * 0.5f }, lnC);
     const char* aName = GetAppearanceName(_appearanceCursor);
-    DrawText(aName, (int)(portraitCX - MeasureText(aName, 20) * 0.5f), (int)(portraitCY + 92.f), 20, Color{ 175, 170, 190, 255 });
+    DrawText(aName, (int)(portraitCX - MeasureText(aName, 22) * 0.5f),
+             (int)(heroPanel.y + heroPanel.height - 30.f), 22, RAYWHITE);
 
     float tx = centerX + 30.f;
     DrawText(info.playstyle, (int)tx, (int)(centerY + 320.f), 22, Color{ 205, 200, 216, 255 });

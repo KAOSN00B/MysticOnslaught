@@ -104,7 +104,7 @@ void Character::Init()
     case PlayerClass::Rogue:   _attackUpdateTime = 1.f / 19.f; break;   // rapid jabs
     default:                   _attackUpdateTime = 1.f / 14.f; break;
     }
-    _dashAnim   = LoadTexture(AssetPath("Hero/Hero_Dash.png").c_str());   // shared dash pose
+    _dashAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Jump.png", prefix)).c_str());   // each hero's Jump anim, repurposed as the dash
     _deathAnim  = LoadTexture(AssetPath(TextFormat("Hero/%s_Death.png",  prefix)).c_str());
     _takeDamageAnim = LoadTexture(AssetPath(TextFormat("Hero/%s_Hurt.png", prefix)).c_str());
 
