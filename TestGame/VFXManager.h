@@ -44,8 +44,16 @@ public:
     // Heal animation that follows the player's center.
     void SpawnHealEffect();
 
-    // Floating damage / heal number that rises and fades.
-    void SpawnFloatingText(Vector2 worldPos, int value, Color color);
+    // Floating damage number that rises and fades. `scale` enlarges crits/big
+    // hits; the displayed value is cosmetically multiplied (see .cpp) so single-
+    // digit balance still reads as satisfying RPG-sized numbers.
+    void SpawnFloatingText(Vector2 worldPos, int value, Color color, float scale = 1.f);
+
+    // A short burst of impact sparks flying out from a hit/kill.
+    void SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed);
+
+    // Cosmetic damage-number multiplier (tuned live via the debug juice panel).
+    void SetDamageNumberScale(int s) { _damageNumberScale = (s > 0) ? s : 1; }
 
 private:
     struct AnimatedEffect
@@ -73,11 +81,24 @@ private:
         int     value     = 0;
         Color   color     = WHITE;
         float   spawnTime = 0.f;
+        float   scale     = 1.f;
         static constexpr float kLifetime = 0.75f;
+    };
+
+    // Impact sparks (juice) — tiny particles that fly out and fade on hits.
+    struct Spark
+    {
+        Vector2 pos{};
+        Vector2 vel{};
+        Color   color = WHITE;
+        float   timer = 0.f;
+        float   life  = 0.35f;
     };
 
     std::vector<AnimatedEffect> _effects;
     std::vector<FloatingText>   _floatingTexts;
+    std::vector<Spark>          _sparks;
+    int                         _damageNumberScale = 25;
 
     // Non-owning pointers — Engine is responsible for load/unload.
     Texture2D* _fireballCastTex  = nullptr;

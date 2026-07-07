@@ -140,6 +140,15 @@ namespace Balance::BossSupport
     inline constexpr float kMinPlayerDistance = 520.f;
 }
 
+// ── Game feel / juice ────────────────────────────────────────────────────────
+namespace Balance::Feel
+{
+    // Damage is single-digit internally; floating combat numbers are multiplied
+    // by this for display only (balance untouched). Bump for bigger, juicier
+    // numbers. 25 turns an 8-damage hit into "200".
+    inline constexpr int kDamageNumberScale = 25;
+}
+
 // ── Timings / miscellaneous ──────────────────────────────────────────────────
 namespace Balance::Misc
 {

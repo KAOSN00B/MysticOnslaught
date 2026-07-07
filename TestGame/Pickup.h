@@ -29,6 +29,13 @@ public:
     void    Destroy()             { _isActive = false; }
     Vector2 GetWorldPos()   const { return _worldPos; }
 
+    // Loot magnetism — pulls the pickup toward the player when it's in range.
+    void    Magnetize(Vector2 target, float factor)
+    {
+        _worldPos.x += (target.x - _worldPos.x) * factor;
+        _worldPos.y += (target.y - _worldPos.y) * factor;
+    }
+
     // Marks pickups that were spawned by the world timer (shown on mini-map)
     bool IsTimerSpawned()   const { return _timerSpawned; }
     void SetTimerSpawned(bool v)  { _timerSpawned = v; }

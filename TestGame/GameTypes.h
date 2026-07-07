@@ -51,6 +51,7 @@ enum class GameState
     TileMapper,           // interactive tilesheet assignment tool (debug)
     NineSliceEditor,      // visual srcCorner/dstCorner editor for any PNG asset
     CharacterAnimator,    // enemy hitbox + animation tuning tool (debug)
+    AttackEditor,         // player/boss attack FX + hitbox editor (debug)
 };
 
 enum class MusicCue

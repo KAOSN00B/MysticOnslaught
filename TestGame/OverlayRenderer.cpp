@@ -64,7 +64,7 @@ void OverlayRenderer::DrawDemoEnd(const DemoEndRenderContext& ctx) const
     const char* lines[] = {
         "You conquered all six domains and felled the Demon within.",
         "The Onslaught is broken - for now.",
-        "Bank your Mystic Cells and dive again for a greater challenge.",
+        "Bank your Echoes and dive again for a greater challenge.",
     };
     int msgSz = 26;
     for (auto& line : lines)

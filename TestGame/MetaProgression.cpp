@@ -35,7 +35,7 @@ static const MetaUnlockInfo kUnlockTable[(int)MetaUnlockType::Count] = {
     { "Ability Mastery",     "Unlock a 6th ability\nslot every run",          200, MetaUnlockType::FifthAbilitySlot },
     { "Bulwark",             "+1 armour at the start\nof every run",           60, MetaUnlockType::Count },
     { "Heirloom",            "Start each run with a\nrandom relic",           120, MetaUnlockType::Count },
-    { "Cell Surge",          "+50% Mystic Cells from\nevery kill",             90, MetaUnlockType::Count },
+    { "Echo Surge",          "+50% Echoes from\nevery kill",             90, MetaUnlockType::Count },
     { "Second Wind",         "Revive once per run\nat 40% health",           160, MetaUnlockType::Count },
 };
 

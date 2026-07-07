@@ -373,6 +373,8 @@ void Character::Update(float dt)
 
     // Tick down temporary self-buffs (War Cry damage, Rampage lifesteal, etc.).
     if (_damageBuffTimer > 0.f) _damageBuffTimer -= dt;
+    if (_reflectTimer    > 0.f) _reflectTimer    -= dt;
+    if (_retributionTimer > 0.f) { _retributionTimer -= dt; if (_retributionTimer <= 0.f) _retributionStacks = 0; }
     if (_lifestealTimer  > 0.f) _lifestealTimer  -= dt;
 
     // Passive mana regen — paused during ultimate sequences.
@@ -834,6 +836,20 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
     if (_hasIFrames || _dashInvincible || _forcedPushActive)
         return;
 
+    // Paladin Retribution — every hit that connects fuels the counter, and Aegis
+    // reflects a fraction back at the attacker. Triggers even if armour eats the
+    // hit (you were still struck). No self-heal anywhere.
+    if (_class == PlayerClass::Paladin)
+    {
+        AddRetribution(1);
+        if (_reflectTimer > 0.f)
+        {
+            _pendingReflectDamage += damage * _reflectFraction;
+            _pendingReflectPos     = attackerPos;
+            _hasPendingReflect     = true;
+        }
+    }
+
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
 
@@ -1142,7 +1158,10 @@ AbilityType Character::ConsumeClassAbility()
 // ── Temporary self-buffs ──────────────────────────────────────────────────────
 float Character::GetClassDamageMult() const
 {
-    return _damageBuffTimer > 0.f ? _damageBuffMult : 1.f;
+    float m = _damageBuffTimer > 0.f ? _damageBuffMult : 1.f;
+    if (_retributionTimer > 0.f)             // Paladin: recent hits taken boost damage
+        m *= (1.f + _retributionStacks * kRetributionPerStack);
+    return m;
 }
 
 void Character::GrantDamageBuff(float mult, float duration)

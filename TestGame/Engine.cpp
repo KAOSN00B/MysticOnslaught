@@ -9,6 +9,7 @@
 #include "AnimationUtils.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "AttackTuning.h"
 #include "CellPickup.h"
 #include "VirtualCanvas.h"
 #include "CapsuleCollision.h"
@@ -69,6 +70,18 @@ namespace
 
     // Drop chance per enemy kill (normal waves only ? boss fight suppresses drops).
     constexpr int kEnemyDropChancePercent = Balance::Economy::kHealDropChancePercent;
+
+    // Poe's rotating greetings, shown on his Echoes (meta) screen. One is picked
+    // each time the player opens his altar — gives the melancholy spirit a voice.
+    const char* kPoeGreetings[] = {
+        "\"Another echo returns to me. Rest a moment, wanderer.\"",
+        "\"The fallen whisper your name. Spend well what they left behind.\"",
+        "\"Death claimed their bodies. I keep the rest. Now choose.\"",
+        "\"So many came before you. So few return. You... keep returning.\"",
+        "\"I cannot leave this place - but you can. Carry their strength.\"",
+        "\"Their echoes are heavy with regret. Make yours count.\"",
+    };
+    constexpr int kPoeGreetingCount = (int)(sizeof(kPoeGreetings) / sizeof(kPoeGreetings[0]));
 
     constexpr float kBiomeFadeOutDuration = 3.f;
     constexpr float kBiomeFadeInDuration = 1.f;
@@ -164,6 +177,7 @@ Engine::~Engine()
         if (_classPortraits[i].id != 0) UnloadTexture(_classPortraits[i]);
     if (_appearancePortrait.id != 0) UnloadTexture(_appearancePortrait);
     if (_cellsMerchantTex.id != 0) UnloadTexture(_cellsMerchantTex);
+    if (_minionTex.id != 0) UnloadTexture(_minionTex);
     for (int i = 0; i < 7; i++)
         if (_relicIcons[i].id != 0) UnloadTexture(_relicIcons[i]);
     for (int i = 0; i < (int)AbilityType::Count; i++)
@@ -373,8 +387,10 @@ void Engine::Init()
         _classPortraits[i] = LoadTexture(AssetPath(TextFormat("Hero/%s_Idle.png", prefix)).c_str());
     }
 
-    // Cells-shop (Legacy Altar) merchant — a reserved hero sprite, not Zeph.
-    _cellsMerchantTex = LoadTexture(AssetPath(TextFormat("Hero/%s_Idle.png", GetCellsShopMerchantPrefix())).c_str());
+    // Poe — the ghostly spirit who keeps your Echoes (not Zeph). A spectral
+    // Phantom sprite so he reads as a hovering spirit, matching the Legacy purple.
+    _cellsMerchantTex = LoadTexture(AssetPath("Enemy/PhantomIdle_B.png").c_str());
+    _minionTex        = LoadTexture(AssetPath("Enemy/BomberImpIdle_B.png").c_str());   // Warlock imp
 
     // Relic icons (one per archetype).
     for (int i = 0; i < 7; i++)
@@ -385,9 +401,14 @@ void Engine::Init()
     {
         const char* stem = GetAbilityIconStem((AbilityType)i);
         if (stem && stem[0] != '\0')
-        {
             _abilityIcons[i] = LoadTexture(AssetPath(TextFormat("PowerUps/Ability_%s.png", stem)).c_str());
-            _abilityFx[i]    = LoadTexture(AssetPath(TextFormat("PowerUps/FX_%s.png", stem)).c_str());
+
+        // FX strip: an Attack Editor override (fx=<stem>) replaces the default.
+        const AttackTuning* t = AttackTuningStore::Get(AttackTuningKeyForAbility((AbilityType)i));
+        const char* fxStem = (t && t->hasFx) ? t->fxStem.c_str() : stem;
+        if (fxStem && fxStem[0] != '\0')
+        {
+            _abilityFx[i] = LoadTexture(AssetPath(TextFormat("PowerUps/FX_%s.png", fxStem)).c_str());
             if (_abilityFx[i].id != 0 && _abilityFx[i].height > 0)
                 _abilityFxFrames[i] = _abilityFx[i].width / 64;   // 64px cells
         }
@@ -599,7 +620,7 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
     // Zeph heals the player fully when they arrive at the store.
     _player.Heal(_player.GetMaxHealthValue());
 
-    // Reaching Zeph banks all carried Mystic Cells — the Dead Cells "made it to
+    // Reaching Zeph banks all carried Echoes — the Dead Cells "made it to
     // the Collector" moment. Cells still carried when dying are lost instead.
     int carriedCells = _player.TakeCells();
     if (carriedCells > 0)
@@ -1388,6 +1409,31 @@ void Engine::UpdateInputPromptMode()
 }
 void Engine::Update(float dt)
 {
+    // Juice timers tick in real time (slow-mo only scales the gameplay sim).
+    if (_critFocusTimer   > 0.f) _critFocusTimer   -= dt;
+    if (_screenFlashTimer > 0.f) _screenFlashTimer -= dt;
+    if (_slowMoTimer      > 0.f) _slowMoTimer      -= dt;
+    // Gold flash + a satisfying micro-pause on level-up (applied silently in AddExp).
+    int lvl = _player.GetLevel();
+    if (lvl > _lastPlayerLevel)
+    {
+        TriggerScreenFlash(Color{ 255, 210, 90, 255 }, 0.35f);
+        RequestHitStop(0.06f);   // brief "power gained" beat
+        // TODO(SFX): level-up chime hook.
+    }
+    _lastPlayerLevel = lvl;
+
+    // Player hurt red-edge vignette — fires whenever the player's HP drops.
+    if (_playerHurtTimer > 0.f) _playerHurtTimer -= dt;
+    if (_deathVignette   > 0.f) _deathVignette   -= dt * 0.6f;   // slow fade during the death beat
+
+    _vfx.SetDamageNumberScale((int)_juiceDamageScale);   // live juice tuning
+    if (_debug.IsActive() && IsKeyPressed(KEY_J)) _juicePanelOpen = !_juicePanelOpen;
+    if (_juicePanelOpen) UpdateJuicePanel();
+    float hpNow = _player.GetHealthValue();
+    if (hpNow < _lastPlayerHp - 0.01f) _playerHurtTimer = 0.4f;   // hurt SFX already handled by the damage source
+    _lastPlayerHp = hpNow;
+
     UpdateInputPromptMode();
     _shop.SetPromptMode(GetPromptModeForUi());
     _worldMap.SetPromptMode(GetPromptModeForUi());
@@ -1482,6 +1528,11 @@ void Engine::Update(float dt)
             _charAnimator.Init();
             _gameState = GameState::CharacterAnimator;
         }
+        if (IsKeyPressed(KEY_K))   // dev: open the Attack Editor (FX + hitbox tuning)
+        {
+            _attackEditor.Init();
+            _gameState = GameState::AttackEditor;
+        }
         if (_menu.SettingsPressed())
         {
             _stateBeforeSettings = GameState::Menu;
@@ -1541,6 +1592,16 @@ void Engine::Update(float dt)
         if (_charAnimator.WantsToExit())
         {
             _charAnimator.Unload();
+            _menu.Init();
+            _gameState = GameState::Menu;
+        }
+        break;
+
+    case GameState::AttackEditor:
+        _attackEditor.Update();
+        if (_attackEditor.WantsToExit())
+        {
+            _attackEditor.Unload();
             _menu.Init();
             _gameState = GameState::Menu;
         }
@@ -1711,6 +1772,11 @@ void Engine::Update(float dt)
 
 void Engine::UpdateGamePlay(float dt)
 {
+    // Hit-stop: freeze the simulation for a few frames so impacts land hard.
+    if (_hitStopTimer > 0.f) { _hitStopTimer -= GetFrameTime(); return; }
+    // Slow-mo (crit / boss death): scale the gameplay sim (timer ticks in Update).
+    if (_slowMoTimer > 0.f) dt *= _slowMoScale;
+
     if (_debug.IsActive())
     {
         if (HandleDebugToggleTabInput())
@@ -1760,6 +1826,10 @@ void Engine::UpdateGamePlay(float dt)
                 _player.RestoreMana(cmd.value); break;
             case DebugActionKind::AddGold:
                 _player.AddGold(cmd.value); break;
+            case DebugActionKind::SpawnLoot:
+                DebugSpawnLoot(); break;
+            case DebugActionKind::ForceLevelUp:
+                _player.AddExp(60); break;
             case DebugActionKind::AddExp:
                 _player.AddExp(cmd.value); break;
             case DebugActionKind::TreasureCards:
@@ -1888,6 +1958,9 @@ void Engine::UpdateGamePlay(float dt)
         {
             _playerDying = true;
             _gameOverTimer = _gameOverDelay;
+            TriggerSlowMo(1.2f, 0.35f);   // death slow-mo
+            _deathVignette = 1.2f;         // dark-red overlay (decays in Update)
+            // TODO(SFX): player-death sting.
         }
     }
 
@@ -2051,6 +2124,8 @@ void Engine::UpdateGamePlay(float dt)
         UpdateSpreadProjectiles(dt);
         UpdateLavaBallProjectiles(dt);
         UpdateEnemyProjectiles(dt);
+        ApplyPendingReflect();
+        UpdateWarlockMinions(dt);
         UpdatePoisonClouds(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
@@ -2059,15 +2134,22 @@ void Engine::UpdateGamePlay(float dt)
         UpdateCyclopsLasers(dt);
     }
 
+    Vector2 lootCentre = _player.GetWorldPos();
     for (auto& pickup : _pickups)
     {
         if (!pickup->IsActive())
             continue;
 
+        Vector2 pp = pickup->GetWorldPos();
+        float dx = lootCentre.x - pp.x, dy = lootCentre.y - pp.y;
+        if (dx * dx + dy * dy < 210.f * 210.f)
+            pickup->Magnetize(lootCentre, std::min(1.f, GetFrameTime() * 9.f));
+
         if (CheckCollisionRecs(_player.GetCollisionRec(), pickup->GetCollisionRec()))
         {
             StopSound(_pickupSound);
-            PlaySound(_pickupSound);
+            PlaySound(_pickupSound);   // (SFX hook: collect ping)
+            _vfx.SpawnImpactBurst(pickup->GetWorldPos(), Color{ 255, 220, 120, 255 }, 5, 170.f);
             pickup->OnCollect(_player);
         }
     }
@@ -2264,6 +2346,10 @@ void Engine::Draw()
         _charAnimator.Draw();
         break;
 
+    case GameState::AttackEditor:
+        _attackEditor.Draw();
+        break;
+
     case GameState::GameOver:
     {
         int goResult = _pauseUI.DrawGameOver(GetPromptModeForUi());
@@ -2367,6 +2453,8 @@ void Engine::Draw()
 
     default: break;
     }
+
+    DrawScreenFx();   // crit spotlight + level-up/ultimate flash, over the whole canvas
 }
 
 void Engine::HandleCollisions()
@@ -2537,7 +2625,7 @@ void Engine::UpdateEnemyCount(float dt)
 
 void Engine::TriggerScreenShake(float strength, float duration)
 {
-    _shakeStrength = strength;
+    _shakeStrength = strength * _juiceShakeMult;   // global multiplier (debug juice panel)
     _shakeTimer = duration;
 }
 
@@ -2557,22 +2645,29 @@ void Engine::DrawHUD()
         DrawText(text, (int)x, (int)y, fontSize, textColor);
     };
 
-    drawLabelBox(("Gold: " + std::to_string(_player.GetGold())).c_str(),
+    // Counters tick smoothly toward the real value (satisfying loot feel).
+    float ctrK = std::min(1.f, GetFrameTime() * 10.f);
+    _displayGold  += ((float)_player.GetGold()  - _displayGold)  * ctrK;
+    _displayCells += ((float)_player.GetCells() - _displayCells) * ctrK;
+    if (fabsf(_displayGold  - _player.GetGold())  < 0.6f) _displayGold  = (float)_player.GetGold();
+    if (fabsf(_displayCells - _player.GetCells()) < 0.6f) _displayCells = (float)_player.GetCells();
+
+    drawLabelBox(("Gold: " + std::to_string((int)(_displayGold + 0.5f))).c_str(),
         hc.goldX, hc.goldY, (int)hc.goldFs, GOLD);
     if (_currentRoomType != RoomType::Store)
         drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(),
             hc.enemiesX, hc.enemiesY, (int)hc.enemiesFs, RAYWHITE);
 
-    // Carried Mystic Cells — pink to match the pickup orbs; lost on death.
-    drawLabelBox(("Cells: " + std::to_string(_player.GetCells())).c_str(),
+    // Carried Echoes — pink to match the pickup orbs; lost on death.
+    drawLabelBox(("Echoes: " + std::to_string((int)(_displayCells + 0.5f))).c_str(),
         hc.goldX, hc.enemiesY + hc.enemiesFs + 24.f, (int)hc.goldFs, Color{ 255, 120, 210, 255 });
 
-    // "+N Cells banked" toast after reaching Zeph with carried cells.
+    // "+N Echoes banked" toast after reaching Zeph with carried cells.
     if (_cellsBankedToastTimer > 0.f)
     {
         _cellsBankedToastTimer -= GetFrameTime();
         float toastAlpha = std::min(1.f, _cellsBankedToastTimer / 0.75f);
-        const char* toastText = TextFormat("+%d Cells banked with Zeph", _cellsBankedToastAmount);
+        const char* toastText = TextFormat("+%d Echoes banked with Zeph", _cellsBankedToastAmount);
         int toastFontSize = 40;
         int toastWidth = MeasureText(toastText, toastFontSize);
         float toastX = (float)kVirtualWidth * 0.5f - toastWidth * 0.5f;
@@ -2650,13 +2745,17 @@ void Engine::DrawHUD()
             float pulse = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
             DrawCircleV(hpOrbCentre, orbR + 16.f, Fade(RED, 0.22f * pulse));
         }
-        drawOrb(hpOrbCentre, orbR, hpPct,
+        // Orb fill slides toward the true value instead of snapping.
+        float orbK = std::min(1.f, GetFrameTime() * 8.f);
+        _displayHpPct += (hpPct - _displayHpPct) * orbK;
+        drawOrb(hpOrbCentre, orbR, _displayHpPct,
             hpFill, TextFormat("HP %.0f", curHp));
 
         int curMana = _player.GetMana();
         int maxMana = _player.GetMaxMana();
         float manaPct = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
-        drawOrb(mpOrbCentre, orbR, manaPct,
+        _displayManaPct += (manaPct - _displayManaPct) * orbK;
+        drawOrb(mpOrbCentre, orbR, _displayManaPct,
             Color{245, 205, 45, 235}, TextFormat("MP %d", curMana));
     }
 
@@ -5182,7 +5281,7 @@ void Engine::HandlePlayerMeleeDamage()
             int dmg  = ScalePlayerHit(*enemy, std::max(1, base), crit);
             enemy->TakeDamage(dmg, _player.GetWorldPos());
             ApplyPlayerLifesteal(dmg);
-            _vfx.SpawnFloatingText(enemy->GetWorldPos(), dmg, crit ? GOLD : YELLOW);
+            RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
             _vfx.SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
             hitAny = true;
         }
@@ -5285,11 +5384,13 @@ void Engine::SpawnSpreadBurst(AbilityType element)
     };
 
     Vector2 origin = _player.GetCastOrigin();
+    const AttackTuning* t = AttackTuningStore::Get(AttackTuningKeyForAbility(element));
 
     for (const Vector2& dir : directions)
     {
         SpreadProjectile projectile;
         projectile.Init(origin, dir, element);
+        if (t && t->hasBox && t->w > 0.f) projectile.SetRadius(t->w * 0.5f);
         _spreadProjectiles.push_back(projectile);
     }
 }
@@ -5298,11 +5399,19 @@ void Engine::SpawnBolt(AbilityType element)
 {
     SpreadProjectile projectile;
     projectile.Init(_player.GetCastOrigin(), _player.GetFacingDirection(), element);
+    const AttackTuning* t = AttackTuningStore::Get(AttackTuningKeyForAbility(element));
+    if (t && t->hasBox && t->w > 0.f) projectile.SetRadius(t->w * 0.5f);
     _spreadProjectiles.push_back(projectile);
 }
 
 void Engine::SpawnUltimateBurst(AbilityType element)
 {
+    // Big elemental screen flash on the ult cast.
+    Color flash = (element == AbilityType::IceUltimate)      ? Color{ 130, 210, 255, 255 }
+                : (element == AbilityType::ElectricUltimate) ? Color{ 255, 240, 130, 255 }
+                :                                              Color{ 255, 150, 70, 255 };
+    TriggerScreenFlash(flash, 0.30f);
+
     // Fill the entire visible screen with blasts. Positions are computed in
     // screen space then converted to world space so they always cover the
     // full 1920x1080 view regardless of where the player is.
@@ -5379,7 +5488,7 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
         int dmg = ScalePlayerHit(*enemy, std::max(1, damage), crit);
         enemy->TakeDamage(dmg, playerPos);
         ApplyPlayerLifesteal(dmg);
-        _vfx.SpawnFloatingText(enemy->GetWorldPos(), dmg, crit ? GOLD : YELLOW);
+        RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
 
         if (stunSeconds  > 0.f) enemy->ApplyFreeze(stunSeconds);          // stun ≈ frozen hold
         if (bleedSeconds > 0.f) enemy->ApplyBurn(0.f, bleedDmgPerTick, playerPos);  // bleed DoT
@@ -5413,13 +5522,27 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // Helper to scale a base value by ability level and the active damage buff.
     auto dmgVal = [&](float base) { return std::max(1, (int)roundf(base * level * buff)); };
 
+    // Attack Editor override: if a hitbox was saved for this ability, use it
+    // (centred at the box offset from the player, mirrored by facing). No file =
+    // the original hardcoded rect below, so gameplay is unchanged until tuned.
+    const AttackTuning* atkTune = AttackTuningStore::Get(AttackTuningKeyForAbility(ability));
+    auto tunedOr = [&](Rectangle def) -> Rectangle {
+        if (atkTune && atkTune->hasBox)
+        {
+            float cx = playerPos.x + facingSign * atkTune->x;
+            float cy = playerPos.y + atkTune->y;
+            return Rectangle{ cx - atkTune->w * 0.5f, cy - atkTune->h * 0.5f, atkTune->w, atkTune->h };
+        }
+        return def;
+    };
+
     // Builds a forward rectangle starting at the player, extending in facing dir.
     auto forwardRect = [&](float length, float height) -> Rectangle {
         float x = (facingSign > 0.f) ? playerPos.x : playerPos.x - length;
-        return Rectangle{ x, playerPos.y - height * 0.5f, length, height };
+        return tunedOr(Rectangle{ x, playerPos.y - height * 0.5f, length, height });
     };
     auto radialRect = [&](float radius) -> Rectangle {
-        return Rectangle{ playerPos.x - radius, playerPos.y - radius, radius * 2.f, radius * 2.f };
+        return tunedOr(Rectangle{ playerPos.x - radius, playerPos.y - radius, radius * 2.f, radius * 2.f });
     };
 
     auto pushVfx = [&](WarriorVfxKind kind, float lifetime, float radius, Color tint) {
@@ -5672,10 +5795,10 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         _warriorVfx.push_back(z);
         break;
     }
-    case AbilityType::ShieldOfFaith:
+    case AbilityType::ShieldOfFaith:   // "Aegis" — reflect + smite buff (no heal)
     {
         _player.GrantDamageBuff(1.5f, 6.f);
-        _player.Heal(3);
+        _player.GrantReflect(0.5f, 6.f);
         pushVfx(WarriorVfxKind::Cry, 0.6f, 160.f, Color{ 255, 235, 150, 255 });
         break;
     }
@@ -5690,26 +5813,26 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         pushShot(0.42f, 480.f, AbilityType::HammerThrow, true);
         break;
     }
-    case AbilityType::LayOnHands:
+    case AbilityType::LayOnHands:   // repurposed "Vengeful Ward" — strong reflect + full retribution (no heal)
     {
-        _player.Heal(6);
+        _player.GrantReflect(0.6f, 6.f);
+        _player.AddRetribution(5);
         pushVfx(WarriorVfxKind::Cry, 0.6f, 150.f, Color{ 255, 245, 190, 255 });
         break;
     }
     case AbilityType::DivineStorm:
     {
         int hits = DamageEnemiesInRect(radialRect(320.f), dmgVal(7.f + atk * 1.4f), 1.f, 0.f, 0.f, 0);
-        _player.Heal(std::min(4, hits));   // retribution restores health per foe struck
+        _player.AddRetribution(hits);   // wrath builds per foe struck (no heal)
         pushVfx(WarriorVfxKind::Slam, 0.5f, 320.f, Color{ 255, 235, 150, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
         break;
     }
-    case AbilityType::AvengingWrath:
+    case AbilityType::AvengingWrath:   // pure wrath — big damage buff + reflect, no heal/lifesteal
     {
         _player.GrantDamageBuff(1.9f, 7.f);
-        _player.GrantLifesteal(0.3f, 7.f);
-        _player.Heal(3);
+        _player.GrantReflect(0.5f, 7.f);
         pushVfx(WarriorVfxKind::Cry, 0.7f, 180.f, Color{ 255, 240, 170, 255 });
         TriggerScreenShake(8.f, 0.25f);
         break;
@@ -6184,19 +6307,189 @@ void Engine::UpdateUltimateSequence(float dt)
     }
 }
 
+namespace
+{
+    struct JuiceParam { const char* name; float step; float lo; float hi; bool isBool; };
+    const JuiceParam kJuiceParams[] = {
+        { "Damage # scale",  10.f,  1.f,   999.f, false },
+        { "Crit slow dur",   0.05f, 0.f,   1.5f,  false },
+        { "Crit slow scale", 0.05f, 0.05f, 1.f,   false },
+        { "Boss slow dur",   0.1f,  0.f,   3.f,   false },
+        { "Boss slow scale", 0.05f, 0.05f, 1.f,   false },
+        { "Kill hit-stop",   0.01f, 0.f,   0.3f,  false },
+        { "Shake mult",      0.1f,  0.f,   3.f,   false },
+        { "Crit focus dark", 0.05f, 0.f,   1.f,   false },
+        { "FORCE CRIT",      0.f,   0.f,   1.f,   true  },
+    };
+    constexpr int kJuiceParamCount = (int)(sizeof(kJuiceParams) / sizeof(kJuiceParams[0]));
+}
+
+void Engine::UpdateJuicePanel()
+{
+    float* vals[] = { &_juiceDamageScale, &_juiceCritSlowDur, &_juiceCritSlowScale,
+                      &_juiceBossSlowDur, &_juiceBossSlowScale, &_juiceKillHitStop,
+                      &_juiceShakeMult, &_juiceCritFocus };
+
+    if (IsKeyPressed(KEY_ESCAPE)) { _juicePanelOpen = false; return; }
+    if (IsKeyPressed(KEY_DOWN)) _juiceSel = (_juiceSel + 1) % kJuiceParamCount;
+    if (IsKeyPressed(KEY_UP))   _juiceSel = (_juiceSel + kJuiceParamCount - 1) % kJuiceParamCount;
+
+    _juiceNudgeCd -= GetFrameTime();
+    int dir = 0;
+    if      (IsKeyPressed(KEY_RIGHT)) dir = 1;
+    else if (IsKeyPressed(KEY_LEFT))  dir = -1;
+    else if (_juiceNudgeCd <= 0.f)
+    {
+        if      (IsKeyDown(KEY_RIGHT)) dir = 1;
+        else if (IsKeyDown(KEY_LEFT))  dir = -1;
+    }
+
+    const JuiceParam& p = kJuiceParams[_juiceSel];
+    if (p.isBool)
+    {
+        if (dir != 0 || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE))
+            _juiceForceCrit = !_juiceForceCrit;
+    }
+    else if (dir != 0)
+    {
+        float* v = vals[_juiceSel];
+        *v += dir * p.step;
+        if (*v < p.lo) *v = p.lo;
+        if (*v > p.hi) *v = p.hi;
+        _juiceNudgeCd = 0.07f;
+    }
+}
+
+void Engine::DrawJuicePanel()
+{
+    float vals[] = { _juiceDamageScale, _juiceCritSlowDur, _juiceCritSlowScale,
+                     _juiceBossSlowDur, _juiceBossSlowScale, _juiceKillHitStop,
+                     _juiceShakeMult, _juiceCritFocus };
+    const float sw = (float)kVirtualWidth;
+    float pw = 520.f, ph = 44.f + kJuiceParamCount * 34.f, px = sw - pw - 30.f, py = 120.f;
+    DrawRectangleRounded({ px, py, pw, ph }, 0.04f, 6, Fade(Color{ 18, 16, 26, 255 }, 0.94f));
+    DrawRectangleRoundedLines({ px, py, pw, ph }, 0.04f, 6, Color{ 235, 210, 140, 255 });
+    DrawText("JUICE TUNING", (int)(px + 18.f), (int)(py + 12.f), 24, Color{ 235, 210, 140, 255 });
+
+    for (int i = 0; i < kJuiceParamCount; i++)
+    {
+        float y = py + 44.f + i * 34.f;
+        bool sel = (i == _juiceSel);
+        if (sel) DrawRectangle((int)(px + 6.f), (int)y - 2, (int)pw - 12, 30, Fade(GOLD, 0.16f));
+        DrawText(kJuiceParams[i].name, (int)(px + 18.f), (int)y, 22, sel ? GOLD : RAYWHITE);
+        const char* valTxt = kJuiceParams[i].isBool
+            ? (_juiceForceCrit ? "ON" : "off")
+            : ((i == 0) ? TextFormat("%.0f", vals[i]) : TextFormat("%.2f", vals[i]));
+        DrawText(valTxt, (int)(px + pw - 110.f), (int)y, 22, sel ? GOLD : Color{ 180, 210, 255, 255 });
+    }
+    DrawText("Up/Down: pick   Left/Right: adjust (hold)   J/ESC: close",
+             (int)(px + 18.f), (int)(py + ph - 26.f), 16, Color{ 165, 160, 185, 255 });
+}
+
+void Engine::DrawScreenFx()
+{
+    // Crit focus — a soft dark spotlight centred on the hit (no blur; pixel-safe).
+    if (_critFocusTimer > 0.f)
+    {
+        float t = _critFocusTimer / _critFocusDur;                 // 1 -> 0
+        float dark = _juiceCritFocus * t;
+        float radius = kVirtualHeight * 0.9f;
+        DrawCircleGradient((int)_critFocusScreenPos.x, (int)_critFocusScreenPos.y,
+                           radius, Fade(BLACK, 0.f), Fade(BLACK, dark));
+    }
+    // Screen flash (level-up / ultimate).
+    if (_screenFlashTimer > 0.f && _screenFlashDur > 0.f)
+    {
+        float a = (_screenFlashTimer / _screenFlashDur) * 0.45f;
+        DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(_screenFlashColor, a));
+    }
+    // Player hurt — red vignette reddening from the screen edges inward.
+    if (_playerHurtTimer > 0.f)
+    {
+        float a = (_playerHurtTimer / 0.4f) * 0.5f;
+        DrawCircleGradient(kVirtualWidth / 2, kVirtualHeight / 2, kVirtualHeight * 0.85f,
+                           Fade(Color{ 200, 20, 20, 255 }, 0.f), Fade(Color{ 200, 20, 20, 255 }, a));
+    }
+    // Player death — heavy dark-red wash over the whole screen during the beat.
+    if (_deathVignette > 0.f)
+    {
+        float a = std::min(0.6f, _deathVignette * 0.55f);
+        DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(Color{ 90, 0, 0, 255 }, a));
+    }
+
+    if (_juicePanelOpen) DrawJuicePanel();
+}
+
+void Engine::RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bool isBoss, Color textColor)
+{
+    _vfx.SpawnFloatingText(enemyPos, dmg, crit ? GOLD : textColor, crit ? 1.7f : 1.f);
+    _vfx.SpawnImpactBurst(enemyPos, crit ? GOLD : textColor,
+                          killed ? 12 : (crit ? 9 : 4), killed ? 360.f : 240.f);
+
+    if (killed)
+    {
+        TriggerScreenShake(isBoss ? 9.f : 6.5f, isBoss ? 0.35f : 0.18f);
+        if (isBoss) TriggerSlowMo(_juiceBossSlowDur, _juiceBossSlowScale);   // cinematic boss-death slow-mo
+        else        RequestHitStop(_juiceKillHitStop);                        // snappy trash kill
+    }
+    else if (crit)
+    {
+        TriggerScreenShake(3.f, 0.09f);
+        TriggerSlowMo(_juiceCritSlowDur, _juiceCritSlowScale);   // crit slowdown (instead of extra push)
+        // Focus spotlight on the hit — screen pos via the same camera transform
+        // the world objects use.
+        _critFocusTimer     = _critFocusDur = 0.3f;
+        _critFocusScreenPos = Vector2{
+            enemyPos.x - (_cameraPos.x - _shakeOffset.x) + kVirtualWidth  * 0.5f,
+            enemyPos.y - (_cameraPos.y - _shakeOffset.y) + kVirtualHeight * 0.5f };
+    }
+}
+
+void Engine::ApplyPendingReflect()
+{
+    float dmg; Vector2 pos;
+    if (!_player.ConsumeReflect(dmg, pos) || dmg < 1.f) return;
+
+    Enemy* best = nullptr; float bestD = 1e18f;
+    for (auto& e : _enemies)
+    {
+        if (!e->IsActive() || !e->IsAlive()) continue;
+        Vector2 ep = e->GetWorldPos();
+        float d = (ep.x - pos.x) * (ep.x - pos.x) + (ep.y - pos.y) * (ep.y - pos.y);
+        if (d < bestD) { bestD = d; best = e.get(); }
+    }
+    if (best)
+    {
+        int r = (int)lroundf(dmg);
+        bool bossKill = best->IsBoss();
+        best->TakeDamage(r, _player.GetWorldPos());
+        RegisterHitFx(best->GetWorldPos(), r, false, !best->IsAlive(), bossKill, Color{ 255, 220, 120, 255 });
+    }
+}
+
 void Engine::ApplyUltimateImpact()
 {
     // Hit every enemy currently visible on screen (with a small margin beyond edges).
-    const float halfW = kVirtualWidth  * 0.55f;
-    const float halfH = kVirtualHeight * 0.55f;
+    // Attack Editor override: a saved box replaces the screen-wide default so the
+    // damage region can be matched to the blast FX.
+    float halfW = kVirtualWidth  * 0.55f;
+    float halfH = kVirtualHeight * 0.55f;
     Vector2 playerPos = _player.GetWorldPos();
+    Vector2 centreOff{ 0.f, 0.f };
+    const AttackTuning* ultTune = AttackTuningStore::Get(AttackTuningKeyForAbility(_ultimateElement));
+    if (ultTune && ultTune->hasBox)
+    {
+        halfW = ultTune->w * 0.5f;
+        halfH = ultTune->h * 0.5f;
+        centreOff = { ultTune->x, ultTune->y };
+    }
 
     for (auto& enemy : _enemies)
     {
         if (!enemy->IsActive() || !enemy->IsAlive())
             continue;
 
-        Vector2 delta = Vector2Subtract(enemy->GetWorldPos(), playerPos);
+        Vector2 delta = Vector2Subtract(enemy->GetWorldPos(), Vector2Add(playerPos, centreOff));
         if (fabsf(delta.x) > halfW || fabsf(delta.y) > halfH)
             continue;
 
@@ -6466,7 +6759,7 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 int dmg = ScalePlayerHit(*enemy, base, basicCrit);
                 enemy->TakeDamage(dmg, _player.GetWorldPos());
                 ApplyPlayerLifesteal(dmg);
-                _vfx.SpawnFloatingText(enemy->GetWorldPos(), dmg, basicCrit ? GOLD : RAYWHITE);
+                RegisterHitFx(enemy->GetWorldPos(), dmg, basicCrit, !enemy->IsAlive(), enemy->IsBoss(), RAYWHITE);
                 _vfx.SpawnHitEffect(elementToCastType(element), projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 break;
@@ -6489,7 +6782,7 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 Color dmgColor = spreadCrit ? GOLD :
                                  (element == AbilityType::IceSpread   || element == AbilityType::IceBolt)      ? SKYBLUE  :
                                  (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt) ? YELLOW   : ORANGE;
-                _vfx.SpawnFloatingText(enemy->GetWorldPos(), hitDamage, dmgColor);
+                RegisterHitFx(enemy->GetWorldPos(), hitDamage, spreadCrit, !enemy->IsAlive(), enemy->IsBoss(), dmgColor);
             }
 
             // Per-element on-hit effect - same for both spread and bolt of the same element
@@ -6567,7 +6860,7 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
         spawnGold(GoldDenomination::Single,  80.f, -110.f);
         spawnGold(GoldDenomination::Single,   0.f, -150.f);
 
-        // Mystic Cells: bosses guarantee a big haul (1x Ten + 2x Five = 20 cells).
+        // Echoes: bosses guarantee a big haul (1x Ten + 2x Five = 20 cells).
         auto spawnCell = [&](CellDenomination denom, float ox, float oy)
         {
             auto c = std::make_unique<CellPickup>();
@@ -6648,7 +6941,7 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
         _pickups.push_back(std::move(eg));
     }
 
-    // Mystic Cells (meta progression currency, Dead Cells style):
+    // Echoes (meta progression currency, Dead Cells style):
     // Ogres/elites always drop a Five; regular enemies drop a Single 30% of the time.
     if (isOgre)
     {
@@ -6706,7 +6999,7 @@ void Engine::SpawnTimedPickup()
 }
 
 // =============================================================================
-// Meta progression — Mystic Cells, Legacy Altar, permanent unlocks
+// Meta progression — Echoes, Legacy Altar, permanent unlocks
 // =============================================================================
 
 Vector2 Engine::GetLegacyAltarPos() const
@@ -6829,13 +7122,22 @@ void Engine::DrawMetaShop()
     const Texture2D& cellTexture = CellPickup::GetMediumTexture();
 
     // -- Title + banked cell balance -------------------------------------------
-    const char* title = "ZEPH'S LEGACY";
+    const char* title = "ECHOES OF THE FALLEN";
     int titleFontSize = 74;
     DrawText(title, (int)(sw * 0.5f - MeasureText(title, titleFontSize) * 0.5f), 70, titleFontSize, Color{ 255, 170, 230, 255 });
 
     const char* subtitle = "Permanent unlocks. Death cannot take these from you.";
     int subFontSize = 28;
-    DrawText(subtitle, (int)(sw * 0.5f - MeasureText(subtitle, subFontSize) * 0.5f), 160, subFontSize, Color{ 190, 160, 200, 255 });
+    DrawText(subtitle, (int)(sw * 0.5f - MeasureText(subtitle, subFontSize) * 0.5f), 158, subFontSize, Color{ 190, 160, 200, 255 });
+
+    // Poe's voice — a rotating, melancholy greeting from the keeper of Echoes.
+    const char* poeLine = kPoeGreetings[_poeGreetingIdx % kPoeGreetingCount];
+    int poeFs = 20;
+    const char* poePrefix = "Poe: ";
+    int poeLineW = MeasureText(poePrefix, poeFs) + MeasureText(poeLine, poeFs);
+    int poeX = (int)(sw * 0.5f - poeLineW * 0.5f);
+    DrawText(poePrefix, poeX, 190, poeFs, Color{ 214, 196, 255, 255 });
+    DrawText(poeLine, poeX + MeasureText(poePrefix, poeFs), 190, poeFs, Color{ 178, 170, 198, 235 });
 
     // Banked balance with the cell orb icon
     const char* balanceText = TextFormat("%d", _meta.GetBankedCells());
@@ -6925,7 +7227,7 @@ void Engine::DrawMetaShop()
     int hintFontSize = 24;
     DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, hintFontSize) * 0.5f), (int)(sh - 60.f), hintFontSize, Color{ 170, 160, 180, 255 });
 
-    const char* lifetimeText = TextFormat("Lifetime cells banked: %d", _meta.GetLifetimeCells());
+    const char* lifetimeText = TextFormat("Lifetime Echoes banked: %d", _meta.GetLifetimeCells());
     DrawText(lifetimeText, 40, (int)(sh - 60.f), 22, Color{ 130, 120, 140, 255 });
 }
 
@@ -6950,11 +7252,11 @@ static const PactOption kPacts[] = {
     { "Berserker's Pact", "+35% your damage",   "Enemies deal +25% damage", 1.35f, 1.f,   1.25f, 1.f,   0, 1.f,  false },
     { "Glass Cannon",     "+50% your damage",   "-30% max health",          1.50f, 1.f,   1.f,   0.70f, 0, 1.f,  false },
     { "Iron Curse",       "+2 armour",          "-20% your damage",         0.80f, 1.f,   1.f,   1.f,   2, 1.f,  false },
-    { "Blood Pact",       "+50% Mystic Cells",  "Enemies have +25% HP",     1.f,   1.25f, 1.f,   1.f,   0, 1.5f, false },
+    { "Blood Pact",       "+50% Echoes",  "Enemies have +25% HP",     1.f,   1.25f, 1.f,   1.f,   0, 1.5f, false },
     { "Titan's Bargain",  "+35% max health",    "Enemies have +30% HP",     1.f,   1.30f, 1.f,   1.35f, 0, 1.f,  false },
     { "Fortune's Gambit", "Gain a random relic","Enemies have +30% HP",     1.f,   1.30f, 1.f,   1.f,   0, 1.f,  true  },
     { "Reckless Might",   "+40% your damage",   "-15% max health",          1.40f, 1.f,   1.f,   0.85f, 0, 1.f,  false },
-    { "Cursed Hoard",     "+100% Mystic Cells", "Enemies deal +30% damage", 1.f,   1.f,   1.30f, 1.f,   0, 2.0f, false },
+    { "Cursed Hoard",     "+100% Echoes", "Enemies deal +30% damage", 1.f,   1.f,   1.30f, 1.f,   0, 2.0f, false },
 };
 static const int kPactCount = (int)(sizeof(kPacts) / sizeof(kPacts[0]));
 
@@ -8214,6 +8516,13 @@ void Engine::ResetRunState()
     _poisonClouds.clear();
     _cyclopsLasers.clear();
     _pickups.clear();
+    SpawnWarlockMinion();   // Warlock's imp (clears + respawns; no-op for other classes)
+    _lastPlayerLevel = _player.GetLevel();   // avoid a false level-up flash on run start
+    _lastPlayerHp    = _player.GetHealthValue();
+    _slowMoTimer = 0.f; _critFocusTimer = 0.f; _screenFlashTimer = 0.f;
+    _playerHurtTimer = 0.f; _deathVignette = 0.f;
+    _displayGold = (float)_player.GetGold();  _displayCells = (float)_player.GetCells();
+    _displayHpPct = 1.f; _displayManaPct = 1.f;
     _vfx.Clear();
     _player.Init();
 
@@ -8226,7 +8535,7 @@ void Engine::ResetRunState()
         _meta.HasSixthAbilitySlot(),
         _meta.GetStartingArmourBonus());
 
-    _player.SetCellGainMultiplier(_meta.GetCellGainMultiplier());   // Cell Surge
+    _player.SetCellGainMultiplier(_meta.GetCellGainMultiplier());   // Echo Surge
 
     // Heirloom: begin the run already holding one random relic.
     if (_meta.HasStartingRelic())
@@ -8807,12 +9116,14 @@ void Engine::UpdateClassSelect()
     Rectangle lookNext  { centerX + centerW - 84.f, portraitCY - 22.f, 46.f, 60.f };
 
     // ---- Appearance ("look") cycling -- independent of class ------------------
+    // Sprite lives on the TRIGGERS (LT/RT) so it can never be confused with the
+    // class controls (D-pad / bumpers). Two separate button pairs on purpose.
     bool appPrev = IsKeyPressed(KEY_Q);
     bool appNext = IsKeyPressed(KEY_E);
     if (_gamepad.isActive)
     {
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_TRIGGER_1))  appPrev = true;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) appNext = true;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_TRIGGER_2))  appPrev = true;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_2)) appNext = true;
     }
     bool clickedLook = false;
     if (click && CheckCollisionPointRec(mouse, lookPrev)) { appPrev = true; clickedLook = true; }
@@ -8821,12 +9132,13 @@ void Engine::UpdateClassSelect()
     if (appNext) { _appearanceCursor = (_appearanceCursor + 1) % appCount;            ReloadAppearancePortrait(); }
 
     // ---- Class cycling --------------------------------------------------------
+    // Class lives on the D-pad AND the bumpers (LB/RB) — never the triggers.
     bool clsPrev = IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A);
     bool clsNext = IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D);
     if (_gamepad.isActive)
     {
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  clsPrev = true;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) clsNext = true;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)  || IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_TRIGGER_1))  clsPrev = true;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT) || IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_1)) clsNext = true;
     }
     bool clickedNav = false;
     if (click && (CheckCollisionPointRec(mouse, bigLeft)  || CheckCollisionPointRec(mouse, leftPeek)))  { clsPrev = true; clickedNav = true; }
@@ -8894,7 +9206,11 @@ void Engine::DrawClassSelect()
         int fs = 26;
         DrawText(pinfo.name, (int)(r.x + r.width * 0.5f - MeasureText(pinfo.name, fs) * 0.5f),
                  (int)(r.y + 18.f), fs, Color{ 150, 144, 164, 255 });
-        drawHero(r.x + r.width * 0.5f, r.y + r.height * 0.5f + 20.f, 4.0f, Color{ 150, 150, 160, 180 });
+        // NO hero sprite on the peeks — the sprite belongs ONLY to the focused
+        // class card, so changing your look never looks tied to picking a class.
+        int pfs = 17;
+        DrawText(pinfo.playstyle, (int)(r.x + r.width * 0.5f - MeasureText(pinfo.playstyle, pfs) * 0.5f),
+                 (int)(r.y + r.height * 0.5f - 10.f), pfs, Color{ 122, 118, 138, 255 });
     };
     drawPeek(leftPeekX,  prevIdx);
     drawPeek(rightPeekX, nextIdx);
@@ -8970,8 +9286,8 @@ void Engine::DrawClassSelect()
     DrawText(pos, (int)(sw * 0.5f - MeasureText(pos, 22) * 0.5f), (int)(pipY + 20.f), 22, Color{ 200, 195, 212, 255 });
 
     const char* hint = _gamepad.isActive
-        ? "D-Pad: Class    LB/RB: Look    A: Confirm    B: Back"
-        : "A/D or Arrows: Class    Q/E: Look    Enter/Click: Confirm    ESC: Back";
+        ? "D-Pad / LB-RB: Class      LT-RT: Change Hero      A: Confirm      B: Back"
+        : "A/D or Arrows: Class      Q/E: Change Hero      Enter: Confirm      ESC: Back";
     int hintFs = 24;
     DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, hintFs) * 0.5f), (int)(sh - 52.f), hintFs, Color{ 175, 168, 188, 255 });
 }
@@ -9031,6 +9347,26 @@ void Engine::SpawnBossForBiome(Vector2 pos)
 // Debug-panel direct spawns — index order mirrors NewEnemyItems/NewBossItems
 // in DebugPanel.cpp. Used only from the debug panel for playtesting.
 // =============================================================================
+void Engine::DebugSpawnLoot()
+{
+    Vector2 c = _player.GetWorldPos();
+    for (int i = 0; i < 8; i++)
+    {
+        auto g = std::make_unique<GoldPickup>();
+        GoldDenomination d = (i % 3 == 0) ? GoldDenomination::Ten
+                           : (i % 3 == 1) ? GoldDenomination::Five : GoldDenomination::Single;
+        g->Init(Vector2{ c.x + (float)GetRandomValue(-170, 170), c.y + (float)GetRandomValue(-170, 170) }, d);
+        _pickups.push_back(std::move(g));
+    }
+    for (int i = 0; i < 4; i++)
+    {
+        auto ce = std::make_unique<CellPickup>();
+        ce->Init(Vector2{ c.x + (float)GetRandomValue(-150, 150), c.y + (float)GetRandomValue(-150, 150) },
+                 CellDenomination::Single);
+        _pickups.push_back(std::move(ce));
+    }
+}
+
 void Engine::DebugSpawnNewEnemy(int index, Vector2 pos)
 {
     switch (index)
@@ -9145,6 +9481,88 @@ void Engine::UpdatePoisonClouds(float dt)
     }
 }
 
+void Engine::SpawnWarlockMinion()
+{
+    _warlockMinions.clear();
+    if (_player.GetClass() != PlayerClass::Warlock) return;
+    WarlockMinion m;
+    m.pos = Vector2Add(_player.GetWorldPos(), Vector2{ -60.f, -40.f });
+    _warlockMinions.push_back(m);
+}
+
+void Engine::UpdateWarlockMinions(float dt)
+{
+    if (_warlockMinions.empty()) return;
+    const float kSpeed = 320.f, kAttackRange = 80.f, kLeash = 1100.f, kCooldown = 0.7f;
+    const int   kBaseDamage = 4;   // atk-independent; ScalePlayerHit adds relic scaling
+    Vector2 playerPos = _player.GetWorldPos();
+
+    for (auto& m : _warlockMinions)
+    {
+        m.bob += dt;
+        m.frameTimer += dt;
+        if (m.frameTimer >= 1.f / 10.f) { m.frameTimer = 0.f; m.frame++; }
+        if (m.attackCooldown > 0.f) m.attackCooldown -= dt;
+
+        // Nearest active enemy within leash of the player.
+        Enemy* target = nullptr; float bestD = kLeash * kLeash;
+        for (auto& e : _enemies)
+        {
+            if (!e->IsActive() || !e->IsAlive()) continue;
+            Vector2 ep = e->GetWorldPos();
+            float dp = (ep.x - playerPos.x) * (ep.x - playerPos.x) + (ep.y - playerPos.y) * (ep.y - playerPos.y);
+            if (dp > kLeash * kLeash) continue;
+            float dm = (ep.x - m.pos.x) * (ep.x - m.pos.x) + (ep.y - m.pos.y) * (ep.y - m.pos.y);
+            if (dm < bestD) { bestD = dm; target = e.get(); }
+        }
+
+        Vector2 goal  = target ? target->GetWorldPos() : Vector2Add(playerPos, Vector2{ -60.f, -40.f });
+        Vector2 delta = Vector2Subtract(goal, m.pos);
+        float   dist  = Vector2Length(delta);
+        if (fabsf(delta.x) > 2.f) m.facing = (delta.x >= 0.f) ? 1.f : -1.f;
+
+        if (target && dist <= kAttackRange)
+        {
+            if (m.attackCooldown <= 0.f)
+            {
+                bool crit = false;
+                int dmg = ScalePlayerHit(*target, kBaseDamage, crit);
+                target->TakeDamage(dmg, m.pos);
+                RegisterHitFx(target->GetWorldPos(), dmg, crit, !target->IsAlive(), target->IsBoss(), Color{ 195, 130, 240, 255 });
+                m.attackCooldown = kCooldown;
+            }
+        }
+        else if (dist > 4.f)
+        {
+            Vector2 dir = Vector2Scale(delta, 1.f / dist);
+            m.pos = Vector2Add(m.pos, Vector2Scale(dir, kSpeed * dt));
+        }
+    }
+}
+
+void Engine::DrawWarlockMinions(Vector2 worldOffset) const
+{
+    if (_minionTex.id == 0 || _warlockMinions.empty()) return;
+    int frameH = _minionTex.height;
+    int frames = (frameH > 0) ? (_minionTex.width / frameH) : 1;   // square frames
+    if (frames < 1) frames = 1;
+    float fw = (float)_minionTex.width / (float)frames;
+
+    for (const auto& m : _warlockMinions)
+    {
+        int   fr    = (frames > 1) ? (m.frame % frames) : 0;
+        float bobY  = sinf(m.bob * 3.f) * 6.f;
+        float scale = 2.6f;
+        Vector2 screen{ m.pos.x + worldOffset.x + kVirtualWidth  / 2.f,
+                        m.pos.y + worldOffset.y + kVirtualHeight / 2.f + bobY };
+        // Soft demonic aura so the ally reads clearly.
+        DrawCircleV(Vector2{ screen.x, screen.y + frameH * scale * 0.32f }, 24.f, Fade(Color{ 150, 80, 220, 255 }, 0.20f));
+        Rectangle src{ fr * fw, 0.f, fw * m.facing, (float)frameH };   // negative w flips
+        Rectangle dst{ screen.x, screen.y, fw * scale, frameH * scale };
+        DrawTexturePro(_minionTex, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, 0.f, Color{ 210, 170, 255, 255 });
+    }
+}
+
 void Engine::DrawPoisonClouds(Vector2 worldOffset) const
 {
     for (const PoisonCloud& cloud : _poisonClouds)
@@ -9183,8 +9601,10 @@ int Engine::ScalePlayerHit(const Enemy& target, int baseDamage, bool& outCrit) c
         ? (target.GetHealthValue() / target.GetMaxHealthValue()) : 1.f;
     // Cursed Shrine blessing/curse modifies all outgoing player damage.
     int scaledBase = std::max(1, (int)lroundf(baseDamage * _runPlayerDamageMult));
-    return _player.ScaleOutgoingDamage(target.IsFrozen(), target.IsCharged(),
+    int dmg = _player.ScaleOutgoingDamage(target.IsFrozen(), target.IsCharged(),
         target.IsBurning(), hpFraction, scaledBase, outCrit);
+    if (_juiceForceCrit && !outCrit) { outCrit = true; dmg *= 2; }   // debug: force crit
+    return dmg;
 }
 
 void Engine::ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
@@ -9276,8 +9696,11 @@ void Engine::GrantRelic(RelicType type)
     _player.AddRelic(type);
     _relicToastName  = GetRelicInfo(type).name;
     _relicToastTimer = 4.f;
+    // Power-gain moment.
+    TriggerScreenFlash(Color{ 200, 160, 255, 255 }, 0.30f);
+    RequestHitStop(0.06f);
     if (_audioInitialised)
-        PlaySound(_pickupSound);
+        PlaySound(_pickupSound);   // (SFX hook: relic-gain fanfare)
 }
 
 void Engine::DrawOwnedRelics() const
@@ -12058,6 +12481,11 @@ void Engine::UpdateDreamFlicker(float dt)
 
 void Engine::UpdateDungeonRun(float dt)
 {
+    // Hit-stop: freeze the simulation for a few frames so impacts land hard.
+    if (_hitStopTimer > 0.f) { _hitStopTimer -= GetFrameTime(); return; }
+    // Slow-mo (crit / boss death): scale the gameplay sim (timer ticks in Update).
+    if (_slowMoTimer > 0.f) dt *= _slowMoScale;
+
     // -- Dungeon fade transition (Store enter / boss clear) --------------------
     if (_dungeonFadeState != DungeonFadeState::None)
     {
@@ -12263,6 +12691,10 @@ void Engine::UpdateDungeonRun(float dt)
                     _player.RestoreMana(cmd.value); break;
                 case DebugActionKind::AddGold:
                     _player.AddGold(cmd.value); break;
+                case DebugActionKind::SpawnLoot:
+                    DebugSpawnLoot(); break;
+                case DebugActionKind::ForceLevelUp:
+                    _player.AddExp(60); break;
                 case DebugActionKind::AddExp:
                     _player.AddExp(cmd.value); break;
                 case DebugActionKind::TreasureCards:
@@ -12566,8 +12998,8 @@ void Engine::UpdateDungeonRun(float dt)
                 return;
             }
 
-            // -- Legacy Altar (meta progression unlocks) ---------------------
-            // A floating Mystic Cell orb west of Zeph. Standing near it and
+            // -- Poe's altar (Echoes / meta progression unlocks) -------------
+            // Poe, a hovering spirit west of Zeph. Standing near him and
             // pressing the interact key opens the permanent unlock screen.
             _legacyAltarBobTimer += dt;
             Vector2 altarPos = GetLegacyAltarPos();
@@ -12588,6 +13020,7 @@ void Engine::UpdateDungeonRun(float dt)
                 {
                     _metaShopCursor      = 0;
                     _metaShopOpenTimer   = 0.25f;
+                    _poeGreetingIdx      = GetRandomValue(0, kPoeGreetingCount - 1);
                     _gameState           = GameState::MetaShop;
                     return;
                 }
@@ -12721,19 +13154,28 @@ void Engine::UpdateDungeonRun(float dt)
         UpdateLavaBallProjectiles(dt);
         UpdateCyclopsLasers(dt);
         UpdateEnemyProjectiles(dt);
+        ApplyPendingReflect();
+        UpdateWarlockMinions(dt);
         UpdatePoisonClouds(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
 
         // Collect gold coins and health pickups dropped by enemies.
+        Vector2 lootCentre = _player.GetWorldPos();
         for (auto& pickup : _pickups)
         {
             if (!pickup->IsActive()) continue;
+            // Loot magnetism — nearby drops vacuum toward the player.
+            Vector2 pp = pickup->GetWorldPos();
+            float dx = lootCentre.x - pp.x, dy = lootCentre.y - pp.y;
+            if (dx * dx + dy * dy < 210.f * 210.f)
+                pickup->Magnetize(lootCentre, std::min(1.f, GetFrameTime() * 9.f));
             if (CheckCollisionRecs(_player.GetCollisionRec(), pickup->GetCollisionRec()))
             {
                 StopSound(_pickupSound);
-                PlaySound(_pickupSound);
+                PlaySound(_pickupSound);   // (SFX hook: collect ping)
+                _vfx.SpawnImpactBurst(pickup->GetWorldPos(), Color{ 255, 220, 120, 255 }, 5, 170.f);
                 pickup->OnCollect(_player);
             }
         }
@@ -13093,6 +13535,7 @@ void Engine::DrawDungeonRun()
                     if (proj.IsActive())
                         proj.Draw(worldOffset);
                 DrawPoisonClouds(worldOffset);
+                DrawWarlockMinions(worldOffset);
                 DrawEnemyProjectiles(worldOffset);
                 DrawCyclopsLasers(worldOffset);
                 _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
@@ -13157,18 +13600,20 @@ void Engine::DrawDungeonRun()
                 {
                     _shop.DrawNpc(worldOffset);
 
-                    // Cells shop — a hero-sprite merchant (not Zeph) west of Zeph,
-                    // with a small floating Mystic Cell above to mark it as the
-                    // cells vendor and a soft glow so it reads as important.
+                    // Poe — a hovering ghostly spirit (Phantom sprite) who keeps your
+                    // Echoes, with a small floating Echo above his head. He IS the
+                    // glow (a spirit), so there's no painted feet-circle — just a
+                    // faint pale aura around him.
                     {
                         Vector2 altarPos = GetLegacyAltarPos();
                         float bobOffset  = sinf(_legacyAltarBobTimer * 2.2f) * 5.f;
                         Vector2 altarScreen{ altarPos.x + worldOffset.x + kVirtualWidth * 0.5f,
                                              altarPos.y + worldOffset.y + kVirtualHeight * 0.5f };
 
-                        // Soft pink glow at the merchant's feet.
-                        DrawCircleV(Vector2{ altarScreen.x, altarScreen.y + 34.f }, 40.f,
-                            Fade(Color{ 235, 60, 180, 255 }, 0.14f + 0.05f * sinf(_legacyAltarBobTimer * 3.f)));
+                        // Faint pale-lavender spirit aura that breathes around Poe.
+                        float auraPulse = 0.10f + 0.05f * sinf(_legacyAltarBobTimer * 2.4f);
+                        DrawCircleV(Vector2{ altarScreen.x, altarScreen.y + bobOffset }, 48.f,
+                            Fade(Color{ 184, 170, 236, 255 }, auraPulse));
 
                         // Merchant sprite (animated idle: cycle the 6 idle frames).
                         if (_cellsMerchantTex.id != 0)
@@ -13184,7 +13629,18 @@ void Engine::DrawDungeonRun()
                                 Vector2{ mDst.width * 0.5f, mDst.height * 0.5f }, 0.f, WHITE);
                         }
 
-                        // Small Mystic Cell floating over the merchant's head.
+                        // "Poe" nameplate (mirrors Zeph's, in spectral lavender).
+                        {
+                            const char* np = "Poe";
+                            int npFs = 28, npW = MeasureText(np, npFs);
+                            float npY = altarScreen.y - 104.f + bobOffset;
+                            DrawRectangle((int)(altarScreen.x - npW * 0.5f - 10.f), (int)npY,
+                                          npW + 20, 34, Fade(BLACK, 0.6f));
+                            DrawText(np, (int)(altarScreen.x - npW * 0.5f),
+                                     (int)(npY + 17.f - npFs * 0.5f), npFs, Color{ 212, 194, 255, 255 });
+                        }
+
+                        // Small floating Echo bobbing beside Poe (marks him the keeper).
                         {
                             const Texture2D& cellTexture = CellPickup::GetMediumTexture();
                             float cellScale = 2.6f;
@@ -13203,8 +13659,8 @@ void Engine::DrawDungeonRun()
                             int promptWidth = MeasureText(altarPrompt, promptFontSize);
                             DrawText(altarPrompt,
                                 (int)(altarScreen.x - promptWidth * 0.5f),
-                                (int)(altarScreen.y - 92.f),
-                                promptFontSize, Color{ 255, 170, 230, 255 });
+                                (int)(altarScreen.y + 96.f + bobOffset),
+                                promptFontSize, Color{ 212, 194, 255, 255 });
                         }
 
                         // Cursed Shrine — a dark pedestal with a swirling red orb.

@@ -35,6 +35,7 @@ public:
     static int GetFrameCountFor(AbilityType element);
 
     bool        IsActive()       const;
+    void        SetRadius(float r) { _radius = r; }   // Attack Editor hitbox override
     Rectangle   GetCollisionRec() const;
     Vector2     GetWorldPos()     const;
     Vector2     GetDirection()    const;

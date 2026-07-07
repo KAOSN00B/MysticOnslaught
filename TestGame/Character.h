@@ -171,6 +171,21 @@ public:
     float GetLifestealFraction() const { return _lifestealTimer > 0.f ? _lifestealFraction : 0.f; }
     void  GrantDamageBuff(float mult, float duration);
     void  GrantLifesteal(float fraction, float duration);
+
+    // ── Paladin Retribution (no self-heal): being struck fuels a stacking damage
+    // buff, and Aegis reflects a fraction of damage back at the attacker. ──
+    void  GrantReflect(float fraction, float duration) { _reflectFraction = fraction; _reflectTimer = duration; }
+    void  AddRetribution(int n) { int s = _retributionStacks + n; _retributionStacks = (s > kRetributionMaxStacks) ? kRetributionMaxStacks : s; _retributionTimer = kRetributionDuration; }
+    int   GetRetributionStacks() const { return _retributionTimer > 0.f ? _retributionStacks : 0; }
+    bool  IsReflectActive() const { return _reflectTimer > 0.f; }
+    // Engine drains any reflect owed this frame and applies it to the attacker.
+    bool  ConsumeReflect(float& outDmg, Vector2& outPos)
+    {
+        if (!_hasPendingReflect) return false;
+        outDmg = _pendingReflectDamage; outPos = _pendingReflectPos;
+        _pendingReflectDamage = 0.f; _hasPendingReflect = false;
+        return true;
+    }
     void  MoveTowardFacing(float distance);   // short lunge/dash for melee abilities
 
     bool CanApplyMeleeDamage() const;
@@ -361,6 +376,18 @@ private:
     float _damageBuffTimer  = 0.f;
     float _lifestealFraction = 0.f;  // fraction of damage dealt returned as HP
     float _lifestealTimer    = 0.f;
+
+    // Paladin Retribution / Aegis reflect.
+    static constexpr int   kRetributionMaxStacks = 5;
+    static constexpr float kRetributionDuration  = 5.f;
+    static constexpr float kRetributionPerStack  = 0.12f;   // +12% damage per stack
+    int     _retributionStacks    = 0;
+    float   _retributionTimer     = 0.f;
+    float   _reflectFraction      = 0.f;
+    float   _reflectTimer         = 0.f;
+    float   _pendingReflectDamage = 0.f;
+    Vector2 _pendingReflectPos{};
+    bool    _hasPendingReflect    = false;
 
     PlayerClass _class = PlayerClass::Mage;   // chosen at run start
     std::string _appearancePrefix;            // hero sprite set; empty = use class default

@@ -81,6 +81,12 @@
     <ClCompile Include="CharacterAnimator.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="AttackEditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="AttackTuning.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="CellPickup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -270,6 +276,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CharacterAnimator.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="AttackEditor.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="AttackTuning.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CellPickup.h">

@@ -21,6 +21,8 @@ enum class DebugActionKind
     Heal,
     RestoreMana,
     AddGold,
+    SpawnLoot,      // drop a pile of gold + echo pickups near the player (feel test)
+    ForceLevelUp,   // instant level-up (see the power-gain flash)
     AddExp,
     TreasureCards,
     EliteReward,

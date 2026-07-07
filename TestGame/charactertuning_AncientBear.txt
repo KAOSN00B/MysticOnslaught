@@ -1,0 +1,4 @@
+scale=5.000
+anim_0_body_x=12.00
+anim_0_body_y=81.00
+anim_0_body_r=121.00

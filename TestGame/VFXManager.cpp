@@ -1,4 +1,5 @@
 ﻿#include "VFXManager.h"
+#include "GameBalance.h"
 #include "VirtualCanvas.h"
 #include "AnimationUtils.h"
 #include "VirtualCanvas.h"
@@ -45,6 +46,18 @@ void VFXManager::Update(float dt)
         std::remove_if(_effects.begin(), _effects.end(),
             [](const AnimatedEffect& e) { return !e.active; }),
         _effects.end());
+
+    // Impact sparks — fly out, slow down, fade.
+    for (auto& s : _sparks)
+    {
+        s.timer += dt;
+        s.pos = Vector2Add(s.pos, Vector2Scale(s.vel, dt));
+        s.vel = Vector2Scale(s.vel, 1.f - 6.f * dt);   // drag
+    }
+    _sparks.erase(
+        std::remove_if(_sparks.begin(), _sparks.end(),
+            [](const Spark& s) { return s.timer >= s.life; }),
+        _sparks.end());
 }
 
 void VFXManager::Draw(Vector2 worldOffset, Vector2 playerWorldPos, Vector2 playerCastOrigin)
@@ -90,16 +103,33 @@ void VFXManager::DrawFloatingTexts(Vector2 worldOffset)
 
     const float sw2 = kVirtualWidth  / 2.f;
     const float sh2 = kVirtualHeight / 2.f;
+
+    // Impact sparks (drawn under the numbers).
+    for (const auto& s : _sparks)
+    {
+        float st    = s.timer / s.life;
+        float alpha = 1.f - st;
+        float r     = 4.f * (1.f - st) + 1.f;
+        DrawCircleV(Vector2{ s.pos.x + worldOffset.x + sw2, s.pos.y + worldOffset.y + sh2 },
+                    r, Fade(s.color, alpha));
+    }
+
     for (const auto& ft : _floatingTexts)
     {
         float t      = (now - ft.spawnTime) / FloatingText::kLifetime;
         float yOff   = -55.f * t;
         float screenX = ft.worldPos.x + worldOffset.x + sw2;
         float screenY = ft.worldPos.y + worldOffset.y + sh2 + yOff;
+
+        // Spawn "pop": briefly overshoot the font size, then settle.
+        float pop  = (t < 0.18f) ? (1.f + (0.18f - t) / 0.18f * 0.6f) : 1.f;
+        int   fs   = (int)(22.f * ft.scale * pop);
         const char* txt = TextFormat("%d", ft.value);
-        int   tw    = MeasureText(txt, 22);
+        int   tw    = MeasureText(txt, fs);
         float alpha = 1.f - t;
-        DrawText(txt, (int)(screenX - tw / 2.f), (int)screenY, 22, Fade(ft.color, alpha));
+        // Dark outline so big numbers read over any background.
+        DrawText(txt, (int)(screenX - tw / 2.f) + 2, (int)screenY + 2, fs, Fade(BLACK, alpha * 0.6f));
+        DrawText(txt, (int)(screenX - tw / 2.f),     (int)screenY,     fs, Fade(ft.color, alpha));
     }
 }
 
@@ -211,12 +241,29 @@ void VFXManager::SpawnHealEffect()
     _effects.push_back(effect);
 }
 
-void VFXManager::SpawnFloatingText(Vector2 worldPos, int value, Color color)
+void VFXManager::SpawnFloatingText(Vector2 worldPos, int value, Color color, float scale)
 {
     FloatingText ft;
     ft.worldPos  = worldPos;
-    ft.value     = value;
+    ft.value     = value * _damageNumberScale;   // cosmetic big-number scale (debug-tunable)
     ft.color     = color;
+    ft.scale     = scale;
     ft.spawnTime = (float)GetTime();
     _floatingTexts.push_back(ft);
+}
+
+void VFXManager::SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed)
+{
+    for (int i = 0; i < count; i++)
+    {
+        float ang = (float)GetRandomValue(0, 628) / 100.f;
+        float spd = speed * (0.4f + (float)GetRandomValue(0, 100) / 100.f * 0.6f);
+        Spark s;
+        s.pos   = worldPos;
+        s.vel   = Vector2{ cosf(ang) * spd, sinf(ang) * spd };
+        s.color = color;
+        s.timer = 0.f;
+        s.life  = 0.22f + (float)GetRandomValue(0, 100) / 100.f * 0.18f;
+        _sparks.push_back(s);
+    }
 }

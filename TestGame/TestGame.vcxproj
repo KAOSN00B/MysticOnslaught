@@ -164,6 +164,8 @@
     <ClCompile Include="PlayerClass.cpp" />
     <ClCompile Include="CharacterTuning.cpp" />
     <ClCompile Include="CharacterAnimator.cpp" />
+    <ClCompile Include="AttackEditor.cpp" />
+    <ClCompile Include="AttackTuning.cpp" />
     <ClCompile Include="CellPickup.cpp" />
     <ClCompile Include="EnemyProjectile.cpp" />
     <ClCompile Include="SkeletonArcher.cpp" />
@@ -241,6 +243,8 @@
     <ClInclude Include="PlayerClass.h" />
     <ClInclude Include="CharacterTuning.h" />
     <ClInclude Include="CharacterAnimator.h" />
+    <ClInclude Include="AttackEditor.h" />
+    <ClInclude Include="AttackTuning.h" />
     <ClInclude Include="CellPickup.h" />
     <ClInclude Include="EnemyProjectile.h" />
     <ClInclude Include="SkeletonArcher.h" />

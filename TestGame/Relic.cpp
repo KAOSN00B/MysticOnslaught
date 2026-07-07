@@ -24,7 +24,7 @@ static const RelicInfo kRelicTable[(int)RelicType::Count] = {
     { "Thornmail Runes","+2 max HP",                                   RelicRarity::Common, RelicArchetype::Defense },
     // Economy
     { "Midas Touch",    "+60% gold from kills",                        RelicRarity::Common, RelicArchetype::Economy },
-    { "Soul Siphon",    "+60% Mystic Cells\nfrom kills",              RelicRarity::Rare,   RelicArchetype::Economy },
+    { "Soul Siphon",    "+60% Echoes\nfrom kills",              RelicRarity::Rare,   RelicArchetype::Economy },
     { "Scavenger",      "Enemies drop healing\nfar more often",        RelicRarity::Common, RelicArchetype::Economy },
     // Utility
     { "Swift Boots",    "+14% move speed",                            RelicRarity::Common, RelicArchetype::Utility },

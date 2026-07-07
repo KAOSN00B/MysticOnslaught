@@ -57,6 +57,7 @@
 #include "TileMapper.h"
 #include "NineSliceEditor.h"
 #include "CharacterAnimator.h"
+#include "AttackEditor.h"
 #include "DungeonGen.h"
 #include "TileDefs.h"
 #include "RoomLayout.h"
@@ -176,6 +177,7 @@ private:
 
     // Debug-panel direct spawns (index maps to kDebugEnemyList / kDebugBossList).
     void DebugSpawnNewEnemy(int index, Vector2 pos);
+    void DebugSpawnLoot();   // drops a pile of gold + echo pickups near the player
     void DebugSpawnNewBoss(int index, Vector2 pos);
     void UpdateEnemyProjectiles(float dt);    // arrows + fire bolts (player collision)
     void DrawEnemyProjectiles(Vector2 worldOffset) const;
@@ -193,6 +195,62 @@ private:
     // the enemy-death path with the dead enemy's status snapshot.
     void ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
                           bool wasCharged, bool eliteOrBoss);
+    void ApplyPendingReflect();                   // Paladin Aegis: reflect damage to attacker
+
+    // ── Juice ──────────────────────────────────────────────────────────────────
+    float _hitStopTimer = 0.f;   // > 0 = gameplay frozen for a few frames (impact)
+    void  RequestHitStop(float seconds) { if (seconds > _hitStopTimer) _hitStopTimer = seconds; }
+
+    // Slow-mo (crit + boss death): scales gameplay dt while active.
+    float _slowMoTimer = 0.f;
+    float _slowMoScale = 1.f;
+    void  TriggerSlowMo(float dur, float scale) { if (dur > _slowMoTimer) { _slowMoTimer = dur; _slowMoScale = scale; } }
+
+    // Crit focus: a soft dark spotlight (no blur — pixel-friendly) on the hit.
+    float   _critFocusTimer = 0.f;
+    float   _critFocusDur   = 0.3f;
+    Vector2 _critFocusScreenPos{};
+
+    // Screen flash (level-up gold, ultimate elemental).
+    float _screenFlashTimer = 0.f;
+    float _screenFlashDur   = 0.f;
+    Color _screenFlashColor{};
+    int   _lastPlayerLevel  = 1;
+    void  TriggerScreenFlash(Color c, float dur) { _screenFlashColor = c; _screenFlashDur = dur; _screenFlashTimer = dur; }
+    void  DrawScreenFx();   // crit spotlight + flash + hurt/death vignette (end of Draw)
+
+    // Player hurt / death feedback (red edge vignette; death adds slow-mo).
+    float _playerHurtTimer = 0.f;
+    float _lastPlayerHp    = 0.f;
+    float _deathVignette    = 0.f;   // 0..1 dark-red overlay strength on death
+
+    // Smoothed UI — displayed values lerp toward the real ones so counters tick
+    // and orbs slide instead of snapping.
+    float _displayGold    = 0.f;
+    float _displayCells   = 0.f;
+    float _displayHpPct   = 1.f;
+    float _displayManaPct = 1.f;
+
+    // ── Live juice tuning (debug panel: J in debug mode) ────────────────────────
+    // Runtime copies of the feel constants so they can be nudged while playing.
+    float _juiceDamageScale   = 25.f;
+    float _juiceCritSlowDur   = 0.30f;
+    float _juiceCritSlowScale = 0.40f;
+    float _juiceBossSlowDur    = 0.80f;
+    float _juiceBossSlowScale  = 0.30f;
+    float _juiceKillHitStop    = 0.07f;
+    float _juiceShakeMult      = 1.00f;
+    float _juiceCritFocus      = 0.55f;
+    bool  _juiceForceCrit      = false;   // debug: every player hit crits
+    bool  _juicePanelOpen      = false;
+    int   _juiceSel            = 0;
+    float _juiceNudgeCd        = 0.f;
+    void  UpdateJuicePanel();
+    void  DrawJuicePanel();
+
+    // Central hit feedback: floating number (pop on crit), impact sparks, and on
+    // crit → slow-mo + focus, on kill → hit-stop (boss kill → cinematic slow-mo).
+    void  RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bool isBoss, Color textColor);
     void GrantRelic(RelicType type);              // adds relic + shows a toast
     RelicType RollRandomRelic() const;            // weighted by rarity, unowned
     void DrawOwnedRelics() const;                 // HUD strip
@@ -273,7 +331,7 @@ private:
     void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);
     void SpawnTimedPickup();
 
-    // -- Meta progression (Mystic Cells / Legacy Altar) ----------------------
+    // -- Meta progression (Echoes / Legacy Altar) ----------------------
     Vector2 GetLegacyAltarPos() const;         // world pos of the altar in Zeph's room
     void    HandlePlayerDeathMetaPenalty();    // gold retention + lose carried cells
     void    UpdateMetaShop(float dt);          // GameState::MetaShop input handling
@@ -390,11 +448,11 @@ private:
     int   _settingsGpContentCol = 0;   // column (Display option buttons; unused elsewhere)
     float _settingsGpCooldown   = 0.f;
 
-    // -- Meta progression (Mystic Cells / Legacy Altar) --------------------------
+    // -- Meta progression (Echoes / Legacy Altar) --------------------------
     MetaProgressionManager _meta;
     bool  _nearLegacyAltar        = false;  // player in range of the altar this frame
     bool  _deathPenaltyApplied    = false;  // guards double-applying gold retention
-    float _cellsBankedToastTimer  = 0.f;    // "+N Cells banked" HUD toast countdown
+    float _cellsBankedToastTimer  = 0.f;    // "+N Echoes banked" HUD toast countdown
     int   _cellsBankedToastAmount = 0;
 
     // Relic acquisition toast ("New Relic: <name>")
@@ -411,6 +469,7 @@ private:
     float _legacyAltarBobTimer    = 0.f;    // altar orb floating animation
     int   _metaShopCursor         = 0;      // keyboard/gamepad cursor into the unlock grid
     float _metaShopNavCooldown    = 0.f;    // gamepad d-pad repeat cooldown
+    int   _poeGreetingIdx         = 0;      // which of Poe's lines shows this visit
     float _metaShopOpenTimer      = 0.f;    // brief input lock so the opening press isn't consumed
 
     RunStateController _runState;
@@ -824,6 +883,24 @@ private:
     };
     std::vector<PoisonCloud> _poisonClouds;
     float _poisonDamageCooldown = 0.f;
+
+    // Warlock's imp minion — a persistent pet that hunts enemies. Its damage is
+    // atk-independent (routes through ScalePlayerHit so it scales with relics),
+    // which is how the Warlock's damage identity is fixed.
+    struct WarlockMinion
+    {
+        Vector2 pos{};
+        float   attackCooldown = 0.f;
+        float   bob = 0.f;
+        int     frame = 0;
+        float   frameTimer = 0.f;
+        float   facing = 1.f;
+    };
+    std::vector<WarlockMinion> _warlockMinions;
+    Texture2D _minionTex{};
+    void SpawnWarlockMinion();
+    void UpdateWarlockMinions(float dt);
+    void DrawWarlockMinions(Vector2 worldOffset) const;
     BossSupportState _bossCyclopsSupport;
     BossSupportState _bossOgreSupport;
 
@@ -853,6 +930,7 @@ private:
     TileMapper      _tileMapper;
     NineSliceEditor _nineSliceEditor;
     CharacterAnimator _charAnimator;
+    AttackEditor      _attackEditor;
     DungeonGen   _dungeonGen;
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;
