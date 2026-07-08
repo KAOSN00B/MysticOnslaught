@@ -145,7 +145,7 @@ void CombatDirector::SpawnEnemies(const CombatSpawnContext& ctx) const
         *ctx.eliteMinibossPtr = eliteMiniboss;
         *ctx.eliteCageRadius = 0.f;
         *ctx.eliteCageDamageTimer = 0.f;
-        *ctx.eliteEnrageWarningTimer = 0.f;
+        *ctx.eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
         *ctx.eliteIsLeaping = false;
         *ctx.eliteLeapCooldown = 0.f;
         *ctx.eliteLeapTimer = 0.f;
@@ -165,7 +165,6 @@ void CombatDirector::SpawnEnemies(const CombatSpawnContext& ctx) const
         case 2:
             if (*ctx.eliteMinibossPtr)
                 (*ctx.eliteMinibossPtr)->ApplyEnrage();
-            *ctx.eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
             break;
         case 3:
             *ctx.eliteLeapCooldown = kLeapInterval;
@@ -251,7 +250,7 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
             (*ctx.eliteMinibossPtr)->SetInvulnerable(false);
     }
 
-    if (*ctx.eliteMechanic == 2 && *ctx.eliteEnrageWarningTimer > 0.f)
+    if (*ctx.eliteEnrageWarningTimer > 0.f)
         *ctx.eliteEnrageWarningTimer -= dt;
 
     if (*ctx.eliteMechanic == 3

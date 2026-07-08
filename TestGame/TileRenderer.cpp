@@ -16,7 +16,7 @@ void TileRenderer::Unload()
 }
 
 void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
-                            Vector2 screenOffset) const
+                            Vector2 screenOffset, bool includeProps) const
 {
     float cellW = 16.f * scaleX;
     float cellH = 16.f * scaleY;
@@ -97,7 +97,59 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         }
     }
 
-    // ── Pass 3: props (solid objects, drawn last so they sit on top) ──────────
+    // ── Pass 3: props — the room's top layer. Gameplay passes includeProps=false
+    // and calls DrawRoomProps AFTER the player/enemies so they walk behind trees.
+    if (includeProps)
+        DrawRoomProps(layout, scaleX, scaleY, screenOffset);
+}
+
+void TileRenderer::DrawRoomPropsSplit(const RoomLayout& layout, float scaleX, float scaleY,
+                                      Vector2 screenOffset, float splitScreenY, bool frontHalf) const
+{
+    float cellW = 16.f * scaleX;
+    float cellH = 16.f * scaleY;
+
+    // A prop belongs to the FRONT half when its bottom edge sits below the
+    // split line (the player's feet) — those draw after the player.
+    auto inRequestedHalf = [&](int row, float spriteSourceH) -> bool
+    {
+        float bottomY = screenOffset.y + row * cellH + spriteSourceH * scaleY;
+        return (bottomY > splitScreenY) == frontHalf;
+    };
+
+    for (const SpritePlacement& p : layout.props)
+    {
+        if (p.defIdx < 0 || p.defIdx >= (int)_defs.props.size()) continue;
+        const Rectangle& src = _defs.props[p.defIdx].src;
+        if (!inRequestedHalf(p.row, src.height)) continue;
+        float sx = screenOffset.x + p.col * cellW;
+        float sy = screenOffset.y + p.row * cellH;
+        DrawSpriteScaled(src, sx, sy, scaleX, scaleY);
+    }
+
+    for (const SpritePlacement& p : layout.animProps)
+    {
+        if (p.defIdx < 0 || p.defIdx >= (int)_defs.animProps.size()) continue;
+        const AnimPropDef& anim = _defs.animProps[p.defIdx];
+        if (anim.frames.empty()) continue;
+        if (!inRequestedHalf(p.row, anim.frames[0].height)) continue;
+
+        int fc    = (int)anim.frames.size();
+        int frame = (fc > 1 && anim.fps > 0.f)
+            ? (int)(GetTime() * anim.fps) % fc : 0;
+        float sx = screenOffset.x + p.col * cellW;
+        float sy = screenOffset.y + p.row * cellH;
+        DrawSpriteScaled(anim.frames[frame], sx, sy, scaleX, scaleY);
+    }
+}
+
+void TileRenderer::DrawRoomProps(const RoomLayout& layout, float scaleX, float scaleY,
+                                 Vector2 screenOffset) const
+{
+    float cellW = 16.f * scaleX;
+    float cellH = 16.f * scaleY;
+
+    // ── Static props ──────────────────────────────────────────────────────────
     for (const SpritePlacement& p : layout.props)
     {
         if (p.defIdx < 0 || p.defIdx >= (int)_defs.props.size()) continue;
@@ -106,7 +158,7 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         DrawSpriteScaled(_defs.props[p.defIdx].src, sx, sy, scaleX, scaleY);
     }
 
-    // ── Pass 3b: animated props (same layer as props, each frame is a direct rect) ─
+    // ── Animated props (same layer, each frame is a direct rect) ─────────────
     for (const SpritePlacement& p : layout.animProps)
     {
         if (p.defIdx < 0 || p.defIdx >= (int)_defs.animProps.size()) continue;

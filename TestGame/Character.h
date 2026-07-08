@@ -199,6 +199,7 @@ public:
     void  SetAttackHeightAdjust(float v) { _attackHeightAdjust = v; }
     Vector2 GetCastOrigin() const;
     Vector2 GetFacingDirection() const;
+    Vector2 GetMoveDirection() const { return _direction; }
     Vector2 GetFeetWorldPos() const;
     int ConsumeHealEffectRequests();
     float GetDashCooldownPercent() const { return (_dashCooldownTime > 0.f) ? 1.f - (_dashCooldown / _dashCooldownTime) : 1.f; }
@@ -216,6 +217,9 @@ public:
     void AddCellsFromDrop(int amount);   // applies the Soul Siphon relic bonus
     void SetCellGainMultiplier(float m) { _cellGainMultiplier = m; }
     void MultiplyCellGainMultiplier(float m) { _cellGainMultiplier *= m; }
+    // Cursed Wager: bonus gold/XP/Echoes for the wagered biome (1.0 = no wager).
+    void  SetWagerRewardMult(float m) { _wagerRewardMult = (m < 1.f) ? 1.f : m; }
+    float GetWagerRewardMult() const  { return _wagerRewardMult; }
     void ScaleMaxHealth(float mult);     // Cursed Shrine pacts (blessing/curse)
     int  GetCells()      const { return _cells; }
     int  TakeCells()           { int taken = _cells; _cells = 0; return taken; }
@@ -313,6 +317,8 @@ private:
 
     Texture _dashAnim{};
     Texture _staffAnim{};
+    Texture _bowAnim{};   // Hunter only: bow-draw sheet for basic + shot abilities
+                          // (traps use the appearance's own attack animation)
 
     Vector2 _direction{};
     Vector2 _dashDirection{};
@@ -392,6 +398,7 @@ private:
     PlayerClass _class = PlayerClass::Mage;   // chosen at run start
     std::string _appearancePrefix;            // hero sprite set; empty = use class default
     float _cellGainMultiplier = 1.f;          // Cell Surge meta unlock (1.0 / 1.5)
+    float _wagerRewardMult    = 1.f;          // Cursed Wager biome reward bonus
     const CharacterTuning* _playerTuning = nullptr;   // authored hit/hurt colliders
 
     int _exp  = 0;

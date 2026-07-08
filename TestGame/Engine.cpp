@@ -108,6 +108,40 @@ namespace
         return value;
     }
 
+    constexpr int kDungeonDoorSpanCols = 5;
+    constexpr int kDungeonDoorSpanRows = 3;
+
+    int GetDungeonDoorStartCol()
+    {
+        return ClampInt(RoomLayout::kCols / 2 - kDungeonDoorSpanCols / 2, 1, RoomLayout::kCols - 1 - kDungeonDoorSpanCols);
+    }
+
+    int GetDungeonDoorStartRow()
+    {
+        return ClampInt(RoomLayout::kRows / 2 - kDungeonDoorSpanRows / 2, 1, RoomLayout::kRows - 1 - kDungeonDoorSpanRows);
+    }
+
+    struct EliteChallengeBannerDef
+    {
+        const char* shortLabel;
+        const char* detailLabel;
+        Color       color;
+    };
+
+    constexpr EliteChallengeBannerDef kEliteChallengeBanners[] = {
+        { "ARENA CONSTRICTION",    "CONDITION: CAGE WALLS  |  STAY INSIDE THE RING", Color{220,  40, 200, 255} },
+        { "INVULNERABILITY LINKS", "CONDITION: BODYGUARDS  |  BREAK THE LINK",      Color{180, 100, 255, 255} },
+        { "PERMANENT ENRAGE",      "CONDITION: ENRAGED  |  FAST & LETHAL",          Color{255,  60,  60, 255} },
+        { "GAP-CLOSER LEAP",       "CONDITION: HUNTING LEAP  |  KEEP MOVING",       Color{255, 180,  60, 255} },
+        { "ROOM HAZARDS",          "CONDITION: HAZARD VOLLEYS  |  WATCH THE FLOOR", Color{255, 220,  80, 255} },
+    };
+
+    const EliteChallengeBannerDef& GetEliteChallengeBannerDef(int mechanic)
+    {
+        int idx = ClampInt(mechanic, 0, (int)(sizeof(kEliteChallengeBanners) / sizeof(kEliteChallengeBanners[0])) - 1);
+        return kEliteChallengeBanners[idx];
+    }
+
     const char* GetDebugRoomTypeName(RoomType type)
     {
         switch (type)
@@ -629,6 +663,12 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
         _cellsBankedToastAmount = carriedCells;
         _cellsBankedToastTimer  = 4.f;
     }
+
+    // New biome reached: the previous Cursed Wager expires and the shrine re-arms
+    // so a fresh wager can be placed for the rooms ahead.
+    _wagerTier = 0;
+    _player.SetWagerRewardMult(1.f);
+    _curseShrineUsed = false;
 }
 
 void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates)
@@ -640,13 +680,13 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     const DungeonRoom& room = rooms[roomIdx];
     _dungeonRoomIdx = roomIdx;
     _dungeonEntryDoorSide = entryDoorSide;
-    int propDensityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 5 : 0;
+    // Forest/Jungle stay the densest biomes — smaller bonus now that every
+    // biome's base prop counts were raised (footprint placement keeps it clean).
+    int propDensityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 2 : 0;
     _dungeonRoomLayout = RoomLayout::Generate(
         room.hasNorth, room.hasSouth,
         room.hasEast,  room.hasWest, room.type,
-        (int)_tileDefs.props.size(),      (int)_tileDefs.decors.size(),
-        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size(),
-        propDensityBonus);
+        &_tileDefs, propDensityBonus);
 
     if (resetRoomStates)
     {
@@ -776,10 +816,8 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     _message = std::string("Debug - ") + GetDebugRoomTypeName(type) + " Tile Room";
 
     _dungeonRoomLayout = RoomLayout::Generate(
-        hasNorth, hasSouth, hasEast, hasWest, type,
-        (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
-        (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
-    _dungeonRoomStates[_dungeonRoomIdx].cleared = false;
+        hasNorth, hasSouth, hasEast, hasWest, type, &_tileDefs);
+    _dungeonRoomStates[_dungeonRoomIdx] = DungeonRoomState{};
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
 
     float sw = (float)kVirtualWidth;
@@ -807,8 +845,10 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     else if (type == RoomType::Elite)
     {
         Enemy* miniboss = SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
+        if (miniboss) miniboss->SetIsEliteMiniboss(true);
         _eliteMinibossPtr = miniboss;
-        _eliteMechanic    = GetRandomValue(0, 4);
+        _eliteMechanic    = GetEliteMechanicForRoom(_dungeonRoomIdx);
+        _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
         if (_eliteMechanic == 0)
         {
             _eliteCageCenter      = { sw * 0.5f, sh * 0.5f };
@@ -816,7 +856,7 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
             _eliteCageDamageTimer = kEliteCageDamageInterval;
         }
         else if (_eliteMechanic == 1) { if (miniboss) miniboss->SetInvulnerable(true); }
-        else if (_eliteMechanic == 2) { if (miniboss) miniboss->ApplyEnrage(); _eliteEnrageWarningTimer = kEliteEnrageWarningDuration; }
+        else if (_eliteMechanic == 2) { if (miniboss) miniboss->ApplyEnrage(); }
         else if (_eliteMechanic == 3) { _eliteLeapCooldown = kLeapInterval; }
         else if (_eliteMechanic == 4) { _eliteHazardSpawnTimer = (float)GetRandomValue((int)(kHazardVolleyMinInterval * 100.f), (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f; }
         spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
@@ -1533,6 +1573,11 @@ void Engine::Update(float dt)
             _attackEditor.Init();
             _gameState = GameState::AttackEditor;
         }
+        if (IsKeyPressed(KEY_V))   // dev: open the Map Editor (village painting)
+        {
+            _mapEditor.Init();
+            _gameState = GameState::MapEditor;
+        }
         if (_menu.SettingsPressed())
         {
             _stateBeforeSettings = GameState::Menu;
@@ -1602,6 +1647,16 @@ void Engine::Update(float dt)
         if (_attackEditor.WantsToExit())
         {
             _attackEditor.Unload();
+            _menu.Init();
+            _gameState = GameState::Menu;
+        }
+        break;
+
+    case GameState::MapEditor:
+        _mapEditor.Update();
+        if (_mapEditor.WantsToExit())
+        {
+            _mapEditor.Unload();
             _menu.Init();
             _gameState = GameState::Menu;
         }
@@ -2350,6 +2405,10 @@ void Engine::Draw()
         _attackEditor.Draw();
         break;
 
+    case GameState::MapEditor:
+        _mapEditor.Draw();
+        break;
+
     case GameState::GameOver:
     {
         int goResult = _pauseUI.DrawGameOver(GetPromptModeForUi());
@@ -2761,18 +2820,9 @@ void Engine::DrawHUD()
 
     if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
     {
-        static constexpr const char* kMechanicNames[] = {
-            "ARENA CONSTRICTION", "INVULNERABILITY LINKS", "PERMANENT ENRAGE",
-            "GAP-CLOSER LEAP",    "ROOM HAZARDS"
-        };
-        static constexpr Color kMechanicColors[] = {
-            Color{220, 40, 200, 255}, Color{180, 100, 255, 255}, Color{255, 60,  60, 255},
-            Color{255,180,  60, 255}, Color{255,220,  80, 255},
-        };
-        const char* mechLabel = kMechanicNames[_eliteMechanic];
-        Color mechColor = kMechanicColors[_eliteMechanic];
-        int mw = MeasureText(mechLabel, 20);
-        drawLabelBox(mechLabel, (float)(kVirtualWidth - mw - (int)hc.actOffsetX), 58.f, 20, mechColor);
+        const EliteChallengeBannerDef& mech = GetEliteChallengeBannerDef(_eliteMechanic);
+        int mw = MeasureText(mech.shortLabel, 20);
+        drawLabelBox(mech.shortLabel, (float)(kVirtualWidth - mw - (int)hc.actOffsetX), 58.f, 20, mech.color);
     }
 
     // Ascension badge (top-right, only on a modified difficulty run).
@@ -2794,16 +2844,17 @@ void Engine::DrawHUD()
             alpha = _eliteEnrageWarningTimer / 0.5f;
         alpha = std::max(0.f, std::min(1.f, alpha));
 
+        const EliteChallengeBannerDef& mech = GetEliteChallengeBannerDef(_eliteMechanic);
         const char* line1 = "ELITE ENCOUNTER";
-        const char* line2 = "CONDITION: ENRAGED  |  FAST & LETHAL";
+        const char* line2 = mech.detailLabel;
         const int sz1 = 48, sz2 = 28;
         const float bannerH = 120.f;
         const float bannerY = sh * 0.38f;
         DrawRectangle(0, (int)bannerY, (int)sw, (int)bannerH, Fade(Color{20,0,0,220}, alpha));
-        DrawRectangle(0, (int)bannerY, (int)sw, 3, Fade(Color{200,0,0,255}, alpha));
-        DrawRectangle(0, (int)(bannerY + bannerH - 3), (int)sw, 3, Fade(Color{200,0,0,255}, alpha));
-        DrawText(line1, (int)(sw/2.f - MeasureText(line1,sz1)/2.f), (int)(bannerY+14.f), sz1, Fade(Color{255,60,60,255},alpha));
-        DrawText(line2, (int)(sw/2.f - MeasureText(line2,sz2)/2.f), (int)(bannerY+14.f+sz1+8.f), sz2, Fade(Color{255,180,60,255},alpha));
+        DrawRectangle(0, (int)bannerY, (int)sw, 3, Fade(mech.color, alpha));
+        DrawRectangle(0, (int)(bannerY + bannerH - 3), (int)sw, 3, Fade(mech.color, alpha));
+        DrawText(line1, (int)(sw/2.f - MeasureText(line1,sz1)/2.f), (int)(bannerY+14.f), sz1, Fade(mech.color,alpha));
+        DrawText(line2, (int)(sw/2.f - MeasureText(line2,sz2)/2.f), (int)(bannerY+14.f+sz1+8.f), sz2, Fade(Color{255,220,150,255},alpha));
     }
 
     if (_debug.IsActive())
@@ -5249,16 +5300,16 @@ void Engine::HandlePlayerMeleeDamage()
     // Ranged classes (Mage/Warlock/Hunter) fire a projectile instead of swinging.
     if (_player.UsesRangedBasic())
     {
-        AbilityType element; Color tint;
+        AbilityType element; Color tint; bool arrow = false;
         switch (_player.GetClass())
         {
         case PlayerClass::Mage:    element = AbilityType::FireSpread; tint = Color{ 150, 205, 255, 255 }; break; // arcane orb
         case PlayerClass::Warlock: element = AbilityType::FireSpread; tint = Color{ 190, 100, 225, 255 }; break; // dark orb
-        case PlayerClass::Hunter:  element = AbilityType::IceSpread;  tint = Color{ 220, 245, 220, 255 }; break; // pale arrow-shard
+        case PlayerClass::Hunter:  element = AbilityType::FireSpread; tint = WHITE; arrow = true;         break; // physical arrow
         default:                   element = AbilityType::FireSpread; tint = WHITE; break;
         }
         SpreadProjectile shot;
-        shot.InitBasic(_player.GetCastOrigin(), _player.GetFacingDirection(), element, tint);
+        shot.InitBasic(_player.GetCastOrigin(), _player.GetFacingDirection(), element, tint, arrow);
         _spreadProjectiles.push_back(shot);
         _player.ConsumeMeleeDamageFrame();
         return;
@@ -5295,9 +5346,11 @@ void Engine::HandlePlayerMeleeDamage()
 
 Rectangle Engine::GetTreasureChestRect() const
 {
+    // Generous pickup zone (~2.5 tiles) — walking anywhere near the chest opens
+    // it; paired with a body-overlap check instead of a single-point test.
     float cx = (float)kVirtualWidth  * 0.5f;
     float cy = (float)kVirtualHeight * 0.5f;
-    return { cx - 36.f, cy - 36.f, 72.f, 72.f };
+    return { cx - 90.f, cy - 90.f, 180.f, 180.f };
 }
 
 void Engine::OpenTreasureChest()
@@ -6481,12 +6534,20 @@ void Engine::DrawScreenFx()
         float a = (_screenFlashTimer / _screenFlashDur) * 0.45f;
         DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(_screenFlashColor, a));
     }
-    // Player hurt — red vignette reddening from the screen edges inward.
+    // Player hurt — red vignette hugging the four screen edges, clear in the
+    // middle (four gradient bands fading from red at the border to transparent
+    // inward; overlapping corners read a touch darker, as a vignette should).
     if (_playerHurtTimer > 0.f)
     {
-        float a = (_playerHurtTimer / 0.4f) * 0.5f;
-        DrawCircleGradient(kVirtualWidth / 2, kVirtualHeight / 2, kVirtualHeight * 0.85f,
-                           Fade(Color{ 200, 20, 20, 255 }, 0.f), Fade(Color{ 200, 20, 20, 255 }, a));
+        float a = (_playerHurtTimer / 0.4f) * 0.6f;
+        Color edge  = Fade(Color{ 200, 20, 20, 255 }, a);
+        Color clear = Fade(Color{ 200, 20, 20, 255 }, 0.f);
+        const int bandX = (int)(kVirtualWidth  * 0.20f);
+        const int bandY = (int)(kVirtualHeight * 0.22f);
+        DrawRectangleGradientV(0, 0, kVirtualWidth, bandY, edge, clear);                      // top
+        DrawRectangleGradientV(0, kVirtualHeight - bandY, kVirtualWidth, bandY, clear, edge); // bottom
+        DrawRectangleGradientH(0, 0, bandX, kVirtualHeight, edge, clear);                     // left
+        DrawRectangleGradientH(kVirtualWidth - bandX, 0, bandX, kVirtualHeight, clear, edge); // right
     }
     // Player death — heavy dark-red wash over the whole screen during the beat.
     if (_deathVignette > 0.f)
@@ -7312,94 +7373,69 @@ void Engine::DrawMetaShop()
 // =============================================================================
 // Cursed Shrine — risk/reward blessing+curse pacts (#19)
 // =============================================================================
-struct PactOption
+// A wager tier: pay `cost` gold to make the whole upcoming biome tougher
+// (enemyHp / enemyDmg mults) in exchange for a `reward` mult on all gold, XP
+// and Echoes earned until the next shop.
+struct WagerTier
 {
     const char* name;
-    const char* blessing;   // upside line
-    const char* curse;      // downside line
-    float pDmg;   // player damage mult
-    float eHp;    // enemy health mult
-    float eDmg;   // enemy damage mult
-    float maxHp;  // player max HP scale (applied instantly)
-    int   armour; // instant armour delta
-    float cell;   // cell-gain mult
-    bool  relic;  // grant a random relic
+    int         cost;      // gold to activate
+    float       enemyHp;   // enemy HP mult for the biome
+    float       enemyDmg;  // enemy damage mult for the biome
+    float       reward;    // gold / XP / Echo gain mult while active
+    const char* risk;      // difficulty line (two lines via \n)
+    const char* payout;    // reward line
+    Color       tint;
 };
 
-static const PactOption kPacts[] = {
-    { "Berserker's Pact", "+35% your damage",   "Enemies deal +25% damage", 1.35f, 1.f,   1.25f, 1.f,   0, 1.f,  false },
-    { "Glass Cannon",     "+50% your damage",   "-30% max health",          1.50f, 1.f,   1.f,   0.70f, 0, 1.f,  false },
-    { "Iron Curse",       "+2 armour",          "-20% your damage",         0.80f, 1.f,   1.f,   1.f,   2, 1.f,  false },
-    { "Blood Pact",       "+50% Echoes",  "Enemies have +25% HP",     1.f,   1.25f, 1.f,   1.f,   0, 1.5f, false },
-    { "Titan's Bargain",  "+35% max health",    "Enemies have +30% HP",     1.f,   1.30f, 1.f,   1.35f, 0, 1.f,  false },
-    { "Fortune's Gambit", "Gain a random relic","Enemies have +30% HP",     1.f,   1.30f, 1.f,   1.f,   0, 1.f,  true  },
-    { "Reckless Might",   "+40% your damage",   "-15% max health",          1.40f, 1.f,   1.f,   0.85f, 0, 1.f,  false },
-    { "Cursed Hoard",     "+100% Echoes", "Enemies deal +30% damage", 1.f,   1.f,   1.30f, 1.f,   0, 2.0f, false },
+static const WagerTier kWagerTiers[] = {
+    { "Cursed", 40,  1.40f, 1.30f, 1.60f, "+40% enemy HP\n+30% enemy damage",   "+60% gold, XP\n& Echoes",  Color{ 235, 180, 90, 255 } },
+    { "Damned", 120, 1.90f, 1.70f, 2.40f, "+90% enemy HP\n+70% enemy damage",   "+140% gold, XP\n& Echoes", Color{ 235, 120, 90, 255 } },
+    { "Doomed", 300, 2.60f, 2.20f, 3.60f, "+160% enemy HP\n+120% enemy damage", "+260% gold, XP\n& Echoes", Color{ 230, 70, 90, 255 } },
 };
-static const int kPactCount = (int)(sizeof(kPacts) / sizeof(kPacts[0]));
+static const int kWagerTierCount = (int)(sizeof(kWagerTiers) / sizeof(kWagerTiers[0]));
 
 Vector2 Engine::GetCurseShrinePos() const
 {
-    // East of Zeph, mirroring the Poe's Altar on the west.
+    // East of Zeph, mirroring Poe's Altar on the west.
     return { (float)kVirtualWidth * 0.70f, (float)kVirtualHeight * 0.42f };
 }
 
 void Engine::OpenCurseShrine()
 {
-    // Pick 3 distinct pacts.
-    int pool[kPactCount];
-    for (int i = 0; i < kPactCount; i++) pool[i] = i;
-    for (int i = kPactCount - 1; i > 0; i--)
-    {
-        int j = GetRandomValue(0, i);
-        int t = pool[i]; pool[i] = pool[j]; pool[j] = t;
-    }
-    for (int i = 0; i < 3; i++) _shrineChoices[i] = pool[i];
     _shrineCursor    = 0;
     _shrineOpenTimer = 0.25f;
+    _shrineDenyFlash = 0.f;
     _gameState       = GameState::CurseShrine;
-}
-
-void Engine::ApplyPactChoice(int pactIndex)
-{
-    if (pactIndex < 0 || pactIndex >= kPactCount) return;
-    const PactOption& p = kPacts[pactIndex];
-    _runPlayerDamageMult *= p.pDmg;
-    _runEnemyHealthMult  *= p.eHp;
-    _runEnemyDamageMult  *= p.eDmg;
-    if (p.maxHp != 1.f)  _player.ScaleMaxHealth(p.maxHp);
-    if (p.armour != 0)   _player.AddArmour(p.armour);
-    if (p.cell != 1.f)   _player.MultiplyCellGainMultiplier(p.cell);
-    if (p.relic)         GrantRelic(RollRandomRelic());
-    _curseShrineUsed = true;
 }
 
 void Engine::UpdateCurseShrine()
 {
     if (_shrineOpenTimer > 0.f) { _shrineOpenTimer -= GetFrameTime(); return; }
+    if (_shrineDenyFlash > 0.f) _shrineDenyFlash -= GetFrameTime();
 
     _gamepad.Update(_gamepadBindingsEdit);
 
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
     const float cardW = 420.f, cardH = 460.f, gap = 60.f;
-    const float totalW = 3 * cardW + 2 * gap;
+    const float totalW = kWagerTierCount * cardW + (kWagerTierCount - 1) * gap;
     const float startX = (sw - totalW) * 0.5f;
-    const float cardY  = sh * 0.5f - cardH * 0.5f + 30.f;
+    const float cardY  = sh * 0.5f - cardH * 0.5f + 40.f;
 
-    if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A)) _shrineCursor = (_shrineCursor + 2) % 3;
-    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) _shrineCursor = (_shrineCursor + 1) % 3;
+    if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A)) _shrineCursor = (_shrineCursor + kWagerTierCount - 1) % kWagerTierCount;
+    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) _shrineCursor = (_shrineCursor + 1) % kWagerTierCount;
     if (_gamepad.isActive)
     {
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  _shrineCursor = (_shrineCursor + 2) % 3;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) _shrineCursor = (_shrineCursor + 1) % 3;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  _shrineCursor = (_shrineCursor + kWagerTierCount - 1) % kWagerTierCount;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) _shrineCursor = (_shrineCursor + 1) % kWagerTierCount;
     }
 
     Vector2 mouse = GetVirtualMousePos();
     bool confirm = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
                    (_gamepad.isActive && _gamepad.menuConfirmPressed);
 
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < kWagerTierCount; i++)
     {
         Rectangle card{ startX + i * (cardW + gap), cardY, cardW, cardH };
         if (CheckCollisionPointRec(mouse, card))
@@ -7409,9 +7445,26 @@ void Engine::UpdateCurseShrine()
         }
     }
 
+    // Walk away without wagering (Esc / gamepad B).
+    if (IsKeyPressed(KEY_ESCAPE) ||
+        (_gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)))
+    {
+        _gameState = GameState::DungeonRun;
+        return;
+    }
+
     if (confirm)
     {
-        ApplyPactChoice(_shrineChoices[_shrineCursor]);
+        const WagerTier& w = kWagerTiers[_shrineCursor];
+        if (_player.GetGold() < w.cost)
+        {
+            _shrineDenyFlash = 0.6f;   // can't afford — flash the cost and stay
+            return;
+        }
+        _player.AddGold(-w.cost);
+        _wagerTier = _shrineCursor + 1;              // curses this biome's enemies
+        _player.SetWagerRewardMult(w.reward);        // richer gold / XP / Echoes
+        _curseShrineUsed = true;                     // one wager per biome
         if (_audioInitialised) PlaySound(_pickupSound);
         _gameState = GameState::DungeonRun;
     }
@@ -7425,21 +7478,27 @@ void Engine::DrawCurseShrine()
     DrawScrollingCheckerboard(sw, sh, Color{ 30, 14, 20, 255 }, Color{ 42, 20, 30, 255 }, 18.f, 12.f);
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.35f));
 
-    const char* title = "CURSED SHRINE";
-    DrawText(title, (int)(sw * 0.5f - MeasureText(title, 70) * 0.5f), 70, 70, Color{ 235, 90, 120, 255 });
-    const char* sub = "Every gift demands a price. Choose one pact — it binds for the whole run.";
-    DrawText(sub, (int)(sw * 0.5f - MeasureText(sub, 26) * 0.5f), 160, 26, Color{ 200, 160, 175, 255 });
+    const char* title = "CURSED WAGER";
+    DrawText(title, (int)(sw * 0.5f - MeasureText(title, 70) * 0.5f), 56, 70, Color{ 235, 90, 120, 255 });
+    const char* sub = "Pay in gold to curse the whole biome. Survive it for far richer spoils.";
+    DrawText(sub, (int)(sw * 0.5f - MeasureText(sub, 26) * 0.5f), 146, 26, Color{ 200, 160, 175, 255 });
+
+    // Show the player's purse so affordability is obvious (flashes red on denial).
+    const char* goldLine = TextFormat("Your gold: %d", _player.GetGold());
+    Color goldCol = (_shrineDenyFlash > 0.f) ? Color{ 245, 90, 90, 255 } : Color{ 255, 210, 120, 255 };
+    DrawText(goldLine, (int)(sw * 0.5f - MeasureText(goldLine, 30) * 0.5f), 190, 30, goldCol);
 
     const float cardW = 420.f, cardH = 460.f, gap = 60.f;
-    const float totalW = 3 * cardW + 2 * gap;
+    const float totalW = kWagerTierCount * cardW + (kWagerTierCount - 1) * gap;
     const float startX = (sw - totalW) * 0.5f;
-    const float cardY  = sh * 0.5f - cardH * 0.5f + 30.f;
+    const float cardY  = sh * 0.5f - cardH * 0.5f + 40.f;
 
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < kWagerTierCount; i++)
     {
-        const PactOption& p = kPacts[_shrineChoices[i]];
+        const WagerTier& w = kWagerTiers[i];
         Rectangle card{ startX + i * (cardW + gap), cardY, cardW, cardH };
-        bool sel = (i == _shrineCursor);
+        bool sel    = (i == _shrineCursor);
+        bool afford = _player.GetGold() >= w.cost;
 
         DrawRectangleRounded(card, 0.06f, 8, sel ? Color{ 60, 30, 42, 245 } : Color{ 42, 24, 32, 235 });
         if (sel)
@@ -7449,28 +7508,34 @@ void Engine::DrawCurseShrine()
         }
         DrawRectangleRoundedLines(card, 0.06f, 8, sel ? GOLD : Color{ 110, 70, 84, 255 });
 
-        DrawText(p.name, (int)(card.x + card.width * 0.5f - MeasureText(p.name, 38) * 0.5f),
-                 (int)(card.y + 34.f), 38, sel ? GOLD : RAYWHITE);
+        DrawText(w.name, (int)(card.x + card.width * 0.5f - MeasureText(w.name, 40) * 0.5f),
+                 (int)(card.y + 26.f), 40, sel ? w.tint : RAYWHITE);
 
-        // Blessing block.
-        DrawText("BLESSING", (int)(card.x + 30.f), (int)(card.y + 140.f), 24, Color{ 120, 235, 150, 255 });
-        DrawText(p.blessing, (int)(card.x + 30.f), (int)(card.y + 176.f), 26, Color{ 205, 240, 210, 255 });
+        // Cost.
+        const char* costTxt = TextFormat("%d gold", w.cost);
+        Color costCol = afford ? Color{ 255, 210, 120, 255 } : Color{ 150, 90, 90, 255 };
+        DrawText(costTxt, (int)(card.x + card.width * 0.5f - MeasureText(costTxt, 30) * 0.5f),
+                 (int)(card.y + 82.f), 30, costCol);
 
-        // Curse block.
-        DrawText("CURSE", (int)(card.x + 30.f), (int)(card.y + 268.f), 24, Color{ 245, 100, 110, 255 });
-        DrawText(p.curse, (int)(card.x + 30.f), (int)(card.y + 304.f), 26, Color{ 240, 200, 205, 255 });
+        // Risk block.
+        DrawText("RISK", (int)(card.x + 30.f), (int)(card.y + 150.f), 24, Color{ 245, 100, 110, 255 });
+        DrawText(w.risk, (int)(card.x + 30.f), (int)(card.y + 186.f), 26, Color{ 240, 200, 205, 255 });
+
+        // Reward block.
+        DrawText("REWARD", (int)(card.x + 30.f), (int)(card.y + 300.f), 24, Color{ 120, 235, 150, 255 });
+        DrawText(w.payout, (int)(card.x + 30.f), (int)(card.y + 336.f), 26, Color{ 205, 240, 210, 255 });
 
         if (sel)
         {
-            const char* pick = "CHOOSE";
+            const char* pick = afford ? "WAGER" : "NOT ENOUGH GOLD";
             DrawText(pick, (int)(card.x + card.width * 0.5f - MeasureText(pick, 26) * 0.5f),
-                     (int)(card.y + card.height - 52.f), 26, GOLD);
+                     (int)(card.y + card.height - 48.f), 26, afford ? GOLD : Color{ 235, 90, 90, 255 });
         }
     }
 
-    const char* hint = _gamepad.isActive ? "D-Pad: Choose    A: Accept pact"
-                                         : "Arrows / Click: Choose    Enter / Click: Accept pact";
-    DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, 24) * 0.5f), (int)(sh - 58.f), 24, Color{ 190, 160, 175, 255 });
+    const char* hint = _gamepad.isActive ? "D-Pad: Choose    A: Wager    B: Leave"
+                                         : "Arrows / Click: Choose    Enter / Click: Wager    Esc: Leave";
+    DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, 24) * 0.5f), (int)(sh - 54.f), 24, Color{ 190, 160, 175, 255 });
 }
 
 // =============================================================================
@@ -8622,10 +8687,12 @@ void Engine::ResetRunState()
     // Second Wind: one free revive per run.
     _secondWindAvailable = _meta.HasSecondWind();
 
-    // Cursed Shrine: reset per-run risk/reward modifiers.
+    // Cursed Shrine / Wager: reset run-wide modifiers + the per-biome wager.
     _runPlayerDamageMult = 1.f;
     _runEnemyHealthMult  = 1.f;
     _runEnemyDamageMult  = 1.f;
+    _wagerTier           = 0;
+    _player.SetWagerRewardMult(1.f);
     _curseShrineUsed     = false;
     _nearCurseShrine     = false;
     _pendingRelicChoices = 0;
@@ -8869,6 +8936,14 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
     const RoomAffixDef& affix = GetRoomAffixDef(_currentRoomAffix);
     if (affix.enemyHpMult != 1.f || affix.enemyDmgMult != 1.f)
         enemy.ApplyDifficultyScaling(affix.enemyHpMult, affix.enemyDmgMult);
+
+    // Cursed Wager — the tier chosen at Zeph's shrine makes every enemy in this
+    // biome much tougher (traded for bonus gold/XP/Echoes on the reward side).
+    if (_wagerTier > 0)
+    {
+        const WagerTier& wager = kWagerTiers[_wagerTier - 1];
+        enemy.ApplyDifficultyScaling(wager.enemyHp, wager.enemyDmg);
+    }
 
     // Colour-variant tier by world zone — later zones spawn recoloured,
     // visibly tougher versions (their stats already scale via power level).
@@ -9421,6 +9496,181 @@ void Engine::SpawnBossForBiome(Vector2 pos)
     _bossWarningTimer = 4.f;
 }
 
+void Engine::SaveDungeonRoomEnemyState()
+{
+    if (_dungeonRoomIdx < 0)
+        return;
+
+    auto& state = _dungeonRoomStates[_dungeonRoomIdx];
+    if (state.cleared)
+    {
+        state.enemiesInitialized = true;
+        state.survivors.clear();
+        return;
+    }
+
+    state.enemiesInitialized = true;
+    state.survivors.clear();
+    for (auto& enemy : _enemies)
+    {
+        if (!enemy || !enemy->IsActive())
+            continue;
+
+        DungeonEnemySnapshot snapshot{};
+        snapshot.type = GetDungeonSnapshotType(*enemy);
+        snapshot.pos = enemy->GetWorldPos();
+        state.survivors.push_back(snapshot);
+    }
+}
+
+bool Engine::RestoreDungeonRoomEnemyState(int roomIdx)
+{
+    auto it = _dungeonRoomStates.find(roomIdx);
+    if (it == _dungeonRoomStates.end() || !it->second.enemiesInitialized)
+        return false;
+
+    DungeonRoomState& state = it->second;
+    if (state.cleared)
+    {
+        _dungeonEnemiesSpawned = false;
+        return true;
+    }
+
+    ResetEliteRoomRuntime();
+    bool anySpawned = false;
+    if (_currentRoomType == RoomType::Elite)
+    {
+        _eliteMechanic = GetEliteMechanicForRoom(roomIdx);
+        _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
+    }
+
+    for (const DungeonEnemySnapshot& snapshot : state.survivors)
+    {
+        Enemy* spawned = SpawnDungeonSnapshotEnemy(snapshot);
+        if (spawned)
+        {
+            anySpawned = true;
+            if (snapshot.type == "EliteOgre")
+            {
+                spawned->SetIsEliteMiniboss(true);
+                _eliteMinibossPtr = spawned;
+            }
+        }
+        else if (snapshot.type == "Molarbeast")
+        {
+            anySpawned = true;
+        }
+    }
+
+    if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
+    {
+        if (_eliteMechanic == 0)
+        {
+            _eliteCageCenter = { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
+            _eliteCageRadius = kEliteCageRadius;
+            _eliteCageDamageTimer = kEliteCageDamageInterval;
+        }
+        else if (_eliteMechanic == 1)
+        {
+            bool hasBodyguard = false;
+            for (const auto& enemy : _enemies)
+            {
+                if (enemy && enemy->IsActive() && !enemy->IsEliteMiniboss())
+                {
+                    hasBodyguard = true;
+                    break;
+                }
+            }
+            if (_eliteMinibossPtr)
+                _eliteMinibossPtr->SetInvulnerable(hasBodyguard);
+        }
+        else if (_eliteMechanic == 2)
+        {
+            if (_eliteMinibossPtr)
+                _eliteMinibossPtr->ApplyEnrage();
+        }
+        else if (_eliteMechanic == 3)
+        {
+            _eliteLeapCooldown = kLeapInterval;
+        }
+        else if (_eliteMechanic == 4)
+        {
+            _eliteHazardSpawnTimer = (float)GetRandomValue(
+                (int)(kHazardVolleyMinInterval * 100.f),
+                (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
+        }
+    }
+
+    _dungeonEnemiesSpawned = anySpawned;
+    if (!anySpawned)
+    {
+        state.cleared = true;
+        state.survivors.clear();
+        ApplyDungeonRoomDoorState(_dungeonRoomLayout, roomIdx, _dungeonEntryDoorSide);
+    }
+    return true;
+}
+
+std::string Engine::GetDungeonSnapshotType(Enemy& enemy) const
+{
+    if (enemy.IsEliteMiniboss()) return "EliteOgre";
+    if (enemy.AsCyclops()) return "Cyclops";
+    if (enemy.AsOgre()) return "Ogre";
+    if (enemy.AsMolarbeast()) return "Molarbeast";
+    if (enemy.AsSkeletonArcher()) return "SkeletonArcher";
+    if (enemy.AsFlameWisp()) return "FlameWisp";
+    if (SlimeEnemy* slime = enemy.AsSlime())
+        return slime->GetSize() == SlimeSize::Small ? "SlimeSmall" : "SlimeBig";
+    if (enemy.AsSporeling()) return "Sporeling";
+    if (enemy.AsShieldbearer()) return "Shieldbearer";
+    if (enemy.AsPhantom()) return "Phantom";
+    if (enemy.AsBomberImp()) return "BomberImp";
+    if (enemy.AsWarchief()) return "Warchief";
+    if (enemy.AsLivingBlade()) return "LivingBlade";
+    if (enemy.AsWerewolf()) return "Werewolf";
+    if (enemy.AsChompBug()) return "ChompBug";
+    if (enemy.AsOsiris()) return "Osiris";
+    if (enemy.AsTitanGuard()) return "TitanGuard";
+    if (enemy.AsToxicVermin()) return "ToxicVermin";
+    if (enemy.AsAncientBear()) return "AncientBear";
+    if (enemy.AsAbyssSlime()) return "AbyssSlime";
+    if (enemy.AsPumpkinJack()) return "PumpkinJack";
+    if (enemy.AsMinotaur()) return "Minotaur";
+    return "Basic";
+}
+
+Enemy* Engine::SpawnDungeonSnapshotEnemy(const DungeonEnemySnapshot& snapshot)
+{
+    const Vector2 pos = snapshot.pos;
+    if (snapshot.type == "Basic") return SpawnBasicEnemy(pos);
+    if (snapshot.type == "Cyclops") return SpawnCyclops(pos);
+    if (snapshot.type == "Ogre") return SpawnOgre(pos);
+    if (snapshot.type == "EliteOgre") return SpawnOgre(pos);
+    if (snapshot.type == "SkeletonArcher") return SpawnSkeletonArcher(pos);
+    if (snapshot.type == "FlameWisp") return SpawnFlameWisp(pos);
+    if (snapshot.type == "SlimeSmall") return SpawnSlime(pos, SlimeSize::Small);
+    if (snapshot.type == "SlimeBig") return SpawnSlime(pos, SlimeSize::Big);
+    if (snapshot.type == "Sporeling") return SpawnSporeling(pos);
+    if (snapshot.type == "Shieldbearer") return SpawnShieldbearer(pos);
+    if (snapshot.type == "Phantom") return SpawnPhantom(pos);
+    if (snapshot.type == "BomberImp") return SpawnBomberImp(pos);
+    if (snapshot.type == "Warchief") return SpawnWarchief(pos);
+    if (snapshot.type == "LivingBlade") return SpawnLivingBlade(pos);
+    if (snapshot.type == "Molarbeast") { SpawnMolarbeast(pos); return nullptr; }
+
+    auto configure = [&](Enemy& e) { ConfigureSpawnedEnemy(e); };
+    if (snapshot.type == "Werewolf") return SpawnPooledType<Werewolf>(_enemies, pos, &Enemy::AsWerewolf, configure);
+    if (snapshot.type == "ChompBug") return SpawnPooledType<ChompBug>(_enemies, pos, &Enemy::AsChompBug, configure);
+    if (snapshot.type == "Osiris") return SpawnPooledType<Osiris>(_enemies, pos, &Enemy::AsOsiris, configure);
+    if (snapshot.type == "TitanGuard") return SpawnPooledType<TitanGuard>(_enemies, pos, &Enemy::AsTitanGuard, configure);
+    if (snapshot.type == "ToxicVermin") return SpawnPooledType<ToxicVermin>(_enemies, pos, &Enemy::AsToxicVermin, configure);
+    if (snapshot.type == "AncientBear") return SpawnPooledType<AncientBear>(_enemies, pos, &Enemy::AsAncientBear, configure);
+    if (snapshot.type == "AbyssSlime") return SpawnPooledType<AbyssSlime>(_enemies, pos, &Enemy::AsAbyssSlime, configure);
+    if (snapshot.type == "PumpkinJack") return SpawnPooledType<PumpkinJack>(_enemies, pos, &Enemy::AsPumpkinJack, configure);
+    if (snapshot.type == "Minotaur") return SpawnPooledType<Minotaur>(_enemies, pos, &Enemy::AsMinotaur, configure);
+
+    return SpawnBasicEnemy(pos);
+}
 // =============================================================================
 // Debug-panel direct spawns — index order mirrors NewEnemyItems/NewBossItems
 // in DebugPanel.cpp. Used only from the debug panel for playtesting.
@@ -10257,8 +10507,21 @@ void Engine::SpawnDungeonRoomEnemies()
 {
     if (_dungeonRoomIdx < 0) return;
 
+    DungeonRoomState& roomState = _dungeonRoomStates[_dungeonRoomIdx];
+
     // Rooms that have already been cleared don't respawn.
-    if (_dungeonRoomStates[_dungeonRoomIdx].cleared) return;
+    if (roomState.cleared)
+    {
+        _dungeonEnemiesSpawned = false;
+        return;
+    }
+
+    // Re-entering a half-cleared room restores only the enemies that were still alive.
+    if (roomState.enemiesInitialized)
+    {
+        RestoreDungeonRoomEnemyState(_dungeonRoomIdx);
+        return;
+    }
 
     float sw    = (float)kVirtualWidth;
     float sh    = (float)kVirtualHeight;
@@ -10276,7 +10539,9 @@ void Engine::SpawnDungeonRoomEnemies()
     // Non-combat start room - pre-clear so we never try to spawn here again.
     if (i == startIdx || type == RoomType::Rest)
     {
-        _dungeonRoomStates[i].cleared = true;
+        roomState.cleared = true;
+        roomState.enemiesInitialized = true;
+        roomState.survivors.clear();
         return;
     }
 
@@ -10314,21 +10579,17 @@ void Engine::SpawnDungeonRoomEnemies()
     {
         // Spawn the miniboss and initialize the elite mechanic for this room.
         Enemy* miniboss = SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
+        if (miniboss) miniboss->SetIsEliteMiniboss(true);
+        ResetEliteRoomRuntime();
         _eliteMinibossPtr = miniboss;
-        _eliteMechanic    = GetRandomValue(0, 4);
-        _eliteCageRadius         = 0.f;
-        _eliteCageDamageTimer    = 0.f;
-        _eliteEnrageWarningTimer = 0.f;
-        _eliteIsLeaping          = false;
-        _eliteLeapCooldown       = 0.f;
-        _eliteLeapTimer          = 0.f;
-        _eliteHazardSpawnTimer   = 0.f;
+        _eliteMechanic = GetEliteMechanicForRoom(i);
+        _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
 
         switch (_eliteMechanic)
         {
         case 0:  // Cage - centred on screen
-            _eliteCageCenter     = { sw * 0.5f, sh * 0.5f };
-            _eliteCageRadius     = kEliteCageRadius;
+            _eliteCageCenter      = { sw * 0.5f, sh * 0.5f };
+            _eliteCageRadius      = kEliteCageRadius;
             _eliteCageDamageTimer = kEliteCageDamageInterval;
             break;
         case 1:  // Bodyguard - miniboss immune until fodder die
@@ -10336,7 +10597,6 @@ void Engine::SpawnDungeonRoomEnemies()
             break;
         case 2:  // Enrage - miniboss powered up immediately
             if (miniboss) miniboss->ApplyEnrage();
-            _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
             break;
         case 3:  // Leap - miniboss leaps at the player periodically
             _eliteLeapCooldown = kLeapInterval;
@@ -10457,7 +10717,9 @@ void Engine::SpawnDungeonRoomEnemies()
         }
     }
 
+    roomState.enemiesInitialized = true;
     _dungeonEnemiesSpawned = true;
+    SaveDungeonRoomEnemyState();
 }
 
 void Engine::ClearDungeonEnemies()
@@ -10480,12 +10742,34 @@ void Engine::ClearDungeonEnemies()
     _treasureChestSpawned  = false;
     _treasureChestBroken   = false;
     _eliteRewardGranted    = false;
-    _eliteMechanic         = -1;
-    _eliteMinibossPtr      = nullptr;
-    _eliteCageRadius       = 0.f;
-    _eliteIsLeaping        = false;
+    ResetEliteRoomRuntime();
+}
+
+void Engine::ResetEliteRoomRuntime()
+{
+    _eliteMechanic           = -1;
+    _eliteMinibossPtr        = nullptr;
+    _eliteCageRadius         = 0.f;
+    _eliteCageDamageTimer    = 0.f;
     _eliteEnrageWarningTimer = 0.f;
+    _eliteIsLeaping          = false;
+    _eliteLeapCooldown       = 0.f;
+    _eliteLeapTimer          = 0.f;
     _eliteHazardSpawnTimer   = 0.f;
+}
+
+int Engine::GetEliteMechanicForRoom(int roomIdx)
+{
+    DungeonRoomState& state = _dungeonRoomStates[roomIdx];
+    int forced = _debug.GetForcedEliteMechanic();
+    if (forced >= 0 && forced <= 4)
+    {
+        state.eliteMechanic = forced;
+        return state.eliteMechanic;
+    }
+    if (state.eliteMechanic < 0 || state.eliteMechanic > 4)
+        state.eliteMechanic = GetRandomValue(0, 4);
+    return state.eliteMechanic;
 }
 
 
@@ -10512,27 +10796,27 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
         || room.type == RoomType::Treasure
         || room.type == RoomType::Store;
 
-    int doorStartC = RoomLayout::kCols / 2 - 1;
-    int doorStartR = RoomLayout::kRows / 2 - 1;
+    int doorStartC = GetDungeonDoorStartCol();
+    int doorStartR = GetDungeonDoorStartRow();
 
     auto shouldOpen = [&](DungeonDoorSide side) {
         return alwaysOpen || side == entryDoorSide;
     };
 
     auto setNorth = [&](bool open) {
-        for (int dc = 0; dc < 3; dc++)
+        for (int dc = 0; dc < kDungeonDoorSpanCols; dc++)
             layout.tiles[0][doorStartC + dc] = open ? TileType::Floor : TileType::WallTopFace;
     };
     auto setSouth = [&](bool open) {
-        for (int dc = 0; dc < 3; dc++)
+        for (int dc = 0; dc < kDungeonDoorSpanCols; dc++)
             layout.tiles[RoomLayout::kRows - 1][doorStartC + dc] = open ? TileType::Floor : TileType::WallBottom;
     };
     auto setWest = [&](bool open) {
-        for (int dr = 0; dr < 2; dr++)
+        for (int dr = 0; dr < kDungeonDoorSpanRows; dr++)
             layout.tiles[doorStartR + dr][0] = open ? TileType::Floor : TileType::WallLeft;
     };
     auto setEast = [&](bool open) {
-        for (int dr = 0; dr < 2; dr++)
+        for (int dr = 0; dr < kDungeonDoorSpanRows; dr++)
             layout.tiles[doorStartR + dr][RoomLayout::kCols - 1] = open ? TileType::Floor : TileType::WallRight;
     };
 
@@ -10553,16 +10837,16 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
 
 bool Engine::IsDungeonDoorOpen(DungeonDoorSide side) const
 {
-    int doorStartC = RoomLayout::kCols / 2 - 1;
-    int doorStartR = RoomLayout::kRows / 2 - 1;
+    int doorStartC = GetDungeonDoorStartCol();
+    int doorStartR = GetDungeonDoorStartRow();
     TileType t = TileType::None;
 
     switch (side)
     {
-    case DungeonDoorSide::North: t = _dungeonRoomLayout.tiles[0][doorStartC + 1]; break;
-    case DungeonDoorSide::South: t = _dungeonRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + 1]; break;
-    case DungeonDoorSide::West:  t = _dungeonRoomLayout.tiles[doorStartR][0]; break;
-    case DungeonDoorSide::East:  t = _dungeonRoomLayout.tiles[doorStartR][RoomLayout::kCols - 1]; break;
+    case DungeonDoorSide::North: t = _dungeonRoomLayout.tiles[0][doorStartC + kDungeonDoorSpanCols / 2]; break;
+    case DungeonDoorSide::South: t = _dungeonRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + kDungeonDoorSpanCols / 2]; break;
+    case DungeonDoorSide::West:  t = _dungeonRoomLayout.tiles[doorStartR + kDungeonDoorSpanRows / 2][0]; break;
+    case DungeonDoorSide::East:  t = _dungeonRoomLayout.tiles[doorStartR + kDungeonDoorSpanRows / 2][RoomLayout::kCols - 1]; break;
     default: return false;
     }
 
@@ -10579,8 +10863,8 @@ void Engine::SpawnDungeonDoorOpenEffects()
     float sh = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
-    int doorStartC = RoomLayout::kCols / 2 - 1;
-    int doorStartR = RoomLayout::kRows / 2 - 1;
+    int doorStartC = GetDungeonDoorStartCol();
+    int doorStartR = GetDungeonDoorStartRow();
     size_t effectStartCount = _dungeonClearEffects.size();
 
     auto addDoorEffect = [&](DungeonDoorSide side, bool exists) {
@@ -10590,20 +10874,20 @@ void Engine::SpawnDungeonDoorOpenEffects()
         switch (side)
         {
         case DungeonDoorSide::North:
-            pos = { (doorStartC + 1.5f) * cellW, 0.65f * cellH };
-            glow = { doorStartC * cellW, 0.f, 3.f * cellW, 0.85f * cellH };
+            pos = { (doorStartC + kDungeonDoorSpanCols * 0.5f) * cellW, 0.65f * cellH };
+            glow = { doorStartC * cellW, 0.f, (float)kDungeonDoorSpanCols * cellW, 0.85f * cellH };
             break;
         case DungeonDoorSide::South:
-            pos = { (doorStartC + 1.5f) * cellW, (RoomLayout::kRows - 0.65f) * cellH };
-            glow = { doorStartC * cellW, (RoomLayout::kRows - 0.85f) * cellH, 3.f * cellW, 0.85f * cellH };
+            pos = { (doorStartC + kDungeonDoorSpanCols * 0.5f) * cellW, (RoomLayout::kRows - 0.65f) * cellH };
+            glow = { doorStartC * cellW, (RoomLayout::kRows - 0.85f) * cellH, (float)kDungeonDoorSpanCols * cellW, 0.85f * cellH };
             break;
         case DungeonDoorSide::West:
-            pos = { 0.65f * cellW, (doorStartR + 1.f) * cellH };
-            glow = { 0.f, doorStartR * cellH, 0.85f * cellW, 2.f * cellH };
+            pos = { 0.65f * cellW, (doorStartR + kDungeonDoorSpanRows * 0.5f) * cellH };
+            glow = { 0.f, doorStartR * cellH, 0.85f * cellW, (float)kDungeonDoorSpanRows * cellH };
             break;
         case DungeonDoorSide::East:
-            pos = { (RoomLayout::kCols - 0.65f) * cellW, (doorStartR + 1.f) * cellH };
-            glow = { (RoomLayout::kCols - 0.85f) * cellW, doorStartR * cellH, 0.85f * cellW, 2.f * cellH };
+            pos = { (RoomLayout::kCols - 0.65f) * cellW, (doorStartR + kDungeonDoorSpanRows * 0.5f) * cellH };
+            glow = { (RoomLayout::kCols - 0.85f) * cellW, doorStartR * cellH, 0.85f * cellW, (float)kDungeonDoorSpanRows * cellH };
             break;
         default: return;
         }
@@ -10684,17 +10968,16 @@ void Engine::DrawDungeonClearEffects() const
             { dst.width * 0.5f, dst.height * 0.5f }, 0.f, WHITE);
     }
 }
-// Set the 3 north door tiles of the Store room to doorType.
+// Set the north door tiles of the Store room to doorType.
 // Used to lock the door at cutscene start and unlock it after ability selection.
 void Engine::SetStoreDoorTiles(TileType doorType)
 {
     if (_currentRoomType != RoomType::Store) return;
 
     TileType placedType = (doorType == TileType::DoorOpen) ? TileType::Floor : doorType;
-    int midC = RoomLayout::kCols / 2;
-    // North door is 3 tiles wide, centred on column midC, at row 0.
-    for (int dc = -1; dc <= 1; dc++)
-        _dungeonRoomLayout.tiles[0][midC + dc] = placedType;
+    int doorStartC = GetDungeonDoorStartCol();
+    for (int dc = 0; dc < kDungeonDoorSpanCols; dc++)
+        _dungeonRoomLayout.tiles[0][doorStartC + dc] = placedType;
 
     RebuildDungeonNav();
 }
@@ -10707,28 +10990,28 @@ void Engine::ApplyDungeonBossExitTiles(TileType doorType)
     if (bossIdx >= (int)rooms.size()) return;
     const DungeonRoom& boss = rooms[bossIdx];
 
-    int doorStartC = RoomLayout::kCols / 2 - 1;
-    int doorStartR = RoomLayout::kRows / 2 - 1;
+    int doorStartC = GetDungeonDoorStartCol();
+    int doorStartR = GetDungeonDoorStartRow();
 
     // Place the exit on the first wall that has no existing dungeon connection.
     if (!boss.hasSouth)
     {
-        for (int dc = 0; dc < 3; dc++)
+        for (int dc = 0; dc < kDungeonDoorSpanCols; dc++)
             _dungeonRoomLayout.tiles[RoomLayout::kRows - 1][doorStartC + dc] = doorType;
     }
     else if (!boss.hasNorth)
     {
-        for (int dc = 0; dc < 3; dc++)
+        for (int dc = 0; dc < kDungeonDoorSpanCols; dc++)
             _dungeonRoomLayout.tiles[0][doorStartC + dc] = doorType;
     }
     else if (!boss.hasEast)
     {
-        for (int dr = 0; dr < 2; dr++)
+        for (int dr = 0; dr < kDungeonDoorSpanRows; dr++)
             _dungeonRoomLayout.tiles[doorStartR + dr][RoomLayout::kCols - 1] = doorType;
     }
     else
     {
-        for (int dr = 0; dr < 2; dr++)
+        for (int dr = 0; dr < kDungeonDoorSpanRows; dr++)
             _dungeonRoomLayout.tiles[doorStartR + dr][0] = doorType;
     }
 }
@@ -10745,16 +11028,16 @@ Rectangle Engine::GetDungeonBossExitTrigger() const
     float sh    = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
-    int doorStartC = RoomLayout::kCols / 2 - 1;
-    int doorStartR = RoomLayout::kRows / 2 - 1;
+    int doorStartC = GetDungeonDoorStartCol();
+    int doorStartR = GetDungeonDoorStartRow();
 
     if (!boss.hasSouth)
-        return { doorStartC * cellW, (RoomLayout::kRows - 2) * cellH, 3.f * cellW, cellH };
+        return { doorStartC * cellW, (RoomLayout::kRows - 2) * cellH, (float)kDungeonDoorSpanCols * cellW, cellH };
     if (!boss.hasNorth)
-        return { doorStartC * cellW, cellH, 3.f * cellW, cellH };
+        return { doorStartC * cellW, cellH, (float)kDungeonDoorSpanCols * cellW, cellH };
     if (!boss.hasEast)
-        return { (RoomLayout::kCols - 2) * cellW, doorStartR * cellH, cellW, 2.f * cellH };
-    return { cellW, doorStartR * cellH, cellW, 2.f * cellH };
+        return { (RoomLayout::kCols - 2) * cellW, doorStartR * cellH, cellW, (float)kDungeonDoorSpanRows * cellH };
+    return { cellW, doorStartR * cellH, cellW, (float)kDungeonDoorSpanRows * cellH };
 }
 
 void Engine::RebuildDungeonNav()
@@ -10992,15 +11275,15 @@ Rectangle Engine::GetBossBarrierRect(DungeonDoorSide side) const
     float sh = (float)kVirtualHeight;
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
-    int doorStartC = RoomLayout::kCols / 2 - 1;
-    int doorStartR = RoomLayout::kRows / 2 - 1;
+    int doorStartC = GetDungeonDoorStartCol();
+    int doorStartR = GetDungeonDoorStartRow();
 
     switch (side)
     {
-    case DungeonDoorSide::North: return { doorStartC * cellW, 0.f, 3.f * cellW, cellH };
-    case DungeonDoorSide::South: return { doorStartC * cellW, (RoomLayout::kRows - 1) * cellH, 3.f * cellW, cellH };
-    case DungeonDoorSide::West:  return { 0.f, doorStartR * cellH, cellW, 2.f * cellH };
-    case DungeonDoorSide::East:  return { (RoomLayout::kCols - 1) * cellW, doorStartR * cellH, cellW, 2.f * cellH };
+    case DungeonDoorSide::North: return { doorStartC * cellW, 0.f, (float)kDungeonDoorSpanCols * cellW, cellH };
+    case DungeonDoorSide::South: return { doorStartC * cellW, (RoomLayout::kRows - 1) * cellH, (float)kDungeonDoorSpanCols * cellW, cellH };
+    case DungeonDoorSide::West:  return { 0.f, doorStartR * cellH, cellW, (float)kDungeonDoorSpanRows * cellH };
+    case DungeonDoorSide::East:  return { (RoomLayout::kCols - 1) * cellW, doorStartR * cellH, cellW, (float)kDungeonDoorSpanRows * cellH };
     default: return {};
     }
 }
@@ -12913,19 +13196,29 @@ void Engine::UpdateDungeonRun(float dt)
         const DungeonRoom& cur = rooms[_dungeonRoomIdx];
 
         // Door ranges in world (= screen) coords.
-        int   doorCentreC = RoomLayout::kCols / 2;
-        float doorLeft    = (doorCentreC - 1) * cellW;
-        float doorRight   = (doorCentreC + 2) * cellW;
-        int   doorCentreR = RoomLayout::kRows / 2;
-        float doorTop     = (doorCentreR - 1) * cellH;
-        float doorBot     = (doorCentreR + 1) * cellH;
+        int   doorStartC = GetDungeonDoorStartCol();
+        float doorLeft   = doorStartC * cellW;
+        float doorRight  = (doorStartC + kDungeonDoorSpanCols) * cellW;
+        int   doorStartR = GetDungeonDoorStartRow();
+        float doorTop    = doorStartR * cellH;
+        float doorBot    = (doorStartR + kDungeonDoorSpanRows) * cellH;
 
         // Which walls have open doorways the player can walk through?
-        bool canPassNorth = cur.hasNorth && IsDungeonDoorOpen(DungeonDoorSide::North) && pos.x > doorLeft && pos.x < doorRight;
-        bool canPassSouth = cur.hasSouth && IsDungeonDoorOpen(DungeonDoorSide::South) && pos.x > doorLeft && pos.x < doorRight;
-        bool canPassWest  = cur.hasWest  && IsDungeonDoorOpen(DungeonDoorSide::West)  && pos.y > doorTop  && pos.y < doorBot;
-        bool canPassEast  = cur.hasEast  && IsDungeonDoorOpen(DungeonDoorSide::East)  && pos.y > doorTop  && pos.y < doorBot;
-
+        // The player's BODY (collision rect) must fit inside the opening, and
+        // travel only starts while the player is actively pushing toward that door.
+        Rectangle playerBody = _player.GetCollisionRec();
+        bool bodyInDoorX = playerBody.x > doorLeft && playerBody.x + playerBody.width  < doorRight;
+        bool bodyInDoorY = playerBody.y > doorTop  && playerBody.y + playerBody.height < doorBot;
+        Vector2 moveDir = _player.GetMoveDirection();
+        bool canUseDoor = !_player.IsForceLocked() && Vector2LengthSqr(moveDir) > 0.01f;
+        bool wantsNorth = canUseDoor && moveDir.y < -0.25f;
+        bool wantsSouth = canUseDoor && moveDir.y >  0.25f;
+        bool wantsWest  = canUseDoor && moveDir.x < -0.25f;
+        bool wantsEast  = canUseDoor && moveDir.x >  0.25f;
+        bool canPassNorth = cur.hasNorth && IsDungeonDoorOpen(DungeonDoorSide::North) && bodyInDoorX && wantsNorth;
+        bool canPassSouth = cur.hasSouth && IsDungeonDoorOpen(DungeonDoorSide::South) && bodyInDoorX && wantsSouth;
+        bool canPassWest  = cur.hasWest  && IsDungeonDoorOpen(DungeonDoorSide::West)  && bodyInDoorY && wantsWest;
+        bool canPassEast  = cur.hasEast  && IsDungeonDoorOpen(DungeonDoorSide::East)  && bodyInDoorY && wantsEast;
         // Helper: begin a Zelda-style scroll into an adjacent room.
         // scrollVec describes which direction the CURRENT room slides offscreen.
         auto startScroll = [&](int dr, int dc, Vector2 scrollVec, Vector2 spawnPos)
@@ -12955,11 +13248,12 @@ void Engine::UpdateDungeonRun(float dt)
                 }
             }
 
+            SaveDungeonRoomEnemyState();
+
             const DungeonRoom& next = rooms[nextIdx];
             _dungeonScrollNextLayout  = RoomLayout::Generate(
                 next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
-                (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
-                (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size());
+                &_tileDefs);
             _dungeonScrollNextEntryDoorSide = OppositeDungeonDoorSide(dr, dc);
             ApplyDungeonRoomDoorState(_dungeonScrollNextLayout, nextIdx, _dungeonScrollNextEntryDoorSide);
             _dungeonScrollNextIdx     = nextIdx;
@@ -12980,6 +13274,7 @@ void Engine::UpdateDungeonRun(float dt)
                 if (nextIdx >= 0)
                 {
                     Vector2 spawnPos{ sw * 0.5f, (RoomLayout::kRows - 2) * cellH };
+                    SaveDungeonRoomEnemyState();
                     _dungeonFadePendingAction = [this, nextIdx, spawnPos]()
                     {
                         EnterDungeonRoom(nextIdx, DungeonDoorSide::South, spawnPos, false);
@@ -13004,13 +13299,24 @@ void Engine::UpdateDungeonRun(float dt)
             startScroll( 0, +1, {-1.f,  0.f }, { cellW * 2.f, pos.y });
 
         // Wall collision: solid walls clamp, door openings let the player through.
+        // Clamps push the player's COLLISION RECT flush against each wall's
+        // visible inner edge (old version clamped the centre point, letting the
+        // sprite sink into the side walls and stop short of the top wall).
         if (!_dungeonScrolling)
         {
             Vector2 posBefore = pos;
-            if (!canPassNorth) pos.y = std::max(pos.y, cellH);
-            if (!canPassSouth) pos.y = std::min(pos.y, (RoomLayout::kRows - 2) * cellH);
-            if (!canPassWest)  pos.x = std::max(pos.x, cellW);
-            if (!canPassEast)  pos.x = std::min(pos.x, (RoomLayout::kCols - 1) * cellW);
+            float wallNorthEdge = cellH;                                   // bottom of the top wall row
+            float wallSouthEdge = (RoomLayout::kRows - 1) * cellH;         // top of the bottom wall row
+            float wallWestEdge  = cellW;                                   // right edge of the left wall
+            float wallEastEdge  = (RoomLayout::kCols - 1) * cellW;         // left edge of the right wall
+            if (!canPassNorth && playerBody.y < wallNorthEdge)
+                pos.y += wallNorthEdge - playerBody.y;
+            if (!canPassSouth && playerBody.y + playerBody.height > wallSouthEdge)
+                pos.y -= (playerBody.y + playerBody.height) - wallSouthEdge;
+            if (!canPassWest  && playerBody.x < wallWestEdge)
+                pos.x += wallWestEdge - playerBody.x;
+            if (!canPassEast  && playerBody.x + playerBody.width > wallEastEdge)
+                pos.x -= (playerBody.x + playerBody.width) - wallEastEdge;
             _player.SetWorldPos(pos);
             // End any forced push the moment the player touches a wall.
             if ((pos.x != posBefore.x || pos.y != posBefore.y) && _player.IsBeingForcedPushed())
@@ -13105,7 +13411,7 @@ void Engine::UpdateDungeonRun(float dt)
                 }
             }
 
-            // -- Cursed Shrine (risk/reward pacts) — east of Zeph, once per run.
+            // -- Cursed Wager — east of Zeph; one wager per biome (re-arms each shop).
             _curseShrineBobTimer += dt;
             Vector2 shrinePos = GetCurseShrinePos();
             _nearCurseShrine = !_curseShrineUsed &&
@@ -13331,12 +13637,15 @@ void Engine::UpdateDungeonRun(float dt)
         // -- Room clear detection -----------------------------------------------
         if (_dungeonEnemiesSpawned)
         {
+            SaveDungeonRoomEnemyState();
             bool allDead = true;
             for (const auto& e : _enemies)
                 if (e->IsActive()) { allDead = false; break; }
             if (allDead)
             {
                 _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
+                _dungeonRoomStates[_dungeonRoomIdx].enemiesInitialized = true;
+                _dungeonRoomStates[_dungeonRoomIdx].survivors.clear();
                 _dungeonEnemiesSpawned = false;
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
                 if (_dungeonRoomIdx == _dungeonGen.GetKeyIndex() && !_magicGemCollected)
@@ -13435,7 +13744,9 @@ void Engine::UpdateDungeonRun(float dt)
         // Treasure chest overlap - player walks over the chest to open it.
         if (_treasureChestSpawned && !_treasureChestBroken)
         {
-            if (CheckCollisionPointRec(_player.GetWorldPos(), GetTreasureChestRect()))
+            // Body-overlap test (not a centre-point test) so brushing against
+            // the chest is enough to open it.
+            if (CheckCollisionRecs(_player.GetCollisionRec(), GetTreasureChestRect()))
             {
                 _treasureChestBroken = true;
                 OpenTreasureChest();
@@ -13490,12 +13801,10 @@ void Engine::UpdateDungeonRun(float dt)
             if (_dungeonRoomIdx >= 0 && _dungeonRoomIdx < (int)_dungeonGen.GetRooms().size())
             {
                 const DungeonRoom& room = _dungeonGen.GetRooms()[_dungeonRoomIdx];
-                int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 5 : 0;
+                int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 2 : 0;
                 _dungeonRoomLayout = RoomLayout::Generate(
                     room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
-                    (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
-                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size(),
-                    densityBonus);
+                    &_tileDefs, densityBonus);
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
             }
         }
@@ -13533,12 +13842,10 @@ void Engine::UpdateDungeonRun(float dt)
             if (CheckCollisionPointRec(GetVirtualMousePos(), GetDungeonRoomRect(i)))
             {
                 const DungeonRoom& room = rooms[i];
-                int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 5 : 0;
+                int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 2 : 0;
                 _dungeonRoomLayout    = RoomLayout::Generate(
                     room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
-                    (int)_tileDefs.props.size(), (int)_tileDefs.decors.size(),
-                    (int)_tileDefs.animDecors.size(), (int)_tileDefs.animProps.size(),
-                    densityBonus);
+                    &_tileDefs, densityBonus);
                 _dungeonRoomIdx = i;
                 _dungeonEntryDoorSide = DungeonDoorSide::None;
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
@@ -13600,7 +13907,16 @@ void Engine::DrawDungeonRun()
             }
             else
             {
-                _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, _shakeOffset);
+                // Y-sort vs the player: props whose BASE is above the player's
+                // feet draw here (behind, the old order); props whose base is
+                // below the feet draw after the player, so standing behind a
+                // tree tucks the player under its canopy.
+                float playerFeetScreenY = _player.GetFeetWorldPos().y
+                                        - (_cameraPos.y - _shakeOffset.y)
+                                        + sh * 0.5f;
+                _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, _shakeOffset, false);
+                _tileRenderer.DrawRoomPropsSplit(_dungeonRoomLayout, scaleX, scaleY,
+                                                 _shakeOffset, playerFeetScreenY, false);
                 DrawDungeonClearEffects();
                 DrawDungeonMagicGemAndBarrier();
                 DrawBiomeModifiers();
@@ -13763,7 +14079,7 @@ void Engine::DrawDungeonRun()
                                 }
                             if (_nearCurseShrine && !_shop.IsNearNpc())
                             {
-                                const char* pr = "[E] Cursed Shrine";
+                                const char* pr = "[E] Cursed Wager";
                                 int fs = 26, w = MeasureText(pr, fs);
                                 DrawText(pr, (int)(ss.x - w * 0.5f), (int)(ss.y - 92.f), fs, Color{ 255, 120, 150, 255 });
                             }
@@ -13772,6 +14088,11 @@ void Engine::DrawDungeonRun()
                 }
 
                 _player.DrawPlayer(shakenCamRef);
+
+                // Front half of the Y-sort: props the player is standing
+                // behind draw over them (see split above).
+                _tileRenderer.DrawRoomPropsSplit(_dungeonRoomLayout, scaleX, scaleY,
+                                                 _shakeOffset, playerFeetScreenY, true);
             }
         }
         else

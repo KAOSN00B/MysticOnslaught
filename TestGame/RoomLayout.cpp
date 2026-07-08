@@ -1,11 +1,35 @@
 #include "RoomLayout.h"
 #include "raylib.h"
 
+#include <cmath>
+#include <cstdlib>
+#include <vector>
+
+namespace
+{
+    // A placed object's footprint in tile units (col/row/width/height).
+    struct TileFootprint { int col, row, w, h; };
+
+    // Tiles a sprite covers, from its source-pixel size (16px tiles, round up).
+    int TilesFor(float sourcePixels)
+    {
+        int tiles = (int)std::ceil(sourcePixels / 16.f);
+        return (tiles < 1) ? 1 : tiles;
+    }
+
+    bool RectsOverlap(int aCol, int aRow, int aW, int aH,
+                      int bCol, int bRow, int bW, int bH)
+    {
+        return aCol < bCol + bW && bCol < aCol + aW &&
+               aRow < bRow + bH && bRow < aRow + aH;
+    }
+}
+
 RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
                                 bool hasEast,  bool hasWest,
                                 RoomType type,
-                                int propCount, int decorCount, int animDecorCount,
-                                int animPropCount, int propDensityBonus)
+                                const TileDefSet* defs,
+                                int propDensityBonus)
 {
     RoomLayout layout;
 
@@ -59,69 +83,93 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
             if (layout.tiles[r][c] == TileType::Floor && GetRandomValue(0, 99) < 15)
                 layout.tiles[r][c] = TileType::FloorVariant;
 
-    // ── Treasure chest centred in the room ───────────────────────────────────
-    // Starts as Floor — Engine switches it to ChestClosed after enemies die, ChestOpen after opened.
-    // (No tile change here; Engine handles it on _treasureChestSpawned / _treasureChestBroken.)
+    if (defs == nullptr)
+        return layout;
+
+    // ── Footprint-aware placement ─────────────────────────────────────────────
+    // Every solid object is placed by its REAL sprite size (in tiles), with:
+    //   * kWallMargin tiles kept clear of every wall,
+    //   * the door cross-lanes kept fully clear (guaranteed walkable paths),
+    //   * kClearance tiles of open floor between any two footprints, so the
+    //     player AND enemies always fit between props (no more wedging),
+    //   * no footprint ever overlapping another (no more stacked props).
+    const int kWallMargin = 2;   // tiles between a footprint and the border walls
+    const int kClearance  = 2;   // open tiles required between any two footprints
+
+    std::vector<TileFootprint> placedFootprints;
+
+    // The door lanes: a horizontal and a vertical band through the room centre
+    // (matching the door positions) that placement must never block.
+    const int laneC0 = doorStartC - 1, laneC1 = doorStartC + 3;   // vertical lane cols
+    const int laneR0 = doorStartR - 1, laneR1 = doorStartR + 2;   // horizontal lane rows
+
+    auto canPlaceFootprint = [&](int col, int row, int w, int h) -> bool
+    {
+        // Fully inside the walkable interior, with the wall margin.
+        if (col < kWallMargin || row < kWallMargin) return false;
+        if (col + w > cols - kWallMargin || row + h > rows - kWallMargin) return false;
+
+        // Off the door lanes.
+        if (RectsOverlap(col, row, w, h, laneC0, 0, laneC1 - laneC0 + 1, rows)) return false;
+        if (RectsOverlap(col, row, w, h, 0, laneR0, cols, laneR1 - laneR0 + 1)) return false;
+
+        // Clearance gap against everything already placed (expand by kClearance).
+        for (const TileFootprint& other : placedFootprints)
+            if (RectsOverlap(col - kClearance, row - kClearance,
+                             w + kClearance * 2, h + kClearance * 2,
+                             other.col, other.row, other.w, other.h))
+                return false;
+
+        return true;
+    };
+
+    // Tries to place one object of the given tile size; records the footprint
+    // and returns the anchor via out params. False = no space found (skip it —
+    // fewer props always beats overlapping props).
+    auto tryPlace = [&](int w, int h, int& outCol, int& outRow) -> bool
+    {
+        for (int attempt = 0; attempt < 60; attempt++)
+        {
+            int col = GetRandomValue(kWallMargin, cols - kWallMargin - w);
+            int row = GetRandomValue(kWallMargin, rows - kWallMargin - h);
+            if (!canPlaceFootprint(col, row, w, h)) continue;
+            placedFootprints.push_back({ col, row, w, h });
+            outCol = col; outRow = row;
+            return true;
+        }
+        return false;
+    };
+
+    const int propCount      = (int)defs->props.size();
+    const int animPropCount  = (int)defs->animProps.size();
+    const int decorCount     = (int)defs->decors.size();
+    const int animDecorCount = (int)defs->animDecors.size();
 
     // ── Props (solid objects) ─────────────────────────────────────────────────
     if (propCount > 0 && type != RoomType::Boss && type != RoomType::Rest && type != RoomType::Store)
     {
+        // Base counts raised now that footprint placement guarantees clean
+        // spacing — dense biomes (Forest/Jungle) add propDensityBonus on top.
         int numProps = 0;
         switch (type)
         {
-        case RoomType::Standard: numProps = GetRandomValue(1, 3 + propDensityBonus); break;
-        case RoomType::Elite:    numProps = GetRandomValue(3, 5 + propDensityBonus); break;
-        case RoomType::Treasure: numProps = GetRandomValue(0, 2 + propDensityBonus); break;
-        default:                 numProps = GetRandomValue(0, 2 + propDensityBonus); break;
+        case RoomType::Standard: numProps = GetRandomValue(3, 6 + propDensityBonus); break;
+        case RoomType::Elite:    numProps = GetRandomValue(4, 7 + propDensityBonus); break;
+        case RoomType::Treasure: numProps = GetRandomValue(1, 4 + propDensityBonus); break;
+        default:                 numProps = GetRandomValue(1, 4 + propDensityBonus); break;
         }
 
         for (int p = 0; p < numProps; p++)
         {
-            for (int attempt = 0; attempt < 40; attempt++)
-            {
-                // Stay 2 tiles from every wall so sprites don't bleed onto the border.
-                int pr = GetRandomValue(3, rows - 4);
-                int pc = GetRandomValue(3, cols - 4);
-
-                // Stay clear of door paths.
-                if (pc >= doorStartC - 1 && pc <= doorStartC + 3) continue;
-                if (pr >= doorStartR - 1 && pr <= doorStartR + 2) continue;
-
-                TileType t = layout.tiles[pr][pc];
-                if (t != TileType::Floor && t != TileType::FloorVariant) continue;
-
-                // Enforce a minimum 2-tile gap between props so the player can pass between them.
-                bool tooClose = false;
-                for (const auto& sp : layout.props)
-                    if (std::abs(sp.col - pc) < 2 && std::abs(sp.row - pr) < 2)
-                    { tooClose = true; break; }
-                if (tooClose) continue;
-
-                layout.props.push_back({ GetRandomValue(0, propCount - 1), pc, pr });
-                break;
-            }
+            int defIdx = GetRandomValue(0, propCount - 1);
+            const Rectangle& src = defs->props[defIdx].src;
+            int col, row;
+            if (tryPlace(TilesFor(src.width), TilesFor(src.height), col, row))
+                layout.props.push_back({ defIdx, col, row });
         }
     }
 
-    // ── Decorations (floor-level, no collision) — 1–7 randomly placed ───────
-    if (decorCount > 0)
-    {
-        int numDecors = GetRandomValue(1, 7);
-        for (int d = 0; d < numDecors; d++)
-        {
-            for (int attempt = 0; attempt < 20; attempt++)
-            {
-                int dr = GetRandomValue(1, rows - 2);
-                int dc = GetRandomValue(1, cols - 2);
-                TileType t = layout.tiles[dr][dc];
-                if (t != TileType::Floor && t != TileType::FloorVariant) continue;
-                layout.decors.push_back({ GetRandomValue(0, decorCount - 1), dc, dr });
-                break;
-            }
-        }
-    }
-
-    // ── Animated props — scattered like static props, drawn on top with collision ─
+    // ── Animated props — same footprint rules, sharing the placed list ───────
     if (animPropCount > 0 && type != RoomType::Boss && type != RoomType::Rest && type != RoomType::Store)
     {
         int numAnimProps = 0;
@@ -135,25 +183,46 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
 
         for (int p = 0; p < numAnimProps; p++)
         {
-            for (int attempt = 0; attempt < 40; attempt++)
+            int defIdx = GetRandomValue(0, animPropCount - 1);
+            if (defs->animProps[defIdx].frames.empty()) continue;
+            const Rectangle& frame = defs->animProps[defIdx].frames[0];
+            int col, row;
+            if (tryPlace(TilesFor(frame.width), TilesFor(frame.height), col, row))
+                layout.animProps.push_back({ defIdx, col, row });
+        }
+    }
+
+    // Decors have no collision, so they skip clearance — but they must never sit
+    // under a prop's footprint (that's the "stacked on top of each other" look).
+    auto cellUnderFootprint = [&](int col, int row) -> bool
+    {
+        for (const TileFootprint& fp : placedFootprints)
+            if (RectsOverlap(col, row, 1, 1, fp.col, fp.row, fp.w, fp.h))
+                return true;
+        return false;
+    };
+
+    // ── Decorations (floor-level, no collision) — 1–7 randomly placed ───────
+    if (decorCount > 0)
+    {
+        int numDecors = GetRandomValue(1, 7);
+        for (int d = 0; d < numDecors; d++)
+        {
+            for (int attempt = 0; attempt < 20; attempt++)
             {
-                int pr = GetRandomValue(3, rows - 4);
-                int pc = GetRandomValue(3, cols - 4);
-                if (pc >= doorStartC - 1 && pc <= doorStartC + 3) continue;
-                if (pr >= doorStartR - 1 && pr <= doorStartR + 2) continue;
-                TileType t = layout.tiles[pr][pc];
+                int dr = GetRandomValue(1, rows - 2);
+                int dc = GetRandomValue(1, cols - 2);
+                TileType t = layout.tiles[dr][dc];
                 if (t != TileType::Floor && t != TileType::FloorVariant) continue;
-                // 2-tile gap from all props and other animProps.
-                bool tooClose = false;
-                for (const auto& sp : layout.props)
-                    if (std::abs(sp.col - pc) < 2 && std::abs(sp.row - pr) < 2)
-                    { tooClose = true; break; }
-                if (!tooClose)
-                    for (const auto& ap : layout.animProps)
-                        if (std::abs(ap.col - pc) < 2 && std::abs(ap.row - pr) < 2)
-                        { tooClose = true; break; }
-                if (tooClose) continue;
-                layout.animProps.push_back({ GetRandomValue(0, animPropCount - 1), pc, pr });
+                if (cellUnderFootprint(dc, dr)) continue;
+
+                // Not on another decor's cell either.
+                bool taken = false;
+                for (const auto& existing : layout.decors)
+                    if (existing.col == dc && existing.row == dr) { taken = true; break; }
+                if (taken) continue;
+
+                layout.decors.push_back({ GetRandomValue(0, decorCount - 1), dc, dr });
                 break;
             }
         }
@@ -182,14 +251,12 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
 
                 TileType t2 = layout.tiles[pr][pc];
                 if (t2 != TileType::Floor && t2 != TileType::FloorVariant) continue;
+                if (cellUnderFootprint(pc, pr)) continue;
 
-                // Don't stack on another decor or prop.
+                // Don't stack on another torch.
                 bool occupied = false;
                 for (const auto& d : layout.animDecors)
                     if (d.col == pc && d.row == pr) { occupied = true; break; }
-                if (!occupied)
-                    for (const auto& p : layout.props)
-                        if (p.col == pc && p.row == pr) { occupied = true; break; }
                 if (occupied) continue;
 
                 layout.animDecors.push_back({ GetRandomValue(0, animDecorCount - 1), pc, pr });

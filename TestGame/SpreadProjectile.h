@@ -14,7 +14,8 @@ public:
 
     void Init(Vector2 spawnPos, Vector2 direction, AbilityType element);
     // Lightweight class basic-attack shot: small, tinted, short-lived, low damage.
-    void InitBasic(Vector2 spawnPos, Vector2 direction, AbilityType element, Color tint);
+    // arrow = draw a rotating arrow sprite instead of the elemental sheet (Hunter).
+    void InitBasic(Vector2 spawnPos, Vector2 direction, AbilityType element, Color tint, bool arrow = false);
     bool IsBasic() const { return _basic; }
     void Update(float dt);
     void Draw(Vector2 worldOffset) const;
@@ -56,6 +57,7 @@ private:
     int   _frame       = 0;
     bool  _isActive    = false;
     bool  _basic       = false;   // class basic attack (small, low damage)
+    bool  _arrow       = false;   // draw a rotating arrow sprite (Hunter basic shot)
     Color _tint        { 255, 255, 255, 255 };
 
     static constexpr int _frameWidth  = 32;
@@ -65,6 +67,7 @@ private:
     static Texture2D _fireTex;
     static Texture2D _iceTex;
     static Texture2D _electricTex;
+    static Texture2D _arrowTex;   // Hunter basic shot (Enemy/Arrow.png, points NE)
     // Ultimate-specific sprite sheets (64x64 frames)
     static Texture2D _fireUltTex;
     static Texture2D _iceUltTex;

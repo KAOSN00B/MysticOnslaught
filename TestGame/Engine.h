@@ -58,6 +58,7 @@
 #include "NineSliceEditor.h"
 #include "CharacterAnimator.h"
 #include "AttackEditor.h"
+#include "MapEditor.h"
 #include "DungeonGen.h"
 #include "TileDefs.h"
 #include "RoomLayout.h"
@@ -125,20 +126,23 @@ private:
     bool _secondWindAvailable = false;          // meta unlock: one free revive per run
     float _secondWindToastTimer = 0.f;          // "SECOND WIND!" banner countdown
 
-    // ── Curse/blessing run modifiers (Cursed Shrine, #19) ──────────────────────
-    float _runPlayerDamageMult = 1.f;           // folded into ScalePlayerHit
+    // ── Cursed Wager (Cursed Shrine #19, redesigned) ───────────────────────────
+    // Set at Zeph's shrine: pay gold to curse the whole upcoming biome (much
+    // tougher enemies) in exchange for bonus gold/XP/Echoes. Repeatable — it
+    // resets each time you reach the next shop. _wagerTier 0 = no active wager.
+    float _runPlayerDamageMult = 1.f;           // folded into ScalePlayerHit (unused by wager)
     float _runEnemyHealthMult  = 1.f;           // folded into ConfigureSpawnedEnemy
     float _runEnemyDamageMult  = 1.f;
-    bool  _curseShrineUsed     = false;         // one shrine per run
+    int   _wagerTier           = 0;             // 0 none, 1-3 = kWagerTiers index+1
+    bool  _curseShrineUsed     = false;         // one wager per biome (re-armed at each shop)
     bool  _nearCurseShrine     = false;
-    int   _shrineChoices[3]    = { 0, 0, 0 };   // indices into the pact table
-    int   _shrineCursor        = 0;
+    int   _shrineCursor        = 0;             // 0-2 highlighted wager tier
     float _shrineOpenTimer     = 0.f;
+    float _shrineDenyFlash     = 0.f;           // red flash when you can't afford a tier
     float _curseShrineBobTimer = 0.f;
     void  OpenCurseShrine();
     void  UpdateCurseShrine();
     void  DrawCurseShrine();
-    void  ApplyPactChoice(int pactIndex);
     Vector2 GetCurseShrinePos() const;
 
     // Bestiary (#20)
@@ -943,12 +947,24 @@ private:
     NineSliceEditor _nineSliceEditor;
     CharacterAnimator _charAnimator;
     AttackEditor      _attackEditor;
+    MapEditor         _mapEditor;      // village/interior layered map painter (V key)
     DungeonGen   _dungeonGen;
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;
 
     // Per-room persistent state tracked during a dungeon run session.
-    struct DungeonRoomState { bool cleared = false; };
+    struct DungeonEnemySnapshot
+    {
+        std::string type;
+        Vector2     pos{};
+    };
+    struct DungeonRoomState
+    {
+        bool cleared = false;
+        bool enemiesInitialized = false;
+        int  eliteMechanic = -1;
+        std::vector<DungeonEnemySnapshot> survivors;
+    };
 
     // Dungeon run sub-state
     enum class DungeonView { Graph, Room, Play };
@@ -1079,6 +1095,12 @@ private:
     Vector2   GetDungeonSpawnPos(float cellW, float cellH) const;
     void      SpawnDungeonRoomEnemies();
     void      ClearDungeonEnemies();
+    void      SaveDungeonRoomEnemyState();
+    bool      RestoreDungeonRoomEnemyState(int roomIdx);
+    Enemy*    SpawnDungeonSnapshotEnemy(const DungeonEnemySnapshot& snapshot);
+    std::string GetDungeonSnapshotType(Enemy& enemy) const;
+    void      ResetEliteRoomRuntime();
+    int       GetEliteMechanicForRoom(int roomIdx);
 
     // Door state helpers for tile-dungeon rooms.
     void ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonDoorSide entryDoorSide) const;

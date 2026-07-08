@@ -9,6 +9,27 @@
 #include <algorithm>
 #include <cmath>
 
+namespace
+{
+    // Hunter animation: shots (basic attack + arrow abilities) draw the bow; traps
+    // and Roll fall back to the appearance's own attack ("hero push") animation.
+    bool HunterUsesBowFor(AbilityType ability)
+    {
+        switch (ability)
+        {
+        case AbilityType::PiercingShot:
+        case AbilityType::Multishot:
+        case AbilityType::Volley:          // Puncture Shot
+        case AbilityType::ArrowStorm:
+        case AbilityType::Deadeye:
+        case AbilityType::PiercingBarrage:
+            return true;
+        default:
+            return false;                  // Freezing / Explosive Trap, Roll → hero push
+        }
+    }
+}
+
 Character::Character()
 {
     _worldPos = Vector2Zero();
@@ -51,6 +72,7 @@ Character::~Character()
     UnloadTexture(_takeDamageAnim);
     UnloadTexture(_deathAnim);
     UnloadTexture(_dashAnim);
+    UnloadTexture(_bowAnim);
 
     UnloadSound(_footStepSound);
     UnloadSound(_attackSound);
@@ -67,6 +89,7 @@ void Character::Init()
     if (_dashAnim.id != 0) UnloadTexture(_dashAnim);
     if (_deathAnim.id != 0) UnloadTexture(_deathAnim);
     if (_takeDamageAnim.id != 0) UnloadTexture(_takeDamageAnim);
+    if (_bowAnim.id != 0) UnloadTexture(_bowAnim);
 
     if (_footStepSound.frameCount != 0) UnloadSound(_footStepSound);
     if (_attackSound.frameCount != 0) UnloadSound(_attackSound);
@@ -98,6 +121,11 @@ void Character::Init()
     };
     _attackAnim = loadAttackSheet();
     _staffAnim  = loadAttackSheet();
+    // Hunter: a dedicated bow-draw sheet (the class art, independent of the chosen
+    // appearance) shown only for the basic shot + arrow abilities. Traps keep the
+    // appearance's own attack animation.
+    if (_class == PlayerClass::Hunter)
+        _bowAnim = LoadTexture(AssetPath("Hero/Hunter_Attack.png").c_str());
 
     // Per-class basic-attack tempo — heavy for the Warrior, snappy for the Rogue.
     switch (_class)
@@ -336,6 +364,8 @@ void Character::AddGoldFromDrop(int amount)
 {
     if (HasRelic(RelicType::MidasTouch))
         amount = (int)std::ceil(amount * 1.60f);
+    if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
+        amount = (int)std::ceil(amount * _wagerRewardMult);
     _gold += amount;
 }
 
@@ -355,6 +385,8 @@ void Character::AddCellsFromDrop(int amount)
         amount = (int)std::ceil(amount * _cellGainMultiplier);
     if (HasRelic(RelicType::SoulSiphon))
         amount = (int)std::ceil(amount * 1.60f);
+    if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
+        amount = (int)std::ceil(amount * _wagerRewardMult);
     _cells += amount;
 }
 
@@ -584,7 +616,8 @@ void Character::HandleAttackInput()
     {
         _attacking = true;
         _damageApplied = false;
-        _texture = _attackAnim;
+        // Hunter's basic attack is a bow shot → draw the bow sheet.
+        _texture = (_class == PlayerClass::Hunter && _bowAnim.id != 0) ? _bowAnim : _attackAnim;
         _frame = 0;
         _runningTime = 0.f;
         _maxFrames = _texture.width / _width;
@@ -639,9 +672,12 @@ void Character::TriggerAbilityCast(int slot)
     {
         // Non-elemental class ability (Warrior etc.): queue it for the engine and
         // play the weapon (attack) swing rather than the staff-cast animation.
+        // Hunter shot abilities draw the bow; Hunter traps/Roll use the appearance
+        // attack ("hero push"); every other class uses its normal attack sheet.
         _castingAbility     = true;
         _queuedClassAbility = ability;
-        _texture            = _attackAnim;
+        _texture            = (_class == PlayerClass::Hunter && _bowAnim.id != 0 && HunterUsesBowFor(ability))
+                            ? _bowAnim : _attackAnim;
         _frame              = 0;
         _runningTime        = 0.f;
         _maxFrames          = _texture.width / _width;
@@ -1331,6 +1367,8 @@ void Character::AddExp(int amount)
     if (_level >= _maxLevel)
         return;
 
+    if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
+        amount = (int)std::ceil(amount * _wagerRewardMult);
     _exp += amount;
 
     while (_exp >= _expToNextLevel && _level < _maxLevel)

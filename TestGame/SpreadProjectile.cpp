@@ -10,6 +10,7 @@
 Texture2D SpreadProjectile::_fireTex{};
 Texture2D SpreadProjectile::_iceTex{};
 Texture2D SpreadProjectile::_electricTex{};
+Texture2D SpreadProjectile::_arrowTex{};
 Texture2D SpreadProjectile::_fireUltTex{};
 Texture2D SpreadProjectile::_iceUltTex{};
 Texture2D SpreadProjectile::_electricUltTex{};
@@ -26,14 +27,16 @@ void SpreadProjectile::Init(Vector2 spawnPos, Vector2 direction, AbilityType ele
     _frame      = 0;
     _isActive   = true;
     _basic      = false;
+    _arrow      = false;
     _tint       = Color{ 255, 255, 255, 255 };
     _radius     = 56.f;
 }
 
-void SpreadProjectile::InitBasic(Vector2 spawnPos, Vector2 direction, AbilityType element, Color tint)
+void SpreadProjectile::InitBasic(Vector2 spawnPos, Vector2 direction, AbilityType element, Color tint, bool arrow)
 {
     Init(spawnPos, direction, element);
     _basic     = true;
+    _arrow     = arrow;
     _tint      = tint;
     _radius    = 26.f;    // smaller hit box than a full spell
     _lifeTimer = 1.4f;    // short range
@@ -70,6 +73,21 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
     screenPos.x += kVirtualWidth  / 2.f;
     screenPos.y += kVirtualHeight / 2.f;
 
+    float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
+
+    // Hunter basic shot: a real arrow. The art points north-east, so add 45° to
+    // align it with the flight path (same convention as the Skeleton Archer).
+    if (_arrow && _arrowTex.id != 0)
+    {
+        Rectangle arrowSrc{ 0.f, 0.f, (float)_arrowTex.width, (float)_arrowTex.height };
+        float arrowScale = 1.6f;
+        Rectangle arrowDst{ screenPos.x, screenPos.y,
+                            _arrowTex.width * arrowScale, _arrowTex.height * arrowScale };
+        DrawTexturePro(_arrowTex, arrowSrc, arrowDst,
+            Vector2{ arrowDst.width * 0.5f, arrowDst.height * 0.5f }, rotation + 45.f, _tint);
+        return;
+    }
+
     const Texture2D* tex = &_fireTex;
     switch (_element)
     {
@@ -80,7 +98,6 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
     default:                          tex = &_fireTex;     break;
     }
 
-    float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
     Rectangle source = GetAnimationFrameRect(*tex, _frameWidth, _frameHeight, _frame);
     float scale = _basic ? 3.4f : 7.2f;   // basic shots are noticeably smaller
     Rectangle dest{
@@ -107,12 +124,14 @@ void SpreadProjectile::UnloadSharedResources()
     UnloadTexture(_fireTex);
     UnloadTexture(_iceTex);
     UnloadTexture(_electricTex);
+    UnloadTexture(_arrowTex);
     UnloadTexture(_fireUltTex);
     UnloadTexture(_iceUltTex);
     UnloadTexture(_electricUltTex);
     _fireTex        = Texture2D{};
     _iceTex         = Texture2D{};
     _electricTex    = Texture2D{};
+    _arrowTex       = Texture2D{};
     _fireUltTex     = Texture2D{};
     _iceUltTex      = Texture2D{};
     _electricUltTex = Texture2D{};
@@ -195,6 +214,7 @@ void SpreadProjectile::EnsureTexturesLoaded()
     _fireTex        = LoadTexture(AssetPath("PowerUps/Fireball.png").c_str());
     _iceTex         = LoadTexture(AssetPath("PowerUps/Ice_Shard.png").c_str());
     _electricTex    = LoadTexture(AssetPath("PowerUps/Lightning_Bolt01_Y.png").c_str());
+    _arrowTex       = LoadTexture(AssetPath("Enemy/Arrow.png").c_str());
     _fireUltTex     = LoadTexture(AssetPath("PowerUps/Flame_Explosion.png").c_str());
     _iceUltTex      = LoadTexture(AssetPath("PowerUps/Frozen_Explosion.png").c_str());
     _electricUltTex = LoadTexture(AssetPath("PowerUps/Thunder_Blast.png").c_str());

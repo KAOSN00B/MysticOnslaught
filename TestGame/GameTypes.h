@@ -52,6 +52,7 @@ enum class GameState
     NineSliceEditor,      // visual srcCorner/dstCorner editor for any PNG asset
     CharacterAnimator,    // enemy hitbox + animation tuning tool (debug)
     AttackEditor,         // player/boss attack FX + hitbox editor (debug)
+    MapEditor,            // layered village/interior tile-map painter (debug)
 };
 
 enum class MusicCue

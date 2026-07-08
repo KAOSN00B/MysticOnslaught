@@ -30,13 +30,13 @@ struct RoomLayout
 
     // Auto-generate a room with walls around the border and floor inside.
     // Door openings are 3 tiles wide (N/S walls) or 2 tiles tall (E/W walls).
-    // *Count: how many definitions of each type are available to pick from.
+    // defs supplies the biome's prop/decor definitions — placement reads each
+    // prop's REAL sprite + collision size so footprints never overlap, always
+    // keep a walkable clearance gap (no more wedged enemies), and stay clear
+    // of the door lanes. nullptr places nothing.
     static RoomLayout Generate(bool hasNorth, bool hasSouth,
                                bool hasEast,  bool hasWest,
-                               RoomType type           = RoomType::Standard,
-                               int      propCount       = 0,
-                               int      decorCount      = 0,
-                               int      animDecorCount  = 0,
-                               int      animPropCount   = 0,
-                               int      propDensityBonus = 0);
+                               RoomType type              = RoomType::Standard,
+                               const TileDefSet* defs     = nullptr,
+                               int      propDensityBonus  = 0);
 };

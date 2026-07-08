@@ -21,8 +21,21 @@ public:
     // scaleX/scaleY: display pixels per source pixel on each axis.
     // Pass the same value for both if you want square tiles.
     // screenOffset: top-left screen position of the room.
+    // includeProps=false skips the prop passes so gameplay can draw them AFTER
+    // the player/enemies via DrawRoomProps (lets the player walk behind trees).
     void DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
-                  Vector2 screenOffset) const;
+                  Vector2 screenOffset, bool includeProps = true) const;
+
+    // Just the prop + animated-prop passes (the room's top layer).
+    void DrawRoomProps(const RoomLayout& layout, float scaleX, float scaleY,
+                       Vector2 screenOffset) const;
+
+    // Y-sorted split for gameplay: draws only the props whose BOTTOM edge is
+    // above (frontHalf=false) or below (frontHalf=true) splitScreenY — the
+    // player's feet. Back props draw before the player, front props after, so
+    // standing behind a tree tucks the player under its canopy.
+    void DrawRoomPropsSplit(const RoomLayout& layout, float scaleX, float scaleY,
+                            Vector2 screenOffset, float splitScreenY, bool frontHalf) const;
 
     bool IsLoaded() const { return _sheet.id != 0; }
 
