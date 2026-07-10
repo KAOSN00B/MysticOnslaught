@@ -4,4 +4,4 @@ proj_scale=1.550
 proj_radius=34.000
 proj_speed=650.000
 proj_life=1.400
-cooldown=0.000
+cooldown=1.000

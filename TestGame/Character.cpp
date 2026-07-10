@@ -2,6 +2,7 @@
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
+#include "AttackTuning.h"
 
 #include "raymath.h"
 #include "VirtualCanvas.h"
@@ -429,6 +430,7 @@ void Character::Update(float dt)
     if (_reflectTimer    > 0.f) _reflectTimer    -= dt;
     if (_retributionTimer > 0.f) { _retributionTimer -= dt; if (_retributionTimer <= 0.f) _retributionStacks = 0; }
     if (_lifestealTimer  > 0.f) _lifestealTimer  -= dt;
+    if (_basicAttackCdTimer > 0.f) _basicAttackCdTimer -= dt;
 
     // Passive mana regen — paused during ultimate sequences.
     if (!_manaRegenPaused && _mana < _maxMana)
@@ -629,10 +631,15 @@ void Character::HandleAttackInput()
 
     _touchAttackJustPressed = false; // always consume
 
-    if (!_attacking && !_castingAbility && attackPressed)
+    if (!_attacking && !_castingAbility && _basicAttackCdTimer <= 0.f && attackPressed)
     {
         _attacking = true;
         _damageApplied = false;
+        // Enforce the tuned "seconds between shots". No file / cooldown 0 leaves the
+        // old animation-frame cadence untouched; a larger cooldown adds a gap on top.
+        if (const AttackTuning* bt = AttackTuningStore::Get(AttackTuningKeyForBasic((int)_class)))
+            if (bt->hasCooldown && bt->cooldown > 0.f)
+                _basicAttackCdTimer = bt->cooldown;
         // Ranged basics use their ranged-ready pose: Hunter draws bow, casters raise staff.
         if (_class == PlayerClass::Hunter && _bowAnim.id != 0)
             _texture = _bowAnim;

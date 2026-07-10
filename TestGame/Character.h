@@ -344,6 +344,10 @@ private:
 
     bool _attacking = false;
     bool _damageApplied = false;
+    // Gate between basic-attack starts. Set from the tuned "cooldown" in
+    // attacktuning_<Class>_Basic.txt; 0 (or no file) = animation-driven cadence
+    // as before, so untuned classes are unchanged.
+    float _basicAttackCdTimer = 0.f;
     bool _combatLocked      = false;
     bool _dashAllowedWhileCombatLocked = false;
     bool _manaRegenPaused   = false;

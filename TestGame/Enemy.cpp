@@ -1147,7 +1147,16 @@ void Enemy::DrawHealthBar(Vector2 screenPos, float w, float h)
     float barWidth = w * 0.8f;
 
     float barX = screenPos.x - barWidth / 2.f;
-    float barY = screenPos.y - h * _healthBarYFrac - _healthBarYOffset;
+
+    // Anchor the bar just above the actual body (top of the collision capsule),
+    // NOT the padded sprite frame. Big/boss sprites have lots of empty frame above
+    // the art, so the old "half the frame height" anchor floated their bars way up.
+    // The capsule sits on the real character for every enemy, so this gives the same
+    // small gap above the head that the legacy monsters have. (_healthBarYOffset is
+    // still a per-enemy nudge in each ctor for the rare exception.)
+    Capsule2D cap = GetCapsule();
+    float bodyTopRelY = (cap.center.y - GetWorldPos().y) - cap.halfHeight - cap.radius;
+    float barY = screenPos.y + bodyTopRelY - _healthBarYOffset;
 
     DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)_healthBarHeight, RED);
     DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)_healthBarHeight, GREEN);
