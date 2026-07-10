@@ -53,6 +53,10 @@ enum class GameState
     CharacterAnimator,    // enemy hitbox + animation tuning tool (debug)
     AttackEditor,         // player/boss attack FX + hitbox editor (debug)
     MapEditor,            // layered village/interior tile-map painter (debug)
+    VillagePlayground,    // playable village-builder placement test (debug)
+    Village,              // main-game hub village: build with gold, respawn at Poe's Graveyard
+    DeathRevive,          // Zelda-style death beat + Poe's revive dialogue -> class/look select
+    BossChoice,           // after every boss: return to village vs push onward (double-or-nothing)
 };
 
 enum class MusicCue

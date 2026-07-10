@@ -1,31 +1,15 @@
 #pragma once
 
-#include "VillageMap.h"
 #include "raylib.h"
+
 #include <string>
 #include <vector>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MapEditor — dev tool (opened from the main menu with the V key) for painting
-// the hub village and building interiors by hand, in layers.
+// Village Asset Adjuster - dev tool opened from the main menu with V.
 //
-// Left panel  = the tilesheet palette. Click a tile to pick a 1×1 brush, or
-//               DRAG a rectangle to pick a multi-tile stamp (how whole houses
-//               are placed in one click). Number keys / tab buttons switch
-//               between the loaded sheets (Ground / Village / Interior...).
-// Right side  = the map canvas. Left-click paints the current stamp on the
-//               active layer; right-click erases. On the COLLISION layer,
-//               left-click marks cells solid and right-click clears them.
-//
-//   Q / W / E / R   active layer: Ground / Objects / Overhead / Collision
-//   1..5            palette sheet tabs
-//   Mouse wheel     canvas zoom (over canvas)  /  palette scroll (over palette)
-//   Middle-drag / arrows   pan the canvas
-//   F               flood-fill the hovered region (ground-style fills)
-//   G               toggle grid       C   toggle collision overlay
-//   S               save              N   new blank map (with confirm)
-//   H               controls overlay  ESC exit (auto-prompts unsaved changes)
-// ─────────────────────────────────────────────────────────────────────────────
+// Edits metadata for finished PNG village assets in VillageAssets/. The PNG is
+// the visual source; this tool adds runtime data: box colliders, NPC anchors,
+// and respawn/interact points. Metadata saves beside the PNG as .vasset.
 class MapEditor
 {
 public:
@@ -36,61 +20,91 @@ public:
     bool WantsToExit() const { return _wantsToExit; }
 
 private:
-    // A brush is a rectangle of tiles picked from one sheet (1×1 for a single
-    // tile; larger for house/tree stamps).
-    struct Brush
+    enum class MarkerKind
     {
-        short sheet = 0;
-        short col = 0, row = 0;   // top-left tile within the sheet
-        short w = 1,   h = 1;     // size in tiles
+        Zeph = 0,
+        Poe,
+        Respawn,
+        Count
     };
 
-    void LoadSheets();
-    void UpdatePalette(Rectangle panel);
+    struct ColliderBox
+    {
+        Rectangle rect{}; // image-local pixels
+    };
+
+    struct Marker
+    {
+        bool has = false;
+        Vector2 pos{}; // image-local pixels; may be outside the PNG bounds
+    };
+
+    struct Asset
+    {
+        std::string name;
+        std::string pngFile;
+        std::string pngPath;
+        std::string metaPath;
+        Texture2D texture{};
+        std::vector<ColliderBox> colliders;
+        Marker markers[(int)MarkerKind::Count];
+        bool dirty = false;
+    };
+
+    void LoadAssets();
+    void SelectAsset(int index);
+    void LoadMetadata(Asset& asset);
+    void SaveActiveMetadata();
+    void FitActiveAssetToCanvas(Rectangle canvas);
+
+    void UpdatePanel(Rectangle panel);
     void UpdateCanvas(Rectangle canvas);
-    void PaintAt(int cellCol, int cellRow);
-    void EraseAt(int cellCol, int cellRow);
-    void FloodFillAt(int cellCol, int cellRow);
-    void DrawPalette(Rectangle panel) const;
+    void UpdateSelectedColliderKeys();
+    void UpdateSelectedMarkerKeys();
+    void DrawPanel(Rectangle panel) const;
     void DrawCanvas(Rectangle canvas) const;
-    void DrawStatusBar() const;
     void DrawHelp() const;
+    void DrawStatusBar() const;
 
-    // Canvas coordinate helpers.
-    float   TilePx() const { return VillageMap::kTileSize * _zoom; }
-    Vector2 MapOrigin(Rectangle canvas) const
-    { return Vector2{ canvas.x - _cameraPan.x, canvas.y - _cameraPan.y }; }
+    Vector2 ImageToScreen(Vector2 imagePos) const;
+    Vector2 ScreenToImage(Vector2 screenPos) const;
+    Rectangle ImageRectToScreen(Rectangle imageRect) const;
+    Rectangle NormalizeImageRect(Rectangle rect) const;
+    Rectangle ActiveImageBoundsScreen() const;
+    int ColliderAt(Vector2 imagePos) const;
+    int MarkerAt(Vector2 imagePos) const;
+    bool HandleAt(const ColliderBox& box, Vector2 screenPos) const;
+    void AddCollider(Rectangle imageRect);
+    void SetMarker(MarkerKind kind, Vector2 imagePos);
 
-    // ── Sheets / palette ──
-    std::vector<Texture2D>   _sheets;
-    std::vector<std::string> _sheetNames;
-    int     _activeSheet    = 0;
-    Vector2 _paletteScroll{};          // scroll offset within the palette view
-    bool    _paletteDragging = false;  // rubber-band stamp selection in progress
-    Vector2 _paletteDragStartTile{};   // tile coords where the drag began
+    const char* MarkerName(MarkerKind kind) const;
+    Color MarkerColor(MarkerKind kind) const;
+    std::string MarkerOffsetText(const Asset& asset, Vector2 markerPos) const;
+    Asset* ActiveAsset();
+    const Asset* ActiveAsset() const;
 
-    // ── Editing state ──
-    VillageMap        _map;
-    std::string       _mapName = "village";
-    VillageMap::Layer _activeLayer = VillageMap::Layer::Ground;
-    bool              _collisionMode = false;   // R tab: painting solid flags
-    Brush             _brush;
-    bool              _dirty = false;           // unsaved changes
+    std::string _assetFolder;
+    std::vector<Asset> _assets;
+    int _activeAsset = -1;
+    int _selectedCollider = -1;
+    int _selectedMarker = -1;
+    float _zoom = 1.f;
+    Vector2 _viewOffset{}; // screen offset from canvas center
+    bool _panning = false;
+    Vector2 _panStartMouse{};
+    Vector2 _panStartOffset{};
 
-    // ── Canvas view ──
-    float   _zoom = 2.f;               // screen pixels per source pixel
-    Vector2 _cameraPan{};              // map-pixel offset of the view
-    bool    _panning = false;
-    Vector2 _panMouseStart{};
-    Vector2 _panCamStart{};
+    enum class DragMode { None, MoveCollider, ResizeCollider, DrawCollider, MoveMarker };
+    DragMode _dragMode = DragMode::None;
+    int _dragCollider = -1;
+    int _dragMarker = -1;
+    Vector2 _dragStartMouseImage{};
+    Rectangle _dragStartRect{};
+    Rectangle _drawPreview{};
 
-    // ── UI state ──
-    bool        _wantsToExit  = false;
-    bool        _confirmingExit = false;   // unsaved-changes prompt active
-    bool        _confirmingNew  = false;   // new-map prompt active
-    bool        _showGrid      = true;
-    bool        _showCollision = true;
-    bool        _helpOpen      = false;
-    std::string _status;                   // bottom-bar message ("Saved." etc.)
-    float       _statusTimer = 0.f;
+    float _assetListScroll = 0.f;
+    bool _helpOpen = false;
+    bool _wantsToExit = false;
+    std::string _status;
+    float _statusTimer = 0.f;
 };

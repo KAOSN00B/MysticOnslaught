@@ -1,0 +1,346 @@
+Mystic Onslaught - Village Object / Tile Editor Guide
+=====================================================
+
+Purpose
+-------
+The editor should become the tool for making reusable village objects/pieces,
+not just painting the entire village as one flat map.
+
+
+Editor Usability Direction From Other Engines
+---------------------------------------------
+The editor should follow patterns players/designers already understand from
+Tiled, Unity, Godot, Aseprite, RPG Maker-style map tools, and prefab/object
+workflows.
+
+Important patterns to copy:
+- Asset browser first: all tilesets/asset packs should be visible in one list,
+  scrollable, and selectable without guessing which number key maps to which
+  sheet.
+- Stable asset identity: saved data should use clear object names and readable
+  metadata, not only anonymous tile coordinates. The current object save file
+  starts this by exporting villageobject_<name>.txt.
+- Separate source art from placed objects: tilesets are the source art, while a
+  saved village object is a reusable authored asset made from those tiles.
+- Palette navigation must work both directions: many sprite sheets are wider
+  than the left panel, so the user needs sideways scrolling through Shift+wheel,
+  middle mouse dragging, arrow keys, and Home/End jumps.
+- Object canvas/prefab mindset: build a house, door, pond, habitat, sign, or
+  animated prop once, then place that named piece into the village later.
+- Inspector/status clarity: while the full inspector does not exist yet, the
+  status bar and help overlay should always say the current mode, selected sheet,
+  brush size, active layer, and object name.
+- Modal rename: naming an object should feel like renaming an asset in a real
+  editor. Press F2 in Object Maker mode, type the asset name, Enter accepts, and
+  Esc restores the old name.
+
+Current implemented controls from this direction:
+- The left sheet list scans all PNGs in MapTilesets.
+- The original five village sheets stay pinned first so old saved map sheet
+  indexes do not break.
+- The selected asset pack/palette can be moved sideways with Shift+wheel,
+  middle-drag, Left/Right, and Home/End.
+- Object Maker mode has a separate object canvas.
+- Object assets can be named with F2 before saving.
+- Object saves include layered visual parts, collision tiles, animation markers,
+  door markers, and source sheet names for easier debugging.
+
+Correct direction:
+- The default village ground/base map is authored separately.
+- Objects are authored as reusable pieces.
+- Each object can have its own visual layers.
+- Each object can have custom collision/collider data.
+- Each object can optionally have doors, interact points, animations, VFX, and
+  interior links.
+
+This means the editor needs to support both:
+1. Ground/Base Map Mode
+   Used for default terrain: grass, dirt, paths, water base, cliffs, floors,
+   bridges, graveyard ground, village plaza ground, etc.
+
+2. Object/Piece Maker Mode
+   Used to build things the player/NPC can place or the designer can reuse:
+   houses, shops, chimneys, doors, signs, fences, wells, trees, companion
+   habitats, bridges, ponds, animated water, animated doors, lamps, trophies,
+   decorations, interiors, and props.
+
+Immediate Button/Hitbox Fix
+---------------------------
+The tileset list click area should only count clicks inside the visible sheet
+rows, not the header. The click math should use the row-list y position, not the
+whole panel y position. Otherwise the buttons feel offset from what is drawn.
+
+Current Editor State
+--------------------
+Current useful features:
+- Scans all PNG files in MapTilesets.
+- Keeps the original village sheets first so old maps do not break.
+- Lets the user select tiles/stamps from any sheet.
+- Supports layered painting.
+- Supports collision painting with the current brush size.
+- Lets the user save a village map.
+
+But the next important shift is:
+The editor should stop thinking of every brush stroke as just map paint. It needs
+to let the user define an object/piece with metadata.
+
+Object / Piece Data Model
+-------------------------
+Each saved object should eventually have:
+
+Identity:
+- id/name: SmallHouse_A, ZephShop_Tier1, SlimeHabitat_A, GraveMarker_01.
+- display name: Small House, Zeph's Stall, Slime Habitat.
+- category: ground, building, roof, attachment, door, animated prop, water,
+  decoration, habitat, interior prop, light, trophy, path, fence.
+- tags: village, graveyard, shop, sanctuary, forest, water, interactable, etc.
+
+Visual layers:
+- ground layer: foundation, puddle, water base, path under the object.
+- base/object layer: walls, trunk, fence, prop body, shop counter.
+- overhead layer: roof, tree top, chimney, awning, hanging sign, upper trim.
+- foreground layer: pieces that draw over the player when the player walks
+  behind them.
+- VFX/light layer: glow, smoke, flame, water shimmer, magic effects.
+
+Collision/colliders:
+- tile collision cells for simple objects.
+- optional rectangle colliders for more precise blocking.
+- optional multiple colliders per object.
+- collider presets: none, full footprint, bottom half, trunk only, custom.
+- walkable holes: doors, bridges, archways, open gates.
+
+Door/interact metadata:
+- door position in object-local coordinates.
+- door interaction rectangle.
+- destination interior/map id.
+- spawn point inside destination.
+- locked/unlocked state.
+- required building upgrade/NPC/key/quest flag if needed.
+- optional prompt text: Enter, Talk, Open, Shop, Rest, Inspect.
+
+Animation metadata:
+- animation id/name.
+- source tileset/frame rectangle.
+- frame count.
+- frame width/height.
+- FPS/speed.
+- loop/no-loop.
+- ping-pong option.
+- trigger type: always, on interact, when near player, door opening, water idle,
+  fireplace idle, lamp flicker, shop active, boss trophy glow.
+- draw layer for animation.
+- optional collider change while animating, such as door closed blocks movement
+  and door open clears movement.
+
+Placement metadata:
+- footprint width/height in tiles.
+- anchor/pivot tile.
+- snap-to-grid setting.
+- rotation/flip support if added later.
+- allowed placement rules: ground only, water edge, wall, indoors, sanctuary,
+  graveyard, fixed plot only.
+- attachment sockets: chimney, sign, lantern, flower box, banner, roof decor.
+
+Gameplay metadata:
+- service type: shop, class change, wardrobe, mirror, bestiary, training yard,
+  dungeon portal.
+- NPC home/assigned NPC.
+- companion habitat type.
+- spawn points for NPCs/companions.
+- upgrade tier.
+- unlock condition.
+
+Ground/Base Map Mode
+--------------------
+This mode should remain simple and broad.
+
+Use it for:
+- grass
+- dirt paths
+- stone paths
+- water base
+- cliffs/edges
+- plaza floors
+- graveyard ground
+- village boundary
+- default village terrain
+
+Ground should not need lots of metadata except maybe:
+- walkable/non-walkable terrain type
+- water/land type
+- footstep sound type
+- biome/theme tag
+
+Object/Piece Maker Mode
+-----------------------
+This is the big next system.
+
+Workflow idea:
+1. Choose Create New Object.
+2. Name it and choose category.
+3. Select tiles/stamps from all tilesets.
+4. Add visual parts to layers: ground/base/overhead/foreground/VFX.
+5. Paint custom colliders onto the object.
+6. Add optional door/interact marker.
+7. Add optional animation tracks.
+8. Add optional attachment sockets.
+9. Preview it with a player silhouette walking around it.
+10. Save it to a piece catalog.
+11. Place it into the village from the catalog.
+
+Examples:
+
+House object:
+- base layer: walls/body.
+- overhead layer: roof/chimney.
+- collider: walls solid, doorway clear.
+- door marker: front door.
+- interior target: SmallHouseInterior_01.
+- attachment sockets: chimney, sign, flower box.
+
+Shop object:
+- base layer: stall/counter.
+- overhead layer: awning/sign.
+- collider: counter blocks movement.
+- interact marker: shop counter.
+- NPC spawn: behind counter.
+- service: Zeph shop.
+
+Animated door object:
+- closed frames.
+- opening frames.
+- open frame.
+- collider blocks while closed.
+- collider clears after open if it is a walk-through door.
+- interaction prompt: Enter/Open.
+- destination map if it enters a building.
+
+Water object:
+- animated water frames.
+- loop forever.
+- usually no collision for shallow decorative water, or collision for deep water.
+- optional edge/corner variants.
+- optional sound/VFX later.
+
+Companion habitat object:
+- base layer: habitat ground.
+- object layer: fence/den/perch/crystals.
+- overhead layer: tree/cave lip/hanging leaves.
+- colliders: only blocking fences/rocks.
+- companion spawn points.
+- tags: sanctuary, slime/frost/ember/etc.
+
+Collider Tools Needed
+---------------------
+The editor should eventually support:
+- paint solid cells.
+- erase solid cells.
+- rectangle collider draw tool.
+- move/resize collider boxes.
+- collider list per object.
+- collider names/types: wall, water, door_block, counter, fence.
+- toggle collider visibility.
+- preview collision with a player rectangle/capsule.
+- per-animation collider states for doors/gates.
+
+Door Tools Needed
+-----------------
+Doors should be their own marker/tool, not just visual tiles.
+
+Door data should include:
+- object id.
+- local position.
+- interact rectangle.
+- destination map/interior id.
+- destination spawn id.
+- open animation id.
+- closed/open/locked state.
+- whether the door blocks movement while closed.
+- whether player enters instantly or after animation.
+
+Animation Tools Needed
+----------------------
+Animations are needed for doors, water, lamps, fire, smoke, magic, portals,
+shop signs, companion habitats, and trophy glows.
+
+Animation editor needs:
+- select frames from a tileset.
+- frame count and frame size.
+- FPS slider/value.
+- loop toggle.
+- preview playback.
+- layer selection.
+- anchor offset.
+- optional trigger.
+- optional collider state changes.
+
+Useful Extra Features To Add
+----------------------------
+Yes, these are worth adding to make the editor feel complete:
+
+1. Player Preview
+Show a small player sprite/box in the object editor so the user can check if the
+collider and draw layers make sense.
+
+2. Draw Order / Y-Sort Preview
+For tall objects, preview whether the player draws in front of or behind the
+object based on Y position.
+
+3. Object Origin / Anchor Tool
+Let the user choose the object's origin/pivot tile. This matters for placement,
+sorting, and snapping.
+
+4. Named Markers
+Support named markers such as Door, NPCSpawn, CompanionSpawn, Interact,
+InteriorSpawn, VFXPoint, SoundPoint.
+
+5. Attachment Sockets
+Let houses have sockets for chimneys, signs, flower boxes, banners, lamps, etc.
+This supports village customization without needing a whole new house sprite for
+every variation.
+
+6. Variants / Upgrade Tiers
+Let objects have visual states: ruined, repaired, upgraded, seasonal, haunted,
+restored. This is important for village progression.
+
+7. Placement Rules
+Some objects should only be placeable on certain ground: water objects on water,
+bridges over water, doors on buildings, sanctuary habitats in sanctuary plots.
+
+8. Object Catalog
+Saved objects should appear in a catalog with categories and search/filter later.
+
+9. Undo / Redo
+Very important for an editor. Even a simple 20-step undo history would make it
+much safer to use.
+
+10. Copy / Paste / Duplicate
+Useful for fences, paths, windows, repeated roof pieces, and decoration sets.
+
+11. Metadata Export Preview
+Show the saved object data in a readable text/export panel so Claude/Codex can
+inspect and debug it easily.
+
+Recommended Next Technical Steps
+--------------------------------
+1. Fix current UI hitboxes so buttons match what is drawn.
+2. Split the editor into clear modes:
+   - Ground Map Mode
+   - Object Maker Mode
+   - Object Placement Mode
+3. Add a VillageObject/VillagePiece data format.
+4. Add an object canvas separate from the full village map.
+5. Let each object save visual layers and collision.
+6. Add door/interact markers.
+7. Add animation tracks for water/doors/fire/lights.
+8. Add object catalog placement into the village.
+9. Add player/collision preview.
+10. Add undo/redo.
+
+Short Version
+-------------
+The editor should become a village object maker.
+The ground/base map is one layer of the village, but houses, doors, water,
+props, habitats, signs, animated objects, and colliders should be authored as
+reusable pieces with their own layers and metadata.

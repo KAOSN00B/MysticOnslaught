@@ -1,0 +1,263 @@
+MYSTIC ONSLAUGHT - VILLAGE INTERACTIVE ASSET PIPELINE PLAN
+Last updated: 2026-07-09
+
+Purpose
+-------
+We are changing direction for the village tooling. The previous idea was a broad tile/map editor that tried to do everything: paint ground, create layered objects, place NPCs, assign colliders, preview gameplay, and build the whole village. That became too much too soon and was not matching the current workflow.
+
+The new plan is simpler and more practical:
+
+1. The player/developer creates finished PNG village assets manually.
+2. The game editor loads those PNGs from VillageAssets/.
+3. The editor adds metadata to each PNG: colliders, NPC positions, respawn points, and eventually interaction points.
+4. The village builder/gameplay layer later places these completed assets onto a larger forest-ground village map.
+
+This keeps asset creation separate from map layout. It also lets us make nice-looking buildings/areas first, then teach the game how each asset behaves.
+
+Current Folder Setup
+--------------------
+Village assets live here:
+
+    VillageAssets/
+
+Current PNGs:
+
+    VillageAssets/ZephsShop.png
+    VillageAssets/VillageGraveyard.png
+
+Each PNG can have a matching metadata file saved beside it:
+
+    VillageAssets/ZephsShop.vasset
+    VillageAssets/VillageGraveyard.vasset
+
+Important: the .vasset files are not meant to be player-facing text docs. They are readable sidecar data files for the engine, similar to how many tools use .json, .meta, .prefab, .asset, etc. The reason they are readable is so Codex/Claude/the developer can inspect and debug them easily.
+
+Current Editor
+--------------
+The existing MapEditor class has been repurposed into the Village Asset Adjuster. It is still called MapEditor in code because Engine already owns _mapEditor and opens it through GameState::MapEditor. Renaming the class can happen later, but for now this keeps the change small.
+
+Files changed for this tool:
+
+    TestGame/MapEditor.h
+    TestGame/MapEditor.cpp
+    TestGame/Engine.h
+
+Engine.h includes VillageMap.h directly because older village playground code still refers to VillageMap::Layer.
+
+How To Open
+-----------
+Open the editor with the existing V key flow from the main menu/debug tooling.
+
+What The Editor Does Now
+------------------------
+The editor scans VillageAssets/ for .png files.
+
+For each PNG, it shows:
+
+- The asset name.
+- The PNG dimensions.
+- A list/count of colliders.
+- Marker positions for Zeph, Poe, and Respawn.
+- Whether each marker is inside the PNG or outside the PNG, including the pixel offset.
+
+Colliders
+---------
+Colliders are image-local rectangles stored in PNG pixel space.
+
+Current controls:
+
+- C adds a default 64x64 collider at the mouse.
+- Right mouse drag creates a new collider rectangle.
+- Left mouse drag moves a selected collider.
+- Drag the bottom-right handle to resize the selected collider.
+- Delete removes the selected collider.
+- Arrow keys move the selected collider.
+- Ctrl + Arrow keys resize the selected collider.
+- Shift makes movement/resizing faster.
+- S saves the metadata.
+
+Important collider rule:
+
+Colliders are intentionally clamped inside the PNG bounds. This is because colliders describe the solid parts of the visible asset. For example, a graveyard fence, graves, shop walls, barrels, signs, etc. If we later need invisible external colliders, that should become a separate explicit feature, not accidental collider boxes floating outside the art.
+
+Markers
+-------
+Markers are also image-local positions, but unlike colliders they are allowed outside the PNG bounds.
+
+Current marker controls:
+
+- Z places Zeph.
+- P places Poe.
+- X places the player respawn point.
+
+Why markers can be outside the PNG:
+
+NPCs often stand in front of, beside, or below a building, not directly on top of the building image. For Zeph's shop, Zeph may need to stand below the counter or outside the shop PNG. For Poe's graveyard, Poe and the player respawn point may need to sit near the graveyard but not inside the art rectangle.
+
+The saved coordinate is still relative to the PNG. Example:
+
+- If ZephsShop.png is 240 px wide and Zeph is saved at x = 280, that means Zeph stands 40 px to the right of the PNG.
+- If y = -20, that means the marker is 20 px above the PNG.
+- If x = -35, that means the marker is 35 px left of the PNG.
+
+The editor displays this as:
+
+    outside PNG: 40 px right
+    outside PNG: 20 px above
+    outside PNG: 35 px left, 12 px below
+
+When a marker is outside the PNG, the editor draws a guide line from the marker back to the nearest PNG edge so the relationship is visible.
+
+Saved .vasset Format
+--------------------
+The current saved format is simple and line-based:
+
+    village_asset 1
+    image ZephsShop.png
+    size 240 160
+    collider 10.00 20.00 50.00 30.00
+    marker Zeph 280.00 140.00
+    marker Poe 120.00 90.00
+    marker Respawn -20.00 180.00
+
+Meaning:
+
+- village_asset 1 = format/version marker.
+- image = PNG filename this metadata belongs to.
+- size = PNG dimensions when saved.
+- collider = one box in image-local pixels: x y width height.
+- marker = named marker in image-local pixels.
+
+Do not switch this back to random .txt object files unless there is a strong reason. The .vasset sidecar is the planned direction.
+
+Near-Term Goal
+--------------
+The next major goal is not to rebuild the old all-in-one tile editor. The near-term goal is:
+
+1. Use the Village Asset Adjuster to define Zeph's shop and Poe's graveyard.
+2. Save their .vasset files.
+3. Build a larger village gameplay scene using the forest biome ground as the base.
+4. Place completed PNG assets into that scene.
+5. Load each PNG's .vasset metadata at runtime.
+6. Convert asset colliders into world-space collision boxes.
+7. Convert asset markers into world-space NPC/respawn positions.
+8. Let the player walk around and interact with Zeph/Poe in the actual village scene.
+
+Village Runtime Placement Model
+-------------------------------
+When the village later places an asset, it should store something like:
+
+    asset = ZephsShop
+    worldPosition = x, y
+
+Then the runtime computes:
+
+    asset world image rect = worldPosition + PNG size
+    collider world rect = worldPosition + collider local rect
+    Zeph world position = worldPosition + Zeph marker local position
+    Poe world position = worldPosition + Poe marker local position
+    Respawn world position = worldPosition + Respawn marker local position
+
+This is why outside markers are useful. A marker can be at local x/y values outside the image, but once added to the asset's world position it becomes a valid world position.
+
+Village Design Direction
+------------------------
+The village should eventually be a larger non-combat hub using the same forest biome ground base, but expanded for comfort and player expression.
+
+The village is not just a menu. It should become a place the player returns to between runs.
+
+Planned village concepts:
+
+- A small graveyard area where the player respawns after death.
+- Poe can stand near the graveyard and handle meta progression / death reflection systems.
+- Zeph can stand at or near the shop asset and handle shop/buff/upgrades depending on final design.
+- The player can eventually decorate and expand the village using gold/resources earned from runs.
+- Decorations and buildings can be finished PNG assets with colliders and interaction metadata.
+- NPCs should be placed through metadata or village layout data, not hardcoded magic numbers forever.
+
+Important Design Decision
+-------------------------
+We are not trying to make Unity inside this game.
+
+A full visual editor with layers, animation editing, tile painting, object creation, collision authoring, NPC placement, and gameplay preview is too broad for this stage. The better workflow is:
+
+- Make or export finished PNG assets externally.
+- Use the in-game tool only to add gameplay metadata.
+- Later use a simpler village placement system to arrange those authored assets.
+
+This should be easier to use, easier to debug, and easier for Codex/Claude to extend.
+
+Future Features For The Asset Adjuster
+--------------------------------------
+These are good next additions, but should be done carefully and one at a time:
+
+1. Rename MapEditor to VillageAssetEditor once the engine state naming can be updated cleanly.
+2. Add custom named markers, not only Zeph/Poe/Respawn.
+   Example: Door, TalkPrompt, ShopCounter, SpawnPoint, DecorationAnchor.
+3. Add interaction zones separate from colliders.
+   Example: a player can press interact near Zeph's counter without colliding with Zeph himself.
+4. Add marker dragging after placement.
+   Current markers are placed with hotkeys. Later, clicking/dragging marker handles would be better.
+5. Add direct numeric editing for colliders and markers.
+   This would help precise placement.
+6. Add asset origin/pivot editing.
+   The top-left of the PNG is currently the origin. That is fine for now, but a bottom-center pivot may feel better for placement later.
+7. Add per-asset scale only if necessary.
+   Pixel art should usually be drawn/exported at the intended scale or scaled by clean integer factors. Avoid arbitrary stretching.
+8. Add preview mode.
+   Show the player sprite/NPC sprite near the asset so NPC placement and interaction distance can be judged visually.
+9. Add tags/properties.
+   Example: asset type = shop, graveyard, decoration, house, farm, path prop.
+10. Add door metadata.
+   Doors should likely be interaction markers/zones that load interiors or open panels, not just visual art.
+
+What Claude Should Check Next
+-----------------------------
+Please review these areas before making the next large change:
+
+1. Confirm the current MapEditor code is stable and readable.
+2. Confirm .vasset save/load works for both ZephsShop and VillageGraveyard.
+3. Decide whether to add marker dragging next or go straight to runtime loading.
+4. Decide where village runtime asset definitions should live.
+5. Decide whether the existing VillagePlayground code should be removed, replaced, or adapted to the new PNG + .vasset system.
+6. Avoid reviving the old full tile painter unless there is a specific reason.
+
+Suggested Next Implementation Step
+----------------------------------
+The best next engineering step is probably:
+
+Create a small VillageAssetData loader that can read VillageAssets/*.vasset and provide:
+
+    name
+    image filename
+    texture
+    colliders[]
+    markers[]
+
+Then make a simple village gameplay scene that:
+
+- Uses forest ground/base tiles.
+- Places ZephsShop at a test position.
+- Places VillageGraveyard at a test position.
+- Draws the PNGs.
+- Applies their colliders to player movement.
+- Spawns/positions Zeph and Poe using metadata markers.
+- Uses the Respawn marker as the player's village spawn point.
+
+That will prove the whole pipeline from PNG -> editor -> .vasset -> game runtime.
+
+Current Build Note
+------------------
+The code compiled successfully after the marker-outside-PNG change when linked to a separate verification output folder:
+
+    x64/CodexVerify/TestGame.exe
+
+The normal Debug output could not overwrite:
+
+    x64/Debug/TestGame.exe
+
+because the exe appeared to be locked/running. That is not a code compile problem; close the running game before building normally.
+
+Summary
+-------
+We are now treating village pieces as authored PNG assets plus gameplay metadata. Colliders stay inside the PNG. NPC/respawn markers can live outside the PNG as offsets. The next big milestone is loading those .vasset files in the actual village scene and proving Zeph, Poe, respawn, and collision work in real gameplay.

@@ -1,554 +1,839 @@
+#pragma warning(disable: 4996)
 #include "MapEditor.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
 
 #include <algorithm>
-#include <vector>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace
 {
-    // Fixed sheet list — cell.sheet indexes THIS order, so it must never be
-    // reshuffled (saved maps depend on it). Missing files stay as empty slots.
-    const char* kSheetStems[] = {
-        "Village_Ground",      // 0: grass / dirt paths / water
-        "Village",             // 1: houses, fences, trees, wells
-        "Village_Objects01",   // 2: extra village props
-        "Village_Objects02",   // 3: extra village props
-        "Interior",            // 4: building interiors + furniture
-    };
-    constexpr int kSheetCount = 5;
+    constexpr float kPanelW = 390.f;
+    constexpr float kStatusH = 44.f;
+    constexpr float kRowH = 38.f;
+    constexpr float kHandleSize = 12.f;
 
-    // Layout (virtual-canvas space).
-    constexpr float kPanelW      = 520.f;
-    constexpr float kTabH        = 40.f;
-    constexpr float kStatusH     = 36.f;
-    constexpr float kPaletteScale = 2.f;   // palette draws tiles at 32px
-
-    const char* LayerName(VillageMap::Layer layer, bool collisionMode)
+    std::string StemFromFileName(const char* fileName)
     {
-        if (collisionMode) return "COLLISION";
-        switch (layer)
-        {
-        case VillageMap::Layer::Objects:  return "OBJECTS";
-        case VillageMap::Layer::Overhead: return "OVERHEAD";
-        default:                          return "GROUND";
-        }
+        std::string stem = fileName ? fileName : "asset";
+        size_t dot = stem.find_last_of('.');
+        if (dot != std::string::npos) stem = stem.substr(0, dot);
+        return stem;
+    }
+
+    std::string JoinPath(const std::string& folder, const std::string& file)
+    {
+        if (folder.empty()) return file;
+        char last = folder[folder.size() - 1];
+        if (last == '/' || last == '\\') return folder + file;
+        return folder + "/" + file;
+    }
+
+    float ClampFloat(float v, float lo, float hi)
+    {
+        return std::max(lo, std::min(v, hi));
     }
 }
 
 void MapEditor::Init()
 {
-    _wantsToExit    = false;
-    _confirmingExit = false;
-    _confirmingNew  = false;
-    _helpOpen       = false;
-    _dirty          = false;
-    _activeSheet    = 0;
-    _activeLayer    = VillageMap::Layer::Ground;
-    _collisionMode  = false;
-    _brush          = Brush{};
-    _zoom           = 2.f;
-    _cameraPan      = Vector2{ -40.f, -40.f };   // small margin around the map
-    _paletteScroll  = Vector2{};
-
-    LoadSheets();
-
-    if (_map.Load(_mapName)) { _status = "Loaded villagemap_" + _mapName + ".txt"; }
-    else                     { _map.Resize(VillageMap::kDefaultCols, VillageMap::kDefaultRows);
-                               _status = "New blank map (no save found)"; }
-    _statusTimer = 3.f;
-}
-
-void MapEditor::LoadSheets()
-{
-    if (!_sheets.empty()) return;   // already loaded (Init after re-entry)
-    for (int i = 0; i < kSheetCount; i++)
-    {
-        std::string path = std::string("MapTilesets/") + kSheetStems[i] + ".png";
-        _sheets.push_back(LoadTexture(AssetPath(path.c_str()).c_str()));
-        _sheetNames.push_back(kSheetStems[i]);
-    }
+    _wantsToExit = false;
+    _helpOpen = false;
+    _selectedCollider = -1;
+    _selectedMarker = -1;
+    _dragMode = DragMode::None;
+    _dragCollider = -1;
+    _dragMarker = -1;
+    _assetListScroll = 0.f;
+    _statusTimer = 0.f;
+    LoadAssets();
+    SelectAsset(_assets.empty() ? -1 : 0);
+    _status = _assets.empty()
+        ? "No PNGs found in VillageAssets"
+        : "Village Asset Adjuster: add colliders, set Zeph/Poe/respawn markers, S save";
+    _statusTimer = 5.f;
 }
 
 void MapEditor::Unload()
 {
-    for (Texture2D& sheet : _sheets)
-        if (sheet.id != 0) UnloadTexture(sheet);
-    _sheets.clear();
-    _sheetNames.clear();
+    for (Asset& asset : _assets)
+    {
+        if (asset.texture.id != 0) UnloadTexture(asset.texture);
+        asset.texture = Texture2D{};
+    }
+    _assets.clear();
+    _activeAsset = -1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Update
-// ─────────────────────────────────────────────────────────────────────────────
+void MapEditor::LoadAssets()
+{
+    Unload();
+    _assetFolder = AssetFolderPath("VillageAssets");
+    if (!DirectoryExists(_assetFolder.c_str()))
+        _assetFolder = "VillageAssets";
+
+    FilePathList files = LoadDirectoryFiles(_assetFolder.c_str());
+    for (unsigned int i = 0; i < files.count; ++i)
+    {
+        const char* fileName = GetFileName(files.paths[i]);
+        if (!fileName || !IsFileExtension(fileName, ".png")) continue;
+
+        Asset asset;
+        asset.name = StemFromFileName(fileName);
+        asset.pngFile = fileName;
+        asset.pngPath = JoinPath(_assetFolder, asset.pngFile);
+        asset.metaPath = JoinPath(_assetFolder, asset.name + ".vasset");
+        asset.texture = LoadTexture(asset.pngPath.c_str());
+        SetTextureFilter(asset.texture, TEXTURE_FILTER_POINT);
+        LoadMetadata(asset);
+        _assets.push_back(asset);
+    }
+    UnloadDirectoryFiles(files);
+
+    std::sort(_assets.begin(), _assets.end(), [](const Asset& a, const Asset& b) {
+        return a.name < b.name;
+    });
+}
+
+void MapEditor::SelectAsset(int index)
+{
+    if (_assets.empty())
+    {
+        _activeAsset = -1;
+        _selectedCollider = -1;
+        _selectedMarker = -1;
+        return;
+    }
+
+    _activeAsset = std::max(0, std::min(index, (int)_assets.size() - 1));
+    _selectedCollider = -1;
+    _selectedMarker = -1;
+    _dragMarker = -1;
+    _dragMode = DragMode::None;
+    Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
+    FitActiveAssetToCanvas(canvas);
+}
+
+MapEditor::Asset* MapEditor::ActiveAsset()
+{
+    if (_activeAsset < 0 || _activeAsset >= (int)_assets.size()) return nullptr;
+    return &_assets[_activeAsset];
+}
+
+const MapEditor::Asset* MapEditor::ActiveAsset() const
+{
+    if (_activeAsset < 0 || _activeAsset >= (int)_assets.size()) return nullptr;
+    return &_assets[_activeAsset];
+}
+
+const char* MapEditor::MarkerName(MarkerKind kind) const
+{
+    switch (kind)
+    {
+    case MarkerKind::Zeph: return "Zeph";
+    case MarkerKind::Poe: return "Poe";
+    case MarkerKind::Respawn: return "Respawn";
+    default: return "Marker";
+    }
+}
+
+Color MapEditor::MarkerColor(MarkerKind kind) const
+{
+    switch (kind)
+    {
+    case MarkerKind::Zeph: return Color{ 90, 220, 255, 255 };
+    case MarkerKind::Poe: return Color{ 205, 150, 255, 255 };
+    case MarkerKind::Respawn: return Color{ 120, 255, 145, 255 };
+    default: return GOLD;
+    }
+}
+
+std::string MapEditor::MarkerOffsetText(const Asset& asset, Vector2 markerPos) const
+{
+    std::string text;
+    auto append = [&text](const char* part)
+    {
+        if (!text.empty()) text += ", ";
+        text += part;
+    };
+
+    if (markerPos.x < 0.f) append(TextFormat("%.0f px left", -markerPos.x));
+    else if (markerPos.x > asset.texture.width) append(TextFormat("%.0f px right", markerPos.x - asset.texture.width));
+
+    if (markerPos.y < 0.f) append(TextFormat("%.0f px above", -markerPos.y));
+    else if (markerPos.y > asset.texture.height) append(TextFormat("%.0f px below", markerPos.y - asset.texture.height));
+
+    return text.empty() ? std::string("inside PNG") : std::string("outside PNG: ") + text;
+}
+
+void MapEditor::LoadMetadata(Asset& asset)
+{
+    asset.colliders.clear();
+    for (int i = 0; i < (int)MarkerKind::Count; ++i) asset.markers[i] = Marker{};
+
+    FILE* file = fopen(asset.metaPath.c_str(), "r");
+    if (!file) return;
+
+    char line[512];
+    while (fgets(line, sizeof(line), file))
+    {
+        float x = 0.f, y = 0.f, w = 0.f, h = 0.f;
+        if (sscanf(line, "collider %f %f %f %f", &x, &y, &w, &h) == 4)
+        {
+            asset.colliders.push_back(ColliderBox{ Rectangle{ x, y, w, h } });
+            continue;
+        }
+
+        char markerName[64] = {};
+        if (sscanf(line, "marker %63s %f %f", markerName, &x, &y) == 3)
+        {
+            MarkerKind kind = MarkerKind::Count;
+            if (strcmp(markerName, "Zeph") == 0) kind = MarkerKind::Zeph;
+            else if (strcmp(markerName, "Poe") == 0) kind = MarkerKind::Poe;
+            else if (strcmp(markerName, "Respawn") == 0) kind = MarkerKind::Respawn;
+            if (kind != MarkerKind::Count)
+            {
+                asset.markers[(int)kind].has = true;
+                asset.markers[(int)kind].pos = Vector2{ x, y };
+            }
+        }
+    }
+
+    fclose(file);
+    asset.dirty = false;
+}
+
+void MapEditor::SaveActiveMetadata()
+{
+    Asset* asset = ActiveAsset();
+    if (!asset) return;
+
+    FILE* file = fopen(asset->metaPath.c_str(), "w");
+    if (!file)
+    {
+        _status = "Could not save " + asset->metaPath;
+        _statusTimer = 4.f;
+        return;
+    }
+
+    fprintf(file, "village_asset 1\n");
+    fprintf(file, "image %s\n", asset->pngFile.c_str());
+    fprintf(file, "size %d %d\n", asset->texture.width, asset->texture.height);
+    for (const ColliderBox& box : asset->colliders)
+        fprintf(file, "collider %.2f %.2f %.2f %.2f\n", box.rect.x, box.rect.y, box.rect.width, box.rect.height);
+
+    for (int i = 0; i < (int)MarkerKind::Count; ++i)
+    {
+        const Marker& marker = asset->markers[i];
+        if (!marker.has) continue;
+        MarkerKind kind = (MarkerKind)i;
+        fprintf(file, "marker %s %.2f %.2f\n", MarkerName(kind), marker.pos.x, marker.pos.y);
+    }
+
+    fclose(file);
+    asset->dirty = false;
+    _status = "Saved " + asset->name + ".vasset";
+    _statusTimer = 3.f;
+}
+
+void MapEditor::FitActiveAssetToCanvas(Rectangle canvas)
+{
+    const Asset* asset = ActiveAsset();
+    if (!asset || asset->texture.id == 0) return;
+    float fitX = (canvas.width - 80.f) / std::max(1.f, (float)asset->texture.width);
+    float fitY = (canvas.height - 80.f) / std::max(1.f, (float)asset->texture.height);
+    _zoom = ClampFloat(std::min(fitX, fitY), 0.5f, 8.f);
+    _viewOffset = Vector2{};
+}
+
+Vector2 MapEditor::ImageToScreen(Vector2 imagePos) const
+{
+    Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
+    const Asset* asset = ActiveAsset();
+    if (!asset) return Vector2{};
+    Vector2 origin{ canvas.x + canvas.width * 0.5f - asset->texture.width * _zoom * 0.5f + _viewOffset.x,
+                    canvas.y + canvas.height * 0.5f - asset->texture.height * _zoom * 0.5f + _viewOffset.y };
+    return Vector2{ origin.x + imagePos.x * _zoom, origin.y + imagePos.y * _zoom };
+}
+
+Vector2 MapEditor::ScreenToImage(Vector2 screenPos) const
+{
+    Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
+    const Asset* asset = ActiveAsset();
+    if (!asset || _zoom <= 0.f) return Vector2{};
+    Vector2 origin{ canvas.x + canvas.width * 0.5f - asset->texture.width * _zoom * 0.5f + _viewOffset.x,
+                    canvas.y + canvas.height * 0.5f - asset->texture.height * _zoom * 0.5f + _viewOffset.y };
+    return Vector2{ (screenPos.x - origin.x) / _zoom, (screenPos.y - origin.y) / _zoom };
+}
+
+Rectangle MapEditor::ImageRectToScreen(Rectangle imageRect) const
+{
+    Vector2 p = ImageToScreen(Vector2{ imageRect.x, imageRect.y });
+    return Rectangle{ p.x, p.y, imageRect.width * _zoom, imageRect.height * _zoom };
+}
+
+Rectangle MapEditor::NormalizeImageRect(Rectangle rect) const
+{
+    if (rect.width < 0.f) { rect.x += rect.width; rect.width = -rect.width; }
+    if (rect.height < 0.f) { rect.y += rect.height; rect.height = -rect.height; }
+    const Asset* asset = ActiveAsset();
+    if (!asset) return rect;
+    rect.x = ClampFloat(rect.x, 0.f, (float)asset->texture.width);
+    rect.y = ClampFloat(rect.y, 0.f, (float)asset->texture.height);
+    rect.width = ClampFloat(rect.width, 1.f, (float)asset->texture.width - rect.x);
+    rect.height = ClampFloat(rect.height, 1.f, (float)asset->texture.height - rect.y);
+    return rect;
+}
+
+Rectangle MapEditor::ActiveImageBoundsScreen() const
+{
+    const Asset* asset = ActiveAsset();
+    if (!asset) return Rectangle{};
+    Vector2 topLeft = ImageToScreen(Vector2{ 0.f, 0.f });
+    return Rectangle{ topLeft.x, topLeft.y, asset->texture.width * _zoom, asset->texture.height * _zoom };
+}
+
+int MapEditor::ColliderAt(Vector2 imagePos) const
+{
+    const Asset* asset = ActiveAsset();
+    if (!asset) return -1;
+    for (int i = (int)asset->colliders.size() - 1; i >= 0; --i)
+    {
+        if (CheckCollisionPointRec(imagePos, asset->colliders[i].rect)) return i;
+    }
+    return -1;
+}
+
+int MapEditor::MarkerAt(Vector2 imagePos) const
+{
+    const Asset* asset = ActiveAsset();
+    if (!asset) return -1;
+
+    float pickRadius = 14.f / std::max(0.25f, _zoom);
+    float pickRadiusSq = pickRadius * pickRadius;
+    for (int i = 0; i < (int)MarkerKind::Count; ++i)
+    {
+        const Marker& marker = asset->markers[i];
+        if (!marker.has) continue;
+        float dx = marker.pos.x - imagePos.x;
+        float dy = marker.pos.y - imagePos.y;
+        if (dx * dx + dy * dy <= pickRadiusSq) return i;
+    }
+    return -1;
+}
+
+bool MapEditor::HandleAt(const ColliderBox& box, Vector2 screenPos) const
+{
+    Rectangle screen = ImageRectToScreen(box.rect);
+    Rectangle handle{ screen.x + screen.width - kHandleSize * 0.5f,
+                      screen.y + screen.height - kHandleSize * 0.5f,
+                      kHandleSize, kHandleSize };
+    return CheckCollisionPointRec(screenPos, handle);
+}
+
+void MapEditor::AddCollider(Rectangle imageRect)
+{
+    Asset* asset = ActiveAsset();
+    if (!asset) return;
+    imageRect = NormalizeImageRect(imageRect);
+    asset->colliders.push_back(ColliderBox{ imageRect });
+    _selectedCollider = (int)asset->colliders.size() - 1;
+    asset->dirty = true;
+    _status = "Added collider box";
+    _statusTimer = 2.f;
+}
+
+void MapEditor::SetMarker(MarkerKind kind, Vector2 imagePos)
+{
+    Asset* asset = ActiveAsset();
+    if (!asset) return;
+
+    Marker& marker = asset->markers[(int)kind];
+    marker.has = true;
+    marker.pos = imagePos;
+    _selectedMarker = (int)kind;
+    _selectedCollider = -1;
+    asset->dirty = true;
+    _status = std::string("Set ") + MarkerName(kind) + " marker (" + MarkerOffsetText(*asset, imagePos) + ")";
+    _statusTimer = 3.f;
+}
+
 void MapEditor::Update()
 {
     if (_statusTimer > 0.f) _statusTimer -= GetFrameTime();
 
-    // ── Modal prompts eat all input ──
-    if (_confirmingExit)
-    {
-        if (IsKeyPressed(KEY_ENTER))  { _map.Save(_mapName); _wantsToExit = true; }
-        if (IsKeyPressed(KEY_X))      { _wantsToExit = true; }
-        if (IsKeyPressed(KEY_ESCAPE)) { _confirmingExit = false; }
-        return;
-    }
-    if (_confirmingNew)
-    {
-        if (IsKeyPressed(KEY_ENTER))
-        {
-            _map.Resize(VillageMap::kDefaultCols, VillageMap::kDefaultRows);
-            _dirty = true;
-            _status = "New blank map"; _statusTimer = 2.f;
-            _confirmingNew = false;
-        }
-        if (IsKeyPressed(KEY_ESCAPE)) _confirmingNew = false;
-        return;
-    }
     if (_helpOpen)
     {
         if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_ESCAPE)) _helpOpen = false;
         return;
     }
 
-    // ── Global keys ──
-    if (IsKeyPressed(KEY_ESCAPE))
-    {
-        if (_dirty) _confirmingExit = true;
-        else        _wantsToExit = true;
-        return;
-    }
+    if (IsKeyPressed(KEY_ESCAPE)) { _wantsToExit = true; return; }
     if (IsKeyPressed(KEY_H)) { _helpOpen = true; return; }
-    if (IsKeyPressed(KEY_S)) { _map.Save(_mapName); _dirty = false;
-                               _status = "Saved villagemap_" + _mapName + ".txt"; _statusTimer = 2.f; }
-    if (IsKeyPressed(KEY_N)) { _confirmingNew = true; return; }
-    if (IsKeyPressed(KEY_G)) _showGrid = !_showGrid;
-    if (IsKeyPressed(KEY_C)) _showCollision = !_showCollision;
+    if (IsKeyPressed(KEY_S)) SaveActiveMetadata();
+    if (IsKeyPressed(KEY_F))
+    {
+        Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
+        FitActiveAssetToCanvas(canvas);
+    }
+    if (IsKeyPressed(KEY_DELETE))
+    {
+        Asset* asset = ActiveAsset();
+        if (asset && _selectedCollider >= 0 && _selectedCollider < (int)asset->colliders.size())
+        {
+            asset->colliders.erase(asset->colliders.begin() + _selectedCollider);
+            _selectedCollider = -1;
+            asset->dirty = true;
+            _status = "Deleted collider";
+            _statusTimer = 2.f;
+        }
+        else if (asset && _selectedMarker >= 0 && _selectedMarker < (int)MarkerKind::Count)
+        {
+            asset->markers[_selectedMarker] = Marker{};
+            _selectedMarker = -1;
+            asset->dirty = true;
+            _status = "Cleared marker";
+            _statusTimer = 2.f;
+        }
+    }
 
-    // Layer tabs.
-    if (IsKeyPressed(KEY_Q)) { _activeLayer = VillageMap::Layer::Ground;   _collisionMode = false; }
-    if (IsKeyPressed(KEY_W)) { _activeLayer = VillageMap::Layer::Objects;  _collisionMode = false; }
-    if (IsKeyPressed(KEY_E)) { _activeLayer = VillageMap::Layer::Overhead; _collisionMode = false; }
-    if (IsKeyPressed(KEY_R)) { _collisionMode = true; }
-
-    // Sheet tabs.
-    for (int i = 0; i < kSheetCount; i++)
-        if (IsKeyPressed(KEY_ONE + i)) _activeSheet = i;
-
-    Rectangle panel { 0.f, 0.f, kPanelW, (float)kVirtualHeight - kStatusH };
-    Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW,
-                      (float)kVirtualHeight - kStatusH };
-
-    UpdatePalette(panel);
+    Rectangle panel{ 0.f, 0.f, kPanelW, (float)kVirtualHeight - kStatusH };
+    Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
+    UpdatePanel(panel);
     UpdateCanvas(canvas);
+    UpdateSelectedColliderKeys();
 }
 
-void MapEditor::UpdatePalette(Rectangle panel)
+void MapEditor::UpdatePanel(Rectangle panel)
 {
     Vector2 mouse = GetVirtualMousePos();
+    if (!CheckCollisionPointRec(mouse, panel)) return;
 
-    // Sheet tab buttons across the top of the panel.
-    float tabW = panel.width / kSheetCount;
-    for (int i = 0; i < kSheetCount; i++)
-    {
-        Rectangle tab{ panel.x + i * tabW, panel.y, tabW, kTabH };
-        if (CheckCollisionPointRec(mouse, tab) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-            _activeSheet = i;
-    }
-
-    Rectangle view{ panel.x, panel.y + kTabH, panel.width, panel.height - kTabH };
-    if (!CheckCollisionPointRec(mouse, view))
-    {
-        if (!IsMouseButtonDown(MOUSE_LEFT_BUTTON)) _paletteDragging = false;
-        return;
-    }
-
-    // Wheel scrolls the palette (SHIFT = horizontal).
     float wheel = GetMouseWheelMove();
     if (wheel != 0.f)
     {
-        if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
-            _paletteScroll.x -= wheel * 64.f;
-        else
-            _paletteScroll.y -= wheel * 64.f;
-        if (_paletteScroll.x < 0.f) _paletteScroll.x = 0.f;
-        if (_paletteScroll.y < 0.f) _paletteScroll.y = 0.f;
+        float maxScroll = std::max(0.f, (float)_assets.size() * kRowH - (panel.height - 88.f));
+        _assetListScroll = ClampFloat(_assetListScroll - wheel * kRowH * 2.f, 0.f, maxScroll);
     }
 
-    const Texture2D& sheet = _sheets[_activeSheet];
-    if (sheet.id == 0) return;
-
-    // Which sheet tile is under the mouse?
-    float tilePx  = VillageMap::kTileSize * kPaletteScale;
-    int   tileCol = (int)((mouse.x - view.x + _paletteScroll.x) / tilePx);
-    int   tileRow = (int)((mouse.y - view.y + _paletteScroll.y) / tilePx);
-    int   sheetCols = sheet.width  / VillageMap::kTileSize;
-    int   sheetRows = sheet.height / VillageMap::kTileSize;
-    if (tileCol < 0 || tileRow < 0 || tileCol >= sheetCols || tileRow >= sheetRows)
-        return;
-
-    // Click = 1×1 brush; drag = rubber-band a multi-tile stamp (houses!).
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
-        _paletteDragging = true;
-        _paletteDragStartTile = Vector2{ (float)tileCol, (float)tileRow };
-    }
-    if (_paletteDragging)
-    {
-        int startCol = (int)_paletteDragStartTile.x;
-        int startRow = (int)_paletteDragStartTile.y;
-        _brush.sheet = (short)_activeSheet;
-        _brush.col   = (short)std::min(startCol, tileCol);
-        _brush.row   = (short)std::min(startRow, tileRow);
-        _brush.w     = (short)(std::abs(tileCol - startCol) + 1);
-        _brush.h     = (short)(std::abs(tileRow - startRow) + 1);
-        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) _paletteDragging = false;
+        int row = (int)((mouse.y - 82.f + _assetListScroll) / kRowH);
+        if (row >= 0 && row < (int)_assets.size()) SelectAsset(row);
     }
 }
 
 void MapEditor::UpdateCanvas(Rectangle canvas)
 {
+    Asset* asset = ActiveAsset();
+    if (!asset) return;
+
     Vector2 mouse = GetVirtualMousePos();
-    float dt = GetFrameTime();
+    bool inCanvas = CheckCollisionPointRec(mouse, canvas);
+    float wheel = inCanvas ? GetMouseWheelMove() : 0.f;
+    if (wheel != 0.f)
+        _zoom = ClampFloat(_zoom + wheel * 0.18f * _zoom, 0.25f, 12.f);
 
-    // Arrow-key panning always works; middle-drag panning when over the canvas.
-    float panSpeed = 900.f * dt;
-    if (IsKeyDown(KEY_LEFT))  _cameraPan.x -= panSpeed;
-    if (IsKeyDown(KEY_RIGHT)) _cameraPan.x += panSpeed;
-    if (IsKeyDown(KEY_UP))    _cameraPan.y -= panSpeed;
-    if (IsKeyDown(KEY_DOWN))  _cameraPan.y += panSpeed;
-
-    if (!CheckCollisionPointRec(mouse, canvas))
+    if (IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON) && inCanvas)
     {
-        if (!IsMouseButtonDown(MOUSE_MIDDLE_BUTTON)) _panning = false;
-        return;
-    }
-
-    if (IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON))
-    {
-        _panning      = true;
-        _panMouseStart = mouse;
-        _panCamStart   = _cameraPan;
+        _panning = true;
+        _panStartMouse = mouse;
+        _panStartOffset = _viewOffset;
     }
     if (_panning)
     {
-        _cameraPan.x = _panCamStart.x - (mouse.x - _panMouseStart.x);
-        _cameraPan.y = _panCamStart.y - (mouse.y - _panMouseStart.y);
-        if (IsMouseButtonReleased(MOUSE_MIDDLE_BUTTON)) _panning = false;
-        return;   // don't paint while panning
+        if (IsMouseButtonDown(MOUSE_MIDDLE_BUTTON))
+            _viewOffset = Vector2{ _panStartOffset.x + mouse.x - _panStartMouse.x,
+                                   _panStartOffset.y + mouse.y - _panStartMouse.y };
+        else
+            _panning = false;
     }
 
-    // Wheel zoom, anchored on the map point under the cursor.
-    float wheel = GetMouseWheelMove();
-    if (wheel != 0.f)
+    Vector2 imageMouse = ScreenToImage(mouse);
+    if (inCanvas && IsKeyPressed(KEY_C))
+        AddCollider(Rectangle{ imageMouse.x - 32.f, imageMouse.y - 32.f, 64.f, 64.f });
+    if (inCanvas && IsKeyPressed(KEY_Z)) SetMarker(MarkerKind::Zeph, imageMouse);
+    if (inCanvas && IsKeyPressed(KEY_P)) SetMarker(MarkerKind::Poe, imageMouse);
+    if (inCanvas && IsKeyPressed(KEY_X)) SetMarker(MarkerKind::Respawn, imageMouse);
+
+    if (inCanvas && IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
     {
-        Vector2 origin = MapOrigin(canvas);
-        float sourceX = (mouse.x - origin.x) / _zoom;   // map point in source px
-        float sourceY = (mouse.y - origin.y) / _zoom;
-        _zoom *= (wheel > 0.f) ? 1.25f : 0.8f;
-        _zoom = std::max(0.5f, std::min(6.f, _zoom));
-        _cameraPan.x = canvas.x - (mouse.x - sourceX * _zoom);
-        _cameraPan.y = canvas.y - (mouse.y - sourceY * _zoom);
+        _dragMode = DragMode::DrawCollider;
+        _dragStartMouseImage = imageMouse;
+        _drawPreview = Rectangle{ imageMouse.x, imageMouse.y, 0.f, 0.f };
     }
-
-    // Hovered map cell.
-    Vector2 origin = MapOrigin(canvas);
-    int cellCol = (int)((mouse.x - origin.x) / TilePx());
-    int cellRow = (int)((mouse.y - origin.y) / TilePx());
-    if (mouse.x < origin.x) cellCol = -1;   // int cast rounds toward 0
-    if (mouse.y < origin.y) cellRow = -1;
-    if (!_map.InBounds(cellCol, cellRow)) return;
-
-    if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))  PaintAt(cellCol, cellRow);
-    if (IsMouseButtonDown(MOUSE_RIGHT_BUTTON)) EraseAt(cellCol, cellRow);
-    if (IsKeyPressed(KEY_F))                   FloodFillAt(cellCol, cellRow);
-}
-
-void MapEditor::PaintAt(int cellCol, int cellRow)
-{
-    if (_collisionMode)
+    if (_dragMode == DragMode::DrawCollider)
     {
-        _map.solid[_map.Index(cellCol, cellRow)] = 1;
-        _dirty = true;
-        return;
-    }
-    // Stamp the whole brush rectangle, anchored at the hovered cell.
-    std::vector<VillageMapCell>& cells = _map.CellsFor(_activeLayer);
-    for (int dy = 0; dy < _brush.h; dy++)
-        for (int dx = 0; dx < _brush.w; dx++)
+        _drawPreview = Rectangle{ _dragStartMouseImage.x, _dragStartMouseImage.y,
+                                  imageMouse.x - _dragStartMouseImage.x,
+                                  imageMouse.y - _dragStartMouseImage.y };
+        if (!IsMouseButtonDown(MOUSE_RIGHT_BUTTON))
         {
-            int c = cellCol + dx, r = cellRow + dy;
-            if (!_map.InBounds(c, r)) continue;
-            VillageMapCell cell;
-            cell.sheet = _brush.sheet;
-            cell.col   = _brush.col + (short)dx;
-            cell.row   = _brush.row + (short)dy;
-            cells[_map.Index(c, r)] = cell;
+            Rectangle rect = NormalizeImageRect(_drawPreview);
+            if (rect.width >= 3.f && rect.height >= 3.f) AddCollider(rect);
+            _dragMode = DragMode::None;
         }
-    _dirty = true;
-}
-
-void MapEditor::EraseAt(int cellCol, int cellRow)
-{
-    if (_collisionMode)
-    {
-        _map.solid[_map.Index(cellCol, cellRow)] = 0;
-        _dirty = true;
         return;
     }
-    _map.CellsFor(_activeLayer)[_map.Index(cellCol, cellRow)] = VillageMapCell{};
-    _dirty = true;
-}
 
-void MapEditor::FloodFillAt(int cellCol, int cellRow)
-{
-    if (_collisionMode) return;   // fill is for visual layers
-
-    std::vector<VillageMapCell>& cells = _map.CellsFor(_activeLayer);
-    VillageMapCell target = cells[_map.Index(cellCol, cellRow)];
-    VillageMapCell paint;
-    paint.sheet = _brush.sheet; paint.col = _brush.col; paint.row = _brush.row;
-    if (target.sheet == paint.sheet && target.col == paint.col && target.row == paint.row)
-        return;   // filling with itself
-
-    // Simple BFS over 4-connected cells matching the clicked cell's tile.
-    std::vector<int> frontier;
-    frontier.push_back(_map.Index(cellCol, cellRow));
-    while (!frontier.empty())
+    if (inCanvas && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
-        int idx = frontier.back(); frontier.pop_back();
-        VillageMapCell& cell = cells[idx];
-        if (cell.sheet != target.sheet || cell.col != target.col || cell.row != target.row)
-            continue;
-        cell = paint;
+        int markerHit = MarkerAt(imageMouse);
+        if (markerHit >= 0)
+        {
+            _selectedMarker = markerHit;
+            _selectedCollider = -1;
+            _dragMarker = markerHit;
+            _dragMode = DragMode::MoveMarker;
+            _status = std::string("Selected ") + MarkerName((MarkerKind)markerHit) + " marker";
+            _statusTimer = 2.f;
+            return;
+        }
 
-        int c = idx % _map.cols, r = idx / _map.cols;
-        if (c > 0)              frontier.push_back(idx - 1);
-        if (c < _map.cols - 1)  frontier.push_back(idx + 1);
-        if (r > 0)              frontier.push_back(idx - _map.cols);
-        if (r < _map.rows - 1)  frontier.push_back(idx + _map.cols);
+        _selectedCollider = -1;
+        _selectedMarker = -1;
+        for (int i = (int)asset->colliders.size() - 1; i >= 0; --i)
+        {
+            if (HandleAt(asset->colliders[i], mouse))
+            {
+                _selectedCollider = i;
+                _dragCollider = i;
+                _dragMode = DragMode::ResizeCollider;
+                _dragStartMouseImage = imageMouse;
+                _dragStartRect = asset->colliders[i].rect;
+                return;
+            }
+        }
+
+        int hit = ColliderAt(imageMouse);
+        if (hit >= 0)
+        {
+            _selectedCollider = hit;
+            _dragCollider = hit;
+            _dragMode = DragMode::MoveCollider;
+            _dragStartMouseImage = imageMouse;
+            _dragStartRect = asset->colliders[hit].rect;
+        }
     }
-    _dirty = true;
+
+    if (_dragMode == DragMode::MoveMarker)
+    {
+        if (_dragMarker < 0 || _dragMarker >= (int)MarkerKind::Count || !asset->markers[_dragMarker].has)
+        {
+            _dragMode = DragMode::None;
+            _dragMarker = -1;
+            return;
+        }
+
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        {
+            asset->markers[_dragMarker].pos = imageMouse;
+            asset->dirty = true;
+        }
+        else
+        {
+            _dragMode = DragMode::None;
+            _dragMarker = -1;
+            _status = std::string("Moved ") + MarkerName((MarkerKind)_selectedMarker) + " marker (" + MarkerOffsetText(*asset, asset->markers[_selectedMarker].pos) + ")";
+            _statusTimer = 3.f;
+        }
+        return;
+    }
+
+    if (_dragMode == DragMode::MoveCollider || _dragMode == DragMode::ResizeCollider)
+    {
+        if (_dragCollider < 0 || _dragCollider >= (int)asset->colliders.size())
+        {
+            _dragMode = DragMode::None;
+            return;
+        }
+
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        {
+            Vector2 delta{ imageMouse.x - _dragStartMouseImage.x, imageMouse.y - _dragStartMouseImage.y };
+            Rectangle rect = _dragStartRect;
+            if (_dragMode == DragMode::MoveCollider)
+            {
+                rect.x += delta.x;
+                rect.y += delta.y;
+            }
+            else
+            {
+                rect.width += delta.x;
+                rect.height += delta.y;
+            }
+            asset->colliders[_dragCollider].rect = NormalizeImageRect(rect);
+            asset->dirty = true;
+        }
+        else
+        {
+            _dragMode = DragMode::None;
+            _dragCollider = -1;
+        }
+    }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Draw
-// ─────────────────────────────────────────────────────────────────────────────
+void MapEditor::UpdateSelectedColliderKeys()
+{
+    Asset* asset = ActiveAsset();
+    if (!asset || _selectedCollider < 0 || _selectedCollider >= (int)asset->colliders.size()) return;
+
+    float moveStep = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT) ? 8.f : 1.f;
+    Rectangle rect = asset->colliders[_selectedCollider].rect;
+    bool changed = false;
+    bool resizing = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+
+    if (IsKeyDown(KEY_LEFT))  { resizing ? rect.width -= moveStep : rect.x -= moveStep; changed = true; }
+    if (IsKeyDown(KEY_RIGHT)) { resizing ? rect.width += moveStep : rect.x += moveStep; changed = true; }
+    if (IsKeyDown(KEY_UP))    { resizing ? rect.height -= moveStep : rect.y -= moveStep; changed = true; }
+    if (IsKeyDown(KEY_DOWN))  { resizing ? rect.height += moveStep : rect.y += moveStep; changed = true; }
+
+    if (changed)
+    {
+        asset->colliders[_selectedCollider].rect = NormalizeImageRect(rect);
+        asset->dirty = true;
+    }
+}
+
+void MapEditor::UpdateSelectedMarkerKeys()
+{
+    Asset* asset = ActiveAsset();
+    if (!asset || _selectedCollider >= 0 || _selectedMarker < 0 || _selectedMarker >= (int)MarkerKind::Count) return;
+    Marker& marker = asset->markers[_selectedMarker];
+    if (!marker.has) return;
+
+    float moveStep = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT) ? 8.f : 1.f;
+    bool changed = false;
+
+    if (IsKeyDown(KEY_LEFT))  { marker.pos.x -= moveStep; changed = true; }
+    if (IsKeyDown(KEY_RIGHT)) { marker.pos.x += moveStep; changed = true; }
+    if (IsKeyDown(KEY_UP))    { marker.pos.y -= moveStep; changed = true; }
+    if (IsKeyDown(KEY_DOWN))  { marker.pos.y += moveStep; changed = true; }
+
+    if (changed)
+    {
+        asset->dirty = true;
+        _status = std::string("Moved ") + MarkerName((MarkerKind)_selectedMarker) + " marker (" + MarkerOffsetText(*asset, marker.pos) + ")";
+        _statusTimer = 1.5f;
+    }
+}
+
 void MapEditor::Draw() const
 {
-    ClearBackground(Color{ 24, 24, 30, 255 });
-
-    Rectangle panel { 0.f, 0.f, kPanelW, (float)kVirtualHeight - kStatusH };
-    Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW,
-                      (float)kVirtualHeight - kStatusH };
-
+    ClearBackground(Color{ 22, 23, 28, 255 });
+    Rectangle panel{ 0.f, 0.f, kPanelW, (float)kVirtualHeight - kStatusH };
+    Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
     DrawCanvas(canvas);
-    DrawPalette(panel);
+    DrawPanel(panel);
     DrawStatusBar();
-
-    // Modal prompts / help draw on top of everything.
-    if (_confirmingExit)
-    {
-        DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(BLACK, 0.65f));
-        const char* line1 = "Unsaved changes!";
-        const char* line2 = "ENTER: save & exit     X: exit without saving     ESC: keep editing";
-        DrawText(line1, kVirtualWidth / 2 - MeasureText(line1, 44) / 2, 460, 44, GOLD);
-        DrawText(line2, kVirtualWidth / 2 - MeasureText(line2, 26) / 2, 530, 26, RAYWHITE);
-    }
-    if (_confirmingNew)
-    {
-        DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(BLACK, 0.65f));
-        const char* line1 = "Clear the whole map?";
-        const char* line2 = "ENTER: yes, start blank     ESC: cancel";
-        DrawText(line1, kVirtualWidth / 2 - MeasureText(line1, 44) / 2, 460, 44, Color{ 235, 90, 90, 255 });
-        DrawText(line2, kVirtualWidth / 2 - MeasureText(line2, 26) / 2, 530, 26, RAYWHITE);
-    }
     if (_helpOpen) DrawHelp();
 }
 
-void MapEditor::DrawPalette(Rectangle panel) const
+void MapEditor::DrawPanel(Rectangle panel) const
 {
-    DrawRectangleRec(panel, Color{ 34, 34, 42, 255 });
-    DrawLineEx(Vector2{ panel.x + panel.width, panel.y },
-               Vector2{ panel.x + panel.width, panel.y + panel.height }, 2.f, Color{ 70, 70, 84, 255 });
+    DrawRectangleRec(panel, Color{ 30, 31, 38, 255 });
+    DrawLineEx(Vector2{ panel.x + panel.width, panel.y }, Vector2{ panel.x + panel.width, panel.y + panel.height }, 2.f, Color{ 70, 72, 86, 255 });
+    DrawText("VILLAGE ASSET ADJUSTER", 16, 14, 24, GOLD);
+    DrawText("PNGs in VillageAssets | .vasset metadata", 16, 44, 16, Fade(RAYWHITE, 0.72f));
+    DrawText("Z/P/X place markers | drag/arrows offset markers", 16, 64, 15, Fade(RAYWHITE, 0.72f));
 
-    // Sheet tabs.
-    float tabW = panel.width / kSheetCount;
-    for (int i = 0; i < kSheetCount; i++)
+    Rectangle list{ 10.f, 90.f, panel.width - 20.f, 230.f };
+    DrawRectangleRec(list, Color{ 23, 24, 30, 255 });
+    DrawRectangleLinesEx(list, 1.f, Color{ 75, 78, 90, 255 });
+    BeginScissorMode((int)list.x, (int)list.y, (int)list.width, (int)list.height);
+    for (int i = 0; i < (int)_assets.size(); ++i)
     {
-        Rectangle tab{ panel.x + i * tabW, panel.y, tabW, kTabH };
-        bool active  = (i == _activeSheet);
-        bool missing = (_sheets[i].id == 0);
-        DrawRectangleRec(tab, active ? Color{ 70, 70, 92, 255 } : Color{ 44, 44, 54, 255 });
-        DrawRectangleLinesEx(tab, 1.f, Color{ 70, 70, 84, 255 });
-        const char* label = TextFormat("%d", i + 1);
-        DrawText(label, (int)(tab.x + tab.width * 0.5f - MeasureText(label, 22) * 0.5f),
-                 (int)(tab.y + 9.f), 22, missing ? Color{ 120, 80, 80, 255 } : (active ? GOLD : LIGHTGRAY));
+        float y = list.y + i * kRowH - _assetListScroll;
+        if (y + kRowH < list.y || y > list.y + list.height) continue;
+        Rectangle row{ list.x + 5.f, y + 4.f, list.width - 10.f, kRowH - 6.f };
+        bool active = i == _activeAsset;
+        DrawRectangleRec(row, active ? Color{ 76, 82, 58, 255 } : Color{ 42, 44, 52, 255 });
+        DrawRectangleLinesEx(row, 1.f, active ? GOLD : Color{ 65, 68, 78, 255 });
+        DrawText(_assets[i].name.c_str(), (int)row.x + 8, (int)row.y + 7, 18, active ? GOLD : RAYWHITE);
+        if (_assets[i].dirty) DrawText("*", (int)(row.x + row.width - 18), (int)row.y + 5, 22, GOLD);
+    }
+    if (_assets.empty()) DrawText("No PNG assets found", (int)list.x + 12, (int)list.y + 18, 20, Fade(RAYWHITE, 0.75f));
+    EndScissorMode();
+
+    const Asset* asset = ActiveAsset();
+    if (!asset) return;
+
+    int y = 340;
+    DrawText(TextFormat("Asset: %s%s", asset->name.c_str(), asset->dirty ? " *" : ""), 16, y, 22, RAYWHITE); y += 30;
+    DrawText(TextFormat("Image: %dx%d", asset->texture.width, asset->texture.height), 16, y, 18, Fade(RAYWHITE, 0.78f)); y += 26;
+    DrawText(TextFormat("Colliders: %d", (int)asset->colliders.size()), 16, y, 18, Fade(RAYWHITE, 0.78f)); y += 26;
+
+    for (int i = 0; i < (int)MarkerKind::Count; ++i)
+    {
+        MarkerKind kind = (MarkerKind)i;
+        const Marker& marker = asset->markers[i];
+        Color c = marker.has ? MarkerColor(kind) : Fade(RAYWHITE, 0.42f);
+        const char* text = marker.has
+            ? TextFormat("%s: %.0f, %.0f", MarkerName(kind), marker.pos.x, marker.pos.y)
+            : TextFormat("%s: not set", MarkerName(kind));
+        DrawText(text, 16, y, 18, c);
+        y += 22;
+        if (marker.has)
+        {
+            std::string offset = MarkerOffsetText(*asset, marker.pos);
+            DrawText(offset.c_str(), 30, y, 15, offset == "inside PNG" ? Fade(RAYWHITE, 0.55f) : Fade(c, 0.78f));
+            y += 20;
+        }
+        else
+        {
+            y += 4;
+        }
     }
 
-    // Palette view (scissored so scrolling stays inside the panel).
-    Rectangle view{ panel.x, panel.y + kTabH, panel.width, panel.height - kTabH };
-    BeginScissorMode((int)view.x, (int)view.y, (int)view.width, (int)view.height);
-    DrawRectangleRec(view, Color{ 28, 28, 34, 255 });
-
-    const Texture2D& sheet = _sheets[_activeSheet];
-    if (sheet.id != 0)
+    y += 10;
+    if (_selectedMarker >= 0 && _selectedMarker < (int)MarkerKind::Count && asset->markers[_selectedMarker].has)
     {
-        Rectangle src{ 0.f, 0.f, (float)sheet.width, (float)sheet.height };
-        Rectangle dst{ view.x - _paletteScroll.x, view.y - _paletteScroll.y,
-                       sheet.width * kPaletteScale, sheet.height * kPaletteScale };
-        DrawTexturePro(sheet, src, dst, Vector2{ 0.f, 0.f }, 0.f, WHITE);
+        const Marker& marker = asset->markers[_selectedMarker];
+        DrawText(TextFormat("Selected marker: %s", MarkerName((MarkerKind)_selectedMarker)), 16, y, 18, GOLD); y += 24;
+        DrawText(TextFormat("x %.0f y %.0f", marker.pos.x, marker.pos.y), 16, y, 17, RAYWHITE); y += 22;
+        std::string offset = MarkerOffsetText(*asset, marker.pos);
+        DrawText(offset.c_str(), 16, y, 15, offset == "inside PNG" ? Fade(RAYWHITE, 0.62f) : MarkerColor((MarkerKind)_selectedMarker)); y += 22;
+        DrawText("Drag marker or use arrows; Shift moves faster", 16, y, 15, Fade(RAYWHITE, 0.68f)); y += 24;
+    }
 
-        // Brush highlight (only when the brush comes from this sheet).
-        if (_brush.sheet == _activeSheet)
-        {
-            float tilePx = VillageMap::kTileSize * kPaletteScale;
-            Rectangle sel{ dst.x + _brush.col * tilePx, dst.y + _brush.row * tilePx,
-                           _brush.w * tilePx, _brush.h * tilePx };
-            DrawRectangleLinesEx(sel, 2.f, GOLD);
-        }
+    DrawText("Selected collider:", 16, y, 18, GOLD); y += 24;
+    if (_selectedCollider >= 0 && _selectedCollider < (int)asset->colliders.size())
+    {
+        Rectangle r = asset->colliders[_selectedCollider].rect;
+        DrawText(TextFormat("x %.0f y %.0f w %.0f h %.0f", r.x, r.y, r.width, r.height), 16, y, 17, RAYWHITE); y += 22;
+        DrawText("Drag box to move, drag corner to resize", 16, y, 15, Fade(RAYWHITE, 0.68f)); y += 20;
+        DrawText("Arrows move, Ctrl+Arrows resize, Shift faster", 16, y, 15, Fade(RAYWHITE, 0.68f));
     }
     else
     {
-        DrawText("sheet missing", (int)(view.x + 24.f), (int)(view.y + 24.f), 24, Color{ 150, 90, 90, 255 });
+        DrawText("none", 16, y, 17, Fade(RAYWHITE, 0.62f));
     }
-    EndScissorMode();
-
-    // Current sheet name under the tabs (drawn over the view's top edge).
-    DrawText(_sheetNames[_activeSheet].c_str(), (int)(panel.x + 10.f),
-             (int)(panel.y + kTabH + 6.f), 20, Fade(RAYWHITE, 0.75f));
 }
 
 void MapEditor::DrawCanvas(Rectangle canvas) const
 {
+    DrawRectangleRec(canvas, Color{ 18, 19, 24, 255 });
     BeginScissorMode((int)canvas.x, (int)canvas.y, (int)canvas.width, (int)canvas.height);
-    DrawRectangleRec(canvas, Color{ 20, 20, 26, 255 });
 
-    Vector2 origin = MapOrigin(canvas);
-    float tilePx = TilePx();
-    float mapW = _map.cols * tilePx;
-    float mapH = _map.rows * tilePx;
-
-    // Checkerboard under the map so unpainted (transparent) cells read clearly.
-    const float checker = tilePx * 2.f;
-    for (float y = 0.f; y < mapH; y += checker)
-        for (float x = ((int)(y / checker) % 2 == 0) ? 0.f : checker; x < mapW; x += checker * 2.f)
-            DrawRectangle((int)(origin.x + x), (int)(origin.y + y),
-                          (int)std::min(checker, mapW - x), (int)std::min(checker, mapH - y),
-                          Color{ 30, 30, 38, 255 });
-
-    // Layers, bottom → top; the active layer draws full-strength, others dim so
-    // it is always obvious which layer the brush will hit.
-    auto layerTint = [&](VillageMap::Layer layer) -> Color {
-        if (_collisionMode) return Fade(WHITE, 0.6f);
-        return (layer == _activeLayer) ? WHITE : Fade(WHITE, 0.45f);
-    };
-    _map.DrawLayer(VillageMap::Layer::Ground,   _sheets.data(), (int)_sheets.size(),
-                   origin, _zoom, layerTint(VillageMap::Layer::Ground),
-                   (float)kVirtualWidth, (float)kVirtualHeight);
-    _map.DrawLayer(VillageMap::Layer::Objects,  _sheets.data(), (int)_sheets.size(),
-                   origin, _zoom, layerTint(VillageMap::Layer::Objects),
-                   (float)kVirtualWidth, (float)kVirtualHeight);
-    _map.DrawLayer(VillageMap::Layer::Overhead, _sheets.data(), (int)_sheets.size(),
-                   origin, _zoom, layerTint(VillageMap::Layer::Overhead),
-                   (float)kVirtualWidth, (float)kVirtualHeight);
-
-    // Collision overlay.
-    if (_showCollision || _collisionMode)
+    const Asset* asset = ActiveAsset();
+    if (!asset || asset->texture.id == 0)
     {
-        for (int r = 0; r < _map.rows; r++)
-            for (int c = 0; c < _map.cols; c++)
-                if (_map.solid[_map.Index(c, r)])
-                    DrawRectangle((int)(origin.x + c * tilePx), (int)(origin.y + r * tilePx),
-                                  (int)tilePx, (int)tilePx,
-                                  Fade(Color{ 235, 60, 60, 255 }, _collisionMode ? 0.45f : 0.25f));
+        DrawText("Select a PNG asset from VillageAssets", (int)canvas.x + 40, (int)canvas.y + 40, 24, RAYWHITE);
+        EndScissorMode();
+        return;
     }
 
-    // Grid.
-    if (_showGrid && tilePx >= 12.f)
-    {
-        Color gridColor = Fade(WHITE, 0.07f);
-        for (int c = 0; c <= _map.cols; c++)
-            DrawLineEx(Vector2{ origin.x + c * tilePx, origin.y },
-                       Vector2{ origin.x + c * tilePx, origin.y + mapH }, 1.f, gridColor);
-        for (int r = 0; r <= _map.rows; r++)
-            DrawLineEx(Vector2{ origin.x, origin.y + r * tilePx },
-                       Vector2{ origin.x + mapW, origin.y + r * tilePx }, 1.f, gridColor);
-    }
-
-    // Map bounds.
-    DrawRectangleLinesEx(Rectangle{ origin.x, origin.y, mapW, mapH }, 2.f, Color{ 90, 90, 110, 255 });
-
-    // Ghost preview of the brush at the hovered cell.
-    Vector2 mouse = GetVirtualMousePos();
-    if (CheckCollisionPointRec(mouse, canvas) && !_panning)
-    {
-        int cellCol = (int)((mouse.x - origin.x) / tilePx);
-        int cellRow = (int)((mouse.y - origin.y) / tilePx);
-        if (mouse.x >= origin.x && mouse.y >= origin.y && _map.InBounds(cellCol, cellRow))
+    Rectangle img = ActiveImageBoundsScreen();
+    const int checker = 32;
+    for (int y = (int)canvas.y; y < canvas.y + canvas.height; y += checker)
+        for (int x = (int)canvas.x; x < canvas.x + canvas.width; x += checker)
         {
-            if (_collisionMode)
-            {
-                DrawRectangleLinesEx(Rectangle{ origin.x + cellCol * tilePx, origin.y + cellRow * tilePx,
-                                                tilePx, tilePx }, 2.f, Color{ 235, 60, 60, 255 });
-            }
-            else if (_brush.sheet >= 0 && _brush.sheet < (int)_sheets.size() &&
-                     _sheets[_brush.sheet].id != 0)
-            {
-                const Texture2D& sheet = _sheets[_brush.sheet];
-                Rectangle src{ _brush.col * 16.f, _brush.row * 16.f, _brush.w * 16.f, _brush.h * 16.f };
-                Rectangle dst{ origin.x + cellCol * tilePx, origin.y + cellRow * tilePx,
-                               _brush.w * tilePx, _brush.h * tilePx };
-                DrawTexturePro(sheet, src, dst, Vector2{ 0.f, 0.f }, 0.f, Fade(WHITE, 0.55f));
-                DrawRectangleLinesEx(dst, 1.f, GOLD);
-            }
+            bool dark = ((x / checker) + (y / checker)) % 2 == 0;
+            DrawRectangle(x, y, checker, checker, dark ? Color{ 24, 25, 30, 255 } : Color{ 28, 29, 35, 255 });
         }
+
+    DrawTexturePro(asset->texture,
+                   Rectangle{ 0.f, 0.f, (float)asset->texture.width, (float)asset->texture.height },
+                   img, Vector2{ 0.f, 0.f }, 0.f, WHITE);
+    DrawRectangleLinesEx(img, 2.f, Color{ 110, 114, 130, 255 });
+
+    for (int i = 0; i < (int)asset->colliders.size(); ++i)
+    {
+        Rectangle sr = ImageRectToScreen(asset->colliders[i].rect);
+        bool selected = i == _selectedCollider;
+        Color fill = selected ? Fade(Color{ 255, 75, 55, 255 }, 0.34f) : Fade(Color{ 240, 50, 45, 255 }, 0.22f);
+        Color line = selected ? GOLD : Color{ 245, 80, 70, 255 };
+        DrawRectangleRec(sr, fill);
+        DrawRectangleLinesEx(sr, selected ? 3.f : 2.f, line);
+        DrawText(TextFormat("%d", i + 1), (int)sr.x + 4, (int)sr.y + 4, 16, line);
+        if (selected)
+            DrawRectangle((int)(sr.x + sr.width - kHandleSize * 0.5f), (int)(sr.y + sr.height - kHandleSize * 0.5f), (int)kHandleSize, (int)kHandleSize, GOLD);
+    }
+
+    for (int i = 0; i < (int)MarkerKind::Count; ++i)
+    {
+        MarkerKind kind = (MarkerKind)i;
+        const Marker& marker = asset->markers[i];
+        if (!marker.has) continue;
+        Vector2 p = ImageToScreen(marker.pos);
+        Color c = MarkerColor(kind);
+        Vector2 nearestOnImage{
+            ClampFloat(marker.pos.x, 0.f, (float)asset->texture.width),
+            ClampFloat(marker.pos.y, 0.f, (float)asset->texture.height)
+        };
+        if (nearestOnImage.x != marker.pos.x || nearestOnImage.y != marker.pos.y)
+        {
+            Vector2 anchor = ImageToScreen(nearestOnImage);
+            DrawLineEx(anchor, p, 2.f, Fade(c, 0.55f));
+            DrawCircleV(anchor, 5.f, Fade(c, 0.65f));
+        }
+        bool selected = i == _selectedMarker;
+        DrawCircleV(p, selected ? 15.f : 12.f, Fade(c, selected ? 0.45f : 0.32f));
+        DrawCircleLines((int)p.x, (int)p.y, selected ? 15.f : 12.f, selected ? GOLD : c);
+        DrawLine((int)p.x - 16, (int)p.y, (int)p.x + 16, (int)p.y, c);
+        DrawLine((int)p.x, (int)p.y - 16, (int)p.x, (int)p.y + 16, c);
+        DrawText(MarkerName(kind), (int)p.x + 14, (int)p.y - 10, 18, c);
+    }
+
+    if (_dragMode == DragMode::DrawCollider)
+    {
+        Rectangle sr = ImageRectToScreen(NormalizeImageRect(_drawPreview));
+        DrawRectangleRec(sr, Fade(Color{ 255, 80, 60, 255 }, 0.18f));
+        DrawRectangleLinesEx(sr, 2.f, Color{ 255, 110, 90, 255 });
     }
 
     EndScissorMode();
+
+    DrawText("Mouse wheel zoom | middle-drag pan | C add box | RMB drag new box | S save | H help",
+             (int)canvas.x + 14, (int)canvas.y + 12, 18, Fade(RAYWHITE, 0.78f));
 }
 
 void MapEditor::DrawStatusBar() const
 {
     Rectangle bar{ 0.f, (float)kVirtualHeight - kStatusH, (float)kVirtualWidth, kStatusH };
-    DrawRectangleRec(bar, Color{ 38, 38, 48, 255 });
-
-    const char* info = TextFormat("%s%s  |  map %dx%d  |  layer %s  |  sheet %s  |  H help",
-                                  _mapName.c_str(), _dirty ? "*" : "",
-                                  _map.cols, _map.rows,
-                                  LayerName(_activeLayer, _collisionMode),
-                                  _sheetNames.empty() ? "-" : _sheetNames[_activeSheet].c_str());
-    DrawText(info, 12, (int)(bar.y + 8.f), 22, RAYWHITE);
-
-    if (_statusTimer > 0.f)
+    DrawRectangleRec(bar, Color{ 36, 37, 45, 255 });
+    const Asset* asset = ActiveAsset();
+    const char* name = asset ? asset->name.c_str() : "no asset";
+    const char* info = TextFormat("ASSET %s%s | colliders %d | drag/arrows move selected marker outside PNG | C/RMB collider | S save | ESC exit",
+                                  name, (asset && asset->dirty) ? "*" : "", asset ? (int)asset->colliders.size() : 0);
+    DrawText(info, 14, (int)bar.y + 10, 20, RAYWHITE);
+    if (_statusTimer > 0.f && !_status.empty())
     {
-        int w = MeasureText(_status.c_str(), 22);
-        DrawText(_status.c_str(), kVirtualWidth - w - 16, (int)(bar.y + 8.f), 22, GOLD);
+        int w = MeasureText(_status.c_str(), 20);
+        DrawText(_status.c_str(), kVirtualWidth - w - 16, (int)bar.y + 10, 20, GOLD);
     }
 }
 
 void MapEditor::DrawHelp() const
 {
-    DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(BLACK, 0.75f));
+    DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(BLACK, 0.80f));
     const char* lines[] = {
-        "MAP EDITOR — CONTROLS",
+        "VILLAGE ASSET ADJUSTER",
         "",
-        "Palette (left):  click = pick tile,  DRAG = pick a multi-tile stamp (houses!)",
-        "                 1-5 or click tabs to switch sheets,  wheel scroll (SHIFT = sideways)",
+        "This edits metadata for finished PNGs in VillageAssets.",
+        "The PNG is the visual. The .vasset file stores colliders and markers beside it.",
         "",
-        "Canvas:          LEFT-drag paint,  RIGHT-drag erase,  F flood-fill",
-        "                 wheel zoom,  MIDDLE-drag or arrow keys pan",
+        "Left panel: click ZephsShop, VillageGraveyard, or any future PNG asset.",
+        "Canvas: mouse wheel zooms, middle mouse pans.",
         "",
-        "Layers:          Q Ground   W Objects   E Overhead (draws above player)   R Collision",
-        "                 on Collision: LEFT marks solid, RIGHT clears",
+        "Colliders: C adds a default box at mouse. Right-drag draws a new box.",
+        "           Left-drag a box to move it. Drag its bottom-right handle to resize it.",
+        "           Delete removes selected box. Arrows move selected; Ctrl+Arrows resize; Shift is faster.",
         "",
-        "G grid   C collision overlay   S save   N new blank map   ESC exit",
+        "Markers:   Z places Zeph. P places Poe. X places player respawn point.",
+        "           Markers may sit outside the PNG; the panel shows their pixel offset from it.",
+        "           Click/drag a marker, or use Arrow keys after selecting/placing it.",
+        "Saving:    S writes VillageAssets/<asset>.vasset. ESC returns to menu.",
+        "",
+        "Next step: the village builder will place these PNG assets on a large forest-ground village map.",
     };
-    int y = 300;
+    int y = 150;
     for (const char* line : lines)
     {
-        int fs = (y == 300) ? 40 : 26;
-        DrawText(line, kVirtualWidth / 2 - MeasureText(line, fs) / 2, y, fs, (y == 300) ? GOLD : RAYWHITE);
-        y += (y == 300) ? 64 : 38;
+        int fs = (y == 150) ? 38 : 24;
+        DrawText(line, kVirtualWidth / 2 - MeasureText(line, fs) / 2, y, fs, (y == 150) ? GOLD : RAYWHITE);
+        y += (y == 150) ? 58 : 33;
     }
 }

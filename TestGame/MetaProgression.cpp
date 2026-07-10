@@ -37,6 +37,7 @@ static const MetaUnlockInfo kUnlockTable[(int)MetaUnlockType::Count] = {
     { "Heirloom",            "Start each run with a\nrandom relic",           120, MetaUnlockType::Count },
     { "Echo Surge",          "+50% Echoes from\nevery kill",             90, MetaUnlockType::Count },
     { "Second Wind",         "Revive once per run\nat 40% health",           160, MetaUnlockType::Count },
+    { "Cartographer's Echo", "The dungeon map reveals\nevery room's type",    75, MetaUnlockType::Count },
 };
 
 const MetaUnlockInfo& GetMetaUnlockInfo(MetaUnlockType type)

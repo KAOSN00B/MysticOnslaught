@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
 #include <ctime>
 #include <cstdio>
@@ -32,6 +33,7 @@
 #include <functional>
 #include <limits>
 #include <queue>
+#include <set>
 
 namespace
 {
@@ -211,6 +213,7 @@ Engine::~Engine()
         if (_classPortraits[i].id != 0) UnloadTexture(_classPortraits[i]);
     if (_appearancePortrait.id != 0) UnloadTexture(_appearancePortrait);
     if (_cellsMerchantTex.id != 0) UnloadTexture(_cellsMerchantTex);
+    UnloadVillagePlayground();
     if (_minionTex.id != 0) UnloadTexture(_minionTex);
     for (int i = 0; i < 7; i++)
         if (_relicIcons[i].id != 0) UnloadTexture(_relicIcons[i]);
@@ -651,8 +654,14 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
     float sh = (float)kVirtualHeight;
     _shop.Enter({ sw * 0.5f, sh * 0.42f }, _player, _currentAct);
 
-    // Zeph heals the player fully when they arrive at the store.
-    _player.Heal(_player.GetMaxHealthValue());
+    // Zeph stabilizes a bad run, but does not erase the damage taken to get here.
+    float maxHp = _player.GetMaxHealthValue();
+    float curHp = _player.GetHealthValue();
+    if (maxHp > 0.f && curHp < maxHp * 0.35f)
+    {
+        float missingHp = maxHp - curHp;
+        _player.Heal((int)std::ceil(std::min(missingHp, maxHp * 0.20f)));
+    }
 
     // Reaching Zeph banks all carried Echoes — the Dead Cells "made it to
     // the Collector" moment. Cells still carried when dying are lost instead.
@@ -729,6 +738,15 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     EnterDungeonShopIfNeeded(room);
     SpawnDungeonRoomEnemies();
     InitBiomeModifierRoom();
+
+    // First visit: the map remembers this room's type, and special rooms
+    // announce themselves with a temporary intro banner (standard rooms stay
+    // silent — the HUD only speaks up for exceptions).
+    bool firstVisitToRoom = !_dungeonRoomStates[_dungeonRoomIdx].visited;
+    _dungeonRoomStates[_dungeonRoomIdx].visited = true;
+    _roomIntroTimer = 0.f;
+    if (firstVisitToRoom)
+        QueueRoomIntroBanner();
 
     if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
         ApplyDungeonBossExitTiles(TileType::DoorLocked);
@@ -1514,6 +1532,7 @@ void Engine::Update(float dt)
             _isDailyRun = false;   // normal (randomly seeded) run
             _classSelectCursor = (int)_player.GetClass();
             ReloadAppearancePortrait();
+            _classSelectReturnState = GameState::Menu;
             _gameState = GameState::ClassSelect;
         }
         if (IsKeyPressed(KEY_T))   // start today's seeded Daily Run
@@ -1522,6 +1541,7 @@ void Engine::Update(float dt)
             _dailySeed  = ComputeDailySeed();
             _classSelectCursor = (int)_player.GetClass();
             ReloadAppearancePortrait();
+            _classSelectReturnState = GameState::Menu;
             _gameState = GameState::ClassSelect;
         }
         if (IsKeyPressed(KEY_B))   // open the Bestiary from the main menu
@@ -1573,10 +1593,14 @@ void Engine::Update(float dt)
             _attackEditor.Init();
             _gameState = GameState::AttackEditor;
         }
-        if (IsKeyPressed(KEY_V))   // dev: open the Map Editor (village painting)
+        if (IsKeyPressed(KEY_V))   // dev: open the Village Asset Adjuster
         {
             _mapEditor.Init();
             _gameState = GameState::MapEditor;
+        }
+        if (IsKeyPressed(KEY_Y))   // dev: playable village-builder placement playground
+        {
+            EnterVillagePlayground();
         }
         if (_menu.SettingsPressed())
         {
@@ -1662,6 +1686,11 @@ void Engine::Update(float dt)
         }
         break;
 
+    case GameState::VillagePlayground:
+    case GameState::Village:
+        UpdateVillagePlayground(dt);
+        break;
+
     case GameState::NineSliceEditor:
         _nineSliceEditor.Update();
         if (_nineSliceEditor.WantsToExit())
@@ -1722,6 +1751,14 @@ void Engine::Update(float dt)
     }
 
     case GameState::GameOver:
+        break;
+
+    case GameState::DeathRevive:
+        UpdateDeathRevive();
+        break;
+
+    case GameState::BossChoice:
+        UpdateBossChoice();
         break;
 
     case GameState::DemoEnd:
@@ -1814,7 +1851,13 @@ void Engine::Update(float dt)
         bool gpLeave = _shop.UpdateGamepadNav(GetFrameTime(), _player);
         if (gpLeave || _shop.Update(_player, _debug.IsActive()))
         {
-            _gameState = (_levelUpReturnState == GameState::DungeonRun) ? GameState::DungeonRun : GameState::Play;
+            if (_levelUpReturnState == GameState::DungeonRun)
+                _gameState = GameState::DungeonRun;
+            else if (_levelUpReturnState == GameState::VillagePlayground ||
+                     _levelUpReturnState == GameState::Village)   // Zeph in the village
+                _gameState = _levelUpReturnState;
+            else
+                _gameState = GameState::Play;
             if (_currentRoomType == RoomType::Store && _gameState == GameState::Play)
                 _roomClearPending = true;
         }
@@ -2247,6 +2290,1226 @@ void Engine::UpdateGamePlay(float dt)
     }
 }
 
+
+namespace
+{
+    constexpr float kVillagePlaygroundTilePx = 48.f;
+    constexpr int kVillagePlaygroundCols = 120;  // village field, matching dungeon 3x tile scale
+    constexpr int kVillagePlaygroundRows = 68;   // village field, matching dungeon 3x tile scale
+
+    Rectangle VillagePlaygroundFieldRect()
+    {
+        return Rectangle{ 0.f, 0.f,
+                          kVillagePlaygroundCols * kVillagePlaygroundTilePx,
+                          kVillagePlaygroundRows * kVillagePlaygroundTilePx };
+    }
+
+    // The area inside the wall border ring — players, buildings, and citizens
+    // all stay within this.
+    Rectangle VillagePlaygroundWalkableRect()
+    {
+        return Rectangle{ kVillagePlaygroundTilePx, kVillagePlaygroundTilePx,
+                          (kVillagePlaygroundCols - 2) * kVillagePlaygroundTilePx,
+                          (kVillagePlaygroundRows - 2) * kVillagePlaygroundTilePx };
+    }
+
+    // Deterministic per-cell hash so floor variant tiles stay put frame to frame.
+    bool VillageFloorCellUsesVariant(int cellCol, int cellRow)
+    {
+        unsigned int hash = (unsigned int)(cellCol * 73856093) ^ (unsigned int)(cellRow * 19349663);
+        return (hash % 13u) == 0u;
+    }
+
+    // Poe's Graveyard is authored as VillageAssets/VillageGraveyard.png with
+    // VillageGraveyard.vasset markers for Poe and the player respawn point.
+    constexpr float kVillageGraveyardAssetScale = 3.f;
+    constexpr float kVillageZephShopAssetScale = 3.f;
+    constexpr float kVillageGraveyardAssetW = 196.f;
+    constexpr float kVillageGraveyardAssetH = 132.f;
+    constexpr int kVillageGraveyardRow0 = 1;   // right under the top wall
+
+    Rectangle VillageGraveyardWorldRect()
+    {
+        float w = kVillageGraveyardAssetW * kVillageGraveyardAssetScale;
+        float h = kVillageGraveyardAssetH * kVillageGraveyardAssetScale;
+        return Rectangle{ (kVillagePlaygroundCols * kVillagePlaygroundTilePx - w) * 0.5f,
+                          kVillageGraveyardRow0 * kVillagePlaygroundTilePx,
+                          w,
+                          h };
+    }
+
+    Vector2 VillageGraveyardLocalToWorld(Vector2 local)
+    {
+        Rectangle graveyard = VillageGraveyardWorldRect();
+        return Vector2{ graveyard.x + local.x * kVillageGraveyardAssetScale,
+                        graveyard.y + local.y * kVillageGraveyardAssetScale };
+    }
+
+    Rectangle VillageGraveyardLocalRectToWorld(Rectangle local)
+    {
+        Rectangle graveyard = VillageGraveyardWorldRect();
+        return Rectangle{ graveyard.x + local.x * kVillageGraveyardAssetScale,
+                          graveyard.y + local.y * kVillageGraveyardAssetScale,
+                          local.width * kVillageGraveyardAssetScale,
+                          local.height * kVillageGraveyardAssetScale };
+    }
+
+    Vector2 VillageZephShopLocalToWorld(int cellCol, int cellRow, Vector2 local)
+    {
+        return Vector2{ cellCol * kVillagePlaygroundTilePx + local.x * kVillageZephShopAssetScale,
+                        cellRow * kVillagePlaygroundTilePx + local.y * kVillageZephShopAssetScale };
+    }
+
+    Rectangle VillageZephShopLocalRectToWorld(int cellCol, int cellRow, Rectangle local)
+    {
+        return Rectangle{ cellCol * kVillagePlaygroundTilePx + local.x * kVillageZephShopAssetScale,
+                          cellRow * kVillagePlaygroundTilePx + local.y * kVillageZephShopAssetScale,
+                          local.width * kVillageZephShopAssetScale,
+                          local.height * kVillageZephShopAssetScale };
+    }
+
+    // The village gate - bottom-middle. Walking up to it and pressing E sets out
+    // on the next run (class select first). Main-game village only.
+    constexpr int kVillageGateCols = 4;
+
+    Rectangle VillageGateWorldRect()
+    {
+        int col0 = (kVillagePlaygroundCols - kVillageGateCols) / 2;
+        return Rectangle{ col0 * kVillagePlaygroundTilePx,
+                          (kVillagePlaygroundRows - 1) * kVillagePlaygroundTilePx,
+                          kVillageGateCols * kVillagePlaygroundTilePx,
+                          kVillagePlaygroundTilePx };
+    }
+
+    // Zone just inside the wall where the gate prompt shows.
+    Rectangle VillageGateApproachRect()
+    {
+        Rectangle gate = VillageGateWorldRect();
+        gate.y -= kVillagePlaygroundTilePx * 1.5f;
+        gate.height += kVillagePlaygroundTilePx * 1.5f;
+        return gate;
+    }
+
+    // Citizen NPCs - ambient wanderers that appear as the village grows.
+    constexpr int kVillageCitizenCap = 10;            // hard cap on wandering citizens
+    constexpr int kVillageBuildingsPerCitizen = 1;    // one new citizen per building placed
+    constexpr float kVillageCitizenWalkSpeed = 95.f;
+    constexpr float kVillageCitizenChatRange = 128.f; // ~2 cells: close enough to chat
+
+    Rectangle VillageCitizenRect(Vector2 position)
+    {
+        return Rectangle{ position.x - 12.f, position.y - 16.f, 24.f, 36.f };
+    }
+
+    // Placeholder clothing colours until real villager art exists.
+    constexpr Color kVillageCitizenTints[] = {
+        Color{ 178,  98,  70, 255 }, Color{  92, 128, 168, 255 }, Color{ 122, 152,  86, 255 },
+        Color{ 158, 110, 160, 255 }, Color{ 190, 160,  84, 255 }, Color{  96, 156, 148, 255 },
+        Color{ 172,  84, 110, 255 }, Color{ 110, 110, 170, 255 }, Color{ 146, 120,  92, 255 },
+        Color{  88, 140, 104, 255 },
+    };
+
+    bool VillageObjectIsOneTimeService(const std::string& name)
+    {
+        return name == "ZephsShop";
+    }
+
+    bool VillageObjectIsPermanentService(const std::string& name)
+    {
+        return name == "ZephsShop";
+    }
+
+    const char* VillageObjectRuleLabel(const std::string& name, bool isDecoration)
+    {
+        if (VillageObjectIsPermanentService(name)) return "one-time service";
+        if (isDecoration) return "decor";
+        return "buildable";
+    }
+}
+
+void Engine::EnterVillagePlayground() { EnterVillageShared(true); }
+void Engine::EnterVillage() { EnterVillageShared(false); }
+
+void Engine::EnterVillageShared(bool sandboxMode)
+{
+    LoadVillagePlaygroundSheets();
+    LoadVillagePlaygroundCatalog();
+    _villageShopNpcActive = false;
+    _villageInsideInterior = false;
+    _villageBuildMode = false;
+    _villageSandboxMode = sandboxMode;
+    LoadVillageLayout();
+    _villageCatalogScroll = 0.f;
+    _villageActiveObjectIndex = _villageObjectCatalog.empty() ? -1 : 0;
+    _villagePlaygroundMessage = _villageObjectCatalog.empty() ? "No villageobject_*.txt assets saved yet" : (sandboxMode ? "Village tester: walk around, press B to build" : "Welcome back to the village");
+    if (!sandboxMode && !VillageHasPlacedObject("ZephsShop"))
+    {
+        int zephIndex = FindVillageObjectDefIndex("ZephsShop");
+        if (zephIndex >= 0) _villageActiveObjectIndex = zephIndex;
+        _villagePlaygroundMessage = "Poe: Press B to build Zeph's shop. It is free.";
+    }
+    _villagePlaygroundMessageTimer = 4.f;
+    _player.Revive();
+    _player.SetCombatLocked(true);
+    _player.SetDashAllowedWhileCombatLocked(true);
+    _player.SetManaRegenPaused(false);
+    _player.SetWorldPos(sandboxMode ? Vector2{ VillagePlaygroundFieldRect().width * 0.5f, VillagePlaygroundFieldRect().height * 0.5f } : VillageGraveyardLocalToWorld(_villageGraveyardRespawnLocal));
+    _cameraPos = _player.GetWorldPos();
+    _shakeOffset = Vector2Zero();
+    _gameState = sandboxMode ? GameState::VillagePlayground : GameState::Village;
+}
+
+bool Engine::VillageHasPlacedObject(const std::string& defName) const
+{
+    for (const VillagePlacedObject& placed : _villagePlacedObjects) if (placed.defName == defName) return true;
+    return false;
+}
+
+void Engine::UnloadVillagePlayground()
+{
+    for (Texture2D& tex : _villagePlaygroundSheets) if (tex.id != 0) UnloadTexture(tex);
+    _villagePlaygroundSheets.clear(); _villagePlaygroundSheetNames.clear(); _villageObjectCatalog.clear(); _villagePlacedObjects.clear(); _villageCitizens.clear(); _villageActiveObjectIndex = -1;
+    _villageGraveyardColliders.clear();
+    _villageZephShopColliders.clear();
+    if (_villageFieldSheet.id != 0) { UnloadTexture(_villageFieldSheet); _villageFieldSheet = {}; }
+    if (_villageFieldGroundSheet.id != 0) { UnloadTexture(_villageFieldGroundSheet); _villageFieldGroundSheet = {}; }
+    if (_villageGraveyardTex.id != 0) { UnloadTexture(_villageGraveyardTex); _villageGraveyardTex = {}; }
+    if (_villageZephShopTex.id != 0) { UnloadTexture(_villageZephShopTex); _villageZephShopTex = {}; }
+}
+
+void Engine::LoadVillagePlaygroundSheets()
+{
+    if (!_villagePlaygroundSheets.empty()) return;
+    const char* pinned[] = { "Village_Ground", "Village", "Village_Objects01", "Village_Objects02", "Interior" };
+    std::set<std::string> pinnedSet;
+    for (const char* stem : pinned)
+    {
+        pinnedSet.insert(stem);
+        _villagePlaygroundSheetNames.push_back(stem);
+        Texture2D tex = LoadTexture(AssetPath(TextFormat("MapTilesets/%s.png", stem)).c_str());
+        if (tex.id != 0) SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+        _villagePlaygroundSheets.push_back(tex);
+    }
+    std::vector<std::string> discovered;
+    FilePathList files = LoadDirectoryFiles(AssetFolderPath("MapTilesets").c_str());
+    for (unsigned int i = 0; i < files.count; i++)
+    {
+        const char* fileName = GetFileName(files.paths[i]);
+        if (!fileName || !IsFileExtension(fileName, ".png")) continue;
+        std::string stem = fileName; size_t dot = stem.find_last_of('.'); if (dot != std::string::npos) stem = stem.substr(0, dot);
+        if (pinnedSet.find(stem) == pinnedSet.end()) discovered.push_back(stem);
+    }
+    UnloadDirectoryFiles(files);
+    std::sort(discovered.begin(), discovered.end());
+    for (const std::string& stem : discovered)
+    {
+        _villagePlaygroundSheetNames.push_back(stem);
+        Texture2D tex = LoadTexture(AssetPath(TextFormat("MapTilesets/%s.png", stem.c_str())).c_str());
+        if (tex.id != 0) SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+        _villagePlaygroundSheets.push_back(tex);
+    }
+    _villageTileDefs = {};
+    _villageTileDefs.LoadFromFile(AssetPath("tilemapper_Forest.txt").c_str());
+    _villageFieldSheet = LoadTexture(AssetPath("MapTilesets/Forest.png").c_str());
+    _villageFieldGroundSheet = LoadTexture(AssetPath("MapTilesets/Ground TIles.png").c_str());
+
+    _villageGraveyardPoeLocal = Vector2{ 30.90f, 123.72f };
+    _villageGraveyardRespawnLocal = Vector2{ 104.76f, 117.84f };
+    _villageGraveyardColliders.clear();
+    _villageZephShopColliders.clear();
+    std::string graveyardImage = "VillageGraveyard.png";
+    FILE* graveMeta = fopen(AssetPath("VillageAssets/VillageGraveyard.vasset").c_str(), "r");
+    if (graveMeta)
+    {
+        char line[256];
+        while (fgets(line, sizeof(line), graveMeta))
+        {
+            char imageName[128] = {};
+            if (sscanf(line, "image %127s", imageName) == 1)
+            {
+                graveyardImage = imageName;
+                continue;
+            }
+
+            float cx = 0.f, cy = 0.f, cw = 0.f, ch = 0.f;
+            if (sscanf(line, "collider %f %f %f %f", &cx, &cy, &cw, &ch) == 4)
+            {
+                if (cw > 0.f && ch > 0.f) _villageGraveyardColliders.push_back(Rectangle{ cx, cy, cw, ch });
+                continue;
+            }
+
+            char markerName[64] = {}; float x = 0.f, y = 0.f;
+            if (sscanf(line, "marker %63s %f %f", markerName, &x, &y) != 3) continue;
+            if (strcmp(markerName, "Poe") == 0) _villageGraveyardPoeLocal = Vector2{ x, y };
+            else if (strcmp(markerName, "Respawn") == 0) _villageGraveyardRespawnLocal = Vector2{ x, y };
+        }
+        fclose(graveMeta);
+    }
+    _villageGraveyardTex = LoadTexture(AssetPath(TextFormat("VillageAssets/%s", graveyardImage.c_str())).c_str());
+    if (_villageGraveyardTex.id == 0 && graveyardImage != "VillageGraveyard.png")
+        _villageGraveyardTex = LoadTexture(AssetPath("VillageAssets/VillageGraveyard.png").c_str());
+    if (_villageGraveyardTex.id != 0) SetTextureFilter(_villageGraveyardTex, TEXTURE_FILTER_POINT);
+
+    _villageZephShopZephLocal = Vector2{ 50.22f, 124.20f };
+    _villageZephShopColliders.clear();
+    std::string zephShopImage = "ZephsShop.png";
+    FILE* zephMeta = fopen(AssetPath("VillageAssets/ZephsShop.vasset").c_str(), "r");
+    if (zephMeta)
+    {
+        char line[256];
+        while (fgets(line, sizeof(line), zephMeta))
+        {
+            char imageName[128] = {};
+            if (sscanf(line, "image %127s", imageName) == 1)
+            {
+                zephShopImage = imageName;
+                continue;
+            }
+
+            float cx = 0.f, cy = 0.f, cw = 0.f, ch = 0.f;
+            if (sscanf(line, "collider %f %f %f %f", &cx, &cy, &cw, &ch) == 4)
+            {
+                if (cw > 0.f && ch > 0.f) _villageZephShopColliders.push_back(Rectangle{ cx, cy, cw, ch });
+                continue;
+            }
+
+            char markerName[64] = {}; float x = 0.f, y = 0.f;
+            if (sscanf(line, "marker %63s %f %f", markerName, &x, &y) != 3) continue;
+            if (strcmp(markerName, "Zeph") == 0) _villageZephShopZephLocal = Vector2{ x, y };
+        }
+        fclose(zephMeta);
+    }
+    _villageZephShopTex = LoadTexture(AssetPath(TextFormat("VillageAssets/%s", zephShopImage.c_str())).c_str());
+    if (_villageZephShopTex.id == 0 && zephShopImage != "ZephsShop.png")
+        _villageZephShopTex = LoadTexture(AssetPath("VillageAssets/ZephsShop.png").c_str());
+    if (_villageZephShopTex.id != 0) SetTextureFilter(_villageZephShopTex, TEXTURE_FILTER_POINT);
+}
+
+void Engine::LoadVillagePlaygroundCatalog()
+{
+    _villageObjectCatalog.clear();
+    auto scanFolder = [&](const char* folder)
+    {
+        FilePathList files = LoadDirectoryFiles(folder);
+        for (unsigned int i = 0; i < files.count; i++)
+        {
+            const char* fileName = GetFileName(files.paths[i]); if (!fileName) continue;
+            std::string name = fileName;
+            if (name.rfind("villageobject_", 0) != 0 || !IsFileExtension(fileName, ".txt")) continue;
+            std::string path = (strcmp(folder, ".") == 0) ? name : (std::string(folder) + "/" + name);
+            VillageRuntimeObjectDef def; if (LoadVillageRuntimeObject(path, def)) _villageObjectCatalog.push_back(def);
+        }
+        UnloadDirectoryFiles(files);
+    };
+    scanFolder("."); scanFolder("TestGame");
+    std::sort(_villageObjectCatalog.begin(), _villageObjectCatalog.end(), [](const VillageRuntimeObjectDef& a, const VillageRuntimeObjectDef& b) { return a.name < b.name; });
+}
+
+bool Engine::LoadVillageRuntimeObject(const std::string& path, VillageRuntimeObjectDef& outDef) const
+{
+    FILE* f = fopen(AssetPath(path.c_str()).c_str(), "r");
+    if (!f) f = fopen(path.c_str(), "r");
+    if (!f) return false;
+
+    outDef = {};
+    outDef.path = path;
+    int minCol = INT_MAX, minRow = INT_MAX, maxCol = INT_MIN, maxRow = INT_MIN;
+    char line[512];
+    while (fgets(line, sizeof(line), f))
+    {
+        char name[128] = {};
+        if (sscanf(line, "object %127s", name) == 1) { outDef.name = name; continue; }
+        int cost = 0;
+        if (sscanf(line, "cost %d", &cost) == 1) { outDef.costGold = cost; continue; }
+        if (strncmp(line, "decor", 5) == 0) { outDef.isDecoration = true; continue; }
+
+        char layerChar = 0, sheetName[128] = {};
+        int localCol = 0, localRow = 0, sheet = -1, col = 0, row = 0;
+        if (sscanf(line, "part %c %d %d %d %d %d %127s", &layerChar, &localCol, &localRow, &sheet, &col, &row, sheetName) >= 6)
+        {
+            VillageRuntimePart part{};
+            part.layer = (layerChar == 'g') ? VillageMap::Layer::Ground : (layerChar == 'h') ? VillageMap::Layer::Overhead : VillageMap::Layer::Objects;
+            part.localCol = (short)localCol;
+            part.localRow = (short)localRow;
+            part.sheet = (short)sheet;
+            part.col = (short)col;
+            part.row = (short)row;
+            if (sheetName[0])
+            {
+                for (int i = 0; i < (int)_villagePlaygroundSheetNames.size(); ++i)
+                {
+                    if (_villagePlaygroundSheetNames[i] == sheetName) { part.sheet = (short)i; break; }
+                }
+            }
+            outDef.parts.push_back(part);
+            minCol = std::min(minCol, localCol);
+            minRow = std::min(minRow, localRow);
+            maxCol = std::max(maxCol, localCol);
+            maxRow = std::max(maxRow, localRow);
+            continue;
+        }
+
+        int w = 0, h = 0;
+        if (sscanf(line, "solid %d %d %d %d", &localCol, &localRow, &w, &h) == 4)
+        {
+            VillageRuntimeSolid solid{};
+            solid.localCol = (short)localCol;
+            solid.localRow = (short)localRow;
+            solid.w = (short)std::max(1, w);
+            solid.h = (short)std::max(1, h);
+            outDef.solids.push_back(solid);
+            continue;
+        }
+
+        char doorName[128] = {}, target[128] = {};
+        int doorId = 0, blocksClosed = 1, openAnim = -1;
+        if (sscanf(line, "door %d %127s pos=%d,%d size=%d,%d target=%127s blocks_closed=%d open_anim=%d",
+                   &doorId, doorName, &localCol, &localRow, &w, &h, target, &blocksClosed, &openAnim) >= 7)
+        {
+            VillageRuntimeDoor door{};
+            door.doorName = doorName;
+            door.localCol = (short)localCol;
+            door.localRow = (short)localRow;
+            door.w = (short)std::max(1, w);
+            door.h = (short)std::max(1, h);
+            door.targetInterior = target;
+            door.blocksWhenClosed = blocksClosed != 0;
+            door.openAnimationIndex = openAnim;
+            outDef.doors.push_back(door);
+            continue;
+        }
+
+        char npcName[128] = {}, assignment[128] = {};
+        if (sscanf(line, "npc %127s pos=%d,%d assignment=%127s", npcName, &localCol, &localRow, assignment) >= 3)
+        {
+            VillageRuntimeNpc npc{};
+            npc.npcName = npcName;
+            npc.localCol = (short)localCol;
+            npc.localRow = (short)localRow;
+            npc.assignment = assignment;
+            outDef.npcs.push_back(npc);
+            continue;
+        }
+    }
+    fclose(f);
+
+    if (outDef.name.empty())
+    {
+        std::string file = GetFileName(path.c_str());
+        size_t dot = file.find_last_of('.');
+        if (dot != std::string::npos) file = file.substr(0, dot);
+        const std::string prefix = "villageobject_";
+        if (file.rfind(prefix, 0) == 0) file = file.substr(prefix.size());
+        outDef.name = file;
+    }
+
+    if (!outDef.parts.empty() && minCol != INT_MAX)
+    {
+        for (VillageRuntimePart& part : outDef.parts) { part.localCol -= (short)minCol; part.localRow -= (short)minRow; }
+        for (VillageRuntimeSolid& solid : outDef.solids) { solid.localCol -= (short)minCol; solid.localRow -= (short)minRow; }
+        for (VillageRuntimeDoor& door : outDef.doors) { door.localCol -= (short)minCol; door.localRow -= (short)minRow; }
+        for (VillageRuntimeNpc& npc : outDef.npcs) { npc.localCol -= (short)minCol; npc.localRow -= (short)minRow; }
+        outDef.cols = std::max(1, maxCol - minCol + 1);
+        outDef.rows = std::max(1, maxRow - minRow + 1);
+    }
+
+    // PNG-authored Zeph shop: keep it in the build catalog, but let the asset
+    // dimensions drive the placement footprint so the ghost matches the image.
+    if (outDef.name == "ZephsShop" && _villageZephShopTex.id != 0)
+    {
+        outDef.cols = std::max(1, (int)std::ceil((_villageZephShopTex.width * kVillageZephShopAssetScale) / kVillagePlaygroundTilePx));
+        outDef.rows = std::max(1, (int)std::ceil((_villageZephShopTex.height * kVillageZephShopAssetScale) / kVillagePlaygroundTilePx));
+        outDef.costGold = 0;
+    }
+    return true;
+}
+
+int Engine::FindVillageObjectDefIndex(const std::string& defName) const
+{
+    for (int i = 0; i < (int)_villageObjectCatalog.size(); ++i)
+        if (_villageObjectCatalog[i].name == defName) return i;
+    return -1;
+}
+
+void Engine::SaveVillageLayout() const
+{
+    if (_villageSandboxMode) return;
+    FILE* f = fopen(AssetPath("TestGame/village_layout.txt").c_str(), "w");
+    if (!f) f = fopen("TestGame/village_layout.txt", "w");
+    if (!f) return;
+    fprintf(f, "village_layout 1\n");
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+        fprintf(f, "place %s %d %d\n", placed.defName.c_str(), placed.cellCol, placed.cellRow);
+    fclose(f);
+}
+
+void Engine::LoadVillageLayout()
+{
+    _villagePlacedObjects.clear();
+    if (_villageSandboxMode) return;
+    FILE* f = fopen(AssetPath("TestGame/village_layout.txt").c_str(), "r");
+    if (!f) f = fopen("TestGame/village_layout.txt", "r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof(line), f))
+    {
+        char name[128] = {}; int col = 0, row = 0;
+        if (sscanf(line, "place %127s %d %d", name, &col, &row) == 3)
+        {
+            VillagePlacedObject placed{};
+            placed.defName = name;
+            placed.defIndex = FindVillageObjectDefIndex(placed.defName);
+            placed.cellCol = col;
+            placed.cellRow = row;
+            if (placed.defIndex >= 0) _villagePlacedObjects.push_back(placed);
+        }
+    }
+    fclose(f);
+}
+
+bool Engine::VillageObjectHasSolidAt(const VillageRuntimeObjectDef& def, int localCol, int localRow) const
+{
+    for (const VillageRuntimeSolid& solid : def.solids)
+    {
+        if (localCol >= solid.localCol && localCol < solid.localCol + solid.w &&
+            localRow >= solid.localRow && localRow < solid.localRow + solid.h)
+            return true;
+    }
+    return false;
+}
+
+Rectangle Engine::VillagePlacedObjectWorldRect(const VillagePlacedObject& placed, const VillageRuntimeSolid* solid) const
+{
+    if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) return Rectangle{};
+    const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+    int localCol = solid ? solid->localCol : 0;
+    int localRow = solid ? solid->localRow : 0;
+    int w = solid ? solid->w : def.cols;
+    int h = solid ? solid->h : def.rows;
+    return Rectangle{ (placed.cellCol + localCol) * kVillagePlaygroundTilePx,
+                      (placed.cellRow + localRow) * kVillagePlaygroundTilePx,
+                      w * kVillagePlaygroundTilePx,
+                      h * kVillagePlaygroundTilePx };
+}
+
+bool Engine::VillagePlaygroundCanPlace(int defIndex, int cellCol, int cellRow) const
+{
+    if (defIndex < 0 || defIndex >= (int)_villageObjectCatalog.size()) return false;
+    const VillageRuntimeObjectDef& def = _villageObjectCatalog[defIndex];
+    if (!_villageSandboxMode && VillageObjectIsOneTimeService(def.name) && VillageHasPlacedObject(def.name)) return false;
+    Rectangle footprint{ cellCol * kVillagePlaygroundTilePx, cellRow * kVillagePlaygroundTilePx,
+                         def.cols * kVillagePlaygroundTilePx, def.rows * kVillagePlaygroundTilePx };
+    if (!CheckCollisionRecs(footprint, VillagePlaygroundWalkableRect())) return false;
+    Rectangle walk = VillagePlaygroundWalkableRect();
+    if (footprint.x < walk.x || footprint.y < walk.y || footprint.x + footprint.width > walk.x + walk.width || footprint.y + footprint.height > walk.y + walk.height) return false;
+    if (_villageGraveyardColliders.empty())
+    {
+        if (CheckCollisionRecs(footprint, VillageGraveyardWorldRect())) return false;
+    }
+    else
+    {
+        for (const Rectangle& collider : _villageGraveyardColliders)
+            if (CheckCollisionRecs(footprint, VillageGraveyardLocalRectToWorld(collider))) return false;
+    }
+    if (CheckCollisionRecs(footprint, VillageGateApproachRect())) return false;
+
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    {
+        if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+        const VillageRuntimeObjectDef& other = _villageObjectCatalog[placed.defIndex];
+        Rectangle otherRect{ placed.cellCol * kVillagePlaygroundTilePx, placed.cellRow * kVillagePlaygroundTilePx,
+                             other.cols * kVillagePlaygroundTilePx, other.rows * kVillagePlaygroundTilePx };
+        if (CheckCollisionRecs(footprint, otherRect)) return false;
+    }
+    return true;
+}
+
+bool Engine::VillageCitizenSpotIsClear(Vector2 position) const
+{
+    Rectangle rect = VillageCitizenRect(position);
+    Rectangle walk = VillagePlaygroundWalkableRect();
+    if (rect.x < walk.x || rect.y < walk.y || rect.x + rect.width > walk.x + walk.width || rect.y + rect.height > walk.y + walk.height) return false;
+    if (_villageGraveyardColliders.empty())
+    {
+        if (CheckCollisionRecs(rect, VillageGraveyardWorldRect())) return false;
+    }
+    else
+    {
+        for (const Rectangle& collider : _villageGraveyardColliders)
+            if (CheckCollisionRecs(rect, VillageGraveyardLocalRectToWorld(collider))) return false;
+    }
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    {
+        if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+        const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+        for (const VillageRuntimeSolid& solid : def.solids)
+            if (CheckCollisionRecs(rect, VillagePlacedObjectWorldRect(placed, &solid))) return false;
+    }
+    return true;
+}
+
+Vector2 Engine::VillageRandomStandablePoint() const
+{
+    Rectangle walk = VillagePlaygroundWalkableRect();
+    for (int i = 0; i < 80; ++i)
+    {
+        Vector2 p{ walk.x + (float)GetRandomValue(32, (int)walk.width - 32),
+                   walk.y + (float)GetRandomValue(32, (int)walk.height - 32) };
+        if (VillageCitizenSpotIsClear(p)) return p;
+    }
+    return Vector2{ walk.x + walk.width * 0.5f, walk.y + walk.height * 0.5f };
+}
+
+void Engine::SyncVillageCitizenCount()
+{
+    if (_villageSandboxMode) return;
+    int buildingCount = 0;
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    {
+        if (placed.defIndex >= 0 && placed.defIndex < (int)_villageObjectCatalog.size() && !_villageObjectCatalog[placed.defIndex].isDecoration)
+            ++buildingCount;
+    }
+    int wanted = std::min(kVillageCitizenCap, buildingCount / kVillageBuildingsPerCitizen);
+    while ((int)_villageCitizens.size() < wanted)
+    {
+        VillageCitizen c{};
+        c.position = VillageRandomStandablePoint();
+        c.walkTarget = VillageRandomStandablePoint();
+        c.behaviour = GetRandomValue(0, 1);
+        c.behaviourTimer = (float)GetRandomValue(60, 180) / 30.f;
+        c.tint = kVillageCitizenTints[_villageCitizens.size() % (sizeof(kVillageCitizenTints) / sizeof(kVillageCitizenTints[0]))];
+        _villageCitizens.push_back(c);
+    }
+    while ((int)_villageCitizens.size() > wanted) _villageCitizens.pop_back();
+}
+
+void Engine::UpdateVillageCitizens(float deltaTime)
+{
+    for (VillageCitizen& c : _villageCitizens)
+    {
+        if (c.chatCooldown > 0.f) c.chatCooldown -= deltaTime;
+        if (c.behaviour != 0)
+        {
+            c.behaviourTimer -= deltaTime;
+            if (c.behaviourTimer <= 0.f)
+            {
+                c.behaviour = 0;
+                c.chatPartnerIndex = -1;
+                c.walkTarget = VillageRandomStandablePoint();
+            }
+            continue;
+        }
+
+        Vector2 to = Vector2Subtract(c.walkTarget, c.position);
+        float dist = Vector2Length(to);
+        if (dist < 6.f)
+        {
+            c.behaviour = 1;
+            c.behaviourTimer = (float)GetRandomValue(50, 140) / 30.f;
+        }
+        else
+        {
+            Vector2 step = Vector2Scale(Vector2Normalize(to), kVillageCitizenWalkSpeed * deltaTime);
+            Vector2 before = c.position;
+            c.position = Vector2Add(c.position, step);
+            c.facingLeft = step.x < -0.01f;
+            c.walkBobPhase += deltaTime * 8.f;
+            if (!VillageCitizenSpotIsClear(c.position))
+            {
+                c.position = before;
+                c.walkTarget = VillageRandomStandablePoint();
+            }
+        }
+    }
+
+    for (int i = 0; i < (int)_villageCitizens.size(); ++i)
+    {
+        if (_villageCitizens[i].behaviour != 0 || _villageCitizens[i].chatCooldown > 0.f) continue;
+        for (int j = i + 1; j < (int)_villageCitizens.size(); ++j)
+        {
+            if (_villageCitizens[j].behaviour != 0 || _villageCitizens[j].chatCooldown > 0.f) continue;
+            if (Vector2Distance(_villageCitizens[i].position, _villageCitizens[j].position) > kVillageCitizenChatRange) continue;
+            _villageCitizens[i].behaviour = _villageCitizens[j].behaviour = 2;
+            _villageCitizens[i].chatPartnerIndex = j;
+            _villageCitizens[j].chatPartnerIndex = i;
+            _villageCitizens[i].behaviourTimer = _villageCitizens[j].behaviourTimer = 2.5f;
+            _villageCitizens[i].chatCooldown = _villageCitizens[j].chatCooldown = 8.f;
+            break;
+        }
+    }
+}
+
+void Engine::DrawVillageCitizens(Vector2 worldOffset) const
+{
+    for (const VillageCitizen& c : _villageCitizens)
+    {
+        Vector2 p{ worldOffset.x + c.position.x, worldOffset.y + c.position.y };
+        float bob = (c.behaviour == 0) ? sinf(c.walkBobPhase) * 2.f : 0.f;
+        DrawCircle((int)p.x, (int)(p.y + 18.f), 11.f, Fade(BLACK, 0.25f));
+        DrawRectangle((int)(p.x - 9.f), (int)(p.y - 10.f + bob), 18, 24, c.tint);
+        DrawCircle((int)p.x, (int)(p.y - 17.f + bob), 10.f, Color{ 226, 184, 140, 255 });
+        DrawRectangle((int)(p.x + (c.facingLeft ? -7.f : 4.f)), (int)(p.y - 19.f + bob), 3, 3, BLACK);
+        if (c.behaviour == 2) DrawText("...", (int)(p.x - 10.f), (int)(p.y - 44.f), 18, RAYWHITE);
+    }
+}
+
+Rectangle Engine::VillageDoorWorldRect(const VillagePlacedObject& placed, const VillageRuntimeDoor& door) const
+{
+    return Rectangle{ (placed.cellCol + door.localCol) * kVillagePlaygroundTilePx,
+                      (placed.cellRow + door.localRow) * kVillagePlaygroundTilePx,
+                      door.w * kVillagePlaygroundTilePx,
+                      door.h * kVillagePlaygroundTilePx };
+}
+
+bool Engine::VillageDoorIsOpen(const VillagePlacedObject& placed, const VillageRuntimeDoor& door) const
+{
+    Rectangle doorRect = VillageDoorWorldRect(placed, door);
+    Rectangle trigger = doorRect;
+    trigger.x -= 20.f; trigger.y -= 20.f; trigger.width += 40.f; trigger.height += 40.f;
+    return CheckCollisionPointRec(_player.GetWorldPos(), trigger);
+}
+
+void Engine::RefreshVillageShopNpc()
+{
+    _villageShopNpcActive = false;
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    {
+        if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+        const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+        if (def.name == "ZephsShop" && _villageZephShopTex.id != 0)
+        {
+            Vector2 npcPos = VillageZephShopLocalToWorld(placed.cellCol, placed.cellRow, _villageZephShopZephLocal);
+            _shop.Enter(npcPos, _player, _currentAct);
+            _villageShopNpcActive = true;
+            return;
+        }
+        for (const VillageRuntimeNpc& npc : def.npcs)
+        {
+            if (npc.npcName != "Zeph") continue;
+            Vector2 npcPos{ (placed.cellCol + npc.localCol + 0.5f) * kVillagePlaygroundTilePx,
+                            (placed.cellRow + npc.localRow + 0.9f) * kVillagePlaygroundTilePx };
+            _shop.Enter(npcPos, _player, _currentAct);
+            _villageShopNpcActive = true;
+            return;
+        }
+    }
+}
+
+void Engine::ResolveVillagePlaygroundCollision(Vector2 beforePos)
+{
+    Vector2 pos = _player.GetWorldPos();
+    Rectangle walk = VillagePlaygroundWalkableRect();
+    if (pos.x < walk.x + 16.f || pos.y < walk.y + 16.f || pos.x > walk.x + walk.width - 16.f || pos.y > walk.y + walk.height - 16.f)
+    {
+        _player.SetWorldPos(Vector2{ Clamp(pos.x, walk.x + 16.f, walk.x + walk.width - 16.f), Clamp(pos.y, walk.y + 16.f, walk.y + walk.height - 16.f) });
+        pos = _player.GetWorldPos();
+    }
+
+    Rectangle playerRect{ pos.x - 14.f, pos.y - 20.f, 28.f, 36.f };
+    for (const Rectangle& collider : _villageGraveyardColliders)
+    {
+        if (CheckCollisionRecs(playerRect, VillageGraveyardLocalRectToWorld(collider)))
+        {
+            _player.SetWorldPos(beforePos);
+            return;
+        }
+    }
+
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    {
+        if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+        const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+        if (def.name == "ZephsShop")
+        {
+            for (const Rectangle& collider : _villageZephShopColliders)
+            {
+                if (CheckCollisionRecs(playerRect, VillageZephShopLocalRectToWorld(placed.cellCol, placed.cellRow, collider)))
+                {
+                    _player.SetWorldPos(beforePos);
+                    return;
+                }
+            }
+        }
+        for (const VillageRuntimeSolid& solid : def.solids)
+        {
+            bool blockedByDoor = false;
+            for (const VillageRuntimeDoor& door : def.doors)
+            {
+                if (solid.localCol == door.localCol && solid.localRow == door.localRow && door.blocksWhenClosed && VillageDoorIsOpen(placed, door))
+                    blockedByDoor = true;
+            }
+            if (!blockedByDoor && CheckCollisionRecs(playerRect, VillagePlacedObjectWorldRect(placed, &solid)))
+            {
+                _player.SetWorldPos(beforePos);
+                return;
+            }
+        }
+    }
+}
+
+void Engine::EnterVillageInterior(const std::string& interiorName, Vector2 villageReturnPos)
+{
+    _villageInsideInterior = true;
+    _villageInteriorName = interiorName.empty() ? "interior_default" : interiorName;
+    _villageInteriorReturnPos = villageReturnPos;
+    _player.SetWorldPos(Vector2{ kVirtualWidth * 0.5f, kVirtualHeight * 0.62f });
+    _cameraPos = _player.GetWorldPos();
+    _villagePlaygroundMessage = "Inside " + _villageInteriorName + " - press E by the mat to leave";
+    _villagePlaygroundMessageTimer = 2.f;
+}
+
+void Engine::ExitVillageInterior()
+{
+    _villageInsideInterior = false;
+    _player.SetWorldPos(_villageInteriorReturnPos);
+    _cameraPos = _player.GetWorldPos();
+}
+
+namespace
+{
+    Rectangle VillageInteriorExitMatRect()
+    {
+        return Rectangle{ kVirtualWidth * 0.5f - 48.f, kVirtualHeight * 0.74f, 96.f, 42.f };
+    }
+}
+
+void Engine::UpdateVillageInterior(float dt)
+{
+    Vector2 before = _player.GetWorldPos();
+    _player.Update(dt);
+    Vector2 pos = _player.GetWorldPos();
+    pos.x = Clamp(pos.x, 96.f, (float)kVirtualWidth - 96.f);
+    pos.y = Clamp(pos.y, 120.f, (float)kVirtualHeight - 72.f);
+    _player.SetWorldPos(pos);
+    _cameraPos = _player.GetWorldPos();
+    if ((IsKeyPressed(KEY_E) || IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN)) &&
+        CheckCollisionPointRec(_player.GetWorldPos(), VillageInteriorExitMatRect()))
+    {
+        ExitVillageInterior();
+    }
+    (void)before;
+}
+
+void Engine::DrawVillageInterior()
+{
+    ClearBackground(Color{ 20, 18, 22, 255 });
+    DrawRectangle(96, 96, kVirtualWidth - 192, kVirtualHeight - 160, Color{ 48, 38, 34, 255 });
+    DrawRectangleLinesEx(Rectangle{ 96.f, 96.f, (float)kVirtualWidth - 192.f, (float)kVirtualHeight - 160.f }, 4.f, Color{ 96, 74, 54, 255 });
+    DrawRectangleRec(VillageInteriorExitMatRect(), Color{ 74, 54, 42, 255 });
+    DrawText("Exit", (int)(VillageInteriorExitMatRect().x + 26.f), (int)(VillageInteriorExitMatRect().y + 10.f), 20, RAYWHITE);
+    _player.DrawPlayer(_cameraPos);
+}
+
+void Engine::UpdateVillagePlayground(float dt)
+{
+    if (_villageInsideInterior)
+    {
+        UpdateVillageInterior(dt);
+        return;
+    }
+
+    if (_villagePlaygroundMessageTimer > 0.f) _villagePlaygroundMessageTimer -= dt;
+    if (IsKeyPressed(KEY_B)) _villageBuildMode = !_villageBuildMode;
+    if (_villageSandboxMode && IsKeyPressed(KEY_R))
+    {
+        _villagePlacedObjects.clear();
+        _villageCitizens.clear();
+        _villageShopNpcActive = false;
+        _villagePlaygroundMessage = "Village tester cleared";
+        _villagePlaygroundMessageTimer = 2.f;
+    }
+
+    bool tutorialLockActive = !_villageSandboxMode && !VillageHasPlacedObject("ZephsShop");
+    int zephShopDefIndex = FindVillageObjectDefIndex("ZephsShop");
+    if (_villageBuildMode)
+    {
+        float wheel = GetMouseWheelMove();
+        if (fabsf(wheel) > 0.01f) _villageCatalogScroll = std::max(0.f, _villageCatalogScroll - wheel * 44.f);
+        if (IsKeyPressed(KEY_DOWN)) _villageActiveObjectIndex = std::min((int)_villageObjectCatalog.size() - 1, _villageActiveObjectIndex + 1);
+        if (IsKeyPressed(KEY_UP)) _villageActiveObjectIndex = std::max(0, _villageActiveObjectIndex - 1);
+
+        Vector2 mouse = GetVirtualMousePos();
+        Rectangle panel{ kVirtualWidth - 448.f, 88.f, 430.f, 430.f };
+        if (CheckCollisionPointRec(mouse, panel))
+        {
+            for (int i = 0; i < (int)_villageObjectCatalog.size(); ++i)
+            {
+                float y = panel.y + 130.f + i * 42.f - _villageCatalogScroll;
+                Rectangle row{ panel.x + 8.f, y, panel.width - 16.f, 38.f };
+                if (CheckCollisionPointRec(mouse, row) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+                {
+                    if (!tutorialLockActive || i == zephShopDefIndex) _villageActiveObjectIndex = i;
+                }
+            }
+        }
+        else
+        {
+            Vector2 mouseWorld{ mouse.x + _cameraPos.x - kVirtualWidth * 0.5f,
+                                mouse.y + _cameraPos.y - kVirtualHeight * 0.5f };
+            int cellCol = (int)floorf(mouseWorld.x / kVillagePlaygroundTilePx);
+            int cellRow = (int)floorf(mouseWorld.y / kVillagePlaygroundTilePx);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
+            {
+                for (int i = (int)_villagePlacedObjects.size() - 1; i >= 0; --i)
+                {
+                    VillagePlacedObject& placed = _villagePlacedObjects[i];
+                    if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+                    const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+                    Rectangle rect{ placed.cellCol * kVillagePlaygroundTilePx, placed.cellRow * kVillagePlaygroundTilePx,
+                                    def.cols * kVillagePlaygroundTilePx, def.rows * kVillagePlaygroundTilePx };
+                    if (CheckCollisionPointRec(mouseWorld, rect))
+                    {
+                        if (!_villageSandboxMode && VillageObjectIsPermanentService(def.name))
+                        {
+                            _villagePlaygroundMessage = "This service building cannot be removed.";
+                            _villagePlaygroundMessageTimer = 2.f;
+                            break;
+                        }
+                        if (!_villageSandboxMode && def.costGold > 0) _player.AddGold(def.costGold);
+                        _villagePlacedObjects.erase(_villagePlacedObjects.begin() + i);
+                        SaveVillageLayout();
+                        RefreshVillageShopNpc();
+                        SyncVillageCitizenCount();
+                        break;
+                    }
+                }
+            }
+            else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && _villageActiveObjectIndex >= 0)
+            {
+                if (tutorialLockActive && _villageActiveObjectIndex != zephShopDefIndex)
+                {
+                    _villagePlaygroundMessage = "Poe: Zeph's shop comes first.";
+                    _villagePlaygroundMessageTimer = 2.f;
+                }
+                else if (VillagePlaygroundCanPlace(_villageActiveObjectIndex, cellCol, cellRow))
+                {
+                    const VillageRuntimeObjectDef& def = _villageObjectCatalog[_villageActiveObjectIndex];
+                    if (!_villageSandboxMode && _player.GetGold() < def.costGold)
+                    {
+                        _villagePlaygroundMessage = "Not enough gold";
+                        _villagePlaygroundMessageTimer = 2.f;
+                    }
+                    else
+                    {
+                        if (!_villageSandboxMode && def.costGold > 0) _player.AddGold(-def.costGold);
+                        VillagePlacedObject placed{};
+                        placed.defName = def.name;
+                        placed.defIndex = _villageActiveObjectIndex;
+                        placed.cellCol = cellCol;
+                        placed.cellRow = cellRow;
+                        _villagePlacedObjects.push_back(placed);
+                        SaveVillageLayout();
+                        RefreshVillageShopNpc();
+                        SyncVillageCitizenCount();
+                        if (!_villageSandboxMode && def.name == "ZephsShop")
+                        {
+                            _villageBuildMode = false;
+                            _villagePlaygroundMessage = "Zeph has opened shop in the village.";
+                            _villagePlaygroundMessageTimer = 3.f;
+                        }
+                    }
+                }
+                else
+                {
+                    const VillageRuntimeObjectDef& def = _villageObjectCatalog[_villageActiveObjectIndex];
+                    if (!_villageSandboxMode && VillageObjectIsOneTimeService(def.name) && VillageHasPlacedObject(def.name))
+                        _villagePlaygroundMessage = "Zeph's shop is already built.";
+                    else
+                        _villagePlaygroundMessage = "That spot is blocked.";
+                    _villagePlaygroundMessageTimer = 1.5f;
+                }
+            }
+        }
+    }
+    else
+    {
+        Vector2 before = _player.GetWorldPos();
+        _player.Update(dt);
+        ResolveVillagePlaygroundCollision(before);
+        UpdateVillageCitizens(dt);
+        if (_villageShopNpcActive) _shop.UpdateNpc(_player, Vector2{ -_cameraPos.x + kVirtualWidth * 0.5f, -_cameraPos.y + kVirtualHeight * 0.5f }, _touchModeActive);
+
+        if (!_villageSandboxMode && CheckCollisionPointRec(_player.GetWorldPos(), VillageGateApproachRect()) && IsKeyPressed(KEY_E))
+        {
+            _classSelectReturnState = GameState::Village;
+            _gameState = GameState::ClassSelect;
+            _villagePlaygroundMessage = "";
+        }
+
+        for (const VillagePlacedObject& placed : _villagePlacedObjects)
+        {
+            if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+            const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+            if (def.name == "ZephsShop" && _villageZephShopTex.id != 0) continue;
+            for (const VillageRuntimeDoor& door : def.doors)
+            {
+                if (!VillageDoorIsOpen(placed, door)) continue;
+                if (CheckCollisionPointRec(_player.GetWorldPos(), VillageDoorWorldRect(placed, door)) && IsKeyPressed(KEY_E))
+                {
+                    Vector2 returnPos = _player.GetWorldPos();
+                    returnPos.y += kVillagePlaygroundTilePx * 0.75f;
+                    EnterVillageInterior(door.targetInterior, returnPos);
+                    return;
+                }
+            }
+        }
+    }
+
+    Rectangle field = VillagePlaygroundFieldRect();
+    _cameraPos = _player.GetWorldPos();
+    _cameraPos.x = Clamp(_cameraPos.x, kVirtualWidth * 0.5f, field.width - kVirtualWidth * 0.5f);
+    _cameraPos.y = Clamp(_cameraPos.y, kVirtualHeight * 0.5f, field.height - kVirtualHeight * 0.5f);
+}
+
+void Engine::DrawVillageRuntimeObject(const VillageRuntimeObjectDef& def, int cellCol, int cellRow, Vector2 worldOffset, Color tint, VillageMap::Layer layer) const
+{
+    if (def.name == "ZephsShop" && _villageZephShopTex.id != 0)
+    {
+        // Draws from the PNG/vasset path; the old tile parts remain only as fallback/catalog identity.
+        if (layer != VillageMap::Layer::Objects) return;
+        Rectangle src{ 0.f, 0.f, (float)_villageZephShopTex.width, (float)_villageZephShopTex.height };
+        Rectangle dst{ worldOffset.x + cellCol * kVillagePlaygroundTilePx,
+                       worldOffset.y + cellRow * kVillagePlaygroundTilePx,
+                       _villageZephShopTex.width * kVillageZephShopAssetScale,
+                       _villageZephShopTex.height * kVillageZephShopAssetScale };
+        DrawTexturePro(_villageZephShopTex, src, dst, Vector2{}, 0.f, tint);
+        return;
+    }
+
+    for (const VillageRuntimePart& part : def.parts)
+    {
+        if (part.layer != layer) continue;
+        if (part.sheet < 0 || part.sheet >= (int)_villagePlaygroundSheets.size()) continue;
+        const Texture2D& tex = _villagePlaygroundSheets[part.sheet];
+        if (tex.id == 0) continue;
+        Rectangle src{ part.col * 16.f, part.row * 16.f, 16.f, 16.f };
+        Rectangle dst{ worldOffset.x + (cellCol + part.localCol) * kVillagePlaygroundTilePx,
+                       worldOffset.y + (cellRow + part.localRow) * kVillagePlaygroundTilePx,
+                       kVillagePlaygroundTilePx, kVillagePlaygroundTilePx };
+        DrawTexturePro(tex, src, dst, Vector2{}, 0.f, tint);
+    }
+}
+
+void Engine::DrawVillageField(Vector2 worldOffset) const
+{
+    Rectangle field = VillagePlaygroundFieldRect();
+    DrawRectangle((int)worldOffset.x, (int)worldOffset.y, (int)field.width, (int)field.height, Color{ 54, 91, 54, 255 });
+
+    int col0 = std::max(0, (int)floorf((-worldOffset.x) / kVillagePlaygroundTilePx) - 1);
+    int row0 = std::max(0, (int)floorf((-worldOffset.y) / kVillagePlaygroundTilePx) - 1);
+    int col1 = std::min(kVillagePlaygroundCols - 1, (int)ceilf((kVirtualWidth - worldOffset.x) / kVillagePlaygroundTilePx) + 1);
+    int row1 = std::min(kVillagePlaygroundRows - 1, (int)ceilf((kVirtualHeight - worldOffset.y) / kVillagePlaygroundTilePx) + 1);
+
+    for (int row = row0; row <= row1; ++row)
+    {
+        for (int col = col0; col <= col1; ++col)
+        {
+            TileType type = VillageFloorCellUsesVariant(col, row) ? TileType::FloorVariant : TileType::Floor;
+            if (row == 0 && col == 0) type = TileType::WallCornerTL;
+            else if (row == 0 && col == kVillagePlaygroundCols - 1) type = TileType::WallCornerTR;
+            else if (row == kVillagePlaygroundRows - 1 && col == 0) type = TileType::WallCornerBL;
+            else if (row == kVillagePlaygroundRows - 1 && col == kVillagePlaygroundCols - 1) type = TileType::WallCornerBR;
+            else if (row == 0) type = TileType::WallTopFace;
+            else if (row == kVillagePlaygroundRows - 1) type = TileType::WallBottom;
+            else if (col == 0) type = TileType::WallLeft;
+            else if (col == kVillagePlaygroundCols - 1) type = TileType::WallRight;
+
+            int typeIdx = (int)type;
+            bool useGround = typeIdx >= 0 && typeIdx < (int)TileType::Count && _villageTileDefs.fromGround[typeIdx];
+            const Texture2D& tex = useGround ? _villageFieldGroundSheet : _villageFieldSheet;
+            Rectangle dst{ worldOffset.x + col * kVillagePlaygroundTilePx,
+                           worldOffset.y + row * kVillagePlaygroundTilePx,
+                           kVillagePlaygroundTilePx, kVillagePlaygroundTilePx };
+
+            if (tex.id != 0)
+            {
+                Rectangle src = _villageTileDefs.Get(type);
+                DrawTexturePro(tex, src, dst, Vector2{}, 0.f, WHITE);
+            }
+            else
+            {
+                Color tint = (row == 0 || col == 0 || row == kVillagePlaygroundRows - 1 || col == kVillagePlaygroundCols - 1)
+                    ? Color{ 45, 64, 42, 255 }
+                    : (VillageFloorCellUsesVariant(col, row) ? Color{ 64, 103, 58, 255 } : Color{ 58, 96, 55, 255 });
+                DrawRectangleRec(dst, tint);
+            }
+        }
+    }
+
+    Rectangle gate = VillageGateWorldRect();
+    Rectangle gateScreen{ worldOffset.x + gate.x, worldOffset.y + gate.y, gate.width, gate.height };
+    DrawRectangleRec(gateScreen, Color{ 68, 50, 38, 255 });
+    DrawRectangleLinesEx(gateScreen, 3.f, Color{ 130, 100, 70, 255 });
+    DrawText("DUNGEON GATE", (int)(gateScreen.x + 20.f), (int)(gateScreen.y + 20.f), 22, GOLD);
+}
+
+void Engine::DrawVillagePlacementGhost(Vector2 worldOffset, Vector2 mouseWorld)
+{
+    if (_villageActiveObjectIndex < 0 || _villageActiveObjectIndex >= (int)_villageObjectCatalog.size()) return;
+    int cellCol = (int)floorf(mouseWorld.x / kVillagePlaygroundTilePx);
+    int cellRow = (int)floorf(mouseWorld.y / kVillagePlaygroundTilePx);
+    const VillageRuntimeObjectDef& def = _villageObjectCatalog[_villageActiveObjectIndex];
+    bool ok = VillagePlaygroundCanPlace(_villageActiveObjectIndex, cellCol, cellRow);
+    Color tint = ok ? Color{ 180, 255, 180, 170 } : Color{ 255, 80, 80, 165 };
+    DrawVillageRuntimeObject(def, cellCol, cellRow, worldOffset, tint, VillageMap::Layer::Ground);
+    DrawVillageRuntimeObject(def, cellCol, cellRow, worldOffset, tint, VillageMap::Layer::Objects);
+    DrawVillageRuntimeObject(def, cellCol, cellRow, worldOffset, tint, VillageMap::Layer::Overhead);
+    Rectangle rect{ worldOffset.x + cellCol * kVillagePlaygroundTilePx, worldOffset.y + cellRow * kVillagePlaygroundTilePx,
+                    def.cols * kVillagePlaygroundTilePx, def.rows * kVillagePlaygroundTilePx };
+    DrawRectangleLinesEx(rect, 3.f, ok ? GREEN : RED);
+}
+
+void Engine::DrawVillagePlayground()
+{
+    if (_villageInsideInterior)
+    {
+        DrawVillageInterior();
+        return;
+    }
+
+    Vector2 worldOffset{ -_cameraPos.x + kVirtualWidth * 0.5f, -_cameraPos.y + kVirtualHeight * 0.5f };
+    ClearBackground(Color{ 18, 24, 20, 255 });
+    DrawVillageField(worldOffset);
+
+    auto drawPlacedLayer = [&](VillageMap::Layer layer)
+    {
+        for (const VillagePlacedObject& placed : _villagePlacedObjects)
+        {
+            if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+            DrawVillageRuntimeObject(_villageObjectCatalog[placed.defIndex], placed.cellCol, placed.cellRow, worldOffset, WHITE, layer);
+        }
+    };
+
+    drawPlacedLayer(VillageMap::Layer::Ground);
+
+    Rectangle graveyard = VillageGraveyardWorldRect();
+    Rectangle graveyardScreen{ worldOffset.x + graveyard.x, worldOffset.y + graveyard.y, graveyard.width, graveyard.height };
+    if (_villageGraveyardTex.id != 0)
+    {
+        Rectangle src{ 0.f, 0.f, (float)_villageGraveyardTex.width, (float)_villageGraveyardTex.height };
+        DrawTexturePro(_villageGraveyardTex, src, graveyardScreen, Vector2{}, 0.f, WHITE);
+    }
+    else
+    {
+        DrawRectangleRec(graveyardScreen, Color{ 42, 44, 56, 255 });
+        DrawRectangleLinesEx(graveyardScreen, 2.f, Color{ 120, 118, 150, 255 });
+        DrawText("Poe's Graveyard", (int)graveyardScreen.x + 20, (int)graveyardScreen.y + 20, 24, RAYWHITE);
+    }
+
+    Vector2 poeWorld = VillageGraveyardLocalToWorld(_villageGraveyardPoeLocal);
+    Vector2 poeScreen{ worldOffset.x + poeWorld.x, worldOffset.y + poeWorld.y };
+    DrawCircle((int)poeScreen.x, (int)(poeScreen.y - 22.f), 16.f, Color{ 142, 120, 255, 190 });
+    DrawCircleLines((int)poeScreen.x, (int)(poeScreen.y - 22.f), 17.f, Color{ 218, 210, 255, 220 });
+    DrawText("Poe", (int)(poeScreen.x - 18.f), (int)(poeScreen.y - 58.f), 18, Color{ 220, 214, 255, 235 });
+
+    drawPlacedLayer(VillageMap::Layer::Objects);
+
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    {
+        if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+        if (_villageObjectCatalog[placed.defIndex].name == "ZephsShop" && _villageZephShopTex.id != 0) continue;
+        for (const VillageRuntimeDoor& door : _villageObjectCatalog[placed.defIndex].doors)
+        {
+            Rectangle doorRect = VillageDoorWorldRect(placed, door);
+            Rectangle doorScreen{ worldOffset.x + doorRect.x, worldOffset.y + doorRect.y, doorRect.width, doorRect.height };
+            if (VillageDoorIsOpen(placed, door))
+            {
+                DrawRectangleRec(doorScreen, Fade(GOLD, 0.28f));
+                DrawRectangleLinesEx(doorScreen, 2.f, Fade(GOLD, 0.9f));
+            }
+            else
+            {
+                DrawRectangleLinesEx(doorScreen, 1.f, Fade(RAYWHITE, 0.25f));
+            }
+        }
+    }
+
+    DrawVillageCitizens(worldOffset);
+    if (_villageShopNpcActive) _shop.DrawNpc(worldOffset);
+
+    Vector2 mouse = GetVirtualMousePos();
+    Vector2 mouseWorld{ mouse.x - worldOffset.x, mouse.y - worldOffset.y };
+    bool mouseOverUi = _villageBuildMode && CheckCollisionPointRec(mouse, Rectangle{ kVirtualWidth - 448.f, 88.f, 430.f, 430.f });
+    if (_villageBuildMode && !mouseOverUi) DrawVillagePlacementGhost(worldOffset, mouseWorld);
+
+    _player.DrawPlayer(_cameraPos);
+    drawPlacedLayer(VillageMap::Layer::Overhead);
+
+    if (!_villageSandboxMode && !_villageBuildMode && CheckCollisionPointRec(_player.GetWorldPos(), VillageGateApproachRect()))
+        DrawText("Press E to choose a class and leave for the dungeon", 24, 92, 24, GOLD);
+
+    DrawHUD(true);
+
+    bool tutorialLockActive = !_villageSandboxMode && !VillageHasPlacedObject("ZephsShop");
+    int zephShopDefIndex = FindVillageObjectDefIndex("ZephsShop");
+    if (_villageBuildMode)
+    {
+        Rectangle panel{ kVirtualWidth - 448.f, 88.f, 430.f, 430.f };
+        DrawRectangleRounded(panel, 0.08f, 8, Fade(Color{ 18, 20, 18, 255 }, 0.82f));
+        DrawRectangleRoundedLines(panel, 0.08f, 8, Color{ 100, 120, 90, 255 });
+        DrawText("Build Mode", (int)panel.x + 14, (int)panel.y + 12, 22, GOLD);
+        DrawText(_villageSandboxMode ? "B walk mode | R clear | tester is free" : TextFormat("B walk mode | your gold: %d", _player.GetGold()),
+                 (int)panel.x + 14, (int)panel.y + 40, 15, Fade(RAYWHITE, 0.75f));
+        DrawText(_villageSandboxMode ? "Left place | right remove | sandbox freely tests" : "Left place | right remove (services stay)",
+                 (int)panel.x + 14, (int)panel.y + 60, 15, Fade(RAYWHITE, 0.75f));
+        if (_villageActiveObjectIndex >= 0 && _villageActiveObjectIndex < (int)_villageObjectCatalog.size())
+        {
+            const VillageRuntimeObjectDef& selected = _villageObjectCatalog[_villageActiveObjectIndex];
+            DrawText(TextFormat("Selected: %s", selected.name.c_str()), (int)panel.x + 14, (int)panel.y + 84, 16, RAYWHITE);
+            const char* selectedCostText = selected.costGold > 0 ? TextFormat("%dg", selected.costGold) : "free";
+            std::string selectedDetail = TextFormat("Cost: %s | Footprint: %dx%d | %s", selectedCostText, selected.cols, selected.rows, VillageObjectRuleLabel(selected.name, selected.isDecoration));
+            DrawText(selectedDetail.c_str(), (int)panel.x + 14, (int)panel.y + 104, 15, Fade(RAYWHITE, 0.72f));
+        }
+
+        Rectangle rows{ panel.x + 8.f, panel.y + 130.f, panel.width - 16.f, panel.height - 138.f };
+        BeginScissorMode((int)rows.x, (int)rows.y, (int)rows.width, (int)rows.height);
+        for (int i = 0; i < (int)_villageObjectCatalog.size(); ++i)
+        {
+            const VillageRuntimeObjectDef& entry = _villageObjectCatalog[i];
+            float y = rows.y + i * 42.f - _villageCatalogScroll;
+            if (y + 40.f < rows.y || y > rows.y + rows.height) continue;
+            Rectangle row{ rows.x, y, rows.width, 38.f };
+            bool active = i == _villageActiveObjectIndex;
+            bool locked = tutorialLockActive && i != zephShopDefIndex;
+            DrawRectangleRec(row, active ? Color{ 78, 92, 62, 235 } : Color{ 38, 44, 36, locked ? (unsigned char)140 : (unsigned char)225 });
+            DrawRectangleLinesEx(row, 1.f, active ? GOLD : Color{ 82, 94, 72, 220 });
+            DrawText(entry.name.c_str(), (int)row.x + 8, (int)row.y + 10, 17, active ? GOLD : (locked ? Fade(RAYWHITE, 0.35f) : RAYWHITE));
+            if (locked) DrawText("locked", (int)(row.x + row.width - 132), (int)row.y + 11, 14, Fade(RAYWHITE, 0.4f));
+            else
+            {
+                const bool alreadyBuilt = !_villageSandboxMode && VillageObjectIsOneTimeService(entry.name) && VillageHasPlacedObject(entry.name);
+                const char* costText = entry.costGold > 0 ? TextFormat("%dg", entry.costGold) : "free";
+                DrawText(costText, (int)(row.x + 170), (int)row.y + 11, 14, GOLD);
+                DrawText(TextFormat("%dx%d", entry.cols, entry.rows), (int)(row.x + 224), (int)row.y + 11, 14, Fade(RAYWHITE, 0.68f));
+                DrawText(alreadyBuilt ? "built" : VillageObjectRuleLabel(entry.name, entry.isDecoration), (int)(row.x + 278), (int)row.y + 11, 14, alreadyBuilt ? Fade(GOLD, 0.78f) : Fade(RAYWHITE, 0.68f));
+            }
+        }
+        if (_villageObjectCatalog.empty()) DrawText("No saved village objects yet", (int)rows.x + 10, (int)rows.y + 18, 20, Fade(RAYWHITE, 0.75f));
+        EndScissorMode();
+    }
+    else
+    {
+        DrawText("[B] Build mode", 24, (int)(kVirtualHeight - 42), 22, Color{ 150, 170, 200, 220 });
+    }
+
+    if (tutorialLockActive)
+    {
+        const char* banner = "Poe: Press B to build Zeph's shop. It is free.";
+        int bannerFs = 22;
+        int bannerWidth = MeasureText(banner, bannerFs);
+        DrawRectangle((int)(kVirtualWidth * 0.5f - bannerWidth * 0.5f - 14), 100, bannerWidth + 28, 36, Fade(Color{ 30, 20, 45, 255 }, 0.8f));
+        DrawText(banner, (int)(kVirtualWidth * 0.5f - bannerWidth * 0.5f), 107, bannerFs, Color{ 200, 190, 255, 240 });
+    }
+
+    if (_villagePlaygroundMessageTimer > 0.f && !_villagePlaygroundMessage.empty())
+    {
+        int fs = 24;
+        int w = MeasureText(_villagePlaygroundMessage.c_str(), fs);
+        DrawRectangle((int)(kVirtualWidth * 0.5f - w * 0.5f - 16), 54, w + 32, 38, Fade(BLACK, 0.65f));
+        DrawText(_villagePlaygroundMessage.c_str(), (int)(kVirtualWidth * 0.5f - w * 0.5f), 62, fs, GOLD);
+    }
+}
+
 void Engine::Draw()
 {
     switch (_gameState)
@@ -2409,20 +3672,21 @@ void Engine::Draw()
         _mapEditor.Draw();
         break;
 
+    case GameState::VillagePlayground:
+    case GameState::Village:
+        DrawVillagePlayground();
+        break;
+
     case GameState::GameOver:
     {
         int goResult = _pauseUI.DrawGameOver(GetPromptModeForUi());
         if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
         if (goResult == 1)
         {
-            ResetRunState();
-
-            _dungeonGen.Generate();
-            _currentBiome = Biome::Caverns;
-            _pendingBiome = _currentBiome;
-            LoadTilesetForBiome(_currentBiome);
-            int retryStartIdx = _dungeonGen.GetStartIndex();
-            EnterDungeonRoom(retryStartIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
+            // Death sends the player back to the village, waking up at Poe's
+            // Graveyard. No ResetRunState here — retained gold (Deep Pockets)
+            // stays spendable on buildings; the next run resets at the gate.
+            EnterVillage();
 
             _fadeInTimer    = 2.0f;
             _fadeInDuration = 2.0f;
@@ -2431,6 +3695,14 @@ void Engine::Draw()
         else if (goResult == 3) _shouldClose = true;
         break;
     }
+
+    case GameState::DeathRevive:
+        DrawDeathRevive();
+        break;
+
+    case GameState::BossChoice:
+        DrawBossChoice();
+        break;
 
     case GameState::HowToPlay:
     {
@@ -2688,7 +3960,7 @@ void Engine::TriggerScreenShake(float strength, float duration)
     _shakeTimer = duration;
 }
 
-void Engine::DrawHUD()
+void Engine::DrawHUD(bool villageMode)
 {
     {
     const HUDConfig& hc = _hudCfg;
@@ -2713,13 +3985,14 @@ void Engine::DrawHUD()
 
     drawLabelBox(("Gold: " + std::to_string((int)(_displayGold + 0.5f))).c_str(),
         hc.goldX, hc.goldY, (int)hc.goldFs, GOLD);
-    if (_currentRoomType != RoomType::Store)
+    if (!villageMode && _currentRoomType != RoomType::Store)
         drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(),
             hc.enemiesX, hc.enemiesY, (int)hc.enemiesFs, RAYWHITE);
 
-    // Carried Echoes — pink to match the pickup orbs; lost on death.
+    // Carried Echoes - pink to match the pickup orbs; lost on death.
+    float echoesY = villageMode ? hc.enemiesY : hc.enemiesY + hc.enemiesFs + 24.f;
     drawLabelBox(("Echoes: " + std::to_string((int)(_displayCells + 0.5f))).c_str(),
-        hc.goldX, hc.enemiesY + hc.enemiesFs + 24.f, (int)hc.goldFs, Color{ 255, 120, 210, 255 });
+        hc.goldX, echoesY, (int)hc.goldFs, Color{ 255, 120, 210, 255 });
 
     // "+N Echoes banked" toast after reaching Zeph with carried cells.
     if (_cellsBankedToastTimer > 0.f)
@@ -7153,13 +8426,199 @@ void Engine::HandlePlayerDeathMetaPenalty()
         return;
     _deathPenaltyApplied = true;
 
-    // Carried (unbanked) cells are lost — that's the Dead Cells deal. The gold
-    // retention unlock lets part of the gold survive into the next run.
-    float retention = _meta.GetGoldRetentionPercent();
-    if (retention > 0.f)
-        _meta.SetGoldCarryover((int)((float)_player.GetGold() * retention));
+    // One-wallet meta loop (locked 2026-07-09): it's a roguelite, so DEATH WIPES
+    // ALL carried gold. Only unlocked village buildings + cosmetics persist. No
+    // gold carryover survives a death (supersedes the old Dead Cells retention).
+    _meta.SetGoldCarryover(0);
+    _player.SetGold(0);
     _player.TakeCells();
     _meta.Save();   // persist bestiary kills tallied this run
+}
+
+// ── Death -> Poe revive cutscene ───────────────────────────────────────────────
+// Zelda-style: the fallen mystic stays a lone lit sprite on black while the gold
+// + echoes it carried stream away and fade, then Poe (spectral phantom, purple
+// frame) offers a way back and asks what the player will become. Flows straight
+// into ClassSelect (class + look), which starts the next run.
+static constexpr float kDeathReviveLossDur = 1.8f;   // loss/fade beat length
+static constexpr float kDeathReviveTypeDur = 2.4f;   // typewriter reveal length
+static const char* kPoeRevivalLine =
+    "How unfortunate. The dungeon claims another soul... but I am not finished "
+    "with you yet, little mystic. Rise -- and tell me what you will become.";
+
+void Engine::BeginDeathRevive()
+{
+    _deathRevivePhase    = 0;
+    _deathReviveTimer    = 0.f;
+    _deathReviveTypeT    = 0.f;
+    _deathReviveWorldPos = _player.GetWorldPos();
+
+    // Motes: gold coins + purple echo motes drifting up and away from the body.
+    // Count scales with what was lost so a rich death sprays more.
+    _deathMotes.clear();
+    int goldMotes = 10 + std::min(22, _deathReviveLostGold / 20);
+    int echoMotes =  5 + std::min(14, _deathReviveLostCells / 2);
+    auto spawn = [&](bool gold)
+    {
+        DeathMote m;
+        float ang = (float)GetRandomValue(-1200, 1200) / 1000.f;   // spread around straight up
+        float spd = (float)GetRandomValue(60, 190);
+        m.pos = { _deathReviveWorldPos.x + (float)GetRandomValue(-14, 14),
+                  _deathReviveWorldPos.y + (float)GetRandomValue(-24,  4) };
+        m.vel = { sinf(ang) * spd, -fabsf(cosf(ang)) * spd - 40.f };   // mostly upward
+        m.maxLife = (float)GetRandomValue(90, 160) / 100.f;
+        m.life    = m.maxLife;
+        m.gold    = gold;
+        _deathMotes.push_back(m);
+    };
+    for (int i = 0; i < goldMotes; i++) spawn(true);
+    for (int i = 0; i < echoMotes; i++) spawn(false);
+
+    _gameState = GameState::DeathRevive;
+}
+
+void Engine::UpdateDeathRevive()
+{
+    const float dt = GetFrameTime();
+    _gamepad.Update(_gamepadBindingsEdit);
+    _deathReviveTimer += dt;
+
+    if (_deathRevivePhase == 0)
+    {
+        for (auto& m : _deathMotes)
+        {
+            m.pos.x += m.vel.x * dt;
+            m.pos.y += m.vel.y * dt;
+            m.vel.x *= (1.f - 1.4f * dt);   // ease horizontal drift
+            m.vel.y -= 30.f * dt;           // keep rising
+            m.life  -= dt;
+        }
+        if (_deathReviveTimer >= kDeathReviveLossDur)
+        {
+            _deathRevivePhase = 1;
+            _deathReviveTimer = 0.f;
+            _deathReviveTypeT = 0.f;
+        }
+        return;
+    }
+
+    // Phase 1 — Poe dialogue.
+    _deathReviveTypeT += dt;
+    bool fullyShown = _deathReviveTypeT >= kDeathReviveTypeDur;
+
+    // ESC / back abandons the run to the main menu (keeps a quit path).
+    if (IsKeyPressed(KEY_ESCAPE) || (_gamepad.isActive && _gamepad.backPressed))
+    {
+        ResetRunState();
+        _menu.Init();
+        _gameState = GameState::Menu;
+        return;
+    }
+
+    bool advance = IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
+                   IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+                   (_gamepad.isActive && _gamepad.menuConfirmPressed);
+    if (advance)
+    {
+        if (!fullyShown) { _deathReviveTypeT = kDeathReviveTypeDur; return; }
+        // Into class + look select; confirming there calls StartMainRun.
+        _classSelectCursor      = (int)_player.GetClass();
+        _classSelectReturnState = GameState::Menu;
+        _gameState              = GameState::ClassSelect;
+    }
+}
+
+void Engine::DrawDeathRevive()
+{
+    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    DrawRectangle(0, 0, (int)sw, (int)sh, BLACK);
+
+    if (_deathRevivePhase == 0)
+    {
+        // Lone lit sprite where the mystic fell (DungeonRun camera is centred).
+        _player.DrawPlayer(_cameraPos);
+
+        for (const auto& m : _deathMotes)
+        {
+            if (m.life <= 0.f) continue;
+            float a = m.life / m.maxLife;                 // 1 -> 0
+            Vector2 scr = { m.pos.x - _cameraPos.x + sw * 0.5f,
+                            m.pos.y - _cameraPos.y + sh * 0.5f };
+            if (m.gold)
+            {
+                DrawCircleV(scr, 4.f * a + 1.5f, Color{ 255, 210, 90, (unsigned char)(230 * a) });
+                DrawCircleLinesV(scr, 4.f * a + 1.5f, Fade(Color{ 255, 240, 180, 255 }, a));
+            }
+            else
+            {
+                DrawCircleV(scr, 3.5f * a + 1.f, Color{ 190, 130, 240, (unsigned char)(220 * a) });
+            }
+        }
+
+        // Fade the whole beat to black over its last stretch, into Poe's dialogue.
+        float fade = (_deathReviveTimer - kDeathReviveLossDur * 0.55f) /
+                     (kDeathReviveLossDur * 0.45f);
+        if (fade > 0.f) DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, std::min(fade, 1.f)));
+        return;
+    }
+
+    // Phase 1 — Poe (spectral phantom) + purple dialogue frame.
+    if (_cellsMerchantTex.id != 0)
+    {
+        Texture2D poe = _cellsMerchantTex;
+        float bob = sinf(_deathReviveTimer * 2.2f) * 10.f;
+        int fw = (poe.height > 0 && poe.width > poe.height) ? poe.height : poe.width;   // first frame of the idle sheet
+        Rectangle src = { 0, 0, (float)fw, (float)poe.height };
+        float scale = sh * 0.34f / (float)poe.height;
+        float dw = fw * scale, dh = poe.height * scale;
+        Rectangle dst = { sw * 0.30f - dw * 0.5f, sh * 0.40f - dh * 0.5f + bob, dw, dh };
+        DrawCircle((int)(sw * 0.30f), (int)(sh * 0.40f), dh * 0.55f, Fade(Color{ 120, 70, 200, 255 }, 0.20f));
+        DrawTexturePro(poe, src, dst, { 0, 0 }, 0.f, Color{ 205, 180, 255, 235 });
+    }
+
+    Rectangle panel = { sw * 0.15f, sh * 0.66f, sw * 0.70f, sh * 0.26f };
+    DrawRectangleRounded(panel, 0.10f, 10, Color{ 26, 16, 44, 240 });
+    DrawRectangleRoundedLinesEx(panel, 0.10f, 10, 3.f, Color{ 168, 116, 232, 255 });
+    DrawText("Poe", (int)(panel.x + 30.f), (int)(panel.y + 20.f), 30, Color{ 206, 176, 255, 255 });
+
+    // Typed body text with simple word-wrap.
+    int shown = (int)((float)strlen(kPoeRevivalLine) *
+                      std::min(_deathReviveTypeT / kDeathReviveTypeDur, 1.f));
+    std::string vis(kPoeRevivalLine, kPoeRevivalLine + shown);
+    {
+        const int   fs   = 26;
+        const float maxW = panel.width - 60.f;
+        const Color col  = { 232, 224, 245, 255 };
+        float x = panel.x + 30.f, y = panel.y + 66.f;
+        std::string word, line;
+        for (size_t i = 0; i <= vis.size(); i++)
+        {
+            char ch = (i < vis.size()) ? vis[i] : ' ';
+            if (ch == ' ')
+            {
+                std::string trial = line.empty() ? word : line + " " + word;
+                if (!line.empty() && MeasureText(trial.c_str(), fs) > (int)maxW)
+                {
+                    DrawText(line.c_str(), (int)x, (int)y, fs, col);
+                    y += fs + 8.f;
+                    line = word;
+                }
+                else line = trial;
+                word.clear();
+            }
+            else word += ch;
+        }
+        if (!line.empty()) DrawText(line.c_str(), (int)x, (int)y, fs, col);
+    }
+
+    // Continue prompt once fully revealed (blinks).
+    if (_deathReviveTypeT >= kDeathReviveTypeDur && fmodf(_deathReviveTimer, 1.0f) < 0.6f)
+    {
+        const char* p  = "Press  E  to rise";
+        int fs = 22, tw = MeasureText(p, fs);
+        DrawText(p, (int)(panel.x + panel.width - tw - 30.f),
+                 (int)(panel.y + panel.height - fs - 16.f), fs, Color{ 190, 160, 230, 220 });
+    }
 }
 
 void Engine::UpdateMetaShop(float dt)
@@ -8574,6 +10033,7 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
 
 void Engine::ResetRunState()
 {
+    _player.SetDashAllowedWhileCombatLocked(false);
     _nav.CancelAndReset();
     ResetMusicState();
     _wave          = 0;
@@ -8695,6 +10155,7 @@ void Engine::ResetRunState()
     _player.SetWagerRewardMult(1.f);
     _curseShrineUsed     = false;
     _nearCurseShrine     = false;
+    _wagerAccessGranted  = false;   // earned only by choosing "push onward" after a boss
     _pendingRelicChoices = 0;
 
     _deathPenaltyApplied   = false;
@@ -9178,7 +10639,13 @@ int Engine::ComputeDailySeed() const
 void Engine::StartMainRun()
 {
     _debug.Deactivate();
+    // One-wallet meta loop: gold persists from the village INTO the run (only a
+    // death zeroes it, in HandlePlayerDeathMetaPenalty). Capture the village
+    // wallet before ResetRunState reseeds it, then restore it afterwards so the
+    // hauled/leftover gold rides into the run instead of being reset.
+    int walletGold = _player.GetGold();
     ResetRunState();   // calls _player.Init() which loads the chosen class sprites
+    _player.SetGold(walletGold);
     _isMainGameRun = true;
 
     // Daily runs use a fixed seed so everyone shares the same dungeon that day;
@@ -9239,8 +10706,10 @@ void Engine::UpdateClassSelect()
     if (IsKeyPressed(KEY_ESCAPE) ||
         (_gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)))
     {
-        _gameState = GameState::Menu;
-        _menu.Init();
+        // Backing out returns to wherever class select was opened from (the
+        // main menu, or the village gate).
+        _gameState = _classSelectReturnState;
+        if (_gameState == GameState::Menu) _menu.Init();
         return;
     }
 
@@ -10501,6 +11970,296 @@ void Engine::DrawRoomAffixBanner()
     DrawText(tag,  (int)(sw * 0.5f - MeasureText(tag, tagFs) * 0.5f), (int)(pillY + 12.f), tagFs, Fade(accent, 0.85f));
     DrawText(a.name, (int)(sw * 0.5f - nameW * 0.5f), (int)(pillY + 34.f), nameFs, accent);
     DrawText(a.description, (int)(sw * 0.5f - descW * 0.5f), (int)(pillY + 76.f), descFs, Color{ 212, 212, 224, 230 });
+}
+
+// =============================================================================
+// Dungeon HUD polish — intro banner, room badge, modifier stack, minimap.
+// Rule: normal gameplay HUD only shows exceptions, decisions, danger, or
+// actionable info. Standard rooms draw nothing at the top of the screen.
+// =============================================================================
+
+// Elite mechanic display names — index matches the elite mechanic ids
+// (0 Cage, 1 Bodyguard, 2 Enrage, 3 Leap, 4 Hazards).
+static const char* kEliteMechanicNames[5] = {
+    "Shrinking Cage", "Bodyguard Shield", "Permanent Enrage", "Leaping Brute", "Room Hazards",
+};
+static const char* kEliteMechanicShort[5] = {
+    "CAGE", "SHIELD", "ENRAGE", "LEAP", "HAZARDS",
+};
+
+void Engine::QueueRoomIntroBanner()
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (_dungeonRoomIdx < 0 || _dungeonRoomIdx >= (int)rooms.size()) return;
+
+    _roomIntroTitle.clear();
+    _roomIntroSub.clear();
+
+    const DungeonRoom& room = rooms[_dungeonRoomIdx];
+    if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
+    {
+        _roomIntroTitle = "BOSS ROOM";
+        _roomIntroSub   = "No turning back";
+    }
+    else if (_dungeonRoomIdx == _dungeonGen.GetKeyIndex())
+    {
+        _roomIntroTitle = "KEY ROOM";
+        _roomIntroSub   = "Claim the magic gem";
+    }
+    else switch (room.type)
+    {
+    case RoomType::Elite:
+    {
+        _roomIntroTitle = "ELITE ENCOUNTER";
+        int mech = _eliteMechanic;
+        if (mech >= 0 && mech < 5)
+            _roomIntroSub = std::string("Condition: ") + kEliteMechanicNames[mech];
+        break;
+    }
+    case RoomType::Treasure:
+        _roomIntroTitle = "TREASURE ROOM";
+        _roomIntroSub   = "Choose your reward";
+        break;
+    case RoomType::Rest:
+        _roomIntroTitle = "REST ROOM";
+        _roomIntroSub   = "A moment to breathe";
+        break;
+    case RoomType::Store:
+        break;   // Zeph's shop has its own intro flow
+    default:
+        // Standard room: silent — unless an affix makes it an exception.
+        if (_currentRoomAffix != RoomAffix::None)
+        {
+            const RoomAffixDef& a = GetRoomAffixDef(_currentRoomAffix);
+            _roomIntroTitle = a.name;
+            _roomIntroSub   = a.description;
+        }
+        break;
+    }
+
+    if (!_roomIntroTitle.empty())
+        _roomIntroTimer = kRoomIntroDuration;
+}
+
+void Engine::DrawRoomIntroBanner()
+{
+    if (_roomIntroTimer <= 0.f) return;
+    _roomIntroTimer -= GetFrameTime();
+
+    const float sw = (float)kVirtualWidth;
+    float elapsed = kRoomIntroDuration - _roomIntroTimer;
+
+    // Fade in over 0.25s, hold, fade out over the last 0.5s.
+    float alpha = 1.f;
+    if (elapsed < 0.25f)            alpha = elapsed / 0.25f;
+    if (_roomIntroTimer < 0.5f)     alpha = _roomIntroTimer / 0.5f;
+    // Slight settle: the banner drifts up a few px as it appears.
+    float rise = (elapsed < 0.25f) ? (1.f - elapsed / 0.25f) * 10.f : 0.f;
+
+    int   titleFs = 54, subFs = 26;
+    int   titleW  = MeasureText(_roomIntroTitle.c_str(), titleFs);
+    float bandY   = 110.f + rise;
+
+    // Soft backing band so the text reads over any biome.
+    float bandH = _roomIntroSub.empty() ? 84.f : 118.f;
+    DrawRectangleGradientH((int)(sw * 0.20f), (int)(bandY - 14.f), (int)(sw * 0.30f), (int)bandH,
+                           Fade(BLACK, 0.f), Fade(BLACK, 0.55f * alpha));
+    DrawRectangleGradientH((int)(sw * 0.50f), (int)(bandY - 14.f), (int)(sw * 0.30f), (int)bandH,
+                           Fade(BLACK, 0.55f * alpha), Fade(BLACK, 0.f));
+
+    DrawText(_roomIntroTitle.c_str(), (int)(sw * 0.5f - titleW * 0.5f), (int)bandY,
+             titleFs, Fade(GOLD, alpha));
+    if (!_roomIntroSub.empty())
+    {
+        int subW = MeasureText(_roomIntroSub.c_str(), subFs);
+        DrawText(_roomIntroSub.c_str(), (int)(sw * 0.5f - subW * 0.5f), (int)(bandY + 64.f),
+                 subFs, Fade(Color{ 225, 225, 235, 255 }, alpha));
+    }
+}
+
+void Engine::DrawRoomBadge() const
+{
+    if (_roomIntroTimer > 0.f) return;   // never double up with the intro banner
+
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (_dungeonRoomIdx < 0 || _dungeonRoomIdx >= (int)rooms.size()) return;
+
+    auto stateIt = _dungeonRoomStates.find(_dungeonRoomIdx);
+    bool cleared = (stateIt != _dungeonRoomStates.end()) && stateIt->second.cleared;
+
+    // Only rooms with a live objective/identity keep a badge after the intro.
+    std::string label; Color accent{ 255, 205, 100, 255 };
+    if (_dungeonRoomIdx == _dungeonGen.GetBossIndex() && !cleared)
+    {
+        label = "BOSS"; accent = Color{ 235, 80, 80, 255 };
+    }
+    else if (_dungeonRoomIdx == _dungeonGen.GetKeyIndex() && !_magicGemCollected)
+    {
+        label = "KEY ROOM"; accent = Color{ 190, 130, 255, 255 };
+    }
+    else if (rooms[_dungeonRoomIdx].type == RoomType::Elite && !cleared)
+    {
+        int mech = _eliteMechanic;
+        label = (mech >= 0 && mech < 5)
+              ? std::string("ELITE - ") + kEliteMechanicShort[mech] : "ELITE";
+        accent = Color{ 255, 150, 70, 255 };
+    }
+    else if (rooms[_dungeonRoomIdx].type == RoomType::Treasure && _treasureChestSpawned && !_treasureChestBroken)
+    {
+        label = "TREASURE"; accent = GOLD;
+    }
+    if (label.empty()) return;
+
+    const float sw = (float)kVirtualWidth;
+    int   fs = 20;
+    int   tw = MeasureText(label.c_str(), fs);
+    float pillW = tw + 36.f, pillH = 34.f;
+    Rectangle pill{ sw * 0.5f - pillW * 0.5f, 10.f, pillW, pillH };
+    DrawRectangleRounded(pill, 0.5f, 8, Fade(Color{ 18, 16, 26, 255 }, 0.85f));
+    DrawRectangleRoundedLines(pill, 0.5f, 8, Fade(accent, 0.9f));
+    DrawText(label.c_str(), (int)(pill.x + 18.f), (int)(pill.y + 7.f), fs, accent);
+}
+
+void Engine::DrawModifierStack() const
+{
+    // Collect every active run/room modifier into compact pills. Nothing
+    // active = nothing drawn. New systems (curses, contracts, omens) add
+    // entries here so danger info lives in ONE place.
+    struct ModifierPill { std::string text; Color accent; };
+    std::vector<ModifierPill> pills;
+
+    if (_currentRoomAffix != RoomAffix::None)
+    {
+        const RoomAffixDef& a = GetRoomAffixDef(_currentRoomAffix);
+        pills.push_back({ a.name, Color{ a.r, a.g, a.b, 255 } });
+    }
+    if (_wagerTier > 0)
+    {
+        const char* tiers[3] = { "WAGER I", "WAGER II", "WAGER III" };
+        pills.push_back({ tiers[std::min(_wagerTier - 1, 2)], Color{ 235, 120, 90, 255 } });
+    }
+    if (pills.empty()) return;
+
+    // Below the corner minimap, right-aligned.
+    const float sw = (float)kVirtualWidth;
+    const float mapH = DungeonGen::kGridSize * 30.f + 30.f;   // matches minimap footprint
+    float y = 8.f + mapH + 10.f;
+    for (const ModifierPill& pill : pills)
+    {
+        int   fs = 18;
+        int   tw = MeasureText(pill.text.c_str(), fs);
+        float pw = tw + 28.f, ph = 30.f;
+        Rectangle rect{ sw - 10.f - pw, y, pw, ph };
+        DrawRectangleRounded(rect, 0.5f, 8, Fade(Color{ 18, 16, 26, 255 }, 0.8f));
+        DrawRectangleRoundedLines(rect, 0.5f, 8, Fade(pill.accent, 0.85f));
+        DrawText(pill.text.c_str(), (int)(rect.x + 14.f), (int)(rect.y + 6.f), fs, pill.accent);
+        y += ph + 8.f;
+    }
+}
+
+void Engine::DrawDungeonMiniMap(float originX, float originY, float cellPx, bool overlay) const
+{
+    const auto& mmRooms = _dungeonGen.GetRooms();
+    if (mmRooms.empty()) return;
+
+    const float pad = cellPx * 0.5f;
+    const float sq  = cellPx * 0.62f;
+    const float mmW = DungeonGen::kGridSize * cellPx + pad * 2.f;
+
+    DrawRectangleRounded({ originX, originY, mmW, mmW }, 0.08f, 4,
+                         Fade(Color{ 25, 25, 35, 255 }, overlay ? 0.92f : 0.61f));
+    DrawRectangleRoundedLines({ originX, originY, mmW, mmW }, 0.08f, 4,
+                              Color{ 200, 200, 220, 45 });
+
+    int  bossIdx  = _dungeonGen.GetBossIndex();
+    int  startIdx = _dungeonGen.GetStartIndex();
+    int  keyIdx   = _dungeonGen.GetKeyIndex();
+    bool cartographer = _meta.HasCartographer();
+    float pulse = sinf((float)GetTime() * (2.f * PI / 3.f)) * 0.5f + 0.5f;
+
+    // Connections behind the rooms.
+    for (const auto& room : mmRooms)
+    {
+        float cx = originX + pad + (room.col + 0.5f) * cellPx;
+        float cy = originY + pad + (room.row + 0.5f) * cellPx;
+        if (room.hasEast)
+            DrawLineEx({ cx, cy }, { cx + cellPx, cy }, 1.4f, Color{ 185, 185, 205, 65 });
+        if (room.hasSouth)
+            DrawLineEx({ cx, cy }, { cx, cy + cellPx }, 1.4f, Color{ 185, 185, 205, 65 });
+    }
+
+    for (int i = 0; i < (int)mmRooms.size(); i++)
+    {
+        const DungeonRoom& room = mmRooms[i];
+        float rx = originX + pad + room.col * cellPx + (cellPx - sq) * 0.5f;
+        float ry = originY + pad + room.row * cellPx + (cellPx - sq) * 0.5f;
+        Rectangle cellRect{ rx, ry, sq, sq };
+
+        auto stateIt  = _dungeonRoomStates.find(i);
+        bool visited  = (stateIt != _dungeonRoomStates.end()) && stateIt->second.visited;
+        bool cleared  = (stateIt != _dungeonRoomStates.end()) && stateIt->second.cleared;
+        // Boss and shop are structural knowledge — always shown. Everything
+        // else is revealed by visiting (the map remembers) or Cartographer's Echo.
+        bool typeKnown = visited || cartographer || i == _dungeonRoomIdx ||
+                         i == bossIdx || i == startIdx;
+
+        // Base square (dimmer once cleared — spent rooms fade into the background).
+        Color base = cleared ? Color{ 150, 150, 165, 70 } : Color{ 210, 210, 225, 115 };
+        DrawRectangleRounded(cellRect, 0.3f, 4, base);
+
+        // Room content: icon for known special rooms, "?" for unknown ones.
+        const Texture2D* icon = nullptr;
+        if (!typeKnown)
+        {
+            int qFs = (int)(cellPx * 0.55f);
+            DrawText("?", (int)(rx + sq * 0.5f - MeasureText("?", qFs) * 0.5f),
+                     (int)(ry + sq * 0.5f - qFs * 0.5f), qFs, Color{ 235, 220, 160, 200 });
+        }
+        else if (i == bossIdx)                          icon = &_mapIconBoss;
+        else if (i == startIdx)                         icon = &_mapIconShop;
+        else if (room.type == RoomType::Elite)          icon = &_mapIconElite;
+        else if (room.type == RoomType::Treasure)       icon = &_mapIconTreasure;
+        else if (room.type == RoomType::Rest)           icon = &_mapIconRest;
+        else if (room.type == RoomType::Store)          icon = &_mapIconShop;
+        // Standard rooms stay a calm plain square — no icon noise.
+
+        if (icon && icon->id != 0)
+        {
+            float iconSize = cellPx * 0.82f;
+            Rectangle src{ 0.f, 0.f, (float)icon->width, (float)icon->height };
+            Rectangle dst{ rx + sq * 0.5f - iconSize * 0.5f, ry + sq * 0.5f - iconSize * 0.5f,
+                           iconSize, iconSize };
+            DrawTexturePro(*icon, src, dst, Vector2{ 0.f, 0.f }, 0.f, Fade(WHITE, 0.95f));
+        }
+
+        // Key room marker (once known): a gold K over the square.
+        if (typeKnown && i == keyIdx && !_magicGemCollected)
+        {
+            int kFs = (int)(cellPx * 0.5f);
+            DrawText("K", (int)(rx + sq * 0.5f - MeasureText("K", kFs) * 0.5f),
+                     (int)(ry + sq * 0.5f - kFs * 0.5f), kFs, Color{ 190, 130, 255, 255 });
+        }
+
+        // Current room: pulsing gold outline (the icon stays visible underneath).
+        if (i == _dungeonRoomIdx)
+        {
+            Rectangle outline{ rx - 3.f, ry - 3.f, sq + 6.f, sq + 6.f };
+            DrawRectangleRoundedLines(outline, 0.3f, 4,
+                Fade(GOLD, 0.55f + 0.45f * pulse));
+        }
+    }
+
+    if (overlay)
+    {
+        const char* title = "DUNGEON MAP";
+        DrawText(title, (int)(originX + mmW * 0.5f - MeasureText(title, 30) * 0.5f),
+                 (int)(originY - 46.f), 30, GOLD);
+        const char* legend = _meta.HasCartographer()
+            ? "Cartographer's Echo: all rooms revealed"
+            : "? = unexplored    visit rooms to reveal them";
+        DrawText(legend, (int)(originX + mmW * 0.5f - MeasureText(legend, 20) * 0.5f),
+                 (int)(originY + mmW + 12.f), 20, Color{ 200, 200, 215, 220 });
+    }
 }
 
 void Engine::SpawnDungeonRoomEnemies()
@@ -12339,6 +14098,131 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
     }
 }
 
+// -- Boss-clear choice ----------------------------------------------------------
+// Fires after EVERY boss (from the boss exit trigger, in place of jumping
+// straight to the world map). The player weighs safety against greed:
+//   Return to village  -> bank the run: keep your hauled gold, spend it at the
+//                         village build menu, then start a fresh run at the gate.
+//   Push onward        -> double-or-nothing: full heal + bonus gold now, the
+//                         cursed wager unlocks for the next shop, and this same
+//                         character presses on to the next domain. Die and it's
+//                         all gone.
+void Engine::OpenBossChoice()
+{
+    _bossChoiceCursor    = 0;      // default-highlight the safe option
+    _bossChoiceOpenTimer = 0.30f;  // swallow the exit-tile input for a beat
+    _gameState           = GameState::BossChoice;
+}
+
+// Shared card geometry (Update + Draw MUST agree).
+static void BossChoiceCardRects(Rectangle& left, Rectangle& right)
+{
+    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    const float cardW = sw * 0.30f, cardH = sh * 0.46f, gap = sw * 0.05f;
+    const float totalW = cardW * 2.f + gap;
+    const float x0 = sw * 0.5f - totalW * 0.5f;
+    const float y  = sh * 0.5f - cardH * 0.5f + sh * 0.04f;
+    left  = { x0,                 y, cardW, cardH };
+    right = { x0 + cardW + gap,   y, cardW, cardH };
+}
+
+void Engine::UpdateBossChoice()
+{
+    const float dt = GetFrameTime();
+    if (_bossChoiceOpenTimer > 0.f) { _bossChoiceOpenTimer -= dt; return; }
+    _gamepad.Update(_gamepadBindingsEdit);
+
+    Rectangle left, right;
+    BossChoiceCardRects(left, right);
+    Vector2 mouse = GetVirtualMousePos();
+
+    if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A)) _bossChoiceCursor = 0;
+    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) _bossChoiceCursor = 1;
+    if (_gamepad.isActive)
+    {
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  _bossChoiceCursor = 0;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) _bossChoiceCursor = 1;
+    }
+    if (CheckCollisionPointRec(mouse, left))  _bossChoiceCursor = 0;
+    if (CheckCollisionPointRec(mouse, right)) _bossChoiceCursor = 1;
+
+    bool clickL = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(mouse, left);
+    bool clickR = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(mouse, right);
+    bool confirm = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
+                   (_gamepad.isActive && _gamepad.menuConfirmPressed);
+
+    if (clickL || (confirm && _bossChoiceCursor == 0))
+    {
+        // Return to village — the run ends here; hauled gold rides along (only a
+        // death wipes it) to spend on buildings, then a fresh run via the gate.
+        StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+        EnterVillage();
+        _fadeInTimer = 1.0f; _fadeInDuration = 1.0f;
+        return;
+    }
+    if (clickR || (confirm && _bossChoiceCursor == 1))
+    {
+        // Push onward (double-or-nothing): a breath + a bounty, the wager opens,
+        // and this same character continues to the next domain.
+        StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+        _player.Heal(99999);                       // clamps to max — the boss-clear breath
+        _player.AddGold(50 + _worldZone * 50);     // bravery bounty (tunable)
+        _wagerAccessGranted = true;                // cursed wager appears next shop
+        OpenWorldMap();
+        return;
+    }
+}
+
+void Engine::DrawBossChoice()
+{
+    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    DrawRectangle(0, 0, (int)sw, (int)sh, Color{ 10, 8, 16, 255 });
+
+    const char* title = "The boss lies broken. What now?";
+    int tFs = 46, tTw = MeasureText(title, tFs);
+    DrawText(title, (int)(sw * 0.5f - tTw * 0.5f), (int)(sh * 0.16f), tFs, Color{ 235, 228, 245, 255 });
+
+    Rectangle left, right;
+    BossChoiceCardRects(left, right);
+
+    struct CardInfo { Rectangle rec; const char* head; const char* sub; std::vector<const char*> lines; Color accent; };
+    CardInfo cards[2] = {
+        { left,  "Return to Village", "Safe",
+          { "Bank this journey.", "Keep the gold you hauled", "and spend it on the village.", "", "This run ends here;", "begin anew at the gate." },
+          Color{ 110, 190, 130, 255 } },
+        { right, "Push Onward", "Double or Nothing",
+          { "Press deeper, same soul.", "A breath, a gold bounty,", "and a CURSED WAGER opens", "for the road ahead.", "", "But fall now and lose it all." },
+          Color{ 220, 90, 110, 255 } },
+    };
+
+    for (int i = 0; i < 2; i++)
+    {
+        const CardInfo& c = cards[i];
+        bool sel = (_bossChoiceCursor == i);
+        Color body = sel ? Color{ 34, 30, 48, 255 } : Color{ 22, 20, 32, 245 };
+        DrawRectangleRounded(c.rec, 0.06f, 10, body);
+        DrawRectangleRoundedLinesEx(c.rec, 0.06f, 10, sel ? 5.f : 2.f,
+                                    sel ? c.accent : Color{ 70, 66, 86, 255 });
+
+        int hFs = 34, hTw = MeasureText(c.head, hFs);
+        DrawText(c.head, (int)(c.rec.x + c.rec.width * 0.5f - hTw * 0.5f), (int)(c.rec.y + 26.f), hFs, c.accent);
+        int sFs = 20, sTw = MeasureText(c.sub, sFs);
+        DrawText(c.sub, (int)(c.rec.x + c.rec.width * 0.5f - sTw * 0.5f), (int)(c.rec.y + 68.f), sFs, Color{ 190, 184, 205, 255 });
+
+        float ly = c.rec.y + 120.f;
+        for (const char* ln : c.lines)
+        {
+            int lFs = 22, lTw = MeasureText(ln, lFs);
+            DrawText(ln, (int)(c.rec.x + c.rec.width * 0.5f - lTw * 0.5f), (int)ly, lFs, Color{ 210, 204, 222, 235 });
+            ly += lFs + 10.f;
+        }
+    }
+
+    const char* hint = "A / D  or  <  >  to choose      Enter / click to confirm";
+    int hFs = 22, hTw = MeasureText(hint, hFs);
+    DrawText(hint, (int)(sw * 0.5f - hTw * 0.5f), (int)(sh * 0.90f), hFs, Color{ 150, 145, 165, 220 });
+}
+
 // -- World Map ------------------------------------------------------------------
 
 void Engine::OpenWorldMap()
@@ -13141,8 +15025,13 @@ void Engine::UpdateDungeonRun(float dt)
             if (_gameOverTimer <= 0.f)
             {
                 _playerDying = false;
-                HandlePlayerDeathMetaPenalty();
-                _gameState   = GameState::GameOver;
+                // Capture what the fallen mystic carried BEFORE the wipe so the
+                // loss animation shows the right gold + echoes streaming away,
+                // then begin Poe's revive cutscene (replaces the GameOver menu).
+                _deathReviveLostGold  = _player.GetGold();
+                _deathReviveLostCells = _player.GetCells();
+                HandlePlayerDeathMetaPenalty();   // one-wallet rule: wipes all gold + cells
+                BeginDeathRevive();
             }
             _cameraPos = { sw * 0.5f, sh * 0.5f };
             return;
@@ -13414,7 +15303,7 @@ void Engine::UpdateDungeonRun(float dt)
             // -- Cursed Wager — east of Zeph; one wager per biome (re-arms each shop).
             _curseShrineBobTimer += dt;
             Vector2 shrinePos = GetCurseShrinePos();
-            _nearCurseShrine = !_curseShrineUsed &&
+            _nearCurseShrine = _wagerAccessGranted && !_curseShrineUsed &&
                                Vector2Distance(_player.GetWorldPos(), shrinePos) < 155.f;
             if (_nearCurseShrine && !_shop.IsNearNpc())
             {
@@ -13734,7 +15623,9 @@ void Engine::UpdateDungeonRun(float dt)
                 // Note: the fade handler sets FadingIn after the action fires; that stale state
                 // is overwritten when UpdateWorldMap later calls EnterDungeonRoom.
                 ClearDungeonEnemies();
-                _dungeonFadePendingAction = [this]() { OpenWorldMap(); };
+                // Every boss now offers the return-vs-onward choice instead of
+                // jumping straight to the world map.
+                _dungeonFadePendingAction = [this]() { OpenBossChoice(); };
                 _dungeonFadeState = DungeonFadeState::FadingOut;
                 _dungeonFadeTimer = kDungeonFadeDuration;
                 return;
@@ -14060,6 +15951,8 @@ void Engine::DrawDungeonRun()
                         }
 
                         // Cursed Shrine — a dark pedestal with a swirling red orb.
+                        // Only manifests once "push onward" has unlocked the wager.
+                        if (_wagerAccessGranted)
                         {
                             Vector2 sp = GetCurseShrinePos();
                             Vector2 ss{ sp.x + worldOffset.x + kVirtualWidth * 0.5f,
@@ -14103,90 +15996,33 @@ void Engine::DrawDungeonRun()
         if (!_dungeonScrolling)
         {
             DrawHUD();
-            DrawRoomAffixBanner();
 
-            // -- Dungeon graph minimap (top-right corner) ---------------------
+            // Polished dungeon HUD: intro banner (temporary), badge (special
+            // rooms only), modifier pills (top-right, nothing when empty),
+            // and the corner minimap with room-type icons.
+            DrawRoomIntroBanner();
+            DrawRoomBadge();
             {
-                const auto& mmRooms = _dungeonGen.GetRooms();
-                if (!mmRooms.empty())
-                {
-                    constexpr float kMmCell = 17.5f;              // px per grid cell
-                    constexpr float kMmPad  =  8.75f;             // inner padding
-                    constexpr float kMmSq   = kMmCell * 0.62f;    // room square size
-
-                    const float mmW = DungeonGen::kGridSize * kMmCell + kMmPad * 2.f;
-                    const float mmX = sw - mmW - 10.f;
-                    const float mmY =  8.f;
-
-                    // Semi-transparent grey background
-                    DrawRectangleRounded({ mmX, mmY, mmW, mmW }, 0.08f, 4,
-                                         Color{ 25, 25, 35, 155 });
-                    DrawRectangleRoundedLines({ mmX, mmY, mmW, mmW }, 0.08f, 4,
-                                              Color{ 200, 200, 220, 45 });
-
-                    int bossIdx = _dungeonGen.GetBossIndex();
-
-                    // Current-room pulse: slow blue flash with 3-second period
-                    float pulse = sinf((float)GetTime() * (2.f * PI / 3.f)) * 0.5f + 0.5f;
-
-                    // Connections drawn behind rooms
-                    for (const auto& room : mmRooms)
-                    {
-                        float cx = mmX + kMmPad + (room.col + 0.5f) * kMmCell;
-                        float cy = mmY + kMmPad + (room.row + 0.5f) * kMmCell;
-                        if (room.hasEast)
-                            DrawLineEx({ cx, cy }, { cx + kMmCell, cy },
-                                       1.2f, Color{ 185, 185, 205, 65 });
-                        if (room.hasSouth)
-                            DrawLineEx({ cx, cy }, { cx, cy + kMmCell },
-                                       1.2f, Color{ 185, 185, 205, 65 });
-                    }
-
-                    // Room squares
-                    for (int mmI = 0; mmI < (int)mmRooms.size(); mmI++)
-                    {
-                        const DungeonRoom& room = mmRooms[mmI];
-                        float rx = mmX + kMmPad + room.col * kMmCell
-                                   + (kMmCell - kMmSq) * 0.5f;
-                        float ry = mmY + kMmPad + room.row * kMmCell
-                                   + (kMmCell - kMmSq) * 0.5f;
-
-                        Color roomCol;
-                        if (mmI == _dungeonRoomIdx)
-                        {
-                            // Blue pulse for current position
-                            roomCol = {
-                                (unsigned char)(50  + (int)(40  * pulse)),
-                                (unsigned char)(120 + (int)(80  * pulse)),
-                                255,
-                                (unsigned char)(160 + (int)(95  * pulse))
-                            };
-                        }
-                        else if (mmI == bossIdx)
-                        {
-                            roomCol = Color{ 215, 50, 50, 175 };  // boss: red
-                        }
-                        else
-                        {
-                            roomCol = Color{ 210, 210, 225, 115 };  // standard: white
-                        }
-
-                        DrawRectangleRounded({ rx, ry, kMmSq, kMmSq }, 0.3f, 4, roomCol);
-                    }
-                }
+                constexpr float kMiniMapCell = 30.f;
+                const float mapW = DungeonGen::kGridSize * kMiniMapCell + kMiniMapCell;
+                DrawDungeonMiniMap(sw - mapW - 10.f, 8.f, kMiniMapCell, false);
             }
+            DrawModifierStack();
 
             DrawUltimateSequence();
             DrawMagicGemHudIcon();
-            drawRoomLabel();
+            if (_debug.IsActive()) drawRoomLabel();   // room label is debug info now
 
             // Small biome name reminder in the bottom-right corner - useful when
             // cycling biomes in the pregen map test without losing track of which one is active.
             {
-                const char* biomeTag = TextFormat("[ %s ]", GetBiomeName(_currentBiome));
-                int biomeTagW = MeasureText(biomeTag, 16);
-                DrawText(biomeTag, (int)(sw - biomeTagW - 12), (int)(sh - 26), 16,
-                    Fade(Color{ 160, 200, 255, 255 }, 0.55f));
+                if (_debug.IsActive())   // biome reminder is dev info, not gameplay HUD
+                {
+                    const char* biomeTag = TextFormat("[ %s ]", GetBiomeName(_currentBiome));
+                    int biomeTagW = MeasureText(biomeTag, 16);
+                    DrawText(biomeTag, (int)(sw - biomeTagW - 12), (int)(sh - 26), 16,
+                        Fade(Color{ 160, 200, 255, 255 }, 0.55f));
+                }
 
                 if (_isDailyRun)
                 {
@@ -14196,6 +16032,16 @@ void Engine::DrawDungeonRun()
                         Fade(Color{ 255, 210, 120, 255 }, 0.75f));
                 }
             }
+            // Hold TAB: full-screen dungeon map overlay for planning.
+            if (IsKeyDown(KEY_TAB) && !_dungeonScrolling)
+            {
+                DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.72f));
+                constexpr float kOverlayCell = 64.f;
+                const float overlayW = DungeonGen::kGridSize * kOverlayCell + kOverlayCell;
+                DrawDungeonMiniMap(sw * 0.5f - overlayW * 0.5f,
+                                   sh * 0.5f - overlayW * 0.5f, kOverlayCell, true);
+            }
+
             if (_bossBarrierMessageTimer > 0.f)
             {
                 const char* msg = "you need a a magic gem to get past the barrier";

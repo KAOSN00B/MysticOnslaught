@@ -1,4 +1,4 @@
-﻿#include "Character.h"
+#include "Character.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
@@ -257,8 +257,8 @@ void Character::AddRelic(RelicType type)
         Heal(3);
         break;
     case RelicType::SecondWind:
-        _maxHealth = std::ceil(_maxHealth * 1.30f);
-        _health    = std::min(_health + _maxHealth * 0.30f, _maxHealth);
+        _maxHealth = std::ceil(_maxHealth * 1.20f);
+        _health    = std::min(_health + _maxHealth * 0.20f, _maxHealth);
         break;
     case RelicType::ThornmailRunes:
         _maxHealth += 2.f;
@@ -269,11 +269,11 @@ void Character::AddRelic(RelicType type)
         _health    = std::min(_health, _maxHealth);
         break;
     case RelicType::ArcaneBattery:
-        _maxMana += 40;
-        _manaRegenMultiplier *= 1.40f;
+        _maxMana += 8;
+        _manaRegenMultiplier *= 1.12f;
         break;
     case RelicType::SwiftBoots:
-        _speed *= 1.14f;
+        _speed *= 1.08f;
         break;
     case RelicType::Momentum:
         _speed *= 1.10f;
@@ -304,7 +304,7 @@ int Character::ScaleOutgoingDamage(bool targetFrozen, bool targetCharged, bool t
     // Flat global damage boosts.
     if (HasRelic(RelicType::KeenEdge))    mult += 0.15f;
     if (HasRelic(RelicType::Bloodlust))   mult += 0.25f;
-    if (HasRelic(RelicType::GlassCannon)) mult += 0.80f;
+    if (HasRelic(RelicType::GlassCannon)) mult += 0.35f;
     if (HasRelic(RelicType::Momentum))    mult += 0.10f;
     if (HasRelic(RelicType::Reaper))      mult += 0.15f;
 
@@ -314,20 +314,20 @@ int Character::ScaleOutgoingDamage(bool targetFrozen, bool targetCharged, bool t
         mult += 0.30f;
 
     // Status synergies.
-    if (targetFrozen  && HasRelic(RelicType::Permafrost)) mult += 0.60f;
-    if (targetBurning && HasRelic(RelicType::EmberHeart)) mult += 0.40f;
-    if (targetCharged && HasRelic(RelicType::Overcharge)) mult += 0.50f;
+    if (targetFrozen  && HasRelic(RelicType::Permafrost)) mult += 0.25f;
+    if (targetBurning && HasRelic(RelicType::EmberHeart)) mult += 0.25f;
+    if (targetCharged && HasRelic(RelicType::Overcharge)) mult += 0.25f;
 
     // Executioner finisher on low-HP targets.
     if (HasRelic(RelicType::Executioner) && targetHpFraction <= 0.25f)
-        mult += 1.20f;
+        mult += 0.35f;
 
-    // Deadeye crit — rolled per hit, doubles the final number.
+    // Deadeye crit — rolled per hit for a controlled burst.
     outCrit = false;
     if (HasRelic(RelicType::Deadeye) && GetRandomValue(1, 100) <= 20)
     {
         outCrit = true;
-        mult *= 2.0f;
+        mult *= 1.5f;
     }
 
     int scaled = (int)std::ceil((float)baseDamage * mult);
@@ -496,18 +496,17 @@ void Character::HandleInput()
     if (Vector2Length(_direction) > 1.f)
         _direction = Vector2Normalize(_direction);
 
-    // Ability hotkeys and dash — blocked during wave intro or other combat-locked states
-    if (_combatLocked)
-        return;
+    // Combat lock blocks attacks/abilities. Village mode can opt into keeping dash.
+    bool canDash = !_combatLocked || _dashAllowedWhileCombatLocked;
 
-    if (!_touchModeEnabled)
+    if (!_combatLocked && !_touchModeEnabled)
     {
         for (int i = 0; i < _learnedCount; i++)
             if (_bindings.ability[i] != KEY_NULL && IsKeyPressed(_bindings.ability[i]))
                 TriggerAbilityCast(i);
     }
 
-    bool dashTrigger = (!_touchModeEnabled && IsKeyPressed(_bindings.dash)) || _touchDashJustPressed;
+    bool dashTrigger = canDash && ((!_touchModeEnabled && IsKeyPressed(_bindings.dash)) || _touchDashJustPressed);
     _touchDashJustPressed = false; // always consume
 
     if (dashTrigger && !_isDashing && _dashCooldown <= 0.f && !_biomeDashLocked)
@@ -1432,38 +1431,43 @@ void Character::ApplyUpgrade(UpgradeType type)
         _attackPower += 1.0f;
         break;
     case UpgradeType::AttackRange:
-        _attackRangeMultiplier += 0.15f;
+        _attackRangeMultiplier += 0.12f;
         break;
     case UpgradeType::MaxHealth:
-        _maxHealth += 2;
-        Heal(2);
+        _maxHealth += 3;
+        Heal(3);
         break;
     case UpgradeType::MaxMana:
-        _maxMana += 3;
+        _maxMana += 6;
+        _mana = std::min(_mana + 3, _maxMana);
         break;
     case UpgradeType::Defense:
         AddArmour(1);
         break;
     case UpgradeType::MoveSpeed:
-        _speed += 20.0f;
+        _speed += 18.0f;
         break;
     // ── Rare ──────────────────────────────────────────────────────────────────
     case UpgradeType::IronConstitution:
-        _maxHealth += 4;
-        Heal(4);
+    {
+        float oldMax = _maxHealth;
+        _maxHealth = std::ceil(_maxHealth * 1.15f);
+        Heal((int)std::max(1.f, _maxHealth - oldMax));
         break;
+    }
     case UpgradeType::SwiftFeet:
-        _speed += 40.0f;
+        _speed *= 1.08f;
         break;
     case UpgradeType::Ferocity:
-        _attackPower += 2.0f;
+        _attackPower += std::max(1.0f, _attackPower * 0.10f);
         break;
     case UpgradeType::ArcaneMind:
-        _maxMana += 5;
+        _maxMana += 8;
+        _mana = std::min(_mana + 4, _maxMana);
         _manaRegenMultiplier += 0.10f;
         break;
     case UpgradeType::IronSkin:
-        AddArmour(1);
+        AddArmour(2);
         break;
     case UpgradeType::BladeEdge:
         _attackPower += 1.0f;
@@ -1471,25 +1475,33 @@ void Character::ApplyUpgrade(UpgradeType type)
         break;
     // ── Epic ──────────────────────────────────────────────────────────────────
     case UpgradeType::WarGod:
-        _attackPower += 3.0f;
-        _attackRangeMultiplier += 0.20f;
+        _attackPower += std::max(1.75f, _attackPower * 0.15f);
+        _attackRangeMultiplier += 0.12f;
         break;
     case UpgradeType::Resilience:
-        _maxHealth += 6;
-        Heal(6);
+    {
+        float oldMax = _maxHealth;
+        _maxHealth = std::ceil(_maxHealth * 1.18f);
+        Heal((int)std::max(2.f, _maxHealth - oldMax));
         break;
+    }
     case UpgradeType::BladeStorm:
-        _attackPower += 2.0f;
-        _speed += 50.0f;
+        _attackPower += 1.5f;
+        _speed *= 1.08f;
         break;
     case UpgradeType::Juggernaut:
-        _maxHealth += 4;
-        AddArmour(1);
+    {
+        float oldMax = _maxHealth;
+        _maxHealth = std::ceil(_maxHealth * 1.12f);
+        Heal((int)std::max(1.f, _maxHealth - oldMax));
+        AddArmour(2);
         break;
+    }
     case UpgradeType::ArcaneColossus:
-        _maxMana += 5;
-        _attackPower += 2.0f;
-        _manaRegenMultiplier += 0.25f;
+        _maxMana += 10;
+        _mana = std::min(_mana + 5, _maxMana);
+        _attackPower += 1.5f;
+        _manaRegenMultiplier += 0.15f;
         break;
     case UpgradeType::LearnFireSpread:
         LearnAbility(AbilityType::FireSpread);

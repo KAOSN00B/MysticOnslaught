@@ -113,9 +113,8 @@ namespace Balance::Boss
 namespace Balance::Economy
 {
     inline constexpr int   kHealDropChancePercent = 8;     // bonus heal-drop base chance
-    inline constexpr int   kPotionPrice           = 25;
-    inline constexpr int   kRerollBaseCost        = 20;
-    inline constexpr int   kRerollStep            = 20;    // added per reroll
+    inline constexpr int   kRerollBaseCost        = 45;
+    inline constexpr int   kRerollStep            = 35;    // added per reroll
     inline constexpr float kActPriceInflation     = 0.25f; // +25% shop prices per act
 }
 

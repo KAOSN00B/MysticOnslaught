@@ -1,0 +1,787 @@
+Mystic Onslaught - Village Builder / Home Base Direction
+========================================================
+
+Purpose
+-------
+This file captures the new direction for Mystic Onslaught's village portion:
+make the village more than a menu or static hub. The village can become a
+persistent, rebuildable, decorate-able home base that gives the game a second
+progression loop alongside dungeon runs. The graveyard is NOT the whole village
+level; it is a small respawn area inside/near the village that the user will
+make in the editor.
+
+The goal is not to turn Mystic Onslaught into a full farming/life sim. The goal
+is a roguelite village-builder layer inspired by the cozy ownership of Stardew
+Valley and the base-customization satisfaction of Cult of the Lamb, without
+follower/cult management and without daily chore pressure.
+
+Core fantasy:
+The dungeon is dangerous. The village is what the player is rebuilding.
+Every run brings back gold, Echoes, materials, memories, trophies, NPCs, and
+new possibilities. The player slowly turns a ruined, haunted place into a
+personal magical village.
+
+Key rule:
+Village building should unlock systems, options, cosmetics, and variety more
+than raw permanent combat power. Small comfort upgrades are fine, but the
+village should not erase roguelite tension.
+
+
+High-Level Game Loop
+--------------------
+1. Player starts in a ruined graveyard / forgotten village.
+2. Player enters dungeon.
+3. During the run, player earns temporary run resources: gold, Echoes/cells,
+   relics, ability upgrades, trophies, and possibly building materials.
+4. At death, boss clear, or safe return point, some resources are banked.
+5. Banked resources are spent in the village to rebuild useful buildings,
+   unlock NPC services, decorate, and personalize the village.
+6. Village upgrades unlock new run possibilities: room types, relic pools,
+   shop options, class options, starting choices, map tools, and cosmetic
+   choices.
+7. The next run starts with more variety, clearer player identity, and a more
+   personal home base, but still has roguelite risk.
+
+Simple loop sentence:
+Dungeon runs feed the village. The village changes future dungeon runs.
+
+
+Respawn Area - Small Graveyard, Not The Whole Village
+-----------------------------------------------------
+Clarification from the user:
+The game should not be treated as a full graveyard level. The user wants to
+make a small graveyard area in the editor. That graveyard is where the player
+respawns when they die.
+
+Correct framing:
+- The broader village is still the home base and decoration/building space.
+- The graveyard is one small authored area inside or near the village.
+- Death returns the player to the graveyard respawn point.
+- The user will build the graveyard visually in the editor.
+- The village can still have homes, shops, paths, decorations, NPC buildings,
+  trophy areas, and other cozy/functional spaces around or beyond it.
+
+Why the graveyard still matters:
+- It gives death a clear physical return point.
+- It fits the roguelite revive loop.
+- It can hold run graves, memorials, Poe's early presence, or the resurrection
+  shrine.
+- It does not need to define the entire village's mood. The village can become
+  warm, magical, rebuilt, and personal while the graveyard remains the respawn
+  anchor.
+
+Possible respawn flow:
+1. Player dies in dungeon.
+2. Screen fades.
+3. Player appears at the small graveyard respawn point.
+4. A short soul/glow effect plays.
+5. Recovered gold/Echoes/materials are shown.
+6. Player can walk into the rest of the village to build, decorate, change
+   outfit/class, talk to NPCs, or start another run.
+
+Character Identity, Outfits, Skin Tone, and Class Changes
+---------------------------------------------------------
+The player starts as the first/default hero. Later, the village needs places and
+story reasons for changing appearance, outfits, skin tone, and class.
+
+Important design need:
+Changing skin tone/body/outfit/class should not feel random or careless. It
+needs a fantasy explanation that fits the world.
+
+Possible story reasons:
+
+1. Mirror of Memories
+- A magical mirror in the village lets the hero reshape their remembered self.
+- Because the hero is bound to Echoes/memory, appearance is not fixed flesh - it
+  is a soul-form stabilized by memory.
+- This can justify skin tone, hair, outfit, body palette, and cosmetic changes.
+- It should be presented as self-expression, not a disguise.
+
+2. Wardrobe / Tailor NPC
+- A rescued tailor or spirit seamstress unlocks outfits, cloaks, hats, armor
+  skins, and color palettes.
+- Outfits are cosmetic and can be bought with banked gold, boss trophies, or
+  biome materials.
+- Some outfits unlock from achievements: defeat boss, clear biome, complete
+  challenge, rescue NPC, build certain village structure.
+
+3. Class Shrine / Hall of Callings
+- A rebuilt shrine or training hall lets the hero change class.
+- Each class is a remembered fighting style, oath, mask, or soul-aspect.
+- The hero is still the same person, but channels different battle memories.
+- This preserves identity while allowing class changes.
+
+4. Ancestral Graves
+- Each class could be tied to a grave, statue, or memorial of a past champion.
+- Unlocking a class means restoring that memory/spirit.
+- Class change becomes: visit memorial -> attune to this path.
+
+5. Masks / Sigils
+- Classes can be represented by masks, sigils, or relic garments.
+- The hero equips a mask/sigil to fight as Mage, Warrior, Rogue, etc.
+- Outfits and class identity can be separated: outfit is appearance, sigil is
+  mechanical class.
+
+Recommended first version:
+- Mirror of Memories for appearance and skin tone.
+- Wardrobe/Tailor for outfits.
+- Hall of Callings for class changes.
+
+This gives clear places in the village:
+- Mirror = body/skin/hair/basic look.
+- Wardrobe = clothes/skins/cosmetics.
+- Class Hall = class and starting kit.
+
+
+Village Building Layers
+-----------------------
+The village should have two layers: useful buildings and decoration.
+
+1. Useful Buildings
+These unlock systems or affect future runs.
+
+Examples:
+- Poe's Graveyard Library / Echo Altar
+  Unlocks relic pools, death-screen choices, room types, lore memories, and
+  possibly the new meta progression system.
+
+- Zeph's Stall
+  Unlocks better shop variety, rare stock, reroll options, discounts, shop
+  decorations, and maybe special shop events.
+
+- Blacksmith / Relic Forge
+  Unlocks relic forge rooms, relic salvage/reroll, starting weapon/ability
+  options, and run preparation choices.
+
+- Cartographer Hut
+  Unlocks minimap icons, decision-room ? icons, route reveal, Omen room
+  improvements, and dungeon planning tools.
+
+- Training Yard
+  Lets player test abilities, hitboxes, classes, boss practice later, and maybe
+  has target dummies for damage numbers.
+
+- Shrine Garden
+  Unlocks Risk Shrine, Cursed Reward, Omen/Prophecy, and other decision room
+  types.
+
+- Mirror of Memories
+  Appearance editor: skin tone, hair, palette, maybe body/outfit base.
+
+- Wardrobe / Tailor House
+  Outfit unlocks, costumes, armor skins, class-neutral cosmetics.
+
+- Hall of Callings
+  Class-change building. Choose class, starting class kit, maybe class-specific
+  challenge unlocks.
+
+- Portal Gate
+  The dungeon entrance. Later can unlock biome selection, difficulty modifiers,
+  daily run, boss rush, challenge modes.
+
+- Trophy Hall
+  Boss trophies, run milestones, achievements, decorations that prove progress.
+
+2. Decoration / Personalization
+These give the player ownership and creativity without needing to be optimal.
+
+Decoration examples:
+- paths
+- fences
+- flowers
+- shrubs
+- trees
+- lanterns
+- benches
+- signs
+- banners
+- statues
+- fountains
+- ponds/water tiles
+- grave markers
+- candles
+- campfires
+- glowing crystals
+- market props
+- rugs/carpets for interiors
+- walls/floor tiles for interiors
+- boss trophies
+- biome-themed objects
+- seasonal/event objects
+- NPC home decorations
+- house skins
+- ruins restored into pretty versions
+
+Decoration rules:
+- Buy with banked gold or village materials.
+- Place in build mode.
+- Move/remove freely.
+- Rotate if supported.
+- Some objects unlock from bosses, biomes, room achievements, NPCs, or secret
+  finds.
+- Decorations should be mostly cosmetic. A few can have tiny utility, but avoid
+  making decoration placement mathematically required.
+
+Possible tiny utility decorations:
+- Lamp posts mark fast-travel points inside village.
+- Trophy statues unlock lore or cosmetic titles.
+- Garden shrines show active challenges.
+- Practice dummies display saved damage records.
+
+
+Gold, Banking, and Village Currency
+-----------------------------------
+The player suggested keeping money/gold and using it to build things in the
+village. This is strong, but the economy needs separation so dungeon shops and
+village building do not fight each other too much.
+
+Recommended model:
+- Run Gold: gold earned during a dungeon run, spendable inside the run.
+- Banked Gold: safe village currency, used for buildings and decorations.
+
+How Run Gold becomes Banked Gold:
+- On boss clear: bank a large portion or all carried gold.
+- On safe return to village: bank carried gold.
+- On death: bank a smaller percentage by default, maybe 25-50%.
+- Village upgrades can improve death banking slightly.
+- Zeph/shop rooms might bank only special Echoes, not necessarily all gold,
+  depending on desired pressure.
+
+Why separate them:
+- Players can spend freely in dungeon without feeling they ruined village
+  progress forever.
+- Players who save gold still get village progress.
+- Death can hurt without deleting everything.
+- Village upgrades can improve safety without becoming raw combat damage.
+
+Possible death banking examples:
+- Default: keep 30% of carried gold as Banked Gold on death.
+- Build "Grave Ledger": keep 40%.
+- Build "Poe's Vault": keep 50%.
+- Boss clears always bank 100% of carried gold before next act.
+
+Possible additional village resources:
+- Echoes: memory/spirit currency from enemies/bosses/death.
+- Materials: wood/stone/ore/crystal from dungeon biomes or room rewards.
+- Trophies: boss/elite achievements used for cosmetics or major buildings.
+
+Keep first version simple:
+Start with Banked Gold only, then add materials if the village needs more depth.
+
+
+How Roguelite Leveling Fits With Village Building
+-------------------------------------------------
+This is the most important design question. The game can have three progression
+tracks, but they must have different jobs.
+
+Track 1: In-Run Leveling
+Purpose: short-term power for the current run.
+Examples:
+- Level-up cards.
+- Ability upgrades.
+- Relics found this run.
+- Temporary mutations.
+- Shop upgrades.
+
+Rules:
+- Mostly resets on death/new run.
+- Creates the run's build identity.
+- Should be exciting and visible.
+- Should not be replaced by village upgrades.
+
+Track 2: Meta Unlocks
+Purpose: add future variety and small comfort.
+Examples:
+- Unlock new relics into future pool.
+- Unlock new room types.
+- Unlock new class options.
+- Unlock new NPC services.
+- Unlock new starter choices.
+- Unlock cosmetic items.
+
+Rules:
+- Permanent across runs.
+- Mostly expands options instead of raw stats.
+- Makes future runs more varied, not automatically easier forever.
+
+Track 3: Village Building / Decoration
+Purpose: visible long-term ownership and emotional progress.
+Examples:
+- Build Zeph's shop.
+- Restore Poe's library.
+- Place decorations.
+- Build NPC homes.
+- Unlock class hall.
+- Rebuild graveyard into village.
+
+Rules:
+- Permanent and visual.
+- Gives the player a reason to care after death.
+- Can unlock meta systems and cosmetics.
+- Should not require farming chores unless deliberately added later.
+
+The clean relationship:
+- Runs give resources.
+- Resources rebuild village.
+- Village unlocks future options.
+- In-run leveling still determines whether the current run survives.
+
+
+What Happens On Death
+---------------------
+Death should become a meaningful return, not just a failure screen.
+
+Possible death flow:
+1. Player dies in dungeon.
+2. Screen fades / soul returns to graveyard shrine.
+3. Poe appears or the Echo screen opens.
+4. The game shows what was recovered:
+   - Banked Gold gained from carried gold percentage.
+   - Echoes recovered.
+   - Materials recovered.
+   - Trophies or unlocks, if any.
+5. Player can spend resources on village/buildings/unlocks.
+6. Player can decorate, change appearance/class, talk to NPCs, then start a new
+   run.
+
+Death should not feel like pure punishment. It should say:
+"You failed the run, but the village remembers what you brought back."
+
+Potential Balatro / Slay the Spire inspiration:
+- After death, show progress/unlocks clearly.
+- New options enter future pools.
+- Player sees a sense of "next run can be different." 
+
+
+What Happens After A Boss
+-------------------------
+Boss clear should be the cleanest rest moment.
+
+Possible boss clear flow:
+1. Boss defeated.
+2. Player banks carried gold/resources.
+3. Player returns to village or a village intermission version.
+4. Hero receives restoration glow.
+5. HP and mana restore.
+6. Maybe armor partially restores.
+7. New building/NPC/decoration/trophy may unlock.
+8. Player chooses to continue to next act when ready.
+
+Restoration glow idea:
+- Soft golden/blue glow around player.
+- Particles rise from graveyard shrine or village fountain.
+- HP/MP refill with visible ticks.
+- Message: "The village restores you." or "The graveyard releases its light."
+
+This replaces mid-dungeon potions as the primary safe recovery moment.
+
+
+Interactive Bestiary / Monster Sanctuary / Companion Friends
+------------------------------------------------------------
+The bestiary can become more than a static menu. It can become a physical part
+of the village: a Monster Sanctuary, Study Yard, Spirit Pen, Tamed Echo Yard,
+or Creature Farm where discovered creatures appear in safe, friendly forms.
+
+Updated direction:
+The study aspect is important, but the reward should be more playful and useful.
+When all study challenges for a creature are complete, a village NPC can learn
+how to calm/tame/call that creature. The NPC then says something like:
+"I understand the Slime now. I can tame one safely. I'll go get one shortly."
+
+The next time the player returns to or reloads the village, that creature arrives
+in the sanctuary/farm area. It can wander around peacefully, and the player can
+also choose one unlocked creature to bring into a dungeon run as a small
+companion.
+
+Core fantasy:
+The village is not just storing enemies. The village is learning the dungeon.
+Poe, the Keeper, or another NPC studies the player's bestiary notes and figures
+out how to calm a creature. Once understood, a friendly version can live in the
+village and optionally travel with the hero.
+
+Possible NPC role:
+The Keeper
+- Runs the Monster Sanctuary / Creature Farm.
+- Reads Poe's notes and the player's bestiary progress.
+- Learns how to calm each creature.
+- Brings creatures to the village after their study is complete.
+- Explains each creature's habits, personality, and combat behavior.
+- Lets the player choose one companion before starting a run.
+
+Creature study flow:
+1. Encounter creature.
+   - The bestiary gets a basic entry.
+2. Complete study challenges.
+   - Defeat a certain number.
+   - See or survive its special attack.
+   - Defeat an elite version.
+   - Clear a room containing it without taking damage.
+   - Watch all attack patterns.
+   - Find a rare note, charm, or clue tied to that creature.
+3. Return to the Bestiary NPC / Keeper.
+   - NPC confirms that the creature can now be calmed.
+   - Example: "That's enough. I know how to approach a Frost Wisp now. Give me
+     a little time and I'll bring one safely to the sanctuary."
+4. Mark creature as pending arrival.
+   - Save a pending flag: this creature has been unlocked but has not arrived
+     yet.
+5. Next village load / next return from dungeon.
+   - Show a small arrival message.
+   - Example: "A Frost Wisp has arrived at the Sanctuary."
+6. Creature appears in the village.
+   - If a matching habitat exists, it appears there.
+   - If not, it waits in a simple default holding area until the player places a
+     habitat.
+7. Player can choose it as one active dungeon companion.
+
+Dungeon companion flow:
+- Before a run, the player can choose one unlocked creature friend.
+- Only one companion should come at a time for balance and readability.
+- In the dungeon, it has "Friend" above its health bar.
+- It follows the player, attacks lightly, and supports the run.
+- It should feel helpful but not strong enough to replace player skill.
+- If it is defeated, it does not die permanently.
+- Message example: "Slime had enough and returned to the village."
+- The companion is unavailable for the rest of that run or until the player
+  returns to the village, depending on balance.
+- It should return safely to the sanctuary/farm after the run.
+
+Companion balance rules:
+- Companions are small bonuses, not full party members.
+- They should add identity, charm, and build flavor.
+- Their damage should be modest.
+- Their health should be limited enough that careless play can lose them.
+- They should not carry boss fights by themselves.
+- Companion abilities can be more utility-focused than raw damage.
+
+Example companion roles:
+- Slime Friend: slow melee bump, can briefly slow enemies.
+- Bat Friend: flies near player, chips at distant enemies.
+- Frost Wisp Friend: tiny frost projectile, low chance to chill.
+- Ember Sprite Friend: small fire poke, can light torches or react to fire
+  decorations.
+- Bone Imp Friend: throws weak bones, distracts one enemy at a time.
+- Crystal Bug Friend: occasionally drops a tiny shield shard or mana mote.
+
+Village behavior:
+- Friendly creatures walk around a fenced sanctuary, grove, pond, cave, barn,
+  stable, or custom habitat.
+- They do not attack the player in the village.
+- They can idle, sleep, stretch, hop, glow, look at the player, hide, or react
+  to nearby decorations.
+- The player can approach one and open its bestiary page.
+- The entry can show HP, attack type, biome, danger rating, weaknesses,
+  resistances, drops, elite variants, study challenges, companion ability, and
+  dungeon tips.
+- Later, the sanctuary could show harmless previews of the creature's attacks,
+  hitboxes, or projectile paths, which connects nicely to the existing hitbox
+  and VFX animator direction.
+
+Habitats:
+- Each companion type can have a preferred habitat.
+- The player can build/place habitats in the village farm/sanctuary area.
+- Habitat examples: slime puddle, bat perch, bone den, frost patch, ember
+  brazier, crystal nest, mushroom log, shallow pond, shadow cave, tiny shrine.
+- If the player has no habitat yet, newly arrived creatures wait in a default
+  safe pen.
+- Habitats are mostly visual and organizational, not chore systems.
+
+Why this helps the roguelite identity:
+The run still resets, but the village does not. Companion friends become a
+permanent unlock that changes future run choices without giving huge permanent
+stat boosts. The player does not keep temporary level-ups, relics, or shop
+upgrades after death, but they do keep bestiary progress, unlocked companions,
+village buildings, cosmetics, and new options.
+
+Clean roguelite loop:
+- Run power resets.
+- Village knowledge persists.
+- Study progress persists.
+- Companion unlocks persist.
+- Each run can start with one chosen friend, but that friend can be defeated and
+  leave the run.
+- Final dungeon clears unlock harder cycles, new study challenges, new companion
+  variants, and new village goals.
+
+What happens after beating the final dungeon:
+Beating the final dungeon should complete a cycle, not end the whole game. The
+village can visibly restore, story can advance, and a harder layer can unlock.
+
+Possible post-final-boss system:
+- Eclipse Tiers / Omen Tiers / New Moon Cycles.
+- Final boss defeated once: Eclipse Tier 1 unlocks.
+- Enemies gain new patterns or modifiers.
+- Bosses get added attacks.
+- Better rewards and new decorations appear.
+- New companion variants unlock.
+- New bestiary challenges appear.
+- New room variants and late-game village upgrades unlock.
+
+This keeps the game roguelite:
+Dungeon runs are temporary. Village growth is permanent. Final boss clears unlock
+deeper cycles instead of ending all progression.
+
+Possible non-combat room tie-in:
+Add room types such as Wounded Creature, Calm The Beast, Echo Study, or Keeper's
+Trail. These rooms can give bestiary progress, unlock a missing study challenge,
+add a pending sanctuary arrival, or reward a habitat decoration.
+
+First implementation scope:
+1. Add a Bestiary/Sanctuary/Keeper building in the village.
+2. Track basic creature discovery and study challenge completion.
+3. Add a pending arrival flag once a creature's study is complete.
+4. On next village load, spawn the friendly creature in a default sanctuary area.
+5. Let the player interact with it to open its bestiary entry.
+6. Later, add one chosen dungeon companion with "Friend" above its health bar.
+7. Later, add habitats, companion abilities, attack previews, and special unlock
+   events.
+
+Design guardrails:
+- No feeding timers.
+- No happiness meters.
+- No daily chores.
+- No permanent death for companion friends.
+- No required pet management for combat strength.
+- Only one active dungeon companion at a time.
+- Keep rewards focused on lore, cosmetics, practice tools, decorations, small
+  run variety, and player pride.
+Potential Unique Hooks
+----------------------
+These ideas can help Mystic Onslaught feel distinct rather than just a roguelite
+with a hub.
+
+1. Graveyard Becomes Village
+- The graveyard starts as the death/respawn anchor, not the whole village.
+- The broader village gains life/color/lamps/flowers/buildings as it is rebuilt.
+- The player sees dungeon runs feed village recovery and personalization.
+
+2. Graves For Runs
+- Important failed runs leave a grave marker.
+- Grave can show class, floor/act reached, boss killed, gold recovered.
+- Player can decorate graves or convert them into memory statues.
+- This makes failure visible and personal.
+
+3. Memory-Based Appearance
+- Appearance changes are framed as restored memories, not random body swapping.
+- The Mirror of Memories lets players choose how the hero remembers themselves.
+
+4. Rescued NPCs
+- NPCs are found in dungeon events or after bosses.
+- Building them a home unlocks their service.
+- NPCs wander the village once housed.
+
+5. Trophy Decorations From Bosses
+- Every boss drops a trophy decoration.
+- Placing trophies in village gives pride and visual history.
+- Some trophies unlock related cosmetics or room variants.
+
+6. Decision Rooms As Village Unlocks
+- Risk Shrine, Cursed Reward, Omen, Relic Forge, Locked Armory, and Mutation
+  rooms are unlocked by restoring village buildings.
+- The village therefore changes dungeon variety.
+
+7. Village Mood / Corruption
+- Optional later system: village has corruption/life level based on progress.
+- Rebuilding adds light, flowers, NPCs, music layers.
+- Dangerous choices in dungeon could temporarily darken parts of the village,
+  but avoid making this punishing or chore-like.
+
+8. Personal Layout
+- Player chooses where buildings and decorations go.
+- Some key structures may have fixed plots for simplicity, while decorations are
+  freely placed on a grid.
+- This balances technical feasibility with player creativity.
+
+
+Village Tile / Building Piece Editor Direction
+----------------------------------------------
+The village tools likely need a major redesign. The editor should not only build
+one finished village map. It should help create reusable village pieces that can
+be placed, layered, upgraded, and customized in the village builder.
+
+New goal:
+Shift from "paint a whole village" to "define modular village pieces."
+The user should be able to create building parts, decoration parts, doors,
+interior entrances, roofs, chimneys, signs, and overlay layers that the village
+builder can use later.
+
+Why this matters:
+A village-builder system needs objects with meaning. A house is not just pixels
+on the ground. It needs a footprint, visual layers, collision, a door position,
+an optional interior link, upgrade states, and maybe attachment points for extra
+pieces such as chimneys, signs, lamps, fences, and flower boxes.
+
+Recommended object model:
+Each village piece should have data like:
+- id/name: ZephShop_Tier1, SmallHouse_A, Chimney_Stone, SlimeHabitat, etc.
+- category: building, roof, attachment, path, fence, decoration, habitat,
+  interior prop, door, light, trophy, farm/sanctuary piece.
+- footprint: grid cells occupied by the object.
+- collision: cells or rectangles the player cannot walk through.
+- interaction points: door, shop counter, sign, NPC talk spot, bestiary stand.
+- door/entrance position: where the player presses interact to enter.
+- interior target: which interior map or room this door loads.
+- draw layers: ground shadow, base/walls, roof, chimney, sign, foreground trim,
+  lighting, VFX.
+- anchor/pivot: where the object snaps to the grid.
+- allowed attachments: chimney slots, sign slots, window boxes, lantern hooks.
+- upgrade state: ruined, repaired, upgraded, decorated, seasonal variant.
+- tags: village, graveyard, shop, class hall, sanctuary, companion habitat, etc.
+
+Layer needs:
+- Ground layer: paths, floor markings, shadows, foundation tiles.
+- Object base layer: walls, fences, props, lower building pieces.
+- Roof/upper layer: roof, upper walls, tree tops, tall props.
+- Attachment layer: chimneys, signs, banners, lamps, flower boxes.
+- Door/interact layer: invisible metadata for entrances and talk/use points.
+- Collision layer: blocked tiles/rectangles.
+- Foreground layer: pieces that draw over the player when they walk behind them.
+- VFX/light layer: glow, smoke, particles, lantern light, portal effects.
+
+Building example:
+A placeable house should be made from several parts:
+- foundation/footprint
+- wall/base sprite
+- roof sprite
+- optional chimney attachment
+- optional sign attachment
+- door interact point
+- interior destination
+- collision bounds
+- foreground roof edge if the player can walk behind part of it
+
+Companion sanctuary examples:
+- Slime habitat: ground puddle layer, tiny fence layer, optional sign, slime spawn
+  points.
+- Bat perch: post/base layer, perch attachment, bat idle points.
+- Frost patch: icy ground layer, crystal attachment layer, cold mist VFX layer.
+- Ember brazier: base prop, flame VFX, warm light layer.
+
+Editor features needed eventually:
+- Piece catalog browser by category.
+- Define footprint by selecting grid cells.
+- Define collision cells or rectangles.
+- Define draw layer per sprite/piece.
+- Add door/interact marker and name the target interior.
+- Add attachment sockets for chimney/sign/lamp/etc.
+- Preview player walking in front of/behind the object.
+- Preview NPC/companion spawn points.
+- Save piece definitions to data files.
+- Place saved pieces into the village map.
+- Upgrade/variant preview for buildings.
+
+Important difference:
+The map editor can still paint base terrain and paths, but village buildings and
+many decorations should become data-driven pieces. That makes it possible for
+Claude/Codex to add new buildings, interiors, companion habitats, and upgrade
+states without hardcoding every visual arrangement into the map.
+
+First technical target:
+Start simple. Define a VillagePiece format with:
+- sprite source rectangle or sprite id
+- world/grid size
+- draw layer
+- collision rectangle
+- optional interact point
+- optional interior target
+Then expand into attachments, upgrade states, companion spawn points, and VFX
+layers once the basic placement works.
+Recommended First Implementation Scope
+--------------------------------------
+Do not build a huge village builder all at once. First version should prove the
+loop.
+
+Phase 1: Banked Gold + Simple Village Upgrade Menu
+- Add Banked Gold separate from Run Gold.
+- On death/boss clear, convert some carried gold to Banked Gold.
+- Add a simple village upgrade screen/menu with 3-5 upgrades.
+- Upgrades can unlock existing systems or cosmetics later.
+- No free decoration placement yet.
+
+Phase 2: Village Build Mode Prototype
+- Use existing village map/editor systems if possible, but begin moving toward
+  data-driven VillagePiece placement.
+- Add a small catalog of decorations and simple building pieces.
+- Place/remove/move pieces on a grid.
+- Save placed pieces.
+- Start with paths, lanterns, flowers, benches, signs, small statues, and one
+  simple house/stall piece with collision and an interact point.
+
+Phase 3: Useful Buildings
+- Add fixed building plots or placeable building footprints.
+- Build Zeph's Stall, Poe's Library, Mirror, Wardrobe, Class Hall, and the
+  Bestiary/Sanctuary/Keeper building.
+- Buildings unlock simple services.
+- Buildings should support door/interact metadata so the player can enter or use
+  them properly.
+
+Phase 4: Dungeon Integration
+- Buildings unlock room types, shop options, class options, relic pools, and map
+  information.
+- This ties village progression into the roguelite loop.
+
+Phase 5: Polish / Identity
+- NPCs wander.
+- Boss trophies.
+- Restoration glow after boss.
+- Run graves.
+- Friendly sanctuary creatures wander.
+- One chosen companion can join dungeon runs with a Friend label.
+- More decorative sets from biomes.
+
+
+Open Questions
+--------------
+- Should the player return to village after every boss, or only after death and
+  act transitions?
+- Should boss clear bank all carried gold, while death banks only a portion?
+- Should Run Gold and Banked Gold be separate UI currencies, or convert quietly
+  after runs?
+- Should buildings have fixed plots first, or should everything be freely
+  placeable?
+- Should decoration be pure cosmetic, or can a few decorations have tiny utility?
+- Should class change be unlocked early or available from the start after the
+  first tutorial run?
+- How much appearance editing should be supported at first: outfit only, or skin
+  tone/hair/palette too?
+- Should failed runs create grave markers automatically, or only notable runs?
+- Should materials exist, or should v1 use Banked Gold only?
+- Which creature should be the first test companion?
+- Should companion friends return only after a run ends, or can they recover at
+  village rest points?
+- Should buildings use fixed plots first, or fully modular VillagePiece placement
+  from the start?
+
+
+Design Guardrails
+-----------------
+- Do not add farming chores unless the whole project intentionally shifts that
+  way later.
+- Do not require daily schedules, watering, NPC friendship grinding, or food
+  meters.
+- Do not make decorations mandatory for combat strength.
+- Do not let permanent village upgrades trivialize combat.
+- Companion friends should help, but never replace player skill.
+- Prefer unlocks, options, variety, cosmetics, map tools, and small comforts.
+- Keep the dungeon-village connection clear: every run should bring something
+  back, even if the player dies.
+- Make the village visually change. If rebuilding is only a menu, the fantasy is
+  much weaker.
+- Let the player personalize without punishing them for aesthetics.
+
+
+Short Version
+-------------
+The village can become Mystic Onslaught's second core loop.
+
+The game can include a small graveyard respawn area. The player enters the
+dungeon, earns resources, dies or clears bosses, returns to that graveyard
+respawn point, and uses the broader village as the living build/decorate space. Useful buildings unlock future roguelite options.
+Decorations let the player make the village their own. Appearance/class changes
+are explained through memory, mirrors, graves, and restored callings. The
+bestiary can grow into a sanctuary where studied creatures arrive in the village,
+and one chosen friend can join future dungeon runs as a small companion bonus.
+
+The dungeon remains the source of danger and run builds.
+The village becomes the source of identity, ownership, long-term goals, and cozy
+progress.

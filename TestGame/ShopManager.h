@@ -118,8 +118,6 @@ private:
     bool  _gamepadBottomActive   = false;
     int   _gamepadBottomIdx      = 0;
     bool  _gamepadRerollPending  = false;
-    bool  _gamepadHPotPending    = false;
-    bool  _gamepadMPotPending    = false;
     // Tab-row cursor (highlight tab first, A to switch)
     bool  _gamepadTabActive      = false;
     int   _gamepadTabCursor      = 0;      // 0=Wares 1=Abilities
@@ -164,17 +162,17 @@ private:
     float _uiSlotFs         = 42.0f;   // 4  ability name in slot
     float _uiSlotBtnFs      = 32.0f;   // 5  Upg/Rem button text
     float _uiHpFs           = 47.0f;   // 6  HP/MP bar label
-    float _uiTabH           = 57.0f;   // 7  Wares/Abilities tab height
-    float _uiBuyBtnH        = 59.0f;   // 8  buy button height
-    float _uiItemNameFs     = 41.0f;   // 9  shop item name font size
-    float _uiItemDescFs     = 38.0f;   // 10 shop item description font size
+    float _uiTabH           = 63.0f;   // 7  Wares/Abilities tab height
+    float _uiBuyBtnH        = 44.0f;   // 8  buy button height
+    float _uiItemNameFs     = 33.0f;   // 9  shop item name font size
+    float _uiItemDescFs     = 24.0f;   // 10 shop item description font size
     float _uiItemTextOffsetY = 20.0f;  // 11 Y gap between icon bottom and item name/desc
-    float _uiPriceFs        = 45.0f;   // 12 buy button price text font size
-    float _uiDialNameFs     = 45.0f;   // 13 "Zeph:" name tag font size
-    float _uiDialTextFs     = 31.0f;   // 14 dialogue text font size
-    float _uiPotionH        = 63.0f;   // 15 potion strip button height
-    float _uiPotionFs       = 31.0f;   // 16 potion button text font size
-    float _uiAbilTitleFs    = 38.0f;   // 17 "ABILITIES" section header font size
+    float _uiPriceFs        = 34.0f;   // 12 buy button price text font size
+    float _uiDialNameFs     = 47.0f;   // 13 "Zeph:" name tag font size
+    float _uiDialTextFs     = 41.0f;   // 14 dialogue text font size
+    float _uiPotionH        = 59.0f;   // 15 reserved legacy shop spacing
+    float _uiPotionFs       = 32.0f;   // 16 reserved legacy shop text
+    float _uiAbilTitleFs    = 36.0f;   // 17 "ABILITIES" section header font size
     float _uiBtnH           = 75.0f;   // 18 Leave / Reroll button height
     float _uiLeaveW         = 201.0f;  // 19 Leave button width
     float _uiRerollW        = 249.0f;  // 20 Reroll button width

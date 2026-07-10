@@ -47,6 +47,7 @@ enum class MetaUnlockType
     Heirloom,           // start each run with a random relic
     CellSurge,          // +50% Mystic Cells from kills
     SecondWind,         // revive once per run at 40% HP
+    Cartographer,       // dungeon map reveals every room's type without visiting
     Count               // keep last
 };
 
@@ -91,6 +92,7 @@ public:
     bool  HasStartingRelic() const { return IsUnlocked(MetaUnlockType::Heirloom); }
     float GetCellGainMultiplier() const { return IsUnlocked(MetaUnlockType::CellSurge) ? 1.5f : 1.0f; }
     bool  HasSecondWind() const { return IsUnlocked(MetaUnlockType::SecondWind); }
+    bool  HasCartographer() const { return IsUnlocked(MetaUnlockType::Cartographer); }
 
     // ── Gold retention across a death ─────────────────────────────────────────
     // Engine sets this when the player dies; the next run start consumes it.

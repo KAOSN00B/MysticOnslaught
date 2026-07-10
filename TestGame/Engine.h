@@ -59,6 +59,7 @@
 #include "CharacterAnimator.h"
 #include "AttackEditor.h"
 #include "MapEditor.h"
+#include "VillageMap.h"
 #include "DungeonGen.h"
 #include "TileDefs.h"
 #include "RoomLayout.h"
@@ -123,6 +124,35 @@ private:
     Texture2D _appearancePortrait{};            // idle sheet of the selected look
     void ReloadAppearancePortrait();
     Texture2D _cellsMerchantTex{};              // NPC sprite for the cells (Poe) shop
+
+    // ── Death -> Poe revive cutscene (one-wallet meta loop, 2026-07-09) ─────────
+    // On death the fallen mystic hangs as a lone lit sprite on black while the
+    // gold + echoes it carried stream away and fade; then Poe (spectral phantom,
+    // purple frame) offers to bring the player back and asks what they'll become,
+    // flowing straight into ClassSelect (class + look) which starts the next run.
+    void BeginDeathRevive();      // from the dying tick once the death beat ends
+    void UpdateDeathRevive();
+    void DrawDeathRevive();
+    struct DeathMote { Vector2 pos; Vector2 vel; float life; float maxLife; bool gold; };
+    std::vector<DeathMote> _deathMotes;
+    int     _deathRevivePhase     = 0;    // 0 = loss/fade beat, 1 = Poe dialogue
+    float   _deathReviveTimer     = 0.f;  // seconds elapsed in the current phase
+    float   _deathReviveTypeT     = 0.f;  // typewriter reveal progress (phase 1)
+    int     _deathReviveLostGold  = 0;    // captured at death for the loss animation
+    int     _deathReviveLostCells = 0;
+    Vector2 _deathReviveWorldPos{};       // player world pos at death (mote origin)
+
+    // ── Boss-clear choice (every boss): return to village vs double-or-nothing ──
+    // Return -> EnterVillage keeping hauled gold (run ends; spend at the build
+    // menu, restart via the gate). Push onward -> full heal + bonus gold + the
+    // cursed wager unlocks (only path it appears on), then continue this run.
+    void OpenBossChoice();
+    void UpdateBossChoice();
+    void DrawBossChoice();
+    int   _bossChoiceCursor    = 0;      // 0 = return to village, 1 = push onward
+    float _bossChoiceOpenTimer = 0.f;    // brief input lock after the screen opens
+    bool  _wagerAccessGranted  = false;  // set by "push onward"; gates the cursed wager
+
     bool _secondWindAvailable = false;          // meta unlock: one free revive per run
     float _secondWindToastTimer = 0.f;          // "SECOND WIND!" banner countdown
 
@@ -186,6 +216,109 @@ private:
     void UpdateEnemyProjectiles(float dt);    // arrows + fire bolts (player collision)
     void DrawEnemyProjectiles(Vector2 worldOffset) const;
 
+    // Playable village-builder placement test (debug/dev). This is intentionally
+    // runtime-facing, separate from MapEditor, so placement can be tested with the
+    // real player controller, camera, attacks, abilities, and collision response.
+    struct VillageRuntimePart
+    {
+        VillageMap::Layer layer = VillageMap::Layer::Objects;
+        short localCol = 0, localRow = 0;
+        short sheet = -1;
+        short col = 0, row = 0;
+    };
+    struct VillageRuntimeSolid
+    {
+        short localCol = 0, localRow = 0;
+        short w = 1, h = 1;
+    };
+    // A doorway authored on a village object ("door ..." line in villageobject_*.txt).
+    // Doors open automatically when the player walks close, and stepping onto an
+    // open door transitions into the interior named by targetInterior.
+    struct VillageRuntimeDoor
+    {
+        std::string doorName;                 // e.g. "door_01"
+        short localCol = 0, localRow = 0;     // top-left cell within the object
+        short w = 1, h = 1;                   // door size in cells
+        std::string targetInterior;           // e.g. "interior_default"
+        bool blocksWhenClosed = true;         // door is solid until it opens
+        int openAnimationIndex = -1;          // -1 = no authored open animation yet
+    };
+    // An NPC anchor authored on a village object ("npc ..." line). Zeph reuses the
+    // real ShopManager NPC; other names are parsed but inert for now.
+    struct VillageRuntimeNpc
+    {
+        std::string npcName;                  // e.g. "Zeph"
+        short localCol = 0, localRow = 0;     // cell within the object
+        std::string assignment;               // authored hint (e.g. "object:object_test"), unused at runtime
+    };
+    struct VillageRuntimeObjectDef
+    {
+        std::string name;
+        std::string path;
+        int cols = 1, rows = 1;              // trimmed to the drawn sprite bounds at load
+        int costGold = 0;                    // gold spent to place (refunded on remove)
+        bool isDecoration = false;           // decor: no collision/footprint, paints under everything
+        std::vector<VillageRuntimePart> parts;
+        std::vector<VillageRuntimeSolid> solids;
+        std::vector<VillageRuntimeDoor> doors;
+        std::vector<VillageRuntimeNpc> npcs;
+    };
+    struct VillagePlacedObject
+    {
+        std::string defName;                 // persisted identity (catalog order can change)
+        int defIndex = -1;                   // runtime-resolved catalog index
+        int cellCol = 0, cellRow = 0;
+    };
+    void EnterVillagePlayground();            // Y-key sandbox tester (never saves)
+    void EnterVillage();                      // main-game hub (saves, graveyard respawn, gate)
+    void EnterVillageShared(bool sandboxMode);
+    bool VillageHasPlacedObject(const std::string& defName) const;
+    void UnloadVillagePlayground();
+    void LoadVillagePlaygroundSheets();
+    void LoadVillagePlaygroundCatalog();
+    bool LoadVillageRuntimeObject(const std::string& path, VillageRuntimeObjectDef& outDef) const;
+    void UpdateVillagePlayground(float dt);
+    void DrawVillagePlayground();
+    void DrawVillageRuntimeObject(const VillageRuntimeObjectDef& def, int cellCol, int cellRow, Vector2 worldOffset, Color tint, VillageMap::Layer layer) const;
+    bool VillagePlaygroundCanPlace(int defIndex, int cellCol, int cellRow) const;
+    Rectangle VillagePlacedObjectWorldRect(const VillagePlacedObject& placed, const VillageRuntimeSolid* solid) const;
+    bool VillageObjectHasSolidAt(const VillageRuntimeObjectDef& def, int localCol, int localRow) const;
+    void ResolveVillagePlaygroundCollision(Vector2 beforePos);
+    // Doors + NPCs on placed village objects
+    Rectangle VillageDoorWorldRect(const VillagePlacedObject& placed, const VillageRuntimeDoor& door) const;
+    bool VillageDoorIsOpen(const VillagePlacedObject& placed, const VillageRuntimeDoor& door) const;
+    void RefreshVillageShopNpc();
+    int FindVillageObjectDefIndex(const std::string& defName) const;
+    void DrawVillageField(Vector2 worldOffset) const;   // forest floor + wall border ring
+    void DrawVillagePlacementGhost(Vector2 worldOffset, Vector2 mouseWorld);
+    void SaveVillageLayout() const;   // village_layout.txt — main-game village only, tester never writes
+    void LoadVillageLayout();
+
+    // Citizen NPCs — ambient wanderers; more appear as the village grows.
+    struct VillageCitizen
+    {
+        Vector2 position{};
+        Vector2 walkTarget{};
+        int behaviour = 0;               // 0 = walking, 1 = idle, 2 = chatting
+        float behaviourTimer = 0.f;      // time left in idle/chat
+        int chatPartnerIndex = -1;
+        float chatCooldown = 0.f;        // seconds before this citizen may chat again
+        bool facingLeft = false;
+        float walkBobPhase = 0.f;        // placeholder-sprite walk animation
+        Color tint{};                    // per-citizen clothing colour (placeholder art)
+    };
+    bool VillageCitizenSpotIsClear(Vector2 position) const;
+
+    Vector2 VillageRandomStandablePoint() const;
+
+    void SyncVillageCitizenCount();      // citizen count follows placed building count (capped)
+    void UpdateVillageCitizens(float deltaTime);
+    void DrawVillageCitizens(Vector2 worldOffset) const;
+    // Placeholder building interior ("interior_default") reached through doors
+    void EnterVillageInterior(const std::string& interiorName, Vector2 villageReturnPos);
+    void ExitVillageInterior();
+    void UpdateVillageInterior(float dt);
+    void DrawVillageInterior();
     // -- Poison clouds (Sporeling deaths + ToxicVermin pools) ----------------
     void SpawnPoisonCloud(Vector2 pos, float radius);
     void UpdatePoisonClouds(float dt);
@@ -262,7 +395,7 @@ private:
     void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
     void DrawCyclopsLasers(Vector2 worldOffset);
-    void DrawHUD();
+    void DrawHUD(bool villageMode = false);
     void DebugStartRun();
     void DebugRestartRoomAs(RoomType type);
     void DebugRestartDungeonRoomAs(RoomType type);
@@ -947,7 +1080,33 @@ private:
     NineSliceEditor _nineSliceEditor;
     CharacterAnimator _charAnimator;
     AttackEditor      _attackEditor;
-    MapEditor         _mapEditor;      // village/interior layered map painter (V key)
+    MapEditor         _mapEditor;      // village PNG asset metadata adjuster (V key)
+    std::vector<Texture2D> _villagePlaygroundSheets;
+    std::vector<std::string> _villagePlaygroundSheetNames;
+    std::vector<VillageRuntimeObjectDef> _villageObjectCatalog;
+    std::vector<VillagePlacedObject> _villagePlacedObjects;
+    int _villageActiveObjectIndex = -1;
+    float _villageCatalogScroll = 0.f;
+    std::string _villagePlaygroundMessage;
+    float _villagePlaygroundMessageTimer = 0.f;
+    bool _villageShopNpcActive = false;        // a placed object provides the Zeph shop NPC
+    bool _villageInsideInterior = false;       // player is inside a building interior
+    std::string _villageInteriorName;          // which interior (e.g. "interior_default")
+    Vector2 _villageInteriorReturnPos{};       // village world pos restored on exit
+    bool _villageBuildMode = false;            // B toggles: build (catalog+ghost) vs walk (doors/NPCs)
+    bool _villageSandboxMode = true;           // Y-key tester: no saving, no tutorial gating, free placement
+    GameState _classSelectReturnState = GameState::Menu;   // where ESC from ClassSelect goes (Menu or Village)
+    std::vector<VillageCitizen> _villageCitizens;
+    TileDefSet _villageTileDefs;               // Forest tile assignments for the village field
+    Texture2D _villageFieldSheet{};            // Forest.png (biome sheet for the field tiles)
+    Texture2D _villageFieldGroundSheet{};      // Ground TIles.png (fromGround tile types)
+    Texture2D _villageGraveyardTex{};          // VillageAssets/VillageGraveyard.png
+    Texture2D _villageZephShopTex{};           // VillageAssets/ZephsShop.png
+    Vector2 _villageGraveyardPoeLocal{ 30.90f, 123.72f };
+    Vector2 _villageGraveyardRespawnLocal{ 104.76f, 117.84f };
+    std::vector<Rectangle> _villageGraveyardColliders;
+    Vector2 _villageZephShopZephLocal{ 50.22f, 124.20f };
+    std::vector<Rectangle> _villageZephShopColliders;
     DungeonGen   _dungeonGen;
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;
@@ -962,9 +1121,26 @@ private:
     {
         bool cleared = false;
         bool enemiesInitialized = false;
+        bool visited = false;             // player has entered — map remembers the type
         int  eliteMechanic = -1;
         std::vector<DungeonEnemySnapshot> survivors;
     };
+
+    // ── Dungeon HUD polish (intro banner / badge / modifier stack / map) ───────
+    // Normal gameplay HUD only shows exceptions: standard rooms draw no label;
+    // special rooms announce themselves with a fading intro banner, then shrink
+    // to a compact badge. Active modifiers collect into one top-right pill stack.
+    float       _roomIntroTimer = 0.f;        // >0 = intro banner on screen
+    std::string _roomIntroTitle;              // big line ("ELITE ENCOUNTER")
+    std::string _roomIntroSub;                // condition line ("Room Hazards")
+    static constexpr float kRoomIntroDuration = 2.6f;
+    void QueueRoomIntroBanner();              // builds title/sub for the room just entered
+    void DrawRoomIntroBanner();               // temporary top-center announcement
+    void DrawRoomBadge() const;               // compact persistent badge (special rooms only)
+    void DrawModifierStack() const;           // top-right pills: affix / wager / future curses
+    // Minimap: visited rooms remember their type icon, unvisited show "?"
+    // (boss + shop always shown). Cartographer's Echo reveals everything.
+    void DrawDungeonMiniMap(float originX, float originY, float cellPx, bool overlay) const;
 
     // Dungeon run sub-state
     enum class DungeonView { Graph, Room, Play };
@@ -1120,3 +1296,4 @@ private:
     // Resolves all active enemies out of tile walls and props. Ends forced pushes on impact.
     void ResolveDungeonEnemyCollisions();
 };
+

@@ -2,9 +2,7 @@
 #include "GameBalance.h"
 #include "VirtualCanvas.h"
 #include "NineSlice.h"
-#include "VirtualCanvas.h"
 #include "raymath.h"
-#include "VirtualCanvas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,23 +14,23 @@ static const char* ShopUpgradeName(UpgradeType t)
 {
     switch (t)
     {
-    case UpgradeType::AttackPower:      return "Attack Power";
-    case UpgradeType::AttackRange:      return "Attack Range";
-    case UpgradeType::MaxHealth:        return "Max Health";
-    case UpgradeType::MaxMana:          return "Max Mana";
-    case UpgradeType::Defense:          return "Defense";
-    case UpgradeType::MoveSpeed:        return "Move Speed";
+    case UpgradeType::AttackPower:      return "Execution Weight";
+    case UpgradeType::AttackRange:      return "Long Grip";
+    case UpgradeType::MaxHealth:        return "Toughened Vial";
+    case UpgradeType::MaxMana:          return "Mana Reservoir";
+    case UpgradeType::Defense:          return "Emergency Plate";
+    case UpgradeType::MoveSpeed:        return "Fleet Boots";
     case UpgradeType::IronConstitution: return "Iron Constitution";
-    case UpgradeType::SwiftFeet:        return "Swift Feet";
+    case UpgradeType::SwiftFeet:        return "Predator Step";
     case UpgradeType::Ferocity:         return "Ferocity";
-    case UpgradeType::ArcaneMind:       return "Arcane Mind";
-    case UpgradeType::IronSkin:         return "Iron Skin";
-    case UpgradeType::BladeEdge:        return "Blade Edge";
-    case UpgradeType::WarGod:           return "War God";
-    case UpgradeType::Resilience:       return "Resilience";
-    case UpgradeType::BladeStorm:       return "Blade Storm";
-    case UpgradeType::Juggernaut:       return "Juggernaut";
-    case UpgradeType::ArcaneColossus:   return "Arcane Colossus";
+    case UpgradeType::ArcaneMind:       return "Mana Conduit";
+    case UpgradeType::IronSkin:         return "Spiked Guard";
+    case UpgradeType::BladeEdge:        return "Serrated Edge";
+    case UpgradeType::WarGod:           return "War God's Mark";
+    case UpgradeType::Resilience:       return "Last Stand Plate";
+    case UpgradeType::BladeStorm:       return "Blade Storm Rig";
+    case UpgradeType::Juggernaut:       return "Juggernaut Frame";
+    case UpgradeType::ArcaneColossus:   return "Overchannel Core";
     default:                            return "Unknown";
     }
 }
@@ -41,23 +39,23 @@ static const char* ShopUpgradeDesc(UpgradeType t)
 {
     switch (t)
     {
-    case UpgradeType::AttackPower:      return "+1.0 Attack";
-    case UpgradeType::AttackRange:      return "Slightly extends attack range";
-    case UpgradeType::MaxHealth:        return "+2 Max HP";
-    case UpgradeType::MaxMana:          return "+3 Max MP";
-    case UpgradeType::Defense:          return "+1 Defense";
-    case UpgradeType::MoveSpeed:        return "Slightly increases movement speed";
-    case UpgradeType::IronConstitution: return "+4 Max HP";
-    case UpgradeType::SwiftFeet:        return "Moderately increases movement speed";
-    case UpgradeType::Ferocity:         return "+2.0 Attack";
-    case UpgradeType::ArcaneMind:       return "+5 Max MP, +0.10 Regen";
-    case UpgradeType::IronSkin:         return "+2 Defense";
-    case UpgradeType::BladeEdge:        return "+1.0 Attack, Slightly extends range";
-    case UpgradeType::WarGod:           return "+3.0 Attack, Greatly extends range";
-    case UpgradeType::Resilience:       return "+6 Max HP (Heals 6)";
-    case UpgradeType::BladeStorm:       return "+2.0 Attack, Greatly increases movement speed";
-    case UpgradeType::Juggernaut:       return "+4 Max HP, +3 Defense";
-    case UpgradeType::ArcaneColossus:   return "+5 Max MP, +2.0 Attack, +0.25 Regen";
+    case UpgradeType::AttackPower:      return "Basic hits gain modest damage.";
+    case UpgradeType::AttackRange:      return "Slightly wider melee reach.";
+    case UpgradeType::MaxHealth:        return "A small max HP bump and heal.";
+    case UpgradeType::MaxMana:          return "Larger mana pool, small refill.";
+    case UpgradeType::Defense:          return "Gain 1 armour slot now.";
+    case UpgradeType::MoveSpeed:        return "A small movement speed bump.";
+    case UpgradeType::IronConstitution: return "+15% max HP and heal the gain.";
+    case UpgradeType::SwiftFeet:        return "+8% move speed.";
+    case UpgradeType::Ferocity:         return "+10% attack, minimum small gain.";
+    case UpgradeType::ArcaneMind:       return "Max MP and slight regen.";
+    case UpgradeType::IronSkin:         return "Refill 2 armour slots.";
+    case UpgradeType::BladeEdge:        return "Damage plus slight attack reach.";
+    case UpgradeType::WarGod:           return "Strong damage and reach boost.";
+    case UpgradeType::Resilience:       return "+18% max HP and heal the gain.";
+    case UpgradeType::BladeStorm:       return "Damage plus +8% move speed.";
+    case UpgradeType::Juggernaut:       return "+12% max HP and 2 armour.";
+    case UpgradeType::ArcaneColossus:   return "Max MP, damage, slight regen.";
     default:                            return "";
     }
 }
@@ -73,12 +71,69 @@ static int ShopUpgradePrice(UpgradeType t)
 {
     switch (ShopUpgradeRarity(t))
     {
-    case UpgradeRarity::Common: return 30;
-    case UpgradeRarity::Rare:   return 60;
-    default:                    return 120;
+    case UpgradeRarity::Common: return 70;
+    case UpgradeRarity::Rare:   return 135;
+    default:                    return 240;
     }
 }
 
+static std::string FormatStatPreview(const char* label, float before, float after, int decimals = 0)
+{
+    if (decimals <= 0)
+        return TextFormat("%s %.0f -> %.0f", label, before, after);
+    if (decimals == 1)
+        return TextFormat("%s %.1f -> %.1f", label, before, after);
+    return TextFormat("%s %.2f -> %.2f", label, before, after);
+}
+
+static std::string ShopUpgradePreview(const Character& player, UpgradeType t)
+{
+    float atk = player.GetAttackPowerValue();
+    float hp = player.GetMaxHealthValue();
+    float speed = player.GetMoveSpeedValue();
+    float rangePct = player.GetAttackRangeMultiplierValue() * 100.f;
+    float regen = player.GetManaRegenPerSecond();
+
+    switch (t)
+    {
+    case UpgradeType::AttackPower:
+        return TextFormat("Melee %d -> %d", (int)atk, (int)(atk + 1.0f));
+    case UpgradeType::AttackRange:
+        return FormatStatPreview("Reach", rangePct, rangePct + 12.f);
+    case UpgradeType::MaxHealth:
+        return FormatStatPreview("Max HP", hp, hp + 3.f);
+    case UpgradeType::MaxMana:
+        return TextFormat("Max MP %d -> %d", player.GetMaxMana(), player.GetMaxMana() + 6);
+    case UpgradeType::Defense:
+        return TextFormat("Armour %d/%d -> %d/%d", player.GetArmour(), player.GetMaxArmour(), std::min(player.GetMaxArmour(), player.GetArmour() + 1), player.GetMaxArmour());
+    case UpgradeType::MoveSpeed:
+        return FormatStatPreview("Speed", speed + 0.f, speed + 18.f);
+    case UpgradeType::IronConstitution:
+        return FormatStatPreview("Max HP", hp, std::ceil(hp * 1.15f));
+    case UpgradeType::SwiftFeet:
+        return FormatStatPreview("Speed", speed, speed * 1.08f);
+    case UpgradeType::Ferocity:
+        return TextFormat("Melee %d -> %d", (int)atk, (int)(atk + std::max(1.0f, atk * 0.10f)));
+    case UpgradeType::ArcaneMind:
+        return TextFormat("Regen %.2f/s -> %.2f/s", regen, Character::kManaRegenBase * (regen / Character::kManaRegenBase + 0.10f));
+    case UpgradeType::IronSkin:
+        return TextFormat("Armour %d/%d -> %d/%d", player.GetArmour(), player.GetMaxArmour(), std::min(player.GetMaxArmour(), player.GetArmour() + 2), player.GetMaxArmour());
+    case UpgradeType::BladeEdge:
+        return TextFormat("Melee %d -> %d | Reach +10%%", (int)atk, (int)(atk + 1.f));
+    case UpgradeType::WarGod:
+        return TextFormat("Melee %d -> %d | Reach +12%%", (int)atk, (int)(atk + std::max(1.75f, atk * 0.15f)));
+    case UpgradeType::Resilience:
+        return FormatStatPreview("Max HP", hp, std::ceil(hp * 1.18f));
+    case UpgradeType::BladeStorm:
+        return TextFormat("Melee %d -> %d | Speed +8%%", (int)atk, (int)(atk + 1.5f));
+    case UpgradeType::Juggernaut:
+        return TextFormat("Max HP %.0f -> %.0f | Armour +2", hp, std::ceil(hp * 1.12f));
+    case UpgradeType::ArcaneColossus:
+        return TextFormat("MP +10 | Melee %d -> %d", (int)atk, (int)(atk + 1.5f));
+    default:
+        return "";
+    }
+}
 static const char* ShopAbilityName(AbilityType t)
 {
     switch (t)
@@ -113,8 +168,8 @@ static int ShopAbilityPrice(AbilityType t)
     {
     case AbilityType::FireBolt:
     case AbilityType::IceBolt:
-    case AbilityType::ElectricBolt: return 75;
-    default:                        return 50;
+    case AbilityType::ElectricBolt: return 140;
+    default:                        return 95;
     }
 }
 
@@ -190,8 +245,6 @@ void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
     _gamepadBottomActive   = false;
     _gamepadBottomIdx      = 0;
     _gamepadRerollPending  = false;
-    _gamepadHPotPending    = false;
-    _gamepadMPotPending    = false;
     _gamepadTabActive      = false;
     _gamepadTabCursor      = 0;
     _gamepadLPActive       = false;
@@ -495,8 +548,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
                 TraceLog(LOG_INFO, "_uiPriceFs         = %.2ff;", _uiPriceFs);
                 TraceLog(LOG_INFO, "_uiDialNameFs      = %.2ff;", _uiDialNameFs);
                 TraceLog(LOG_INFO, "_uiDialTextFs      = %.2ff;", _uiDialTextFs);
-                TraceLog(LOG_INFO, "_uiPotionH         = %.2ff;", _uiPotionH);
-                TraceLog(LOG_INFO, "_uiPotionFs        = %.2ff;", _uiPotionFs);
+                TraceLog(LOG_INFO, "_uiReservedH       = %.2ff;", _uiPotionH);
+                TraceLog(LOG_INFO, "_uiReservedFs      = %.2ff;", _uiPotionFs);
                 TraceLog(LOG_INFO, "_uiAbilTitleFs     = %.2ff;", _uiAbilTitleFs);
                 TraceLog(LOG_INFO, "_uiBtnH            = %.2ff;", _uiBtnH);
                 TraceLog(LOG_INFO, "_uiLeaveW          = %.2ff;", _uiLeaveW);
@@ -533,13 +586,11 @@ bool ShopManager::Update(Character& player, bool debugActive)
 
     // ── Layout (must match Draw exactly) ─────────────────────────────────
     static constexpr float kBorderDst_u  = 32.f;
-    static constexpr float kPotionPrice  = (float)Balance::Economy::kPotionPrice;
     const float leftW   = sw * _uiLeftPanelW;
     const float leaveH  = _uiBtnH;
     const float leaveY  = sh - pad - leaveH;
-    const float potionY = leaveY - pad * 0.5f - _uiPotionH;
     const float dialH   = std::max(sh * 0.12f, kBorderDst_u * 2.f + 30.f);
-    const float dialY   = potionY - pad * 0.5f - dialH;
+    const float dialY   = leaveY - pad * 0.5f - dialH;
     const float shopX   = pad + leftW + pad;
     const float shopY   = pad;
     const float shopW   = sw - shopX - pad;
@@ -592,30 +643,6 @@ bool ShopManager::Update(Character& player, bool debugActive)
         else { _dialogue = "You don't have enough gold for a reroll!"; }
         return false;
     }
-    if (_gamepadHPotPending)
-    {
-        _gamepadHPotPending = false;
-        if (player.GetGold() >= (int)kPotionPrice)
-        {
-            player.AddGold(-(int)kPotionPrice);
-            player.Heal((int)(player.GetMaxHealthValue() * 0.25f));
-            _dialogue = "Drink up! That's 25% HP back.";
-        }
-        else { _dialogue = "You can't afford that right now."; }
-        return false;
-    }
-    if (_gamepadMPotPending)
-    {
-        _gamepadMPotPending = false;
-        if (player.GetGold() >= (int)kPotionPrice)
-        {
-            player.AddGold(-(int)kPotionPrice);
-            player.RestoreMana(player.GetMaxMana() / 2);
-            _dialogue = "Your mana flows freely again.";
-        }
-        else { _dialogue = "You can't afford that right now."; }
-        return false;
-    }
     if (_gamepadLPUpgSlot >= 0)
     {
         int slotIdx = _gamepadLPUpgSlot;
@@ -652,35 +679,6 @@ bool ShopManager::Update(Character& player, bool debugActive)
         }
         return false;
     }
-
-    // ── Potion buttons (fixed — not affected by rerolls) ──────────────────
-    const float potBtnW  = (shopW - 8.f) * 0.5f;
-    Rectangle hpotBtn = { shopX,                   potionY, potBtnW, _uiPotionH };
-    Rectangle mpotBtn = { shopX + potBtnW + 8.f,   potionY, potBtnW, _uiPotionH };
-
-    if (clicked && CheckCollisionPointRec(mouse, hpotBtn))
-    {
-        if (player.GetGold() >= (int)kPotionPrice)
-        {
-            player.AddGold(-(int)kPotionPrice);
-            player.Heal((int)(player.GetMaxHealthValue() * 0.25f));
-            _dialogue = "Drink up! That's 25% HP back.";
-        }
-        else { _dialogue = "You can't afford that right now."; }
-        return false;
-    }
-    if (clicked && CheckCollisionPointRec(mouse, mpotBtn))
-    {
-        if (player.GetGold() >= (int)kPotionPrice)
-        {
-            player.AddGold(-(int)kPotionPrice);
-            player.RestoreMana(player.GetMaxMana() / 2);
-            _dialogue = "Your mana flows freely again.";
-        }
-        else { _dialogue = "You can't afford that right now."; }
-        return false;
-    }
-
     // ── Left panel ability slot buttons ──────────────────────────────────
     {
         const float lx = pad, ly = pad;
@@ -869,8 +867,6 @@ bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
 {
     _gamepadConfirmPending = false;
     _gamepadRerollPending  = false;
-    _gamepadHPotPending    = false;
-    _gamepadMPotPending    = false;
     _gamepadLPUpgSlot      = -1;
     _gamepadLPRemSlot      = -1;
 
@@ -946,24 +942,17 @@ bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
     }
     else if (_gamepadBottomActive)
     {
-        // Bottom section: [HP Pot=0][MP Pot=1] (top row) / [Reroll=2][Leave=3] (bottom row)
-        int col = _gamepadBottomIdx % 2;
-        int row = _gamepadBottomIdx / 2;
-        if      (navLeft  && col > 0)  { col--; _gamepadNavCooldown = kNavCooldown; }
-        else if (navRight && col < 1)  { col++; _gamepadNavCooldown = kNavCooldown; }
-        else if (navDown  && row < 1)  { row++; _gamepadNavCooldown = kNavCooldown; }
-        else if (navUp    && row > 0)  { row--; _gamepadNavCooldown = kNavCooldown; }
-        else if (navUp    && row == 0) { _gamepadBottomActive = false; _gamepadNavCooldown = kNavCooldown; }
-        _gamepadBottomIdx = row * 2 + col;
+        // Bottom section: [Reroll=0][Leave=1]
+        if      (navLeft  && _gamepadBottomIdx > 0) { _gamepadBottomIdx--; _gamepadNavCooldown = kNavCooldown; }
+        else if (navRight && _gamepadBottomIdx < 1) { _gamepadBottomIdx++; _gamepadNavCooldown = kNavCooldown; }
+        else if (navUp) { _gamepadBottomActive = false; _gamepadNavCooldown = kNavCooldown; }
 
         if (gpA)
         {
-            switch (_gamepadBottomIdx)
+            if (_gamepadBottomIdx == 0)
+                _gamepadRerollPending = true;
+            else
             {
-            case 0: _gamepadHPotPending   = true; break;
-            case 1: _gamepadMPotPending   = true; break;
-            case 2: _gamepadRerollPending = true; break;
-            case 3:
                 _dialogue   = "Safe travels, adventurer.";
                 _introPhase = IntroPhase::Off;
                 return true;
@@ -1059,13 +1048,11 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
     // ── Layout ───────────────────────────────────────────────────────────
     static constexpr float kBorderDst_layout = 32.f;
-    static constexpr int   kPotionPriceDraw  = Balance::Economy::kPotionPrice;
     const float leftW   = sw * _uiLeftPanelW;
     const float leaveH  = _uiBtnH;
     const float leaveY  = sh - pad - leaveH + introYOff;
-    const float potionY = leaveY - pad * 0.5f - _uiPotionH;
     const float dialH   = std::max(sh * 0.12f, kBorderDst_layout * 2.f + 30.f);
-    const float dialY   = potionY - pad * 0.5f - dialH;
+    const float dialY   = leaveY - pad * 0.5f - dialH;
     const float shopX   = pad + leftW + pad;
     const float shopY   = pad + introYOff;
     const float shopW   = sw - shopX - pad;
@@ -1491,6 +1478,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 float cy2 = iconCY + iconSz * 0.5f + _uiItemTextOffsetY;
                 const char* name = ShopUpgradeName(item.upgradeType);
                 const char* desc = ShopUpgradeDesc(item.upgradeType);
+                std::string preview = ShopUpgradePreview(player, item.upgradeType);
 
                 int nw = MeasureText(name, (int)nameFs);
                 DrawText(name, (int)(ix + itemW * 0.5f - nw * 0.5f + 3.f),
@@ -1504,6 +1492,14 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 int dw = MeasureText(desc, (int)descFs);
                 DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
                     (int)cy2, (int)descFs, kDim);
+                cy2 += descFs + 3.f;
+
+                float prevFs = std::min(descFsBase, 28.f);
+                while (prevFs > 8.f && MeasureText(preview.c_str(), (int)prevFs) > (int)maxDescW)
+                    prevFs -= 1.f;
+                int pw = MeasureText(preview.c_str(), (int)prevFs);
+                DrawText(preview.c_str(), (int)(ix + itemW * 0.5f - pw * 0.5f + 3.f),
+                    (int)cy2, (int)prevFs, Color{ 190, 255, 180, 235 });
 
                 // Daily deal badge
                 if (idx == _dailyDealIndex)
@@ -1684,38 +1680,6 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         };
         DrawTexturePro(*_tex.zephIdle, zSrc, zDst, {}, 0.f, WHITE);
     }
-
-    // ── POTION STRIP ─────────────────────────────────────────────────────
-    {
-        const float potBtnW  = (shopW - 8.f) * 0.5f;
-        bool canAffordPot    = (player.GetGold() >= kPotionPriceDraw);
-        Vector2 mpos2        = GetVirtualMousePos();
-
-        auto drawPotBtn = [&](Rectangle r, const char* label, Color baseBg, Color hovBg, Color border, bool gpSelected)
-        {
-            bool hov = CheckCollisionPointRec(mpos2, r) || gpSelected;
-            Color bg = canAffordPot ? (hov ? hovBg : baseBg) : Color{25,25,30,180};
-            Color bo = canAffordPot ? border : Color{70,70,80,140};
-            smallBox(r, bg, bo);
-            int fs = (int)_uiPotionFs;
-            int lw = MeasureText(label, fs);
-            DrawText(label,
-                (int)(r.x + r.width * 0.5f - lw * 0.5f),
-                (int)(r.y + r.height * 0.5f - fs * 0.5f),
-                fs, canAffordPot ? RAYWHITE : Fade(RAYWHITE, 0.35f));
-        };
-
-        drawPotBtn({ shopX,                   potionY, potBtnW, _uiPotionH },
-            TextFormat("Health Potion  %dg   (Heals 25%% HP)", kPotionPriceDraw),
-            Color{55,18,18,220}, Color{80,25,25,240}, Color{220,70,70,220},
-            _gamepadBottomActive && _gamepadBottomIdx == 0);
-
-        drawPotBtn({ shopX + potBtnW + 8.f,   potionY, potBtnW, _uiPotionH },
-            TextFormat("Mana Potion  %dg   (Restores 50%% MP)", kPotionPriceDraw),
-            Color{18,25,65,220}, Color{25,38,95,240}, Color{80,120,255,220},
-            _gamepadBottomActive && _gamepadBottomIdx == 1);
-    }
-
     // ── REROLL + LEAVE BUTTONS ────────────────────────────────────────────
     const float leaveW  = _uiLeaveW;
     const float rerollW = _uiRerollW;
@@ -1725,8 +1689,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     Rectangle rerollBtn = { rerollX, leaveY, rerollW, leaveH };
 
     Vector2 mpos = GetVirtualMousePos();
-    bool leaveHov  = CheckCollisionPointRec(mpos, leaveBtn)  || (_gamepadBottomActive && _gamepadBottomIdx == 3);
-    bool rerollHov = CheckCollisionPointRec(mpos, rerollBtn) || (_gamepadBottomActive && _gamepadBottomIdx == 2);
+    bool leaveHov  = CheckCollisionPointRec(mpos, leaveBtn)  || (_gamepadBottomActive && _gamepadBottomIdx == 1);
+    bool rerollHov = CheckCollisionPointRec(mpos, rerollBtn) || (_gamepadBottomActive && _gamepadBottomIdx == 0);
     bool canReroll = (player.GetGold() >= _rerollCost);
 
     smallBox(leaveBtn,
@@ -1799,8 +1763,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             "12 Price Font",
             "13 Dial Name Font",
             "14 Dial Text Font",
-            "15 Potion Height",
-            "16 Potion Font",
+            "15 Reserved Height",
+            "16 Reserved Font",
             "17 Abil Title Font",
             "18 Btn Height",
             "19 Leave Width",
@@ -1918,11 +1882,12 @@ void ShopManager::GenerateInventory(const Character& player)
         abilityPool.push_back(item);
     }
 
-    // Keep every learnable non-ultimate attack in the shop's ability pool.
+    // Offer a focused set instead of dumping every legal spell into one shop.
     for (int i = (int)abilityPool.size() - 1; i > 0; i--)
         std::swap(abilityPool[i], abilityPool[GetRandomValue(0, i)]);
-    for (const auto& item : abilityPool)
-        _inventory.push_back(item);
+    int abilitySlots = std::min((int)abilityPool.size(), 6);
+    for (int i = 0; i < abilitySlots; i++)
+        _inventory.push_back(abilityPool[i]);
 
     // Build stat pool and shuffle
     std::vector<ShopItem> statPool;

@@ -124,6 +124,7 @@ public:
     bool IsForceLocked() const { return _forcedPushActive || _forcedPushStunTimer > 0.f; }
     bool IsDashing() const { return _isDashing; }
     void SetCombatLocked(bool locked)    { _combatLocked = locked; }
+    void SetDashAllowedWhileCombatLocked(bool allowed) { _dashAllowedWhileCombatLocked = allowed; }
     void SetManaRegenPaused(bool paused) { _manaRegenPaused = paused; }
 
     // ── Touch input (set by Engine each frame before Update) ─────────────────
@@ -207,6 +208,7 @@ public:
     void AddExp(int amount);
     void Heal(int amount);
     void AddGold(int amount) { _gold += amount; }
+    void SetGold(int amount) { _gold = amount; }   // one-wallet meta loop: wipe on death / carry village wallet into a run
     int  GetGold()     const { return _gold; }
     // Gold from an enemy drop — applies the Midas Touch relic bonus.
     void AddGoldFromDrop(int amount);
@@ -333,6 +335,7 @@ private:
     bool _attacking = false;
     bool _damageApplied = false;
     bool _combatLocked      = false;
+    bool _dashAllowedWhileCombatLocked = false;
     bool _manaRegenPaused   = false;
     bool _castingAbility = false;
     bool _isDashing = false;
