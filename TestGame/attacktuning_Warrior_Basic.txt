@@ -1,0 +1,7 @@
+fire_forward=67.000
+fire_height=44.000
+proj_scale=1.000
+proj_radius=26.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

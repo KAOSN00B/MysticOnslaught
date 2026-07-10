@@ -52,7 +52,7 @@ enum class AbilityType
     Whirlwind,     // 360° spin, hits everything around the player
     ThrowingAxe,   // long piercing line hit thrown forward
     Rend,          // lunge forward + bleed (damage over time)
-    ShieldBash,    // short forward dash that stuns those it strikes
+    ShieldBash,    // shoulder charge dash that stuns those it strikes
     WarCry,        // self-buff: temporary bonus damage + a small heal
     GroundSlam,    // ULT: huge radial quake, heavy damage + stun (all mana)
     Rampage,       // ULT: berserk — bonus damage + lifesteal for a while (all mana)
@@ -155,7 +155,7 @@ inline const char* GetAbilityName(AbilityType type)
     case AbilityType::Whirlwind:       return "Whirlwind";
     case AbilityType::ThrowingAxe:     return "Throwing Axe";
     case AbilityType::Rend:            return "Rend";
-    case AbilityType::ShieldBash:      return "Shield Bash";
+    case AbilityType::ShieldBash:      return "Shoulder Charge";
     case AbilityType::WarCry:          return "War Cry";
     case AbilityType::GroundSlam:      return "Ground Slam";
     case AbilityType::Rampage:         return "Rampage";
@@ -217,7 +217,7 @@ inline const char* GetAbilityDesc(AbilityType type)
     case AbilityType::Whirlwind:       return "Spin attack\nhits all around you";
     case AbilityType::ThrowingAxe:     return "Piercing axe\nflies straight ahead";
     case AbilityType::Rend:            return "Lunge + deep cut\nbleeds over time";
-    case AbilityType::ShieldBash:      return "Dash forward\nstuns what you hit";
+    case AbilityType::ShieldBash:      return "Charge forward\nstuns what you hit";
     case AbilityType::WarCry:          return "Roar: +damage\nand a small heal";
     case AbilityType::GroundSlam:      return "Quake around you\nbig dmg + stun, all MP";
     case AbilityType::Rampage:         return "Berserk: +dmg &\nlifesteal, all MP";

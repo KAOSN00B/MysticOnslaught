@@ -123,6 +123,16 @@ private:
     int  _appearanceCursor = 2;                 // default Hero03
     Texture2D _appearancePortrait{};            // idle sheet of the selected look
     void ReloadAppearancePortrait();
+
+    // ── Cosmetic Shop (village Mirror/Tailor) ───────────────────────────────────
+    // The home for changing the player's look. Appearance was REMOVED from the
+    // revive/gate ClassSelect (class-only now) and lives here instead. v1 = free
+    // switching among looks; gold-gated skin unlocks are a later gold sink.
+    void OpenCosmeticShop();
+    void UpdateCosmeticShop();
+    void DrawCosmeticShop();
+    GameState _cosmeticShopReturnState = GameState::Village;  // where ESC/equip returns
+    float     _cosmeticShopOpenTimer   = 0.f;                 // brief input lock after opening
     Texture2D _cellsMerchantTex{};              // NPC sprite for the cells (Poe) shop
 
     // ── Death -> Poe revive cutscene (one-wallet meta loop, 2026-07-09) ─────────
@@ -166,14 +176,90 @@ private:
     int   _wagerTier           = 0;             // 0 none, 1-3 = kWagerTiers index+1
     bool  _curseShrineUsed     = false;         // one wager per biome (re-armed at each shop)
     bool  _nearCurseShrine     = false;
-    int   _shrineCursor        = 0;             // 0-2 highlighted wager tier
-    float _shrineOpenTimer     = 0.f;
-    float _shrineDenyFlash     = 0.f;           // red flash when you can't afford a tier
     float _curseShrineBobTimer = 0.f;
+
+    // ── Generic ChoiceCardScreen (extracted from the Cursed Wager UI) ──────────
+    // One debugged "N cards, pick one or leave" picker (keyboard + gamepad +
+    // mouse + affordability gating + deny flash) reused by every decision room
+    // (Cursed Wager, Risk Shrine, Cursed Reward, …). See
+    // ROOM_EVENTS_INTEGRATION_PLAN.txt. Build the UI once; each new room is then
+    // just an option table, not a UI project.
+    struct ChoiceCard
+    {
+        std::string title;
+        std::string flavor;                     // optional italic quote under the title
+        int         costGold       = 0;         // 0 = free (no cost line drawn)
+        std::string downsideHeader = "RISK";    // red block header
+        std::string downsideText;               // may contain \n
+        std::string upsideHeader   = "REWARD";  // green block header
+        std::string upsideText;                 // may contain \n
+        Color       tint    = RAYWHITE;
+        bool        accentBar = false;          // colored top stripe in tint
+        bool        enabled = true;             // false = cap-gated / unavailable
+        std::string disabledReason;             // pick-label text when !enabled
+    };
+    struct ChoiceCardScreen
+    {
+        std::string title;
+        std::string subtitle;
+        std::string confirmVerb = "CHOOSE";     // pick-label verb ("WAGER")
+        std::string confirmHint = "Confirm";    // bottom hint verb ("Wager")
+        Color       titleColor = Color{ 235, 90, 120, 255 };
+        Color       bgColorA   = Color{ 30, 14, 20, 255 };
+        Color       bgColorB   = Color{ 42, 20, 30, 255 };
+        bool        showPurse  = true;          // draw "Your gold: N"
+        std::vector<ChoiceCard> cards;
+        int         cursor    = 0;
+        float       openTimer = 0.f;            // brief input lock after opening
+        float       denyFlash = 0.f;            // red flash on unaffordable pick
+        int         result    = -1;             // -2 leave, -1 pending, >=0 chosen
+    };
+    void OpenChoiceCards(ChoiceCardScreen& s);    // reset cursor/timers/result
+    void UpdateChoiceCards(ChoiceCardScreen& s);  // input → sets s.result
+    void DrawChoiceCards(const ChoiceCardScreen& s);
+
+    ChoiceCardScreen _wagerScreen;                // Cursed Wager (first consumer)
     void  OpenCurseShrine();
     void  UpdateCurseShrine();
     void  DrawCurseShrine();
     Vector2 GetCurseShrinePos() const;
+
+    // ── Room events: decision rooms + unified pending-modifier system ──────────
+    // A "decision room" is a Standard room tagged with a RoomSpecialType at
+    // generation time. The player walks to a shrine and picks a contract (via the
+    // shared ChoiceCardScreen) that arms a RunModifier applied to the NEXT combat
+    // room. See ROOM_EVENTS_INTEGRATION_PLAN.txt / ROOM_INTERACTION_IDEAS.txt.
+    struct RunModifier
+    {
+        std::string label;              // HUD pill + resolve-toast name
+        float enemyHpMult  = 1.f;
+        float enemyDmgMult  = 1.f;
+        float goldMult      = 1.f;
+        float xpMult        = 1.f;
+        Color tint          = Color{ 235, 180, 90, 255 };
+        bool  active        = false;    // false = armed/pending, true = applying now
+        int   roomsRemaining = 1;       // combat rooms it covers once active
+    };
+    std::vector<RunModifier> _runModifiers;
+    static constexpr int kMaxAcceptedModifiers = 2;   // accepted-danger cap (A4)
+    float _roomModHpMult  = 1.f;        // product of active modifiers, folded into
+    float _roomModDmgMult = 1.f;        // ConfigureSpawnedEnemy this room
+
+    ChoiceCardScreen _decisionScreen;   // Risk Shrine et al. (consumer #2)
+    bool  _nearDecisionShrine    = false;
+    float _decisionShrineBobTimer = 0.f;
+    std::string _contractToastText;     // "GREED HONORED  +N gold  +N XP"
+    float       _contractToastTimer = 0.f;
+
+    void RollDungeonRoomSpecials();     // gen-time roll of which rooms are decisions
+    void OpenDecisionRoom();
+    void UpdateDecisionRoom();
+    void DrawDecisionRoom();
+    Vector2 GetDecisionShrinePos() const;
+    int  AcceptedModifierCount() const { return (int)_runModifiers.size(); }
+    void ActivatePendingModifiers();            // on entering a fresh combat room
+    void ResolveActiveModifiersOnRoomClear();   // on combat-room clear
+    void ClearRunModifiers();                   // on death / new run
 
     // Bestiary (#20)
     void  UpdateBestiary();
@@ -258,6 +344,18 @@ private:
         int cols = 1, rows = 1;              // trimmed to the drawn sprite bounds at load
         int costGold = 0;                    // gold spent to place (refunded on remove)
         bool isDecoration = false;           // decor: no collision/footprint, paints under everything
+        bool required = false;               // service/quest asset, not optional decor
+        bool uniqueInVillage = false;        // only one allowed in the real village
+        bool removable = true;               // can be removed/refunded after placement
+        std::string serviceName;             // Shop, Relic, Wardrobe, Bestiary, etc. for future dispatch
+        Texture2D pngTexture{};              // VillageAssets PNG path, used by .vasset-backed entries
+        float pngScale = 3.f;
+        bool  pngAnimated = false;
+        int   pngAnimCols = 1;
+        int   pngAnimRows = 1;
+        int   pngAnimFrames = 1;
+        float pngAnimFps = 6.f;
+        std::vector<Rectangle> pngColliders; // image-local px colliders from .vasset
         std::vector<VillageRuntimePart> parts;
         std::vector<VillageRuntimeSolid> solids;
         std::vector<VillageRuntimeDoor> doors;
@@ -277,6 +375,7 @@ private:
     void LoadVillagePlaygroundSheets();
     void LoadVillagePlaygroundCatalog();
     bool LoadVillageRuntimeObject(const std::string& path, VillageRuntimeObjectDef& outDef) const;
+    bool LoadVillageRuntimeAssetObject(const std::string& path, VillageRuntimeObjectDef& outDef) const;
     void UpdateVillagePlayground(float dt);
     void DrawVillagePlayground();
     void DrawVillageRuntimeObject(const VillageRuntimeObjectDef& def, int cellCol, int cellRow, Vector2 worldOffset, Color tint, VillageMap::Layer layer) const;
@@ -620,6 +719,7 @@ private:
     float _metaShopNavCooldown    = 0.f;    // gamepad d-pad repeat cooldown
     int   _poeGreetingIdx         = 0;      // which of Poe's lines shows this visit
     float _metaShopOpenTimer      = 0.f;    // brief input lock so the opening press isn't consumed
+    GameState _metaShopReturnState = GameState::DungeonRun;
 
     RunStateController _runState;
     GameState& _gameState;
@@ -1124,6 +1224,13 @@ private:
         bool visited = false;             // player has entered — map remembers the type
         int  eliteMechanic = -1;
         std::vector<DungeonEnemySnapshot> survivors;
+
+        // Room-events / decision-room state (rolled at generation time, seeded by
+        // the dungeon seed, so it never rerolls on re-entry and dailies match).
+        RoomSpecialType special      = RoomSpecialType::None;
+        bool specialClaimed          = false;   // player chose an option or left
+        int  specialChoice           = -1;      // chosen card index, -1 = none/left
+        int  specialOptions[3]       = { -1, -1, -1 }; // option-table indices offered
     };
 
     // ── Dungeon HUD polish (intro banner / badge / modifier stack / map) ───────

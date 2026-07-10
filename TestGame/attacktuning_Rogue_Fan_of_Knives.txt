@@ -1,5 +1,12 @@
+box_x=24.000
+box_y=12.000
+box_w=190.000
+box_h=192.000
 fx=FanOfKnives
-box_x=24.00
-box_y=12.00
-box_w=190.00
-box_h=192.00
+fire_forward=65.000
+fire_height=41.000
+proj_scale=1.000
+proj_radius=26.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

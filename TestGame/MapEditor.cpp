@@ -35,6 +35,25 @@ namespace
     {
         return std::max(lo, std::min(v, hi));
     }
+
+    // Canonical .vasset strings — MUST match VillageAssetData's ParseCategory /
+    // ParseService so the editor's output round-trips through the loader.
+    const char* kCategoryNames[] = { "Building", "Decor", "Path", "Utility", "Trophy" };
+    const int   kCategoryCount   = 5;
+    // None first, then the services village buildings actually use.
+    const char* kServiceNames[]  = { "None", "Shop", "Relic", "Wardrobe", "Bestiary",
+                                     "Training", "ClassChange", "Cartographer",
+                                     "TrophyHall", "Graveyard", "DungeonGate" };
+    const int   kServiceCount    = 11;
+
+    bool EqualsCI(const char* a, const char* b)
+    {
+    #if defined(_WIN32)
+        return _stricmp(a, b) == 0;
+    #else
+        return strcasecmp(a, b) == 0;
+    #endif
+    }
 }
 
 void MapEditor::Init()
@@ -150,6 +169,30 @@ Color MapEditor::MarkerColor(MarkerKind kind) const
     }
 }
 
+int MapEditor::AssetFrameWidth(const Asset& asset) const
+{
+    int cols = std::max(1, asset.animCols);
+    return std::max(1, asset.animEnabled ? asset.texture.width / cols : asset.texture.width);
+}
+
+int MapEditor::AssetFrameHeight(const Asset& asset) const
+{
+    int rows = std::max(1, asset.animRows);
+    return std::max(1, asset.animEnabled ? asset.texture.height / rows : asset.texture.height);
+}
+
+Rectangle MapEditor::AssetFrameSourceRect(const Asset& asset) const
+{
+    int frameW = AssetFrameWidth(asset);
+    int frameH = AssetFrameHeight(asset);
+    if (!asset.animEnabled) return Rectangle{ 0.f, 0.f, (float)frameW, (float)frameH };
+
+    int cols = std::max(1, asset.animCols);
+    int total = std::max(1, std::min(asset.animFrames, std::max(1, asset.animCols * asset.animRows)));
+    int frame = ((int)(GetTime() * std::max(0.1f, asset.animFps))) % total;
+    return Rectangle{ (float)((frame % cols) * frameW), (float)((frame / cols) * frameH), (float)frameW, (float)frameH };
+}
+
 std::string MapEditor::MarkerOffsetText(const Asset& asset, Vector2 markerPos) const
 {
     std::string text;
@@ -160,10 +203,10 @@ std::string MapEditor::MarkerOffsetText(const Asset& asset, Vector2 markerPos) c
     };
 
     if (markerPos.x < 0.f) append(TextFormat("%.0f px left", -markerPos.x));
-    else if (markerPos.x > asset.texture.width) append(TextFormat("%.0f px right", markerPos.x - asset.texture.width));
+    else if (markerPos.x > AssetFrameWidth(asset)) append(TextFormat("%.0f px right", markerPos.x - AssetFrameWidth(asset)));
 
     if (markerPos.y < 0.f) append(TextFormat("%.0f px above", -markerPos.y));
-    else if (markerPos.y > asset.texture.height) append(TextFormat("%.0f px below", markerPos.y - asset.texture.height));
+    else if (markerPos.y > AssetFrameHeight(asset)) append(TextFormat("%.0f px below", markerPos.y - AssetFrameHeight(asset)));
 
     return text.empty() ? std::string("inside PNG") : std::string("outside PNG: ") + text;
 }
@@ -172,6 +215,10 @@ void MapEditor::LoadMetadata(Asset& asset)
 {
     asset.colliders.clear();
     for (int i = 0; i < (int)MarkerKind::Count; ++i) asset.markers[i] = Marker{};
+    // Buying metadata back to defaults before parsing.
+    asset.cost = 0; asset.categoryIdx = 0; asset.serviceIdx = 0;
+    asset.required = false; asset.unique = false; asset.removable = true;
+    asset.animEnabled = false; asset.animCols = 1; asset.animRows = 1; asset.animFrames = 1; asset.animFps = 6.f;
 
     FILE* file = fopen(asset.metaPath.c_str(), "r");
     if (!file) return;
@@ -183,6 +230,27 @@ void MapEditor::LoadMetadata(Asset& asset)
         if (sscanf(line, "collider %f %f %f %f", &x, &y, &w, &h) == 4)
         {
             asset.colliders.push_back(ColliderBox{ Rectangle{ x, y, w, h } });
+            continue;
+        }
+
+        // Buying/service metadata.
+        int iv = 0; char sv[64] = {};
+        if (sscanf(line, "cost %d", &iv) == 1)      { asset.cost = iv < 0 ? 0 : iv; continue; }
+        if (sscanf(line, "required %d", &iv) == 1)  { asset.required  = iv != 0; continue; }
+        if (sscanf(line, "unique %d", &iv) == 1)    { asset.unique    = iv != 0; continue; }
+        if (sscanf(line, "removable %d", &iv) == 1) { asset.removable = iv != 0; continue; }
+        if (sscanf(line, "category %63s", sv) == 1)
+        { for (int k = 0; k < kCategoryCount; ++k) if (EqualsCI(sv, kCategoryNames[k])) { asset.categoryIdx = k; break; } continue; }
+        if (sscanf(line, "service %63s", sv) == 1)
+        { for (int k = 0; k < kServiceCount; ++k) if (EqualsCI(sv, kServiceNames[k])) { asset.serviceIdx = k; break; } continue; }
+        int ac = 1, ar = 1, af = 1; float fps = 6.f;
+        if (sscanf(line, "animation %d %d %d %f", &ac, &ar, &af, &fps) == 4)
+        {
+            asset.animEnabled = true;
+            asset.animCols = std::max(1, ac);
+            asset.animRows = std::max(1, ar);
+            asset.animFrames = std::max(1, af);
+            asset.animFps = std::max(0.1f, fps);
             continue;
         }
 
@@ -220,7 +288,17 @@ void MapEditor::SaveActiveMetadata()
 
     fprintf(file, "village_asset 1\n");
     fprintf(file, "image %s\n", asset->pngFile.c_str());
-    fprintf(file, "size %d %d\n", asset->texture.width, asset->texture.height);
+    fprintf(file, "size %d %d\n", AssetFrameWidth(*asset), AssetFrameHeight(*asset));
+    if (asset->animEnabled)
+        fprintf(file, "animation %d %d %d %.2f\n", std::max(1, asset->animCols), std::max(1, asset->animRows), std::max(1, asset->animFrames), std::max(0.1f, asset->animFps));
+    // Buying/service metadata (read by VillageAssetData -> build menu).
+    fprintf(file, "id %s\n", asset->name.c_str());
+    fprintf(file, "category %s\n", kCategoryNames[asset->categoryIdx]);
+    fprintf(file, "service %s\n",  kServiceNames[asset->serviceIdx]);
+    fprintf(file, "cost %d\n", asset->cost);
+    fprintf(file, "required %d\n",  asset->required  ? 1 : 0);
+    fprintf(file, "unique %d\n",    asset->unique    ? 1 : 0);
+    fprintf(file, "removable %d\n", asset->removable ? 1 : 0);
     for (const ColliderBox& box : asset->colliders)
         fprintf(file, "collider %.2f %.2f %.2f %.2f\n", box.rect.x, box.rect.y, box.rect.width, box.rect.height);
 
@@ -242,8 +320,8 @@ void MapEditor::FitActiveAssetToCanvas(Rectangle canvas)
 {
     const Asset* asset = ActiveAsset();
     if (!asset || asset->texture.id == 0) return;
-    float fitX = (canvas.width - 80.f) / std::max(1.f, (float)asset->texture.width);
-    float fitY = (canvas.height - 80.f) / std::max(1.f, (float)asset->texture.height);
+    float fitX = (canvas.width - 80.f) / std::max(1.f, (float)AssetFrameWidth(*asset));
+    float fitY = (canvas.height - 80.f) / std::max(1.f, (float)AssetFrameHeight(*asset));
     _zoom = ClampFloat(std::min(fitX, fitY), 0.5f, 8.f);
     _viewOffset = Vector2{};
 }
@@ -253,8 +331,8 @@ Vector2 MapEditor::ImageToScreen(Vector2 imagePos) const
     Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
     const Asset* asset = ActiveAsset();
     if (!asset) return Vector2{};
-    Vector2 origin{ canvas.x + canvas.width * 0.5f - asset->texture.width * _zoom * 0.5f + _viewOffset.x,
-                    canvas.y + canvas.height * 0.5f - asset->texture.height * _zoom * 0.5f + _viewOffset.y };
+    Vector2 origin{ canvas.x + canvas.width * 0.5f - AssetFrameWidth(*asset) * _zoom * 0.5f + _viewOffset.x,
+                    canvas.y + canvas.height * 0.5f - AssetFrameHeight(*asset) * _zoom * 0.5f + _viewOffset.y };
     return Vector2{ origin.x + imagePos.x * _zoom, origin.y + imagePos.y * _zoom };
 }
 
@@ -263,8 +341,8 @@ Vector2 MapEditor::ScreenToImage(Vector2 screenPos) const
     Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
     const Asset* asset = ActiveAsset();
     if (!asset || _zoom <= 0.f) return Vector2{};
-    Vector2 origin{ canvas.x + canvas.width * 0.5f - asset->texture.width * _zoom * 0.5f + _viewOffset.x,
-                    canvas.y + canvas.height * 0.5f - asset->texture.height * _zoom * 0.5f + _viewOffset.y };
+    Vector2 origin{ canvas.x + canvas.width * 0.5f - AssetFrameWidth(*asset) * _zoom * 0.5f + _viewOffset.x,
+                    canvas.y + canvas.height * 0.5f - AssetFrameHeight(*asset) * _zoom * 0.5f + _viewOffset.y };
     return Vector2{ (screenPos.x - origin.x) / _zoom, (screenPos.y - origin.y) / _zoom };
 }
 
@@ -278,12 +356,12 @@ Rectangle MapEditor::NormalizeImageRect(Rectangle rect) const
 {
     if (rect.width < 0.f) { rect.x += rect.width; rect.width = -rect.width; }
     if (rect.height < 0.f) { rect.y += rect.height; rect.height = -rect.height; }
-    const Asset* asset = ActiveAsset();
-    if (!asset) return rect;
-    rect.x = ClampFloat(rect.x, 0.f, (float)asset->texture.width);
-    rect.y = ClampFloat(rect.y, 0.f, (float)asset->texture.height);
-    rect.width = ClampFloat(rect.width, 1.f, (float)asset->texture.width - rect.x);
-    rect.height = ClampFloat(rect.height, 1.f, (float)asset->texture.height - rect.y);
+
+    // Colliders are authored in image-local coordinates but may intentionally
+    // extend outside the visible PNG for doors, interaction pads, fences, and
+    // sprite overhangs. Keep only a sane minimum size; do not clamp to the image.
+    rect.width = std::max(1.f, rect.width);
+    rect.height = std::max(1.f, rect.height);
     return rect;
 }
 
@@ -292,7 +370,7 @@ Rectangle MapEditor::ActiveImageBoundsScreen() const
     const Asset* asset = ActiveAsset();
     if (!asset) return Rectangle{};
     Vector2 topLeft = ImageToScreen(Vector2{ 0.f, 0.f });
-    return Rectangle{ topLeft.x, topLeft.y, asset->texture.width * _zoom, asset->texture.height * _zoom };
+    return Rectangle{ topLeft.x, topLeft.y, AssetFrameWidth(*asset) * _zoom, AssetFrameHeight(*asset) * _zoom };
 }
 
 int MapEditor::ColliderAt(Vector2 imagePos) const
@@ -324,13 +402,24 @@ int MapEditor::MarkerAt(Vector2 imagePos) const
     return -1;
 }
 
-bool MapEditor::HandleAt(const ColliderBox& box, Vector2 screenPos) const
+MapEditor::ColliderHandle MapEditor::ColliderHandleAt(const ColliderBox& box, Vector2 screenPos) const
 {
     Rectangle screen = ImageRectToScreen(box.rect);
-    Rectangle handle{ screen.x + screen.width - kHandleSize * 0.5f,
-                      screen.y + screen.height - kHandleSize * 0.5f,
-                      kHandleSize, kHandleSize };
-    return CheckCollisionPointRec(screenPos, handle);
+    Rectangle handles[] = {
+        Rectangle{ screen.x - kHandleSize * 0.5f, screen.y - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+        Rectangle{ screen.x + screen.width - kHandleSize * 0.5f, screen.y - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+        Rectangle{ screen.x - kHandleSize * 0.5f, screen.y + screen.height - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+        Rectangle{ screen.x + screen.width - kHandleSize * 0.5f, screen.y + screen.height - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+    };
+    ColliderHandle kinds[] = {
+        ColliderHandle::TopLeft,
+        ColliderHandle::TopRight,
+        ColliderHandle::BottomLeft,
+        ColliderHandle::BottomRight,
+    };
+    for (int i = 0; i < 4; ++i)
+        if (CheckCollisionPointRec(screenPos, handles[i])) return kinds[i];
+    return ColliderHandle::None;
 }
 
 void MapEditor::AddCollider(Rectangle imageRect)
@@ -404,6 +493,8 @@ void MapEditor::Update()
     UpdatePanel(panel);
     UpdateCanvas(canvas);
     UpdateSelectedColliderKeys();
+    UpdateSelectedMarkerKeys();
+    UpdateAssetMetadataKeys();
 }
 
 void MapEditor::UpdatePanel(Rectangle panel)
@@ -411,16 +502,79 @@ void MapEditor::UpdatePanel(Rectangle panel)
     Vector2 mouse = GetVirtualMousePos();
     if (!CheckCollisionPointRec(mouse, panel)) return;
 
+    Rectangle list{ 10.f, 90.f, panel.width - 20.f, 230.f };
     float wheel = GetMouseWheelMove();
-    if (wheel != 0.f)
+    if (wheel != 0.f && CheckCollisionPointRec(mouse, list))
     {
-        float maxScroll = std::max(0.f, (float)_assets.size() * kRowH - (panel.height - 88.f));
+        float maxScroll = std::max(0.f, (float)_assets.size() * kRowH - list.height);
         _assetListScroll = ClampFloat(_assetListScroll - wheel * kRowH * 2.f, 0.f, maxScroll);
     }
 
-    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    if (!IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) return;
+
+    auto buttonHit = [&](float x, float y, float w, const char* label) -> bool
     {
-        int row = (int)((mouse.y - 82.f + _assetListScroll) / kRowH);
+        (void)label;
+        return CheckCollisionPointRec(mouse, Rectangle{ x, y, w, 30.f });
+    };
+
+    Asset* asset = ActiveAsset();
+    const float bx = 16.f;
+    const float by = 330.f;
+    if (buttonHit(bx, by, 86.f, "Save"))
+    {
+        SaveActiveMetadata();
+        return;
+    }
+    if (buttonHit(bx + 94.f, by, 70.f, "Fit"))
+    {
+        Rectangle canvas{ kPanelW, 0.f, (float)kVirtualWidth - kPanelW, (float)kVirtualHeight - kStatusH };
+        FitActiveAssetToCanvas(canvas);
+        _status = "Fit asset to view";
+        _statusTimer = 2.f;
+        return;
+    }
+    if (buttonHit(bx + 172.f, by, 76.f, "Help"))
+    {
+        _helpOpen = true;
+        return;
+    }
+    if (buttonHit(bx, by + 38.f, 98.f, "Add Box"))
+    {
+        if (asset)
+            AddCollider(Rectangle{ AssetFrameWidth(*asset) * 0.5f - 32.f, AssetFrameHeight(*asset) * 0.5f - 32.f, 64.f, 64.f });
+        return;
+    }
+    if (buttonHit(bx + 106.f, by + 38.f, 82.f, "Full"))
+    {
+        if (asset)
+        {
+            asset->colliders.clear();
+            asset->colliders.push_back(ColliderBox{ Rectangle{ 0.f, 0.f, (float)AssetFrameWidth(*asset), (float)AssetFrameHeight(*asset) } });
+            _selectedCollider = 0;
+            _selectedMarker = -1;
+            asset->dirty = true;
+            _status = "Collider = whole sprite";
+            _statusTimer = 2.f;
+        }
+        return;
+    }
+    if (buttonHit(bx + 196.f, by + 38.f, 96.f, "No Coll"))
+    {
+        if (asset)
+        {
+            asset->colliders.clear();
+            _selectedCollider = -1;
+            asset->dirty = true;
+            _status = "Cleared all colliders";
+            _statusTimer = 2.f;
+        }
+        return;
+    }
+
+    if (CheckCollisionPointRec(mouse, list))
+    {
+        int row = (int)((mouse.y - list.y + _assetListScroll) / kRowH);
         if (row >= 0 && row < (int)_assets.size()) SelectAsset(row);
     }
 }
@@ -434,7 +588,13 @@ void MapEditor::UpdateCanvas(Rectangle canvas)
     bool inCanvas = CheckCollisionPointRec(mouse, canvas);
     float wheel = inCanvas ? GetMouseWheelMove() : 0.f;
     if (wheel != 0.f)
+    {
+        Vector2 imageBeforeZoom = ScreenToImage(mouse);
         _zoom = ClampFloat(_zoom + wheel * 0.18f * _zoom, 0.25f, 12.f);
+        Vector2 sameImageScreen = ImageToScreen(imageBeforeZoom);
+        _viewOffset.x += mouse.x - sameImageScreen.x;
+        _viewOffset.y += mouse.y - sameImageScreen.y;
+    }
 
     if (IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON) && inCanvas)
     {
@@ -496,10 +656,12 @@ void MapEditor::UpdateCanvas(Rectangle canvas)
         _selectedMarker = -1;
         for (int i = (int)asset->colliders.size() - 1; i >= 0; --i)
         {
-            if (HandleAt(asset->colliders[i], mouse))
+            ColliderHandle handle = ColliderHandleAt(asset->colliders[i], mouse);
+            if (handle != ColliderHandle::None)
             {
                 _selectedCollider = i;
                 _dragCollider = i;
+                _dragHandle = handle;
                 _dragMode = DragMode::ResizeCollider;
                 _dragStartMouseImage = imageMouse;
                 _dragStartRect = asset->colliders[i].rect;
@@ -547,6 +709,7 @@ void MapEditor::UpdateCanvas(Rectangle canvas)
         if (_dragCollider < 0 || _dragCollider >= (int)asset->colliders.size())
         {
             _dragMode = DragMode::None;
+            _dragHandle = ColliderHandle::None;
             return;
         }
 
@@ -561,8 +724,30 @@ void MapEditor::UpdateCanvas(Rectangle canvas)
             }
             else
             {
-                rect.width += delta.x;
-                rect.height += delta.y;
+                switch (_dragHandle)
+                {
+                case ColliderHandle::TopLeft:
+                    rect.x += delta.x;
+                    rect.y += delta.y;
+                    rect.width -= delta.x;
+                    rect.height -= delta.y;
+                    break;
+                case ColliderHandle::TopRight:
+                    rect.y += delta.y;
+                    rect.width += delta.x;
+                    rect.height -= delta.y;
+                    break;
+                case ColliderHandle::BottomLeft:
+                    rect.x += delta.x;
+                    rect.width -= delta.x;
+                    rect.height += delta.y;
+                    break;
+                case ColliderHandle::BottomRight:
+                default:
+                    rect.width += delta.x;
+                    rect.height += delta.y;
+                    break;
+                }
             }
             asset->colliders[_dragCollider].rect = NormalizeImageRect(rect);
             asset->dirty = true;
@@ -571,6 +756,7 @@ void MapEditor::UpdateCanvas(Rectangle canvas)
         {
             _dragMode = DragMode::None;
             _dragCollider = -1;
+            _dragHandle = ColliderHandle::None;
         }
     }
 }
@@ -595,6 +781,59 @@ void MapEditor::UpdateSelectedColliderKeys()
         asset->colliders[_selectedCollider].rect = NormalizeImageRect(rect);
         asset->dirty = true;
     }
+}
+
+void MapEditor::UpdateAssetMetadataKeys()
+{
+    Asset* asset = ActiveAsset();
+    if (!asset) return;
+
+    // ── Collider quick-modes (B) ────────────────────────────────────────────────
+    // W = whole-sprite collider (mushrooms & simple solid props); N = clear all
+    // colliders (flowers / walk-through decor). Trees & buildings still use the
+    // manual right-drag boxes for one-or-many precise colliders.
+    if (IsKeyPressed(KEY_W))
+    {
+        asset->colliders.clear();
+        asset->colliders.push_back(ColliderBox{ Rectangle{ 0.f, 0.f,
+            (float)AssetFrameWidth(*asset), (float)AssetFrameHeight(*asset) } });
+        _selectedCollider = 0;
+        asset->dirty = true;
+        _status = "Collider = whole sprite"; _statusTimer = 2.f;
+    }
+    if (IsKeyPressed(KEY_N))
+    {
+        asset->colliders.clear();
+        _selectedCollider = -1;
+        asset->dirty = true;
+        _status = "Cleared all colliders (walk-through)"; _statusTimer = 2.f;
+    }
+
+    // ── Buying/service metadata (A) ─────────────────────────────────────────────
+    const bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    bool changed = false;
+    if (IsKeyPressed(KEY_RIGHT_BRACKET)) { asset->cost += shift ? 100 : 10; changed = true; }
+    if (IsKeyPressed(KEY_LEFT_BRACKET))  { asset->cost -= shift ? 100 : 10; if (asset->cost < 0) asset->cost = 0; changed = true; }
+    if (IsKeyPressed(KEY_PERIOD))    { asset->categoryIdx = (asset->categoryIdx + 1) % kCategoryCount; changed = true; }
+    if (IsKeyPressed(KEY_COMMA))     { asset->categoryIdx = (asset->categoryIdx + kCategoryCount - 1) % kCategoryCount; changed = true; }
+    if (IsKeyPressed(KEY_APOSTROPHE)){ asset->serviceIdx  = (asset->serviceIdx + 1) % kServiceCount; changed = true; }
+    if (IsKeyPressed(KEY_SEMICOLON)) { asset->serviceIdx  = (asset->serviceIdx + kServiceCount - 1) % kServiceCount; changed = true; }
+    if (IsKeyPressed(KEY_T)) { asset->required  = !asset->required;  changed = true; }
+    if (IsKeyPressed(KEY_U)) { asset->unique    = !asset->unique;    changed = true; }
+    if (IsKeyPressed(KEY_M)) { asset->removable = !asset->removable; changed = true; }
+
+    // Animation metadata for water/torch/etc. sheets.
+    if (IsKeyPressed(KEY_A)) { asset->animEnabled = !asset->animEnabled; changed = true; }
+    if (IsKeyPressed(KEY_I)) { asset->animCols = std::max(1, asset->animCols + 1); changed = true; }
+    if (IsKeyPressed(KEY_K)) { asset->animCols = std::max(1, asset->animCols - 1); changed = true; }
+    if (IsKeyPressed(KEY_O)) { asset->animRows = std::max(1, asset->animRows + 1); changed = true; }
+    if (IsKeyPressed(KEY_L)) { asset->animRows = std::max(1, asset->animRows - 1); changed = true; }
+    if (IsKeyPressed(KEY_EQUAL)) { asset->animFrames = std::min(std::max(1, asset->animCols * asset->animRows), asset->animFrames + 1); changed = true; }
+    if (IsKeyPressed(KEY_MINUS)) { asset->animFrames = std::max(1, asset->animFrames - 1); changed = true; }
+    if (IsKeyPressed(KEY_PAGE_UP)) { asset->animFps += 1.f; changed = true; }
+    if (IsKeyPressed(KEY_PAGE_DOWN)) { asset->animFps = std::max(0.1f, asset->animFps - 1.f); changed = true; }
+    asset->animFrames = std::min(asset->animFrames, std::max(1, asset->animCols * asset->animRows));
+    if (changed) asset->dirty = true;
 }
 
 void MapEditor::UpdateSelectedMarkerKeys()
@@ -657,13 +896,37 @@ void MapEditor::DrawPanel(Rectangle panel) const
     if (_assets.empty()) DrawText("No PNG assets found", (int)list.x + 12, (int)list.y + 18, 20, Fade(RAYWHITE, 0.75f));
     EndScissorMode();
 
+    auto drawButton = [](Rectangle r, const char* label, Color fill)
+    {
+        DrawRectangleRounded(r, 0.18f, 6, fill);
+        DrawRectangleRoundedLines(r, 0.18f, 6, Fade(RAYWHITE, 0.45f));
+        int fs = 17;
+        int tw = MeasureText(label, fs);
+        DrawText(label, (int)(r.x + r.width * 0.5f - tw * 0.5f), (int)(r.y + r.height * 0.5f - fs * 0.5f), fs, RAYWHITE);
+    };
+    drawButton(Rectangle{ 16.f, 330.f, 86.f, 30.f }, "Save", Color{ 70, 100, 54, 255 });
+    drawButton(Rectangle{ 110.f, 330.f, 70.f, 30.f }, "Fit", Color{ 54, 72, 100, 255 });
+    drawButton(Rectangle{ 188.f, 330.f, 76.f, 30.f }, "Help", Color{ 78, 64, 102, 255 });
+    drawButton(Rectangle{ 16.f, 368.f, 98.f, 30.f }, "Add Box", Color{ 95, 70, 52, 255 });
+    drawButton(Rectangle{ 122.f, 368.f, 82.f, 30.f }, "Full", Color{ 98, 58, 48, 255 });
+    drawButton(Rectangle{ 212.f, 368.f, 96.f, 30.f }, "No Coll", Color{ 88, 54, 54, 255 });
+
     const Asset* asset = ActiveAsset();
     if (!asset) return;
 
-    int y = 340;
+    int y = 414;
     DrawText(TextFormat("Asset: %s%s", asset->name.c_str(), asset->dirty ? " *" : ""), 16, y, 22, RAYWHITE); y += 30;
-    DrawText(TextFormat("Image: %dx%d", asset->texture.width, asset->texture.height), 16, y, 18, Fade(RAYWHITE, 0.78f)); y += 26;
-    DrawText(TextFormat("Colliders: %d", (int)asset->colliders.size()), 16, y, 18, Fade(RAYWHITE, 0.78f)); y += 26;
+    DrawText(TextFormat("Image: %dx%d  frame: %dx%d", asset->texture.width, asset->texture.height, AssetFrameWidth(*asset), AssetFrameHeight(*asset)), 16, y, 18, Fade(RAYWHITE, 0.78f)); y += 26;
+    DrawText(TextFormat("Colliders: %d   (W whole / N none)", (int)asset->colliders.size()), 16, y, 18, Fade(RAYWHITE, 0.78f)); y += 24;
+    DrawText(TextFormat("Anim: %s  %dx%d frames:%d fps:%.1f", asset->animEnabled ? "ON" : "off", asset->animCols, asset->animRows, asset->animFrames, asset->animFps), 16, y, 17, Color{ 130, 220, 255, 255 }); y += 22;
+    DrawText("A toggle | I/K cols | O/L rows | -/= frames | Pg fps", 16, y, 14, Fade(RAYWHITE, 0.62f)); y += 26;
+
+    // Buying/service metadata (edit keys shown inline).
+    DrawText(TextFormat("Category: %s   [ , . ]", kCategoryNames[asset->categoryIdx]), 16, y, 18, Color{ 170, 210, 255, 255 }); y += 24;
+    DrawText(TextFormat("Service:  %s   [ ; ' ]", kServiceNames[asset->serviceIdx]),   16, y, 18, Color{ 202, 182, 255, 255 }); y += 24;
+    DrawText(TextFormat("Cost:     %d gold   [ [ ] , shift x10 ]", asset->cost),        16, y, 18, Color{ 255, 224, 130, 255 }); y += 24;
+    DrawText(TextFormat("required %s (T)  unique %s (U)  removable %s (M)", asset->required ? "ON" : "off", asset->unique ? "ON" : "off", asset->removable ? "ON" : "off"),
+             16, y, 16, Fade(RAYWHITE, 0.8f)); y += 28;
 
     for (int i = 0; i < (int)MarkerKind::Count; ++i)
     {
@@ -704,6 +967,7 @@ void MapEditor::DrawPanel(Rectangle panel) const
         Rectangle r = asset->colliders[_selectedCollider].rect;
         DrawText(TextFormat("x %.0f y %.0f w %.0f h %.0f", r.x, r.y, r.width, r.height), 16, y, 17, RAYWHITE); y += 22;
         DrawText("Drag box to move, drag corner to resize", 16, y, 15, Fade(RAYWHITE, 0.68f)); y += 20;
+        DrawText("Colliders can extend outside the PNG", 16, y, 15, Fade(RAYWHITE, 0.68f)); y += 20;
         DrawText("Arrows move, Ctrl+Arrows resize, Shift faster", 16, y, 15, Fade(RAYWHITE, 0.68f));
     }
     else
@@ -735,7 +999,7 @@ void MapEditor::DrawCanvas(Rectangle canvas) const
         }
 
     DrawTexturePro(asset->texture,
-                   Rectangle{ 0.f, 0.f, (float)asset->texture.width, (float)asset->texture.height },
+                   AssetFrameSourceRect(*asset),
                    img, Vector2{ 0.f, 0.f }, 0.f, WHITE);
     DrawRectangleLinesEx(img, 2.f, Color{ 110, 114, 130, 255 });
 
@@ -749,7 +1013,16 @@ void MapEditor::DrawCanvas(Rectangle canvas) const
         DrawRectangleLinesEx(sr, selected ? 3.f : 2.f, line);
         DrawText(TextFormat("%d", i + 1), (int)sr.x + 4, (int)sr.y + 4, 16, line);
         if (selected)
-            DrawRectangle((int)(sr.x + sr.width - kHandleSize * 0.5f), (int)(sr.y + sr.height - kHandleSize * 0.5f), (int)kHandleSize, (int)kHandleSize, GOLD);
+        {
+            Rectangle handles[] = {
+                Rectangle{ sr.x - kHandleSize * 0.5f, sr.y - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+                Rectangle{ sr.x + sr.width - kHandleSize * 0.5f, sr.y - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+                Rectangle{ sr.x - kHandleSize * 0.5f, sr.y + sr.height - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+                Rectangle{ sr.x + sr.width - kHandleSize * 0.5f, sr.y + sr.height - kHandleSize * 0.5f, kHandleSize, kHandleSize },
+            };
+            for (const Rectangle& handle : handles)
+                DrawRectangleRec(handle, GOLD);
+        }
     }
 
     for (int i = 0; i < (int)MarkerKind::Count; ++i)
@@ -760,8 +1033,8 @@ void MapEditor::DrawCanvas(Rectangle canvas) const
         Vector2 p = ImageToScreen(marker.pos);
         Color c = MarkerColor(kind);
         Vector2 nearestOnImage{
-            ClampFloat(marker.pos.x, 0.f, (float)asset->texture.width),
-            ClampFloat(marker.pos.y, 0.f, (float)asset->texture.height)
+            ClampFloat(marker.pos.x, 0.f, (float)AssetFrameWidth(*asset)),
+            ClampFloat(marker.pos.y, 0.f, (float)AssetFrameHeight(*asset))
         };
         if (nearestOnImage.x != marker.pos.x || nearestOnImage.y != marker.pos.y)
         {
@@ -813,15 +1086,19 @@ void MapEditor::DrawHelp() const
         "VILLAGE ASSET ADJUSTER",
         "",
         "This edits metadata for finished PNGs in VillageAssets.",
-        "The PNG is the visual. The .vasset file stores colliders and markers beside it.",
+        "The PNG is the visual. The .vasset file stores colliders, markers, and optional animation.",
         "",
         "Left panel: click ZephsShop, VillageGraveyard, or any future PNG asset.",
         "Canvas: mouse wheel zooms, middle mouse pans.",
         "",
         "Colliders: C adds a default box at mouse. Right-drag draws a new box.",
+        "           W makes a full-sprite collider. N clears colliders for walk-through decor.",
+        "           Collider boxes can extend outside the PNG; they save as local offsets.",
         "           Left-drag a box to move it. Drag its bottom-right handle to resize it.",
         "           Delete removes selected box. Arrows move selected; Ctrl+Arrows resize; Shift is faster.",
         "",
+        "Buying:    [ ] changes cost. ,/. changes category. ;/' changes service. T/U/M toggles flags.",
+        "Animation: A toggles sheet animation. I/K cols, O/L rows, -/= frames, PgUp/PgDn fps.",
         "Markers:   Z places Zeph. P places Poe. X places player respawn point.",
         "           Markers may sit outside the PNG; the panel shows their pixel offset from it.",
         "           Click/drag a marker, or use Arrow keys after selecting/placing it.",

@@ -1,5 +1,12 @@
+box_x=-7.000
+box_y=-2.000
+box_w=220.000
+box_h=224.000
 fx=ShieldBash
-box_x=-7.00
-box_y=-2.00
-box_w=220.00
-box_h=224.00
+fire_forward=73.000
+fire_height=43.000
+proj_scale=1.000
+proj_radius=33.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

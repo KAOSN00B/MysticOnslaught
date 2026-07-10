@@ -38,7 +38,7 @@ enum class VillageBuildCategory { Building, Decor, Path, Utility, Trophy };
 enum class VillageService
 {
     None, Shop, Graveyard, Training, ClassChange,
-    Wardrobe, Bestiary, Cartographer, TrophyHall, DungeonGate
+    Wardrobe, Bestiary, Cartographer, TrophyHall, DungeonGate, Relic
 };
 
 // What a press-interact zone does when the player triggers it.
@@ -95,6 +95,18 @@ struct VAssetAmbientSpawn
     std::string unlockKey;          // optional gate, e.g. "build_zeph_shop"
 };
 
+// Optional spritesheet animation for assets like water, torches, smoke, etc.
+// The image is split into columns x rows frames; colliders/markers are authored
+// against one frame, not the entire sheet.
+struct VAssetAnimation
+{
+    bool  enabled = false;
+    int   columns = 1;
+    int   rows = 1;
+    int   frameCount = 1;
+    float fps = 6.f;
+};
+
 // The fully parsed asset. `imageSize` is the PNG size as authored; all colliders,
 // markers and zones are image-local pixels relative to the asset's top-left.
 struct VillageAssetData
@@ -117,6 +129,7 @@ struct VillageAssetData
     std::vector<VAssetInteraction>  interactions;
     std::vector<VAssetDoor>         doors;          // parsed, not yet consumed
     std::vector<VAssetAmbientSpawn> ambientSpawns;  // parsed, not yet consumed
+    VAssetAnimation                 animation;      // optional animated sheet info
 
     // ── Lookups ──────────────────────────────────────────────────────────────
     const VAssetMarker* FindMarker(const char* markerName) const;

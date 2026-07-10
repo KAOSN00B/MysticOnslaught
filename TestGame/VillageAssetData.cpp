@@ -1,8 +1,10 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "VillageAssetData.h"
 
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,6 +112,7 @@ namespace
         if (EqualsIgnoreCase(text, "Cartographer"))return VillageService::Cartographer;
         if (EqualsIgnoreCase(text, "TrophyHall"))  return VillageService::TrophyHall;
         if (EqualsIgnoreCase(text, "DungeonGate")) return VillageService::DungeonGate;
+        if (EqualsIgnoreCase(text, "Relic"))       return VillageService::Relic;
         return VillageService::None;
     }
 
@@ -327,6 +330,14 @@ bool VillageAssetLoader::Load(const std::string& vassetPath, VillageAssetData& o
             if (FindKeyValue(tokens, 3, "unlock_key", unlockValue)) spawn.unlockKey = unlockValue;
             outData.ambientSpawns.push_back(spawn);
         }
+        else if (EqualsIgnoreCase(keyword, "animation") && tokens.size() >= 5)
+        {
+            outData.animation.enabled = true;
+            outData.animation.columns = std::max(1, atoi(tokens[1].c_str()));
+            outData.animation.rows = std::max(1, atoi(tokens[2].c_str()));
+            outData.animation.frameCount = std::max(1, atoi(tokens[3].c_str()));
+            outData.animation.fps = std::max(0.1f, (float)atof(tokens[4].c_str()));
+        }
         // Any other keyword is silently ignored (forward-compatible).
     }
     fclose(file);
@@ -380,6 +391,7 @@ const char* VillageAssetLoader::ToString(VillageService service)
     case VillageService::Cartographer: return "Cartographer";
     case VillageService::TrophyHall:   return "TrophyHall";
     case VillageService::DungeonGate:  return "DungeonGate";
+    case VillageService::Relic:        return "Relic";
     }
     return "None";
 }

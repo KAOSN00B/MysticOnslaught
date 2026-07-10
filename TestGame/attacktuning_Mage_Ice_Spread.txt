@@ -1,5 +1,12 @@
+box_x=8.000
+box_y=7.000
+box_w=83.550
+box_h=83.550
 fx=none
-box_x=8.00
-box_y=7.00
-box_w=83.55
-box_h=83.55
+fire_forward=0.000
+fire_height=42.000
+proj_scale=1.000
+proj_radius=28.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

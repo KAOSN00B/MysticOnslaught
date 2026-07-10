@@ -1,5 +1,12 @@
+box_x=0.000
+box_y=0.000
+box_w=312.000
+box_h=278.000
 fx=GroundSlam
-box_x=0.00
-box_y=0.00
-box_w=312.00
-box_h=278.00
+fire_forward=2.000
+fire_height=76.000
+proj_scale=1.000
+proj_radius=26.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

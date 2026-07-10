@@ -1,5 +1,12 @@
+box_x=-1.000
+box_y=1.000
+box_w=210.000
+box_h=130.000
 fx=Eviscerate
-box_x=-1.00
-box_y=1.00
-box_w=210.00
-box_h=130.00
+fire_forward=70.000
+fire_height=45.000
+proj_scale=1.000
+proj_radius=26.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

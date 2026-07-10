@@ -1,4 +1,14 @@
 village_asset 1
 image ZephsShop.png
 size 201 100
-marker Zeph 50.22 124.20
+id ZephsShop
+category Building
+service None
+cost 0
+required 0
+unique 0
+removable 1
+collider 2.00 68.00 19.00 28.00
+collider 180.00 68.00 20.00 28.00
+collider 33.57 3.88 135.54 93.90
+marker Zeph 50.21 115.25

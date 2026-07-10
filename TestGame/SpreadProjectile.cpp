@@ -80,7 +80,7 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
     if (_arrow && _arrowTex.id != 0)
     {
         Rectangle arrowSrc{ 0.f, 0.f, (float)_arrowTex.width, (float)_arrowTex.height };
-        float arrowScale = 1.6f;
+        float arrowScale = 1.6f * _visualScale;
         Rectangle arrowDst{ screenPos.x, screenPos.y,
                             _arrowTex.width * arrowScale, _arrowTex.height * arrowScale };
         DrawTexturePro(_arrowTex, arrowSrc, arrowDst,
@@ -99,7 +99,7 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
     }
 
     Rectangle source = GetAnimationFrameRect(*tex, _frameWidth, _frameHeight, _frame);
-    float scale = _basic ? 3.4f : 7.2f;   // basic shots are noticeably smaller
+    float scale = (_basic ? 3.4f : 7.2f) * _visualScale;   // basic shots are noticeably smaller
     Rectangle dest{
         screenPos.x,
         screenPos.y,

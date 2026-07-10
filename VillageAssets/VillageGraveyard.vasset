@@ -1,6 +1,13 @@
 village_asset 1
 image VillageGraveyard.png
 size 196 132
+id VillageGraveyard
+category Building
+service None
+cost 0
+required 0
+unique 0
+removable 1
 collider 5.08 5.52 13.12 119.30
 collider 17.92 86.16 16.02 24.30
 collider 18.47 38.66 15.88 23.33
@@ -11,5 +18,5 @@ collider 162.07 38.25 16.15 23.47
 collider 162.34 86.02 15.46 23.89
 collider 17.92 5.80 171.77 21.40
 collider 182.36 27.34 7.32 96.79
-marker Poe 30.90 123.72
-marker Respawn 104.76 117.84
+marker Poe 38.77 128.27
+marker Respawn 104.90 125.23

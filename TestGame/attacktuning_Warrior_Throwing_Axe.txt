@@ -1,5 +1,12 @@
+box_x=77.000
+box_y=1.000
+box_w=122.000
+box_h=94.000
 fx=ThrowingAxe
-box_x=77.00
-box_y=1.00
-box_w=122.00
-box_h=94.00
+fire_forward=78.000
+fire_height=46.000
+proj_scale=1.000
+proj_radius=32.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

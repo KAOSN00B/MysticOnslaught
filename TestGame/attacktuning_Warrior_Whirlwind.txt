@@ -1,5 +1,12 @@
+box_x=-9.000
+box_y=-1.000
+box_w=206.000
+box_h=216.000
 fx=Whirlwind
-box_x=-9.00
-box_y=-1.00
-box_w=206.00
-box_h=216.00
+fire_forward=2.000
+fire_height=43.000
+proj_scale=1.000
+proj_radius=36.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

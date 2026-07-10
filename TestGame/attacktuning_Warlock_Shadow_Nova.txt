@@ -1,5 +1,12 @@
+box_x=188.000
+box_y=2.000
+box_w=680.000
+box_h=200.000
 fx=ShadowNova
-box_x=188.00
-box_y=2.00
-box_w=680.00
-box_h=200.00
+fire_forward=76.000
+fire_height=42.000
+proj_scale=1.510
+proj_radius=28.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

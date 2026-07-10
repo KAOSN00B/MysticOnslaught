@@ -32,7 +32,19 @@ std::string AttackTuningKey(const std::string& owner, const std::string& name)
 std::string AttackTuningKeyForAbility(AbilityType ability)
 {
     int i = (int)ability;
+    // Preserve existing authored tuning after the player-facing rename from
+    // Shield Bash to Shoulder Charge.
+    if (ability == AbilityType::ShieldBash)
+        return AttackTuningKey(AttackOwnerForAbility(i), "Shield Bash");
     return AttackTuningKey(AttackOwnerForAbility(i), GetAbilityName(ability));
+}
+
+std::string AttackTuningKeyForBasic(int playerClass)
+{
+    // PlayerClass order: Mage, Warrior, Hunter, Rogue, Paladin, Warlock.
+    static const char* kClassNames[] = { "Mage", "Warrior", "Hunter", "Rogue", "Paladin", "Warlock" };
+    const char* owner = (playerClass >= 0 && playerClass < 6) ? kClassNames[playerClass] : "Mage";
+    return AttackTuningKey(owner, "Basic");
 }
 
 namespace
@@ -62,6 +74,13 @@ namespace
                 else if (std::strcmp(k, "box_y") == 0) { out.y = val; out.hasBox = true; }
                 else if (std::strcmp(k, "box_w") == 0) { out.w = val; out.hasBox = true; }
                 else if (std::strcmp(k, "box_h") == 0) { out.h = val; out.hasBox = true; }
+                else if (std::strcmp(k, "fire_forward") == 0) { out.fireForward = val; out.hasFirePoint = true; }
+                else if (std::strcmp(k, "fire_height")  == 0) { out.fireHeight  = val; out.hasFirePoint = true; }
+                else if (std::strcmp(k, "proj_scale")   == 0) { out.projScale   = val; out.hasProjectile = true; }
+                else if (std::strcmp(k, "proj_radius")  == 0) { out.projRadius  = val; out.hasProjectile = true; }
+                else if (std::strcmp(k, "proj_speed")   == 0) { out.projSpeed   = val; out.hasProjectile = true; }
+                else if (std::strcmp(k, "proj_life")    == 0) { out.projLifetime= val; out.hasProjectile = true; }
+                else if (std::strcmp(k, "cooldown")     == 0) { out.cooldown    = val; out.hasCooldown = true; }
             }
         }
         fclose(f);
@@ -88,5 +107,40 @@ namespace AttackTuningStore
     {
         g_exists.erase(key);
         g_cache.erase(key);
+    }
+
+    bool Save(const std::string& key, const AttackTuning& t)
+    {
+        std::string path = "attacktuning_" + key + ".txt";
+        FILE* f = fopen(path.c_str(), "w");
+        if (!f) return false;
+
+        if (t.hasBox)
+        {
+            fprintf(f, "box_x=%.3f\n", t.x);
+            fprintf(f, "box_y=%.3f\n", t.y);
+            fprintf(f, "box_w=%.3f\n", t.w);
+            fprintf(f, "box_h=%.3f\n", t.h);
+        }
+        if (t.hasFx)
+            fprintf(f, "fx=%s\n", t.fxStem.empty() ? "none" : t.fxStem.c_str());
+        if (t.hasFirePoint)
+        {
+            fprintf(f, "fire_forward=%.3f\n", t.fireForward);
+            fprintf(f, "fire_height=%.3f\n",  t.fireHeight);
+        }
+        if (t.hasProjectile)
+        {
+            fprintf(f, "proj_scale=%.3f\n",  t.projScale);
+            fprintf(f, "proj_radius=%.3f\n", t.projRadius);
+            fprintf(f, "proj_speed=%.3f\n",  t.projSpeed);
+            fprintf(f, "proj_life=%.3f\n",   t.projLifetime);
+        }
+        if (t.hasCooldown)
+            fprintf(f, "cooldown=%.3f\n", t.cooldown);
+
+        fclose(f);
+        Reload(key);   // drop cache so the next Get() re-reads the new values
+        return true;
     }
 }

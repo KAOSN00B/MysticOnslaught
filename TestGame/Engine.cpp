@@ -1,5 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "Engine.h"
+#include "VillageAssetData.h"
 #include "VirtualCanvas.h"
 
 #ifdef PLATFORM_WEB
@@ -705,6 +706,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _magicGemCollected = false;
         _bossBarrierUnlocked = false;
         _bossBarrierMessageTimer = 0.f;
+        RollDungeonRoomSpecials();   // tag decision rooms for this fresh dungeon
     }
 
     _currentRoomType = room.type;
@@ -725,8 +727,21 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _waveIntroTimer = 0.f;
 
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
-    if (room.type == RoomType::Rest || room.type == RoomType::Store)
+    // Decision rooms (Risk Shrine, …) are peaceful like Rest/Store: no enemies,
+    // doors open. SpawnDungeonRoomEnemies() then skips them (it early-outs on cleared).
+    RoomSpecialType roomSpecial = _dungeonRoomStates[_dungeonRoomIdx].special;
+    if (room.type == RoomType::Rest || room.type == RoomType::Store ||
+        roomSpecial != RoomSpecialType::None)
         _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
+
+    // Entering a fresh combat room arms any pending Risk Shrine contract onto the
+    // enemies about to spawn; peaceful/cleared rooms clear the room levers instead.
+    bool freshCombatRoom = roomSpecial == RoomSpecialType::None
+                        && !_dungeonRoomStates[_dungeonRoomIdx].cleared
+                        && (room.type == RoomType::Standard || room.type == RoomType::Elite
+                         || room.type == RoomType::Treasure || room.type == RoomType::Boss);
+    if (freshCombatRoom) ActivatePendingModifiers();
+    else { _roomModHpMult = 1.f; _roomModDmgMult = 1.f; }
 
     _player.SetWorldPos(playerSpawnPos);
     _player.Revive();
@@ -1488,6 +1503,19 @@ void Engine::Update(float dt)
     _vfx.SetDamageNumberScale((int)_juiceDamageScale);   // live juice tuning
     if (_debug.IsActive() && IsKeyPressed(KEY_J)) _juicePanelOpen = !_juicePanelOpen;
     if (_juicePanelOpen) UpdateJuicePanel();
+
+    // Debug [F6]: turn the current dungeon room into a Risk Shrine on the spot
+    // (clears enemies, spawns the shrine) so the room-events flow is testable.
+    if (_debug.IsActive() && _gameState == GameState::DungeonRun && IsKeyPressed(KEY_F6))
+    {
+        DungeonRoomState& st = _dungeonRoomStates[_dungeonRoomIdx];
+        st.special = RoomSpecialType::RiskShrine;
+        st.specialOptions[0] = 0; st.specialOptions[1] = 1; st.specialOptions[2] = 2;
+        st.specialClaimed = false; st.specialChoice = -1;
+        st.cleared = true;
+        ClearDungeonEnemies();
+        _dungeonEnemiesSpawned = false;
+    }
     float hpNow = _player.GetHealthValue();
     if (hpNow < _lastPlayerHp - 0.01f) _playerHurtTimer = 0.4f;   // hurt SFX already handled by the damage source
     _lastPlayerHp = hpNow;
@@ -1630,6 +1658,10 @@ void Engine::Update(float dt)
         UpdateCurseShrine();
         break;
 
+    case GameState::DecisionRoom:
+        UpdateDecisionRoom();
+        break;
+
     case GameState::RelicChoice:
         UpdateRelicChoice();
         break;
@@ -1688,8 +1720,17 @@ void Engine::Update(float dt)
 
     case GameState::VillagePlayground:
     case GameState::Village:
+    {
+        _gamepad.Update(_gamepadBindingsEdit);
+        if (IsKeyPressed(KEY_ESCAPE) || (_gamepad.isActive && _gamepad.pausePressed))
+        {
+            _stateBeforePause = _gameState;
+            _gameState = GameState::Pause;
+            break;
+        }
         UpdateVillagePlayground(dt);
         break;
+    }
 
     case GameState::NineSliceEditor:
         _nineSliceEditor.Update();
@@ -2468,6 +2509,7 @@ bool Engine::VillageHasPlacedObject(const std::string& defName) const
 void Engine::UnloadVillagePlayground()
 {
     for (Texture2D& tex : _villagePlaygroundSheets) if (tex.id != 0) UnloadTexture(tex);
+    for (VillageRuntimeObjectDef& def : _villageObjectCatalog) if (def.pngTexture.id != 0) UnloadTexture(def.pngTexture);
     _villagePlaygroundSheets.clear(); _villagePlaygroundSheetNames.clear(); _villageObjectCatalog.clear(); _villagePlacedObjects.clear(); _villageCitizens.clear(); _villageActiveObjectIndex = -1;
     _villageGraveyardColliders.clear();
     _villageZephShopColliders.clear();
@@ -2602,6 +2644,33 @@ void Engine::LoadVillagePlaygroundCatalog()
         UnloadDirectoryFiles(files);
     };
     scanFolder("."); scanFolder("TestGame");
+
+    FilePathList assetFiles = LoadDirectoryFiles(AssetFolderPath("VillageAssets").c_str());
+    for (unsigned int i = 0; i < assetFiles.count; ++i)
+    {
+        const char* fileName = GetFileName(assetFiles.paths[i]);
+        if (!fileName || !IsFileExtension(fileName, ".vasset")) continue;
+        std::string stem = fileName;
+        size_t dot = stem.find_last_of('.');
+        if (dot != std::string::npos) stem = stem.substr(0, dot);
+        if (stem == "VillageGraveyard") continue;
+
+        VillageRuntimeObjectDef def;
+        if (!LoadVillageRuntimeAssetObject(std::string("VillageAssets/") + fileName, def)) continue;
+
+        auto existing = std::find_if(_villageObjectCatalog.begin(), _villageObjectCatalog.end(), [&](const VillageRuntimeObjectDef& e) { return e.name == def.name; });
+        if (existing != _villageObjectCatalog.end())
+        {
+            if (existing->pngTexture.id != 0) UnloadTexture(existing->pngTexture);
+            *existing = def;
+        }
+        else
+        {
+            _villageObjectCatalog.push_back(def);
+        }
+    }
+    UnloadDirectoryFiles(assetFiles);
+
     std::sort(_villageObjectCatalog.begin(), _villageObjectCatalog.end(), [](const VillageRuntimeObjectDef& a, const VillageRuntimeObjectDef& b) { return a.name < b.name; });
 }
 
@@ -2724,6 +2793,49 @@ bool Engine::LoadVillageRuntimeObject(const std::string& path, VillageRuntimeObj
     return true;
 }
 
+bool Engine::LoadVillageRuntimeAssetObject(const std::string& path, VillageRuntimeObjectDef& outDef) const
+{
+    VillageAssetData data;
+    if (!VillageAssetLoader::Load(AssetPath(path.c_str()), data))
+    {
+        if (!VillageAssetLoader::Load(path, data)) return false;
+    }
+
+    outDef = {};
+    outDef.name = data.id.empty() ? std::string(GetFileName(path.c_str())) : data.id;
+    size_t dot = outDef.name.find_last_of('.');
+    if (dot != std::string::npos) outDef.name = outDef.name.substr(0, dot);
+    outDef.path = path;
+    outDef.costGold = data.cost;
+    outDef.isDecoration = data.category == VillageBuildCategory::Decor;
+    outDef.required = data.required;
+    outDef.uniqueInVillage = data.unique;
+    outDef.removable = data.removable;
+    outDef.serviceName = VillageAssetLoader::ToString(data.service);
+    outDef.pngScale = (outDef.name == "ZephsShop") ? kVillageZephShopAssetScale : 3.f;
+    outDef.pngAnimated = data.animation.enabled;
+    outDef.pngAnimCols = std::max(1, data.animation.columns);
+    outDef.pngAnimRows = std::max(1, data.animation.rows);
+    outDef.pngAnimFrames = std::max(1, std::min(data.animation.frameCount, outDef.pngAnimCols * outDef.pngAnimRows));
+    outDef.pngAnimFps = std::max(0.1f, data.animation.fps);
+
+    std::string imageFile = data.imageFile.empty() ? (outDef.name + ".png") : data.imageFile;
+    outDef.pngTexture = LoadTexture(AssetPath(TextFormat("VillageAssets/%s", imageFile.c_str())).c_str());
+    if (outDef.pngTexture.id != 0) SetTextureFilter(outDef.pngTexture, TEXTURE_FILTER_POINT);
+    if (outDef.pngTexture.id == 0) return false;
+
+    float imageW = data.imageSize.x > 0.f ? data.imageSize.x : (float)(outDef.pngAnimated ? outDef.pngTexture.width / outDef.pngAnimCols : outDef.pngTexture.width);
+    float imageH = data.imageSize.y > 0.f ? data.imageSize.y : (float)(outDef.pngAnimated ? outDef.pngTexture.height / outDef.pngAnimRows : outDef.pngTexture.height);
+    outDef.cols = std::max(1, (int)std::ceil((imageW * outDef.pngScale) / kVillagePlaygroundTilePx));
+    outDef.rows = std::max(1, (int)std::ceil((imageH * outDef.pngScale) / kVillagePlaygroundTilePx));
+
+    for (const VaRect& collider : data.colliders)
+    {
+        if (collider.w > 0.f && collider.h > 0.f)
+            outDef.pngColliders.push_back(Rectangle{ collider.x, collider.y, collider.w, collider.h });
+    }
+    return true;
+}
 int Engine::FindVillageObjectDefIndex(const std::string& defName) const
 {
     for (int i = 0; i < (int)_villageObjectCatalog.size(); ++i)
@@ -2797,29 +2909,74 @@ bool Engine::VillagePlaygroundCanPlace(int defIndex, int cellCol, int cellRow) c
     if (defIndex < 0 || defIndex >= (int)_villageObjectCatalog.size()) return false;
     const VillageRuntimeObjectDef& def = _villageObjectCatalog[defIndex];
     if (!_villageSandboxMode && VillageObjectIsOneTimeService(def.name) && VillageHasPlacedObject(def.name)) return false;
+
     Rectangle footprint{ cellCol * kVillagePlaygroundTilePx, cellRow * kVillagePlaygroundTilePx,
                          def.cols * kVillagePlaygroundTilePx, def.rows * kVillagePlaygroundTilePx };
-    if (!CheckCollisionRecs(footprint, VillagePlaygroundWalkableRect())) return false;
     Rectangle walk = VillagePlaygroundWalkableRect();
-    if (footprint.x < walk.x || footprint.y < walk.y || footprint.x + footprint.width > walk.x + walk.width || footprint.y + footprint.height > walk.y + walk.height) return false;
-    if (_villageGraveyardColliders.empty())
+    if (footprint.x < walk.x || footprint.y < walk.y ||
+        footprint.x + footprint.width > walk.x + walk.width ||
+        footprint.y + footprint.height > walk.y + walk.height) return false;
+
+    auto objectBlockingRects = [&](const VillageRuntimeObjectDef& objectDef, int col, int row)
     {
-        if (CheckCollisionRecs(footprint, VillageGraveyardWorldRect())) return false;
-    }
-    else
+        std::vector<Rectangle> rects;
+        if (!objectDef.pngColliders.empty())
+        {
+            for (const Rectangle& local : objectDef.pngColliders)
+                rects.push_back(Rectangle{ col * kVillagePlaygroundTilePx + local.x * objectDef.pngScale,
+                                           row * kVillagePlaygroundTilePx + local.y * objectDef.pngScale,
+                                           local.width * objectDef.pngScale,
+                                           local.height * objectDef.pngScale });
+        }
+        else if (objectDef.name == "ZephsShop" && !_villageZephShopColliders.empty())
+        {
+            for (const Rectangle& local : _villageZephShopColliders)
+                rects.push_back(VillageZephShopLocalRectToWorld(col, row, local));
+        }
+        else
+        {
+            for (const VillageRuntimeSolid& solid : objectDef.solids)
+            {
+                rects.push_back(Rectangle{ (col + solid.localCol) * kVillagePlaygroundTilePx,
+                                           (row + solid.localRow) * kVillagePlaygroundTilePx,
+                                           solid.w * kVillagePlaygroundTilePx,
+                                           solid.h * kVillagePlaygroundTilePx });
+            }
+        }
+        if (rects.empty())
+        {
+            rects.push_back(Rectangle{ col * kVillagePlaygroundTilePx,
+                                       row * kVillagePlaygroundTilePx,
+                                       objectDef.cols * kVillagePlaygroundTilePx,
+                                       objectDef.rows * kVillagePlaygroundTilePx });
+        }
+        return rects;
+    };
+
+    std::vector<Rectangle> candidateRects = objectBlockingRects(def, cellCol, cellRow);
+
+    for (const Rectangle& candidate : candidateRects)
     {
-        for (const Rectangle& collider : _villageGraveyardColliders)
-            if (CheckCollisionRecs(footprint, VillageGraveyardLocalRectToWorld(collider))) return false;
+        if (_villageGraveyardColliders.empty())
+        {
+            if (CheckCollisionRecs(candidate, VillageGraveyardWorldRect())) return false;
+        }
+        else
+        {
+            for (const Rectangle& collider : _villageGraveyardColliders)
+                if (CheckCollisionRecs(candidate, VillageGraveyardLocalRectToWorld(collider))) return false;
+        }
+        if (CheckCollisionRecs(candidate, VillageGateApproachRect())) return false;
     }
-    if (CheckCollisionRecs(footprint, VillageGateApproachRect())) return false;
 
     for (const VillagePlacedObject& placed : _villagePlacedObjects)
     {
         if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
         const VillageRuntimeObjectDef& other = _villageObjectCatalog[placed.defIndex];
-        Rectangle otherRect{ placed.cellCol * kVillagePlaygroundTilePx, placed.cellRow * kVillagePlaygroundTilePx,
-                             other.cols * kVillagePlaygroundTilePx, other.rows * kVillagePlaygroundTilePx };
-        if (CheckCollisionRecs(footprint, otherRect)) return false;
+        std::vector<Rectangle> otherRects = objectBlockingRects(other, placed.cellCol, placed.cellRow);
+        for (const Rectangle& candidate : candidateRects)
+            for (const Rectangle& otherRect : otherRects)
+                if (CheckCollisionRecs(candidate, otherRect)) return false;
     }
     return true;
 }
@@ -3019,7 +3176,22 @@ void Engine::ResolveVillagePlaygroundCollision(Vector2 beforePos)
     {
         if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
         const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
-        if (def.name == "ZephsShop")
+        if (!def.pngColliders.empty())
+        {
+            for (const Rectangle& collider : def.pngColliders)
+            {
+                Rectangle worldCollider{ placed.cellCol * kVillagePlaygroundTilePx + collider.x * def.pngScale,
+                                         placed.cellRow * kVillagePlaygroundTilePx + collider.y * def.pngScale,
+                                         collider.width * def.pngScale,
+                                         collider.height * def.pngScale };
+                if (CheckCollisionRecs(playerRect, worldCollider))
+                {
+                    _player.SetWorldPos(beforePos);
+                    return;
+                }
+            }
+        }
+        else if (def.name == "ZephsShop")
         {
             for (const Rectangle& collider : _villageZephShopColliders)
             {
@@ -3227,7 +3399,43 @@ void Engine::UpdateVillagePlayground(float dt)
         _player.Update(dt);
         ResolveVillagePlaygroundCollision(before);
         UpdateVillageCitizens(dt);
-        if (_villageShopNpcActive) _shop.UpdateNpc(_player, Vector2{ -_cameraPos.x + kVirtualWidth * 0.5f, -_cameraPos.y + kVirtualHeight * 0.5f }, _touchModeActive);
+
+        bool gamepadInteract = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
+        if (_villageShopNpcActive)
+        {
+            Vector2 shopWorldOffset{ -_cameraPos.x, -_cameraPos.y };
+            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive, gamepadInteract))
+            {
+                _levelUpReturnState = _gameState;
+                _gameState = GameState::Shop;
+                return;
+            }
+        }
+
+        _poeAltarBobTimer += dt;
+        Vector2 poeWorld = VillageGraveyardLocalToWorld(_villageGraveyardPoeLocal);
+        _nearPoeAltar = Vector2Distance(_player.GetWorldPos(), poeWorld) < 155.f;
+        if (_nearPoeAltar && !_shop.IsNearNpc())
+        {
+            bool interactPressed = IsKeyPressed(KEY_E) || gamepadInteract;
+            if (_touchModeActive && IsGestureDetected(GESTURE_TAP))
+            {
+                Vector2 tap = GetVirtualTouchPos(0);
+                Vector2 poeScreen{ poeWorld.x - _cameraPos.x + kVirtualWidth * 0.5f,
+                                   poeWorld.y - _cameraPos.y + kVirtualHeight * 0.5f };
+                if (Vector2Distance(tap, poeScreen) < 170.f)
+                    interactPressed = true;
+            }
+            if (interactPressed)
+            {
+                _metaShopCursor      = 0;
+                _metaShopOpenTimer   = 0.25f;
+                _metaShopReturnState = _gameState;
+                _poeGreetingIdx      = GetRandomValue(0, kPoeGreetingCount - 1);
+                _gameState           = GameState::MetaShop;
+                return;
+            }
+        }
 
         if (!_villageSandboxMode && CheckCollisionPointRec(_player.GetWorldPos(), VillageGateApproachRect()) && IsKeyPressed(KEY_E))
         {
@@ -3263,16 +3471,22 @@ void Engine::UpdateVillagePlayground(float dt)
 
 void Engine::DrawVillageRuntimeObject(const VillageRuntimeObjectDef& def, int cellCol, int cellRow, Vector2 worldOffset, Color tint, VillageMap::Layer layer) const
 {
-    if (def.name == "ZephsShop" && _villageZephShopTex.id != 0)
+    const Texture2D* png = def.pngTexture.id != 0 ? &def.pngTexture : ((def.name == "ZephsShop" && _villageZephShopTex.id != 0) ? &_villageZephShopTex : nullptr);
+    if (png)
     {
-        // Draws from the PNG/vasset path; the old tile parts remain only as fallback/catalog identity.
         if (layer != VillageMap::Layer::Objects) return;
-        Rectangle src{ 0.f, 0.f, (float)_villageZephShopTex.width, (float)_villageZephShopTex.height };
+        int animCols = std::max(1, def.pngAnimCols);
+        int animRows = std::max(1, def.pngAnimRows);
+        int frameW = std::max(1, def.pngAnimated ? png->width / animCols : png->width);
+        int frameH = std::max(1, def.pngAnimated ? png->height / animRows : png->height);
+        int frameCount = std::max(1, std::min(def.pngAnimFrames, animCols * animRows));
+        int frame = def.pngAnimated ? ((int)(GetTime() * std::max(0.1f, def.pngAnimFps)) % frameCount) : 0;
+        Rectangle src{ (float)((frame % animCols) * frameW), (float)((frame / animCols) * frameH), (float)frameW, (float)frameH };
         Rectangle dst{ worldOffset.x + cellCol * kVillagePlaygroundTilePx,
                        worldOffset.y + cellRow * kVillagePlaygroundTilePx,
-                       _villageZephShopTex.width * kVillageZephShopAssetScale,
-                       _villageZephShopTex.height * kVillageZephShopAssetScale };
-        DrawTexturePro(_villageZephShopTex, src, dst, Vector2{}, 0.f, tint);
+                       frameW * def.pngScale,
+                       frameH * def.pngScale };
+        DrawTexturePro(*png, src, dst, Vector2{}, 0.f, tint);
         return;
     }
 
@@ -3354,9 +3568,48 @@ void Engine::DrawVillagePlacementGhost(Vector2 worldOffset, Vector2 mouseWorld)
     DrawVillageRuntimeObject(def, cellCol, cellRow, worldOffset, tint, VillageMap::Layer::Ground);
     DrawVillageRuntimeObject(def, cellCol, cellRow, worldOffset, tint, VillageMap::Layer::Objects);
     DrawVillageRuntimeObject(def, cellCol, cellRow, worldOffset, tint, VillageMap::Layer::Overhead);
-    Rectangle rect{ worldOffset.x + cellCol * kVillagePlaygroundTilePx, worldOffset.y + cellRow * kVillagePlaygroundTilePx,
-                    def.cols * kVillagePlaygroundTilePx, def.rows * kVillagePlaygroundTilePx };
-    DrawRectangleLinesEx(rect, 3.f, ok ? GREEN : RED);
+
+    Rectangle footprint{ worldOffset.x + cellCol * kVillagePlaygroundTilePx,
+                         worldOffset.y + cellRow * kVillagePlaygroundTilePx,
+                         def.cols * kVillagePlaygroundTilePx,
+                         def.rows * kVillagePlaygroundTilePx };
+    DrawRectangleLinesEx(footprint, 2.f, ok ? Fade(GREEN, 0.55f) : Fade(RED, 0.55f));
+
+    std::vector<Rectangle> colliderRects;
+    if (!def.pngColliders.empty())
+    {
+        for (const Rectangle& local : def.pngColliders)
+        {
+            colliderRects.push_back(Rectangle{ worldOffset.x + cellCol * kVillagePlaygroundTilePx + local.x * def.pngScale,
+                                               worldOffset.y + cellRow * kVillagePlaygroundTilePx + local.y * def.pngScale,
+                                               local.width * def.pngScale,
+                                               local.height * def.pngScale });
+        }
+    }
+    else if (def.name == "ZephsShop" && !_villageZephShopColliders.empty())
+    {
+        for (const Rectangle& local : _villageZephShopColliders)
+        {
+            Rectangle worldRect = VillageZephShopLocalRectToWorld(cellCol, cellRow, local);
+            colliderRects.push_back(Rectangle{ worldOffset.x + worldRect.x, worldOffset.y + worldRect.y, worldRect.width, worldRect.height });
+        }
+    }
+    else
+    {
+        for (const VillageRuntimeSolid& solid : def.solids)
+        {
+            colliderRects.push_back(Rectangle{ worldOffset.x + (cellCol + solid.localCol) * kVillagePlaygroundTilePx,
+                                               worldOffset.y + (cellRow + solid.localRow) * kVillagePlaygroundTilePx,
+                                               solid.w * kVillagePlaygroundTilePx,
+                                               solid.h * kVillagePlaygroundTilePx });
+        }
+    }
+
+    for (const Rectangle& colliderRect : colliderRects)
+    {
+        DrawRectangleRec(colliderRect, ok ? Fade(GREEN, 0.16f) : Fade(RED, 0.18f));
+        DrawRectangleLinesEx(colliderRect, 3.f, ok ? GREEN : RED);
+    }
 }
 
 void Engine::DrawVillagePlayground()
@@ -3398,9 +3651,31 @@ void Engine::DrawVillagePlayground()
 
     Vector2 poeWorld = VillageGraveyardLocalToWorld(_villageGraveyardPoeLocal);
     Vector2 poeScreen{ worldOffset.x + poeWorld.x, worldOffset.y + poeWorld.y };
-    DrawCircle((int)poeScreen.x, (int)(poeScreen.y - 22.f), 16.f, Color{ 142, 120, 255, 190 });
-    DrawCircleLines((int)poeScreen.x, (int)(poeScreen.y - 22.f), 17.f, Color{ 218, 210, 255, 220 });
-    DrawText("Poe", (int)(poeScreen.x - 18.f), (int)(poeScreen.y - 58.f), 18, Color{ 220, 214, 255, 235 });
+    float poeBob = sinf(_poeAltarBobTimer * 2.2f) * 5.f;
+    DrawCircleV(Vector2{ poeScreen.x, poeScreen.y + poeBob }, 42.f, Fade(Color{ 184, 170, 236, 255 }, 0.14f));
+    if (_cellsMerchantTex.id != 0)
+    {
+        const int frames = 6;
+        float frameW = _cellsMerchantTex.width / (float)frames;
+        int frame = ((int)(_poeAltarBobTimer * 6.f)) % frames;
+        float scale = 3.0f;
+        Rectangle src{ frame * frameW, 0.f, frameW, (float)_cellsMerchantTex.height };
+        Rectangle dst{ poeScreen.x, poeScreen.y + poeBob, frameW * scale, _cellsMerchantTex.height * scale };
+        DrawTexturePro(_cellsMerchantTex, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, 0.f, WHITE);
+    }
+    else
+    {
+        DrawCircle((int)poeScreen.x, (int)(poeScreen.y - 22.f + poeBob), 16.f, Color{ 142, 120, 255, 190 });
+        DrawCircleLines((int)poeScreen.x, (int)(poeScreen.y - 22.f + poeBob), 17.f, Color{ 218, 210, 255, 220 });
+    }
+    DrawText("Poe", (int)(poeScreen.x - 18.f), (int)(poeScreen.y - 92.f + poeBob), 18, Color{ 220, 214, 255, 235 });
+    if (_nearPoeAltar && !_shop.IsNearNpc())
+    {
+        const char* poePrompt = "[E] Poe";
+        int promptFs = 24;
+        int promptW = MeasureText(poePrompt, promptFs);
+        DrawText(poePrompt, (int)(poeScreen.x - promptW * 0.5f), (int)(poeScreen.y + 78.f + poeBob), promptFs, Color{ 212, 194, 255, 255 });
+    }
 
     drawPlacedLayer(VillageMap::Layer::Objects);
 
@@ -3425,7 +3700,7 @@ void Engine::DrawVillagePlayground()
     }
 
     DrawVillageCitizens(worldOffset);
-    if (_villageShopNpcActive) _shop.DrawNpc(worldOffset);
+    if (_villageShopNpcActive) _shop.DrawNpc(Vector2{ -_cameraPos.x, -_cameraPos.y });
 
     Vector2 mouse = GetVirtualMousePos();
     Vector2 mouseWorld{ mouse.x - worldOffset.x, mouse.y - worldOffset.y };
@@ -3560,6 +3835,10 @@ void Engine::Draw()
                 // Show the map dimmed behind the pause menu.
                 _worldMap.Draw(_player);
             }
+            else if (_stateBeforePause == GameState::Village || _stateBeforePause == GameState::VillagePlayground)
+            {
+                DrawVillagePlayground();
+            }
             else
             {
                 ClearBackground(Color{ 8, 6, 10, 255 });
@@ -3642,6 +3921,10 @@ void Engine::Draw()
 
     case GameState::CurseShrine:
         DrawCurseShrine();
+        break;
+
+    case GameState::DecisionRoom:
+        DrawDecisionRoom();
         break;
 
     case GameState::RelicChoice:
@@ -4009,6 +4292,22 @@ void Engine::DrawHUD(bool villageMode)
             0.3f, 6, Fade(BLACK, 0.55f * toastAlpha));
         DrawText(toastText, (int)toastX, (int)toastY, toastFontSize,
             Fade(Color{ 255, 120, 210, 255 }, toastAlpha));
+    }
+
+    // "CONTRACT HONORED +N gold +N XP" toast when a Risk Shrine contract resolves.
+    if (_contractToastTimer > 0.f)
+    {
+        _contractToastTimer -= GetFrameTime();
+        float toastAlpha = std::min(1.f, _contractToastTimer / 0.75f);
+        int toastFontSize = 38;
+        int toastWidth = MeasureText(_contractToastText.c_str(), toastFontSize);
+        float toastX = (float)kVirtualWidth * 0.5f - toastWidth * 0.5f;
+        float toastY = 200.f;
+        DrawRectangleRounded(
+            Rectangle{ toastX - 18.f, toastY - 10.f, toastWidth + 36.f, toastFontSize + 20.f },
+            0.3f, 6, Fade(BLACK, 0.55f * toastAlpha));
+        DrawText(_contractToastText.c_str(), (int)toastX, (int)toastY, toastFontSize,
+            Fade(Color{ 255, 200, 110, 255 }, toastAlpha));
     }
 
     // Owned relics strip + "New Relic!" toast.
@@ -6565,6 +6864,25 @@ void Engine::DrawLevelUpChoice()
     DrawText(hint, (int)(sw / 2.f - hintW / 2.f), (int)hintRefY, 22, hintColor);
 }
 
+// Apply an attack's saved projectile tuning (size / collision / speed / lifetime)
+// to a spread projectile. Falls back to the legacy AttackEditor box radius, and
+// leaves the projectile's own defaults when nothing is tuned.
+static void ApplySpreadTuning(SpreadProjectile& p, const AttackTuning* t)
+{
+    if (!t) return;
+    if (t->hasProjectile)
+    {
+        if (t->projRadius   > 0.f) p.SetRadius(t->projRadius);
+        if (t->projScale    > 0.f) p.SetVisualScale(t->projScale);
+        if (t->projSpeed    > 0.f) p.SetSpeed(t->projSpeed);
+        if (t->projLifetime > 0.f) p.SetLifetime(t->projLifetime);
+    }
+    else if (t->hasBox && t->w > 0.f)
+    {
+        p.SetRadius(t->w * 0.5f);   // legacy AttackEditor box → circle radius
+    }
+}
+
 void Engine::HandlePlayerMeleeDamage()
 {
     if (!_player.CanApplyMeleeDamage())
@@ -6581,8 +6899,13 @@ void Engine::HandlePlayerMeleeDamage()
         case PlayerClass::Hunter:  element = AbilityType::FireSpread; tint = WHITE; arrow = true;         break; // physical arrow
         default:                   element = AbilityType::FireSpread; tint = WHITE; break;
         }
+        const AttackTuning* bt = AttackTuningStore::Get(AttackTuningKeyForBasic((int)_player.GetClass()));
+        Vector2 borigin = (bt && bt->hasFirePoint)
+                        ? _player.GetCastOrigin(bt->fireForward, bt->fireHeight)
+                        : _player.GetCastOrigin();
         SpreadProjectile shot;
-        shot.InitBasic(_player.GetCastOrigin(), _player.GetFacingDirection(), element, tint, arrow);
+        shot.InitBasic(borigin, _player.GetFacingDirection(), element, tint, arrow);
+        ApplySpreadTuning(shot, bt);
         _spreadProjectiles.push_back(shot);
         _player.ConsumeMeleeDamageFrame();
         return;
@@ -6709,24 +7032,29 @@ void Engine::SpawnSpreadBurst(AbilityType element)
         Vector2{ -1.f, -1.f }
     };
 
-    Vector2 origin = _player.GetCastOrigin();
     const AttackTuning* t = AttackTuningStore::Get(AttackTuningKeyForAbility(element));
+    Vector2 origin = (t && t->hasFirePoint)
+                   ? _player.GetCastOrigin(t->fireForward, t->fireHeight)
+                   : _player.GetCastOrigin();
 
     for (const Vector2& dir : directions)
     {
         SpreadProjectile projectile;
         projectile.Init(origin, dir, element);
-        if (t && t->hasBox && t->w > 0.f) projectile.SetRadius(t->w * 0.5f);
+        ApplySpreadTuning(projectile, t);
         _spreadProjectiles.push_back(projectile);
     }
 }
 
 void Engine::SpawnBolt(AbilityType element)
 {
-    SpreadProjectile projectile;
-    projectile.Init(_player.GetCastOrigin(), _player.GetFacingDirection(), element);
     const AttackTuning* t = AttackTuningStore::Get(AttackTuningKeyForAbility(element));
-    if (t && t->hasBox && t->w > 0.f) projectile.SetRadius(t->w * 0.5f);
+    Vector2 origin = (t && t->hasFirePoint)
+                   ? _player.GetCastOrigin(t->fireForward, t->fireHeight)
+                   : _player.GetCastOrigin();
+    SpreadProjectile projectile;
+    projectile.Init(origin, _player.GetFacingDirection(), element);
+    ApplySpreadTuning(projectile, t);
     _spreadProjectiles.push_back(projectile);
 }
 
@@ -7841,8 +8169,12 @@ void Engine::RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bo
     if (killed)
     {
         TriggerScreenShake(isBoss ? 9.f : 6.5f, isBoss ? 0.35f : 0.18f);
-        if (isBoss) TriggerSlowMo(_juiceBossSlowDur, _juiceBossSlowScale);   // cinematic boss-death slow-mo
-        else        RequestHitStop(_juiceKillHitStop);                        // snappy trash kill
+        // In the boss room the cinematic slow-mo is deferred to the moment the
+        // LAST enemy falls (room clear) so it doesn't fire early while adds live.
+        bool inBossRoom = (_gameState == GameState::DungeonRun &&
+                           _dungeonRoomIdx == _dungeonGen.GetBossIndex());
+        if (isBoss && !inBossRoom) TriggerSlowMo(_juiceBossSlowDur, _juiceBossSlowScale); // elite death elsewhere
+        else                       RequestHitStop(_juiceKillHitStop);                     // snappy kill; boss-room slow-mo comes at clear
     }
     else if (crit)
     {
@@ -8638,7 +8970,7 @@ void Engine::UpdateMetaShop(float dt)
     if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_E) ||
         (_gamepad.isActive && _gamepad.backPressed))
     {
-        _gameState = GameState::DungeonRun;
+        _gameState = _metaShopReturnState;
         return;
     }
 
@@ -8860,104 +9192,109 @@ Vector2 Engine::GetCurseShrinePos() const
     return { (float)kVirtualWidth * 0.70f, (float)kVirtualHeight * 0.42f };
 }
 
-void Engine::OpenCurseShrine()
+// ── Generic ChoiceCardScreen ────────────────────────────────────────────────
+// Extracted verbatim from the Cursed Wager UI (below) so every decision room
+// reuses the same debugged keyboard/gamepad/mouse picker. Layout constants are
+// unchanged from the original wager, so the wager still renders pixel-identically.
+void Engine::OpenChoiceCards(ChoiceCardScreen& s)
 {
-    _shrineCursor    = 0;
-    _shrineOpenTimer = 0.25f;
-    _shrineDenyFlash = 0.f;
-    _gameState       = GameState::CurseShrine;
+    s.cursor    = 0;
+    s.openTimer = 0.25f;
+    s.denyFlash = 0.f;
+    s.result    = -1;
 }
 
-void Engine::UpdateCurseShrine()
+void Engine::UpdateChoiceCards(ChoiceCardScreen& s)
 {
-    if (_shrineOpenTimer > 0.f) { _shrineOpenTimer -= GetFrameTime(); return; }
-    if (_shrineDenyFlash > 0.f) _shrineDenyFlash -= GetFrameTime();
+    s.result = -1;
+    const int n = (int)s.cards.size();
+    if (n <= 0) return;
+
+    if (s.openTimer > 0.f) { s.openTimer -= GetFrameTime(); return; }
+    if (s.denyFlash > 0.f) s.denyFlash -= GetFrameTime();
 
     _gamepad.Update(_gamepadBindingsEdit);
 
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
     const float cardW = 420.f, cardH = 460.f, gap = 60.f;
-    const float totalW = kWagerTierCount * cardW + (kWagerTierCount - 1) * gap;
+    const float totalW = n * cardW + (n - 1) * gap;
     const float startX = (sw - totalW) * 0.5f;
     const float cardY  = sh * 0.5f - cardH * 0.5f + 40.f;
 
-    if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A)) _shrineCursor = (_shrineCursor + kWagerTierCount - 1) % kWagerTierCount;
-    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) _shrineCursor = (_shrineCursor + 1) % kWagerTierCount;
+    if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A)) s.cursor = (s.cursor + n - 1) % n;
+    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) s.cursor = (s.cursor + 1) % n;
     if (_gamepad.isActive)
     {
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  _shrineCursor = (_shrineCursor + kWagerTierCount - 1) % kWagerTierCount;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) _shrineCursor = (_shrineCursor + 1) % kWagerTierCount;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  s.cursor = (s.cursor + n - 1) % n;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) s.cursor = (s.cursor + 1) % n;
     }
 
     Vector2 mouse = GetVirtualMousePos();
     bool confirm = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
                    (_gamepad.isActive && _gamepad.menuConfirmPressed);
 
-    for (int i = 0; i < kWagerTierCount; i++)
+    for (int i = 0; i < n; i++)
     {
         Rectangle card{ startX + i * (cardW + gap), cardY, cardW, cardH };
         if (CheckCollisionPointRec(mouse, card))
         {
-            _shrineCursor = i;
+            s.cursor = i;
             if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) confirm = true;
         }
     }
 
-    // Walk away without wagering (Esc / gamepad B).
+    // Walk away without choosing (Esc / gamepad B).
     if (IsKeyPressed(KEY_ESCAPE) ||
         (_gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)))
     {
-        _gameState = GameState::DungeonRun;
+        s.result = -2;
         return;
     }
 
     if (confirm)
     {
-        const WagerTier& w = kWagerTiers[_shrineCursor];
-        if (_player.GetGold() < w.cost)
+        const ChoiceCard& c = s.cards[s.cursor];
+        if (!c.enabled || _player.GetGold() < c.costGold)
         {
-            _shrineDenyFlash = 0.6f;   // can't afford — flash the cost and stay
+            s.denyFlash = 0.6f;   // can't afford / unavailable — flash and stay
             return;
         }
-        _player.AddGold(-w.cost);
-        _wagerTier = _shrineCursor + 1;              // curses this biome's enemies
-        _player.SetWagerRewardMult(w.reward);        // richer gold / XP / Echoes
-        _curseShrineUsed = true;                     // one wager per biome
-        if (_audioInitialised) PlaySound(_pickupSound);
-        _gameState = GameState::DungeonRun;
+        s.result = s.cursor;      // caller applies the effect + deducts cost
     }
 }
 
-void Engine::DrawCurseShrine()
+void Engine::DrawChoiceCards(const ChoiceCardScreen& s)
 {
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
+    const int   n  = (int)s.cards.size();
 
-    DrawScrollingCheckerboard(sw, sh, Color{ 30, 14, 20, 255 }, Color{ 42, 20, 30, 255 }, 18.f, 12.f);
+    DrawScrollingCheckerboard(sw, sh, s.bgColorA, s.bgColorB, 18.f, 12.f);
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.35f));
 
-    const char* title = "CURSED WAGER";
-    DrawText(title, (int)(sw * 0.5f - MeasureText(title, 70) * 0.5f), 56, 70, Color{ 235, 90, 120, 255 });
-    const char* sub = "Pay in gold to curse the whole biome. Survive it for far richer spoils.";
-    DrawText(sub, (int)(sw * 0.5f - MeasureText(sub, 26) * 0.5f), 146, 26, Color{ 200, 160, 175, 255 });
+    DrawText(s.title.c_str(), (int)(sw * 0.5f - MeasureText(s.title.c_str(), 70) * 0.5f), 56, 70, s.titleColor);
+    DrawText(s.subtitle.c_str(), (int)(sw * 0.5f - MeasureText(s.subtitle.c_str(), 26) * 0.5f), 146, 26, Color{ 200, 160, 175, 255 });
 
     // Show the player's purse so affordability is obvious (flashes red on denial).
-    const char* goldLine = TextFormat("Your gold: %d", _player.GetGold());
-    Color goldCol = (_shrineDenyFlash > 0.f) ? Color{ 245, 90, 90, 255 } : Color{ 255, 210, 120, 255 };
-    DrawText(goldLine, (int)(sw * 0.5f - MeasureText(goldLine, 30) * 0.5f), 190, 30, goldCol);
+    if (s.showPurse)
+    {
+        const char* goldLine = TextFormat("Your gold: %d", _player.GetGold());
+        Color goldCol = (s.denyFlash > 0.f) ? Color{ 245, 90, 90, 255 } : Color{ 255, 210, 120, 255 };
+        DrawText(goldLine, (int)(sw * 0.5f - MeasureText(goldLine, 30) * 0.5f), 190, 30, goldCol);
+    }
 
     const float cardW = 420.f, cardH = 460.f, gap = 60.f;
-    const float totalW = kWagerTierCount * cardW + (kWagerTierCount - 1) * gap;
+    const float totalW = n * cardW + (n - 1) * gap;
     const float startX = (sw - totalW) * 0.5f;
     const float cardY  = sh * 0.5f - cardH * 0.5f + 40.f;
 
-    for (int i = 0; i < kWagerTierCount; i++)
+    for (int i = 0; i < n; i++)
     {
-        const WagerTier& w = kWagerTiers[i];
+        const ChoiceCard& c = s.cards[i];
         Rectangle card{ startX + i * (cardW + gap), cardY, cardW, cardH };
-        bool sel    = (i == _shrineCursor);
-        bool afford = _player.GetGold() >= w.cost;
+        bool sel    = (i == s.cursor);
+        bool afford = c.enabled && _player.GetGold() >= c.costGold;
 
         DrawRectangleRounded(card, 0.06f, 8, sel ? Color{ 60, 30, 42, 245 } : Color{ 42, 24, 32, 235 });
         if (sel)
@@ -8967,34 +9304,315 @@ void Engine::DrawCurseShrine()
         }
         DrawRectangleRoundedLines(card, 0.06f, 8, sel ? GOLD : Color{ 110, 70, 84, 255 });
 
-        DrawText(w.name, (int)(card.x + card.width * 0.5f - MeasureText(w.name, 40) * 0.5f),
-                 (int)(card.y + 26.f), 40, sel ? w.tint : RAYWHITE);
+        // Optional colored accent stripe across the top of the card.
+        if (c.accentBar)
+            DrawRectangleRounded({ card.x + 16.f, card.y + 12.f, card.width - 32.f, 6.f },
+                                 0.9f, 4, Fade(c.tint, sel ? 0.95f : 0.55f));
 
-        // Cost.
-        const char* costTxt = TextFormat("%d gold", w.cost);
-        Color costCol = afford ? Color{ 255, 210, 120, 255 } : Color{ 150, 90, 90, 255 };
-        DrawText(costTxt, (int)(card.x + card.width * 0.5f - MeasureText(costTxt, 30) * 0.5f),
-                 (int)(card.y + 82.f), 30, costCol);
+        DrawText(c.title.c_str(), (int)(card.x + card.width * 0.5f - MeasureText(c.title.c_str(), 40) * 0.5f),
+                 (int)(card.y + 26.f), 40, sel ? c.tint : RAYWHITE);
 
-        // Risk block.
-        DrawText("RISK", (int)(card.x + 30.f), (int)(card.y + 150.f), 24, Color{ 245, 100, 110, 255 });
-        DrawText(w.risk, (int)(card.x + 30.f), (int)(card.y + 186.f), 26, Color{ 240, 200, 205, 255 });
+        // Optional flavor quote under the title.
+        if (!c.flavor.empty())
+            DrawText(c.flavor.c_str(), (int)(card.x + card.width * 0.5f - MeasureText(c.flavor.c_str(), 20) * 0.5f),
+                     (int)(card.y + 86.f), 20, Fade(sel ? c.tint : Color{ 200, 190, 200, 255 }, 0.9f));
 
-        // Reward block.
-        DrawText("REWARD", (int)(card.x + 30.f), (int)(card.y + 300.f), 24, Color{ 120, 235, 150, 255 });
-        DrawText(w.payout, (int)(card.x + 30.f), (int)(card.y + 336.f), 26, Color{ 205, 240, 210, 255 });
+        // Cost (free cards draw no cost line).
+        if (c.costGold > 0)
+        {
+            const char* costTxt = TextFormat("%d gold", c.costGold);
+            Color costCol = afford ? Color{ 255, 210, 120, 255 } : Color{ 150, 90, 90, 255 };
+            DrawText(costTxt, (int)(card.x + card.width * 0.5f - MeasureText(costTxt, 30) * 0.5f),
+                     (int)(card.y + 82.f), 30, costCol);
+        }
+
+        // Downside block (RISK / CURSE / COST).
+        DrawText(c.downsideHeader.c_str(), (int)(card.x + 30.f), (int)(card.y + 150.f), 24, Color{ 245, 100, 110, 255 });
+        DrawText(c.downsideText.c_str(),   (int)(card.x + 30.f), (int)(card.y + 186.f), 26, Color{ 240, 200, 205, 255 });
+
+        // Upside block (REWARD).
+        DrawText(c.upsideHeader.c_str(), (int)(card.x + 30.f), (int)(card.y + 300.f), 24, Color{ 120, 235, 150, 255 });
+        DrawText(c.upsideText.c_str(),   (int)(card.x + 30.f), (int)(card.y + 336.f), 26, Color{ 205, 240, 210, 255 });
 
         if (sel)
         {
-            const char* pick = afford ? "WAGER" : "NOT ENOUGH GOLD";
+            const char* pick = !c.enabled ? c.disabledReason.c_str()
+                             : afford      ? s.confirmVerb.c_str()
+                                           : "NOT ENOUGH GOLD";
             DrawText(pick, (int)(card.x + card.width * 0.5f - MeasureText(pick, 26) * 0.5f),
                      (int)(card.y + card.height - 48.f), 26, afford ? GOLD : Color{ 235, 90, 90, 255 });
         }
     }
 
-    const char* hint = _gamepad.isActive ? "D-Pad: Choose    A: Wager    B: Leave"
-                                         : "Arrows / Click: Choose    Enter / Click: Wager    Esc: Leave";
+    const char* hint = _gamepad.isActive
+        ? TextFormat("D-Pad: Choose    A: %s    B: Leave", s.confirmHint.c_str())
+        : TextFormat("Arrows / Click: Choose    Enter / Click: %s    Esc: Leave", s.confirmHint.c_str());
     DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, 24) * 0.5f), (int)(sh - 54.f), 24, Color{ 190, 160, 175, 255 });
+}
+
+// ── Cursed Wager — first consumer of ChoiceCardScreen ───────────────────────
+void Engine::OpenCurseShrine()
+{
+    _wagerScreen = ChoiceCardScreen{};
+    _wagerScreen.title       = "CURSED WAGER";
+    _wagerScreen.subtitle    = "Pay in gold to curse the whole biome. Survive it for far richer spoils.";
+    _wagerScreen.titleColor  = Color{ 235, 90, 120, 255 };
+    _wagerScreen.confirmVerb = "WAGER";   // pick label
+    _wagerScreen.confirmHint = "Wager";   // bottom hint verb
+    _wagerScreen.showPurse   = true;
+
+    for (int i = 0; i < kWagerTierCount; i++)
+    {
+        const WagerTier& w = kWagerTiers[i];
+        ChoiceCard c;
+        c.title        = w.name;
+        c.costGold     = w.cost;
+        c.downsideText = w.risk;    // headers default to RISK / REWARD
+        c.upsideText   = w.payout;
+        c.tint         = w.tint;
+        _wagerScreen.cards.push_back(c);
+    }
+
+    OpenChoiceCards(_wagerScreen);
+    _gameState = GameState::CurseShrine;
+}
+
+void Engine::UpdateCurseShrine()
+{
+    UpdateChoiceCards(_wagerScreen);
+
+    if (_wagerScreen.result == -2)          // walked away
+    {
+        _gameState = GameState::DungeonRun;
+        return;
+    }
+    if (_wagerScreen.result >= 0)           // wager confirmed (already affordable)
+    {
+        const WagerTier& w = kWagerTiers[_wagerScreen.result];
+        _player.AddGold(-w.cost);
+        _wagerTier = _wagerScreen.result + 1;        // curses this biome's enemies
+        _player.SetWagerRewardMult(w.reward);        // richer gold / XP / Echoes
+        _curseShrineUsed = true;                     // one wager per biome
+        if (_audioInitialised) PlaySound(_pickupSound);
+        _gameState = GameState::DungeonRun;
+    }
+}
+
+void Engine::DrawCurseShrine()
+{
+    DrawChoiceCards(_wagerScreen);
+}
+
+// =============================================================================
+// Decision rooms + Risk Shrine (room-events P1/P2)
+// =============================================================================
+// Risk Shrine contracts: danger in the NEXT combat room for reward in that room.
+// Effects use only the existing HP/damage + gold/XP levers so every downside has
+// an in-world tell (tougher enemies) and no new enemy plumbing is needed.
+struct RiskContract
+{
+    const char* name;
+    const char* flavor;    // short evocative quote under the title
+    const char* risk;      // downside text (\n allowed)
+    const char* reward;    // upside text
+    float enemyHpMult;
+    float enemyDmgMult;
+    float goldMult;
+    float xpMult;
+    Color tint;
+};
+static const RiskContract kRiskContracts[] = {
+    { "Greed",  "\"Fortune favors the reckless.\"", "Enemies strike +30% harder\nin the next room", "Double all GOLD\nin the next room", 1.00f, 1.30f, 2.0f, 1.0f, Color{ 235, 205, 90, 255 } },
+    { "Hunger", "\"Feed on the danger.\"",          "Enemies are +35% tougher\nin the next room",   "Double all XP\nin the next room",   1.35f, 1.00f, 1.0f, 2.0f, Color{ 140, 220, 120, 255 } },
+    { "Pride",  "\"Prove you fear nothing.\"",      "Enemies +30% tougher\nAND deadlier",           "Double GOLD\nand +50% XP",          1.30f, 1.30f, 2.0f, 1.5f, Color{ 230, 120, 110, 255 } },
+};
+static const int kRiskContractCount = (int)(sizeof(kRiskContracts) / sizeof(kRiskContracts[0]));
+
+// A decision room's shrine sits at room centre (player spawns at the bottom).
+Vector2 Engine::GetDecisionShrinePos() const
+{
+    return { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.42f };
+}
+
+// Rolled once per dungeon, right after _dungeonRoomStates is cleared on a fresh
+// run. Tags 1 guaranteed + 1 (~50%) Standard rooms as Risk Shrines. Done at
+// generation time so it never rerolls on re-entry and seeded runs stay identical.
+void Engine::RollDungeonRoomSpecials()
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    int startIdx = _dungeonGen.GetStartIndex();
+    int bossIdx  = _dungeonGen.GetBossIndex();
+    int keyIdx   = _dungeonGen.GetKeyIndex();   // KEY room stays type Standard — must skip it
+
+    // Collect eligible Standard rooms. Skip start/boss/key so a decision room
+    // never overwrites the gem room or a structural room.
+    std::vector<int> candidates;
+    for (int i = 0; i < (int)rooms.size(); i++)
+        if (i != startIdx && i != bossIdx && i != keyIdx &&
+            rooms[i].type == RoomType::Standard)
+            candidates.push_back(i);
+
+    for (int i = (int)candidates.size() - 1; i > 0; i--)
+        std::swap(candidates[i], candidates[GetRandomValue(0, i)]);
+
+    int count = candidates.empty() ? 0 : (1 + (GetRandomValue(0, 1)));   // 1, sometimes 2
+    count = std::min(count, (int)candidates.size());
+
+    for (int n = 0; n < count; n++)
+    {
+        DungeonRoomState& st = _dungeonRoomStates[candidates[n]];
+        st.special = RoomSpecialType::RiskShrine;
+        // Offer all three contracts for now (with only 3 authored, no sub-roll).
+        st.specialOptions[0] = 0;
+        st.specialOptions[1] = 1;
+        st.specialOptions[2] = 2;
+        st.specialClaimed = false;
+        st.specialChoice  = -1;
+    }
+}
+
+void Engine::OpenDecisionRoom()
+{
+    DungeonRoomState& st = _dungeonRoomStates[_dungeonRoomIdx];
+    _decisionScreen = ChoiceCardScreen{};
+    _decisionScreen.showPurse = false;                 // Risk Shrine contracts are free
+
+    if (st.special == RoomSpecialType::RiskShrine)
+    {
+        _decisionScreen.title       = "RISK SHRINE";
+        _decisionScreen.subtitle    = "Bind a contract: greater danger ahead, greater spoils. Or walk on.";
+        _decisionScreen.titleColor  = Color{ 235, 150, 90, 255 };
+        _decisionScreen.confirmVerb = "BIND";
+        _decisionScreen.confirmHint = "Bind";
+
+        bool atCap = AcceptedModifierCount() >= kMaxAcceptedModifiers;
+        for (int i = 0; i < 3; i++)
+        {
+            int ci = st.specialOptions[i];
+            if (ci < 0 || ci >= kRiskContractCount) continue;
+            const RiskContract& rc = kRiskContracts[ci];
+            ChoiceCard c;
+            c.title        = rc.name;
+            c.flavor       = rc.flavor;
+            c.accentBar    = true;
+            c.downsideText = rc.risk;
+            c.upsideText   = rc.reward;
+            c.tint         = rc.tint;
+            if (atCap) { c.enabled = false; c.disabledReason = "TOO MANY BURDENS"; }
+            _decisionScreen.cards.push_back(c);
+        }
+    }
+
+    OpenChoiceCards(_decisionScreen);
+    _gameState = GameState::DecisionRoom;
+}
+
+void Engine::UpdateDecisionRoom()
+{
+    UpdateChoiceCards(_decisionScreen);
+
+    if (_decisionScreen.result == -2)      // walked away — shrine stays available
+    {
+        _gameState = GameState::DungeonRun;
+        return;
+    }
+    if (_decisionScreen.result >= 0)
+    {
+        DungeonRoomState& st = _dungeonRoomStates[_dungeonRoomIdx];
+        if (st.special == RoomSpecialType::RiskShrine)
+        {
+            int ci = st.specialOptions[_decisionScreen.result];
+            if (ci >= 0 && ci < kRiskContractCount)
+            {
+                const RiskContract& rc = kRiskContracts[ci];
+                RunModifier m;
+                m.label        = rc.name;
+                m.enemyHpMult  = rc.enemyHpMult;
+                m.enemyDmgMult = rc.enemyDmgMult;
+                m.goldMult     = rc.goldMult;
+                m.xpMult       = rc.xpMult;
+                m.tint         = rc.tint;
+                m.active       = false;      // arms for the next combat room
+                m.roomsRemaining = 1;
+                _runModifiers.push_back(m);
+            }
+        }
+        st.specialClaimed = true;
+        st.specialChoice  = _decisionScreen.result;
+        if (_audioInitialised) PlaySound(_pickupSound);
+        _gameState = GameState::DungeonRun;
+    }
+}
+
+void Engine::DrawDecisionRoom()
+{
+    DrawChoiceCards(_decisionScreen);
+}
+
+// On entering a fresh combat room: arm→active, and fold the product of active
+// modifiers into the enemy-scaling + reward levers used while this room runs.
+void Engine::ActivatePendingModifiers()
+{
+    float hp = 1.f, dmg = 1.f, gold = 1.f, xp = 1.f;
+    for (RunModifier& m : _runModifiers)
+    {
+        m.active = true;
+        hp   *= m.enemyHpMult;
+        dmg  *= m.enemyDmgMult;
+        gold *= m.goldMult;
+        xp   *= m.xpMult;
+    }
+    _roomModHpMult  = hp;
+    _roomModDmgMult = dmg;
+    _player.SetContractGoldMult(gold);
+    _player.SetContractXpMult(xp);
+    _player.TakeContractBonusGold();   // zero the accumulators for a clean count
+    _player.TakeContractBonusXp();
+}
+
+// On combat-room clear: bank the bonus, resolve/expire finished contracts, show a
+// toast, and clear the room levers (A2 result toast + A6 duration tick).
+void Engine::ResolveActiveModifiersOnRoomClear()
+{
+    if (_runModifiers.empty()) return;
+
+    int bonusGold = _player.TakeContractBonusGold();
+    int bonusXp   = _player.TakeContractBonusXp();
+
+    std::string lastName;
+    bool resolvedAny = false;
+    for (auto it = _runModifiers.begin(); it != _runModifiers.end(); )
+    {
+        if (it->active && --it->roomsRemaining <= 0)
+        {
+            lastName = it->label;
+            resolvedAny = true;
+            it = _runModifiers.erase(it);
+        }
+        else ++it;
+    }
+
+    if (resolvedAny)
+    {
+        _contractToastText  = TextFormat("%s HONORED   +%d gold   +%d XP", lastName.c_str(), bonusGold, bonusXp);
+        _contractToastTimer = 4.f;
+    }
+
+    // The contracted room is done — recompute levers from whatever remains active.
+    _roomModHpMult = 1.f;
+    _roomModDmgMult = 1.f;
+    _player.SetContractGoldMult(1.f);
+    _player.SetContractXpMult(1.f);
+}
+
+void Engine::ClearRunModifiers()
+{
+    _runModifiers.clear();
+    _roomModHpMult  = 1.f;
+    _roomModDmgMult = 1.f;
+    _player.SetContractGoldMult(1.f);
+    _player.SetContractXpMult(1.f);
+    _contractToastTimer = 0.f;
 }
 
 // =============================================================================
@@ -10156,6 +10774,7 @@ void Engine::ResetRunState()
     _curseShrineUsed     = false;
     _nearCurseShrine     = false;
     _wagerAccessGranted  = false;   // earned only by choosing "push onward" after a boss
+    ClearRunModifiers();            // death/new run drops all Risk Shrine contracts
     _pendingRelicChoices = 0;
 
     _deathPenaltyApplied   = false;
@@ -10405,6 +11024,11 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
         const WagerTier& wager = kWagerTiers[_wagerTier - 1];
         enemy.ApplyDifficultyScaling(wager.enemyHp, wager.enemyDmg);
     }
+
+    // Risk Shrine contract — a decision-room bargain that makes just THIS combat
+    // room harder in exchange for bonus gold/XP (set on room entry, reset on clear).
+    if (_roomModHpMult != 1.f || _roomModDmgMult != 1.f)
+        enemy.ApplyDifficultyScaling(_roomModHpMult, _roomModDmgMult);
 
     // Colour-variant tier by world zone — later zones spawn recoloured,
     // visibly tougher versions (their stats already scale via power level).
@@ -11996,7 +12620,17 @@ void Engine::QueueRoomIntroBanner()
     _roomIntroSub.clear();
 
     const DungeonRoom& room = rooms[_dungeonRoomIdx];
-    if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
+    RoomSpecialType special = RoomSpecialType::None;
+    {
+        auto it = _dungeonRoomStates.find(_dungeonRoomIdx);
+        if (it != _dungeonRoomStates.end()) special = it->second.special;
+    }
+    if (special == RoomSpecialType::RiskShrine)
+    {
+        _roomIntroTitle = "RISK SHRINE";
+        _roomIntroSub   = "Bind a contract, or walk on";
+    }
+    else if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
     {
         _roomIntroTitle = "BOSS ROOM";
         _roomIntroSub   = "No turning back";
@@ -12138,6 +12772,9 @@ void Engine::DrawModifierStack() const
         const char* tiers[3] = { "WAGER I", "WAGER II", "WAGER III" };
         pills.push_back({ tiers[std::min(_wagerTier - 1, 2)], Color{ 235, 120, 90, 255 } });
     }
+    // Risk Shrine contracts — armed (waiting for the next combat room) or active.
+    for (const RunModifier& m : _runModifiers)
+        pills.push_back({ m.active ? m.label : (m.label + " (armed)"), m.tint });
     if (pills.empty()) return;
 
     // Below the corner minimap, right-aligned.
@@ -12230,6 +12867,21 @@ void Engine::DrawDungeonMiniMap(float originX, float originY, float cellPx, bool
             Rectangle dst{ rx + sq * 0.5f - iconSize * 0.5f, ry + sq * 0.5f - iconSize * 0.5f,
                            iconSize, iconSize };
             DrawTexturePro(*icon, src, dst, Vector2{ 0.f, 0.f }, 0.f, Fade(WHITE, 0.95f));
+        }
+
+        // Decision room (Risk Shrine, …): amber "!" once the cell is known
+        // (undiscovered ones just show the generic "?" above — mystery intact).
+        {
+            auto ds = _dungeonRoomStates.find(i);
+            if (typeKnown && ds != _dungeonRoomStates.end() &&
+                ds->second.special != RoomSpecialType::None)
+            {
+                int dFs = (int)(cellPx * 0.55f);
+                Color mc = ds->second.specialClaimed ? Color{ 150, 130, 90, 220 }
+                                                      : Color{ 255, 190, 90, 255 };
+                DrawText("!", (int)(rx + sq * 0.5f - MeasureText("!", dFs) * 0.5f),
+                         (int)(ry + sq * 0.5f - dFs * 0.5f), dFs, mc);
+            }
         }
 
         // Key room marker (once known): a gold K over the square.
@@ -12549,7 +13201,12 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
     const DungeonRoom& room = rooms[roomIdx];
     auto stateIt = _dungeonRoomStates.find(roomIdx);
     bool cleared = (stateIt != _dungeonRoomStates.end() && stateIt->second.cleared);
+    // Decision rooms (Risk Shrine, …) are peaceful — always walkable-through,
+    // even on first entry (independent of when the cleared flag gets set).
+    bool hasSpecial = (stateIt != _dungeonRoomStates.end() &&
+                       stateIt->second.special != RoomSpecialType::None);
     bool alwaysOpen = cleared
+        || hasSpecial
         || roomIdx == _dungeonGen.GetStartIndex()
         || room.type == RoomType::Rest
         || room.type == RoomType::Treasure
@@ -15294,6 +15951,7 @@ void Engine::UpdateDungeonRun(float dt)
                 {
                     _metaShopCursor      = 0;
                     _metaShopOpenTimer   = 0.25f;
+                    _metaShopReturnState = GameState::DungeonRun;
                     _poeGreetingIdx      = GetRandomValue(0, kPoeGreetingCount - 1);
                     _gameState           = GameState::MetaShop;
                     return;
@@ -15326,6 +15984,34 @@ void Engine::UpdateDungeonRun(float dt)
         else
         {
             _nearPoeAltar = false;
+
+            // -- Decision room (Risk Shrine, …) — walk to the shrine, press [E].
+            DungeonRoomState& st = _dungeonRoomStates[_dungeonRoomIdx];
+            _nearDecisionShrine = false;
+            if (st.special != RoomSpecialType::None && !st.specialClaimed)
+            {
+                _decisionShrineBobTimer += dt;
+                Vector2 sp = GetDecisionShrinePos();
+                _nearDecisionShrine = Vector2Distance(_player.GetWorldPos(), sp) < 155.f;
+                if (_nearDecisionShrine)
+                {
+                    bool gp = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
+                    bool interactPressed = IsKeyPressed(KEY_E) || gp;
+                    if (_touchModeActive && IsGestureDetected(GESTURE_TAP))
+                    {
+                        Vector2 tap = GetVirtualTouchPos(0);
+                        Vector2 shrineScreen{ sp.x - _cameraPos.x + kVirtualWidth * 0.5f,
+                                              sp.y - _cameraPos.y + kVirtualHeight * 0.5f };
+                        if (Vector2Distance(tap, shrineScreen) < 170.f)
+                            interactPressed = true;
+                    }
+                    if (interactPressed)
+                    {
+                        OpenDecisionRoom();
+                        return;
+                    }
+                }
+            }
         }
         _nav.TickRefresh(dt, _player.GetFeetWorldPos());
         _nav.ApplyPendingRefresh();
@@ -15536,6 +16222,7 @@ void Engine::UpdateDungeonRun(float dt)
                 _dungeonRoomStates[_dungeonRoomIdx].enemiesInitialized = true;
                 _dungeonRoomStates[_dungeonRoomIdx].survivors.clear();
                 _dungeonEnemiesSpawned = false;
+                ResolveActiveModifiersOnRoomClear();   // Risk Shrine contract pays out
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
                 if (_dungeonRoomIdx == _dungeonGen.GetKeyIndex() && !_magicGemCollected)
                 {
@@ -15543,7 +16230,12 @@ void Engine::UpdateDungeonRun(float dt)
                     _message = "A magic gem appeared";
                 }
                 if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
+                {
                     ApplyDungeonBossExitTiles(TileType::DoorOpen);
+                    // Cinematic slow-mo now that the boss AND all its adds are down —
+                    // longer than a normal kill for a proper victory beat.
+                    TriggerSlowMo(_juiceBossSlowDur * 1.6f, _juiceBossSlowScale);
+                }
                 SpawnDungeonDoorOpenEffects();
                 RebuildDungeonNav();
 
@@ -15976,6 +16668,38 @@ void Engine::DrawDungeonRun()
                                 int fs = 26, w = MeasureText(pr, fs);
                                 DrawText(pr, (int)(ss.x - w * 0.5f), (int)(ss.y - 92.f), fs, Color{ 255, 120, 150, 255 });
                             }
+                        }
+                    }
+                }
+
+                // Decision-room shrine (Risk Shrine, …) — an amber rune-altar at
+                // room centre; dims once its contract has been bound.
+                {
+                    auto drsIt = _dungeonRoomStates.find(_dungeonRoomIdx);
+                    if (drsIt != _dungeonRoomStates.end() &&
+                        drsIt->second.special != RoomSpecialType::None)
+                    {
+                        bool used = drsIt->second.specialClaimed;
+                        Vector2 sp = GetDecisionShrinePos();
+                        Vector2 ss{ sp.x + worldOffset.x + kVirtualWidth * 0.5f,
+                                    sp.y + worldOffset.y + kVirtualHeight * 0.5f };
+                        float bob = sinf(_decisionShrineBobTimer * 2.2f) * 5.f;
+                        DrawRectangleRounded({ ss.x - 30.f, ss.y + 12.f, 60.f, 28.f }, 0.4f, 6, Color{ 40, 32, 22, 255 });
+                        Color orbCol = used ? Color{ 96, 86, 70, 255 } : Color{ 240, 176, 80, 255 };
+                        float glow = used ? 0.08f : (0.18f + 0.08f * sinf(_decisionShrineBobTimer * 3.f));
+                        DrawCircleV({ ss.x, ss.y - 6.f + bob }, 44.f, Fade(orbCol, glow));
+                        DrawCircleV({ ss.x, ss.y - 6.f + bob }, 16.f, Fade(orbCol, used ? 0.4f : 0.9f));
+                        if (!used)
+                            for (int i = 0; i < 3; i++)
+                            {
+                                float a = _decisionShrineBobTimer * 3.f + i * 2.094f;
+                                DrawCircleV({ ss.x + cosf(a) * 24.f, ss.y - 6.f + bob + sinf(a) * 24.f }, 4.f, Fade(orbCol, 0.85f));
+                            }
+                        if (_nearDecisionShrine && !used)
+                        {
+                            const char* pr = "[E] Risk Shrine";
+                            int fs = 26, w = MeasureText(pr, fs);
+                            DrawText(pr, (int)(ss.x - w * 0.5f), (int)(ss.y - 92.f), fs, Color{ 255, 196, 110, 255 });
                         }
                     }
                 }
@@ -17361,7 +18085,6 @@ void Engine::DrawDialogueBoxEditor()
         (int)(sw * 0.5f - MeasureText(banner, bfs) * 0.5f),
         (int)sh - bfs - 5, bfs, Fade(WHITE, 0.85f));
 }
-
 
 
 

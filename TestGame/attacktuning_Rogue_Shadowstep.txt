@@ -1,5 +1,12 @@
+box_x=101.000
+box_y=-10.000
+box_w=418.000
+box_h=120.000
 fx=Shadowstep
-box_x=101.00
-box_y=-10.00
-box_w=418.00
-box_h=120.00
+fire_forward=71.000
+fire_height=45.000
+proj_scale=1.000
+proj_radius=26.000
+proj_speed=650.000
+proj_life=1.400
+cooldown=0.000

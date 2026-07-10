@@ -69,6 +69,7 @@ Character::~Character()
     UnloadTexture(_walkAnim);
     UnloadTexture(_attackAnim);
     UnloadTexture(_staffAnim);
+    UnloadTexture(_pushAnim);
     UnloadTexture(_takeDamageAnim);
     UnloadTexture(_deathAnim);
     UnloadTexture(_dashAnim);
@@ -86,6 +87,7 @@ void Character::Init()
     if (_walkAnim.id != 0) UnloadTexture(_walkAnim);
     if (_attackAnim.id != 0) UnloadTexture(_attackAnim);
     if (_staffAnim.id != 0) UnloadTexture(_staffAnim);
+    if (_pushAnim.id != 0) UnloadTexture(_pushAnim);
     if (_dashAnim.id != 0) UnloadTexture(_dashAnim);
     if (_deathAnim.id != 0) UnloadTexture(_deathAnim);
     if (_takeDamageAnim.id != 0) UnloadTexture(_takeDamageAnim);
@@ -96,8 +98,7 @@ void Character::Init()
     if (_hurtSound.frameCount != 0) UnloadSound(_hurtSound);
     if (_deathSound.frameCount != 0) UnloadSound(_deathSound);
 
-    // Class-specific sprite set. The weapon "Attack" sheet doubles as both the
-    // melee swing and the spell-cast pose for now (Mage's is the staff).
+    // Class-specific sprite set. Weapon attack and caster staff sheets are loaded separately.
     // Appearance is independent of class: use the chosen hero sprite set if set,
     // otherwise fall back to the class's default look.
     const char* prefix = !_appearancePrefix.empty()
@@ -106,11 +107,8 @@ void Character::Init()
     _idleAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Idle.png",   prefix)).c_str());
     _walkAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Walk.png",   prefix)).c_str());
     // The Rogue and Warrior use the forward-thrust (stab) sword animation instead
-    // of the big overhead swing (a hero appearance's _Attack sheet can be a wand /
-    // spell-cast pose, so melee classes force the _Stab sheet — always a blade).
-    // Fall back to the standard attack sheet if a stab sheet is missing (e.g. the
-    // default "Warrior" sprite set has no _Stab). Load two independent copies so
-    // _attackAnim and _staffAnim can be unloaded separately.
+    // of the big overhead swing. Caster basics/elemental casts need a real staff
+    // pose, so load it separately instead of reusing the weapon attack sheet.
     auto loadAttackSheet = [&]() -> Texture2D {
         Texture2D t{};
         if (_class == PlayerClass::Rogue || _class == PlayerClass::Warrior)
@@ -119,13 +117,27 @@ void Character::Init()
             t = LoadTexture(AssetPath(TextFormat("Hero/%s_Attack.png", prefix)).c_str());
         return t;
     };
+    auto loadStaffSheet = [&]() -> Texture2D {
+        Texture2D t = LoadTexture(AssetPath(TextFormat("Hero/%s_Staff.png", prefix)).c_str());
+        if (t.id == 0)
+            t = LoadTexture(AssetPath("Hero/Hero_Staff.png").c_str());
+        if (t.id == 0)
+            t = LoadTexture(AssetPath(TextFormat("Hero/%s_Attack.png", prefix)).c_str());
+        return t;
+    };
     _attackAnim = loadAttackSheet();
-    _staffAnim  = loadAttackSheet();
-    // Hunter: a dedicated bow-draw sheet (the class art, independent of the chosen
-    // appearance) shown only for the basic shot + arrow abilities. Traps keep the
-    // appearance's own attack animation.
+    _staffAnim  = loadStaffSheet();
+    _pushAnim   = LoadTexture(AssetPath("Hero/Hero_003_Push.png").c_str());
+    // Hunter: the bow-draw sheet shown for the basic shot + arrow abilities. Each
+    // hero has their OWN bow animation (Hero/<prefix>_Bow.png, extracted from the
+    // Rogue Adventure character packs), so the shot matches the selected
+    // appearance. Falls back to the Hunter class art only if a bow sheet is absent.
     if (_class == PlayerClass::Hunter)
-        _bowAnim = LoadTexture(AssetPath("Hero/Hunter_Attack.png").c_str());
+    {
+        _bowAnim = LoadTexture(AssetPath(TextFormat("Hero/%s_Bow.png", prefix)).c_str());
+        if (_bowAnim.id == 0)
+            _bowAnim = LoadTexture(AssetPath("Hero/Hunter_Attack.png").c_str());
+    }
 
     // Per-class basic-attack tempo — heavy for the Warrior, snappy for the Rogue.
     switch (_class)
@@ -366,6 +378,12 @@ void Character::AddGoldFromDrop(int amount)
         amount = (int)std::ceil(amount * 1.60f);
     if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
         amount = (int)std::ceil(amount * _wagerRewardMult);
+    if (_contractGoldMult > 1.f)                         // Risk Shrine contract
+    {
+        int before = amount;
+        amount = (int)std::ceil(amount * _contractGoldMult);
+        _contractBonusGold += amount - before;          // bonus portion for the toast
+    }
     _gold += amount;
 }
 
@@ -615,8 +633,13 @@ void Character::HandleAttackInput()
     {
         _attacking = true;
         _damageApplied = false;
-        // Hunter's basic attack is a bow shot → draw the bow sheet.
-        _texture = (_class == PlayerClass::Hunter && _bowAnim.id != 0) ? _bowAnim : _attackAnim;
+        // Ranged basics use their ranged-ready pose: Hunter draws bow, casters raise staff.
+        if (_class == PlayerClass::Hunter && _bowAnim.id != 0)
+            _texture = _bowAnim;
+        else if ((_class == PlayerClass::Mage || _class == PlayerClass::Warlock) && _staffAnim.id != 0)
+            _texture = _staffAnim;
+        else
+            _texture = _attackAnim;
         _frame = 0;
         _runningTime = 0.f;
         _maxFrames = _texture.width / _width;
@@ -686,7 +709,9 @@ void Character::TriggerAbilityCast(int slot)
 
     _castingAbility = true;
     _queuedCast     = castType;
-    _texture        = _staffAnim;
+    bool mageBolt = _class == PlayerClass::Mage &&
+        (castType == CastType::FireBolt || castType == CastType::IceBolt || castType == CastType::ElectricBolt);
+    _texture        = (mageBolt && _pushAnim.id != 0) ? _pushAnim : _staffAnim;
     _frame          = 0;
     _runningTime    = 0.f;
     _maxFrames      = _texture.width / _width;
@@ -1297,6 +1322,12 @@ Vector2 Character::GetCastOrigin() const
     return Vector2Add(_worldPos, Vector2{ _rightLeft * 50.f, 0.f });
 }
 
+Vector2 Character::GetCastOrigin(float forward, float height) const
+{
+    // Tuned fire point: forward flips with facing, height is straight vertical.
+    return Vector2Add(_worldPos, Vector2{ _rightLeft * forward, height });
+}
+
 Vector2 Character::GetFacingDirection() const
 {
     return Vector2{ (float)_rightLeft, 0.f };
@@ -1368,6 +1399,12 @@ void Character::AddExp(int amount)
 
     if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
         amount = (int)std::ceil(amount * _wagerRewardMult);
+    if (_contractXpMult > 1.f)                           // Risk Shrine contract
+    {
+        int before = amount;
+        amount = (int)std::ceil(amount * _contractXpMult);
+        _contractBonusXp += amount - before;            // bonus portion for the toast
+    }
     _exp += amount;
 
     while (_exp >= _expToNextLevel && _level < _maxLevel)

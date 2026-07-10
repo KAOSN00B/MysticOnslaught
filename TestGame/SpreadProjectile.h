@@ -36,7 +36,10 @@ public:
     static int GetFrameCountFor(AbilityType element);
 
     bool        IsActive()       const;
-    void        SetRadius(float r) { _radius = r; }   // Attack Editor hitbox override
+    void        SetRadius(float r)      { _radius = r; }          // hitbox override
+    void        SetVisualScale(float s) { if (s > 0.f) _visualScale = s; } // draw-size multiplier
+    void        SetSpeed(float s)       { if (s > 0.f) _speed = s; }
+    void        SetLifetime(float t)    { if (t > 0.f) _lifeTimer = t; }
     Rectangle   GetCollisionRec() const;
     Vector2     GetWorldPos()     const;
     Vector2     GetDirection()    const;
@@ -58,6 +61,7 @@ private:
     bool  _isActive    = false;
     bool  _basic       = false;   // class basic attack (small, low damage)
     bool  _arrow       = false;   // draw a rotating arrow sprite (Hunter basic shot)
+    float _visualScale = 1.f;     // draw-size multiplier from attack tuning
     Color _tint        { 255, 255, 255, 255 };
 
     static constexpr int _frameWidth  = 32;

@@ -49,6 +49,20 @@ private:
         std::vector<ColliderBox> colliders;
         Marker markers[(int)MarkerKind::Count];
         bool dirty = false;
+
+        // Buying/service metadata — saved into .vasset, read by VillageAssetData.
+        int  cost        = 0;      // gold price in the build menu (0 = free)
+        int  categoryIdx = 0;      // index into kCategoryNames (Building/Decor/...)
+        int  serviceIdx  = 0;      // index into kServiceNames (None/Shop/Relic/...)
+        bool required    = false;  // cannot be skipped in the real village
+        bool unique      = false;  // only one allowed
+        bool removable   = true;   // may be removed after placement
+
+        bool  animEnabled = false; // image is a columns x rows animated spritesheet
+        int   animCols = 1;
+        int   animRows = 1;
+        int   animFrames = 1;
+        float animFps = 6.f;
     };
 
     void LoadAssets();
@@ -61,6 +75,7 @@ private:
     void UpdateCanvas(Rectangle canvas);
     void UpdateSelectedColliderKeys();
     void UpdateSelectedMarkerKeys();
+    void UpdateAssetMetadataKeys();   // cost/category/service/flags + collider quick-modes
     void DrawPanel(Rectangle panel) const;
     void DrawCanvas(Rectangle canvas) const;
     void DrawHelp() const;
@@ -71,9 +86,13 @@ private:
     Rectangle ImageRectToScreen(Rectangle imageRect) const;
     Rectangle NormalizeImageRect(Rectangle rect) const;
     Rectangle ActiveImageBoundsScreen() const;
+    int AssetFrameWidth(const Asset& asset) const;
+    int AssetFrameHeight(const Asset& asset) const;
+    Rectangle AssetFrameSourceRect(const Asset& asset) const;
     int ColliderAt(Vector2 imagePos) const;
     int MarkerAt(Vector2 imagePos) const;
-    bool HandleAt(const ColliderBox& box, Vector2 screenPos) const;
+    enum class ColliderHandle { None, TopLeft, TopRight, BottomLeft, BottomRight };
+    ColliderHandle ColliderHandleAt(const ColliderBox& box, Vector2 screenPos) const;
     void AddCollider(Rectangle imageRect);
     void SetMarker(MarkerKind kind, Vector2 imagePos);
 
@@ -96,6 +115,7 @@ private:
 
     enum class DragMode { None, MoveCollider, ResizeCollider, DrawCollider, MoveMarker };
     DragMode _dragMode = DragMode::None;
+    ColliderHandle _dragHandle = ColliderHandle::None;
     int _dragCollider = -1;
     int _dragMarker = -1;
     Vector2 _dragStartMouseImage{};

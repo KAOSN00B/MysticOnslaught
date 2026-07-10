@@ -199,6 +199,9 @@ public:
     void  SetAttackWidthAdjust(float v)  { _attackWidthAdjust  = v; }
     void  SetAttackHeightAdjust(float v) { _attackHeightAdjust = v; }
     Vector2 GetCastOrigin() const;
+    // Fire point with an explicit forward/height offset (from attack tuning). The
+    // forward offset flips with facing; height is applied straight down/up.
+    Vector2 GetCastOrigin(float forward, float height) const;
     Vector2 GetFacingDirection() const;
     Vector2 GetMoveDirection() const { return _direction; }
     Vector2 GetFeetWorldPos() const;
@@ -222,6 +225,12 @@ public:
     // Cursed Wager: bonus gold/XP/Echoes for the wagered biome (1.0 = no wager).
     void  SetWagerRewardMult(float m) { _wagerRewardMult = (m < 1.f) ? 1.f : m; }
     float GetWagerRewardMult() const  { return _wagerRewardMult; }
+    // Risk Shrine contracts: separate gold / XP multipliers for the contracted
+    // room (1.0 = none). The bonus portion is accumulated for the resolve toast.
+    void SetContractGoldMult(float m) { _contractGoldMult = (m < 1.f) ? 1.f : m; }
+    void SetContractXpMult(float m)   { _contractXpMult   = (m < 1.f) ? 1.f : m; }
+    int  TakeContractBonusGold()      { int v = _contractBonusGold; _contractBonusGold = 0; return v; }
+    int  TakeContractBonusXp()        { int v = _contractBonusXp;   _contractBonusXp   = 0; return v; }
     void ScaleMaxHealth(float mult);     // Cursed Shrine pacts (blessing/curse)
     int  GetCells()      const { return _cells; }
     int  TakeCells()           { int taken = _cells; _cells = 0; return taken; }
@@ -319,6 +328,7 @@ private:
 
     Texture _dashAnim{};
     Texture _staffAnim{};
+    Texture _pushAnim{};  // Mage bolt cast pose
     Texture _bowAnim{};   // Hunter only: bow-draw sheet for basic + shot abilities
                           // (traps use the appearance's own attack animation)
 
@@ -402,6 +412,10 @@ private:
     std::string _appearancePrefix;            // hero sprite set; empty = use class default
     float _cellGainMultiplier = 1.f;          // Cell Surge meta unlock (1.0 / 1.5)
     float _wagerRewardMult    = 1.f;          // Cursed Wager biome reward bonus
+    float _contractGoldMult   = 1.f;          // Risk Shrine contract gold bonus (this room)
+    float _contractXpMult     = 1.f;          // Risk Shrine contract XP bonus (this room)
+    int   _contractBonusGold  = 0;            // gold gained beyond base while contracted
+    int   _contractBonusXp    = 0;            // XP gained beyond base while contracted
     const CharacterTuning* _playerTuning = nullptr;   // authored hit/hurt colliders
 
     int _exp  = 0;
