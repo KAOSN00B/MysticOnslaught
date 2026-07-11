@@ -67,7 +67,13 @@ void Osiris::ResetForSpawn(Vector2 pos)
     _pendingVolley = false;
     _volleyDirection = Vector2Zero();
     _volleyBoltCount = 3;
+    _novaChainRemaining = 0;
+    _pendingPhaseNova = false;
     _teleportTarget = pos;
+
+    // 3 phases: 66% adds a double Judgement Nova + 5-bolt volleys; 33% widens to
+    // 7-bolt volleys, blinks more, and reappears with an instant nova.
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive = false; _forcedPushDirection = Vector2Zero(); _forcedPushSpeed = 0.f;
     _pendingBurns.clear();
@@ -120,6 +126,9 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)     _freezeTimer -= dt;
     if (_meleeCooldown > 0.f)   _meleeCooldown -= dt;
     if (_contactCooldown > 0.f) _contactCooldown -= dt;
@@ -136,6 +145,10 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         Vector2 toPlayer = Vector2Subtract(heroWorldPos, _worldPos);
         float dist = Vector2Length(toPlayer);
 
+        // Each phase change opens with a Judgement Nova (queued until he's stalking).
+        int newPhase = ConsumePhaseChange();
+        if (newPhase >= 0) _pendingPhaseNova = true;
+
         switch (_state)
         {
         case State::Stalking:
@@ -144,6 +157,12 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
             if (toPlayer.x < -20.f) _rightLeft = -1.f;
             if (toPlayer.x >  20.f) _rightLeft =  1.f;
+
+            if (_pendingPhaseNova)
+            {
+                _pendingPhaseNova = false;
+                _novaCooldown = 0.f;   // let the phase nova fire immediately below
+            }
 
             // Sand Step away whenever the player gets too close.
             if (dist < _panicDistance && _teleportCooldown <= 0.f)
@@ -165,6 +184,7 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (_novaCooldown <= 0.f)
             {
                 _state = State::NovaCasting; _stateTimer = 0.f;
+                _novaChainRemaining = (GetPhase() >= 1) ? 1 : 0;   // double nova from phase 1
                 SetAnimation(_sharedMagicAnim, _novaCastDuration / (float)_sheetFrameCount, true);
                 PlaySound(_sharedCastSound);
                 break;
@@ -226,10 +246,20 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (_stateTimer >= _novaCastDuration)
             {
                 _pendingNova = true;
-                _novaBoltCount = IsEnraged() ? 12 : 8;
-                _state = State::Recovery; _stateTimer = 0.f;
-                _novaCooldown = IsEnraged() ? _novaCooldownBase * 0.7f : _novaCooldownBase;
-                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                _novaBoltCount = (GetPhase() >= 2) ? 14 : (GetPhase() >= 1 ? 10 : 8);
+                if (_novaChainRemaining > 0)
+                {
+                    // Double Nova: a second ring right after, offset so the safe gaps move.
+                    _novaChainRemaining--;
+                    _stateTimer = 0.f;   // stay in NovaCasting for the follow-up ring
+                    SetAnimation(_sharedMagicAnim, _novaCastDuration / (float)_sheetFrameCount, true);
+                }
+                else
+                {
+                    _state = State::Recovery; _stateTimer = 0.f;
+                    _novaCooldown = IsEnraged() ? _novaCooldownBase * 0.7f : _novaCooldownBase;
+                    SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                }
             }
             break;
 
@@ -241,7 +271,7 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 Vector2 aim = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
                 _pendingVolley = true;
                 _volleyDirection = (Vector2LengthSqr(aim) > 0.0001f) ? Vector2Normalize(aim) : Vector2{ 1.f, 0.f };
-                _volleyBoltCount = IsEnraged() ? 5 : 3;
+                _volleyBoltCount = (GetPhase() >= 2) ? 7 : (GetPhase() >= 1 ? 5 : 3);
                 _state = State::Recovery; _stateTimer = 0.f;
                 _volleyCooldown = IsEnraged() ? _volleyCooldownBase * 0.7f : _volleyCooldownBase;
                 SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
@@ -263,9 +293,19 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             _stateTimer += dt;
             if (_stateTimer >= _teleportInDuration)
             {
-                _teleportCooldown = IsEnraged() ? _teleportCooldownBase * 0.7f : _teleportCooldownBase;
-                // Arriving with a spiteful volley keeps the pressure on.
-                if (_volleyCooldown <= 1.5f)
+                // Phase 2 blinks more often.
+                float tpCd = IsEnraged() ? _teleportCooldownBase * 0.7f : _teleportCooldownBase;
+                _teleportCooldown = (GetPhase() >= 2) ? tpCd * 0.6f : tpCd;
+                // Phase 2: reappear with an instant Judgement Nova; otherwise a spiteful
+                // volley if it's ready. Either way, arriving is never a free breather.
+                if (GetPhase() >= 2)
+                {
+                    _state = State::NovaCasting; _stateTimer = 0.f;
+                    _novaChainRemaining = 0;   // single quick nova on arrival
+                    SetAnimation(_sharedMagicAnim, _novaCastDuration / (float)_sheetFrameCount, true);
+                    PlaySound(_sharedCastSound);
+                }
+                else if (_volleyCooldown <= 1.5f)
                 {
                     _state = State::VolleyCasting; _stateTimer = 0.f;
                     SetAnimation(_sharedMagicAnim, _volleyCastDuration / (float)_sheetFrameCount, true);

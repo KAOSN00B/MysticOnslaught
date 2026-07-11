@@ -68,8 +68,13 @@ void Werewolf::ResetForSpawn(Vector2 pos)
     _airborneTimer = 0.f;
     _swipeDamageApplied = false;
     _landingDamageApplied = false;
+    _pounceChainUsed = false;
     _impactShakeRequested = false;
     _circleSign = (GetRandomValue(0, 1) == 0) ? -1.f : 1.f;
+
+    // 3 phases: the two Blood Howls (66% / 33%) advance the phase, unlocking the
+    // Rabid three-swipe combo (phase 1) then the chained double-pounce (phase 2).
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive = false; _forcedPushDirection = Vector2Zero(); _forcedPushSpeed = 0.f;
     _pendingBurns.clear();
@@ -124,6 +129,9 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)     _freezeTimer -= dt;
     if (_comboCooldown > 0.f)   _comboCooldown -= dt;
     if (_contactCooldown > 0.f) _contactCooldown -= dt;
@@ -159,11 +167,15 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             break;
 
         case State::Combo1:
-            HandleCombo(false, dt);
+            HandleCombo(1, dt);
             break;
 
         case State::Combo2:
-            HandleCombo(true, dt);
+            HandleCombo(2, dt);
+            break;
+
+        case State::Combo3:
+            HandleCombo(3, dt);
             break;
 
         case State::PounceCharging:
@@ -196,9 +208,20 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             }
             if (_stateTimer >= 0.32f)
             {
-                _state = State::Recovery; _stateTimer = 0.f;
-                _pounceCooldown = IsFrenzied() ? _pounceCooldownBase * 0.55f : _pounceCooldownBase;
-                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                // Moon-Mad (phase 2): chain straight into one more pounce so a single
+                // dodge isn't enough — you have to keep moving after the first landing.
+                if (GetPhase() >= 2 && !_pounceChainUsed && _target != nullptr)
+                {
+                    _pounceChainUsed = true;
+                    _state = State::PounceCharging; _stateTimer = 0.f;
+                    SetAnimation(_sharedJumpAnim, 0.3f, true);
+                }
+                else
+                {
+                    _state = State::Recovery; _stateTimer = 0.f;
+                    _pounceCooldown = IsFrenzied() ? _pounceCooldownBase * 0.55f : _pounceCooldownBase;
+                    SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                }
             }
             break;
 
@@ -242,6 +265,7 @@ void Werewolf::HandleChasing(float dt, Vector2 heroWorldPos)
     if (_pounceCooldown <= 0.f && dist > 300.f)
     {
         _state = State::PounceCharging; _stateTimer = 0.f;
+        _pounceChainUsed = false;   // fresh leap — phase-2 chain available again
         SetAnimation(_sharedJumpAnim, 0.3f, true);   // crouch pose (held frames)
         return;
     }
@@ -270,10 +294,10 @@ void Werewolf::HandleChasing(float dt, Vector2 heroWorldPos)
         SetAnimation(_sharedWalkAnim, 1.f / 10.f, true);
 }
 
-void Werewolf::HandleCombo(bool secondSwipe, float dt)
+void Werewolf::HandleCombo(int step, float dt)
 {
-    // The second swipe lunges forward so back-stepping players still get clipped.
-    if (secondSwipe && _target != nullptr && !_swipeDamageApplied)
+    // Swipes 2 and 3 lunge forward so back-stepping players still get clipped.
+    if (step >= 2 && _target != nullptr && !_swipeDamageApplied)
     {
         Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
         if (Vector2Length(toPlayer) > 40.f)
@@ -286,8 +310,10 @@ void Werewolf::HandleCombo(bool secondSwipe, float dt)
 
     if (!_swipeDamageApplied && _frame >= 3 && _target != nullptr)
     {
+        // Alternate the authored melee boxes: swipe 1 & 3 use slot 2, swipe 2 slot 3.
+        int meleeSlot = (step == 2) ? 3 : 2;
         Rectangle attackRec;
-        if (!GetAnimMeleeRectWorld(secondSwipe ? 3 : 2, attackRec))
+        if (!GetAnimMeleeRectWorld(meleeSlot, attackRec))
         {
             attackRec = GetBodyContactRec();
             attackRec.width += 100.f;
@@ -304,12 +330,20 @@ void Werewolf::HandleCombo(bool secondSwipe, float dt)
 
     if (_frame >= _maxFrames - 1)
     {
-        if (!secondSwipe)
+        float swingSpeed = 1.f / (IsFrenzied() ? 15.f : 11.f);
+        if (step == 1)
         {
-            // Chain straight into the follow-up swipe.
             _state = State::Combo2;
             _swipeDamageApplied = false;
-            SetAnimation(_sharedMelee2Anim, 1.f / (IsFrenzied() ? 15.f : 11.f), true);
+            SetAnimation(_sharedMelee2Anim, swingSpeed, true);
+            PlaySound(_attackSound);
+        }
+        else if (step == 2 && GetPhase() >= 1)
+        {
+            // Rabid Combo: the wolf keeps swinging for a third, forward-driving slash.
+            _state = State::Combo3;
+            _swipeDamageApplied = false;
+            SetAnimation(_sharedMeleeAnim, swingSpeed, true);
             PlaySound(_attackSound);
         }
         else

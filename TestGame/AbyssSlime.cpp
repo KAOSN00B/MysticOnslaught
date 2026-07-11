@@ -20,6 +20,19 @@ Sound     AbyssSlime::_sharedHurtSound{};
 Sound     AbyssSlime::_sharedDeathSound{};
 Sound     AbyssSlime::_sharedLandSound{};
 bool      AbyssSlime::_sharedResourcesLoaded = false;
+namespace
+{
+    Vector2 ClampToAbyssArena(Vector2 point, Vector2 arenaCenter)
+    {
+        constexpr float marginX = 190.f;
+        constexpr float marginY = 190.f;
+        float halfW = (float)kVirtualWidth * 0.5f - marginX;
+        float halfH = (float)kVirtualHeight * 0.5f - marginY;
+        point.x = std::clamp(point.x, arenaCenter.x - halfW, arenaCenter.x + halfW);
+        point.y = std::clamp(point.y, arenaCenter.y - halfH, arenaCenter.y + halfH);
+        return point;
+    }
+}
 
 // =============================================================================
 AbyssSlime::AbyssSlime(Vector2 pos)
@@ -94,6 +107,10 @@ void AbyssSlime::ResetForSpawn(Vector2 pos)
     _summonedAt33    = false;
     _pendingSummonCount   = 0;
     _impactShakeRequested = false;
+    _acidBurstCooldown = 2.2f;
+    _acidBurstFired = false;
+
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _isHopping       = false;
     _hopTimer        = 0.f;
@@ -167,6 +184,13 @@ void AbyssSlime::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarg
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
+    int phaseChange = ConsumePhaseChange();
+    if (phaseChange >= 0)
+        ReactToPhaseChange(phaseChange);
+
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
     if (_meleeCooldown > 0.f)
@@ -175,6 +199,8 @@ void AbyssSlime::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarg
         _contactCooldown -= dt;
     if (_jumpCooldown > 0.f && _state == State::Chasing)
         _jumpCooldown -= dt;
+    if (_acidBurstCooldown > 0.f && _state == State::Chasing)
+        _acidBurstCooldown -= dt;
 
     // Acid puddles keep ticking through every state, including boss death,
     // so leftover pools stay dangerous until they evaporate.
@@ -209,15 +235,15 @@ void AbyssSlime::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarg
         case State::Airborne:       HandleAirborne(dt);       break;
         case State::Landing:        HandleLanding(dt);        break;
         case State::Summoning:      HandleSummoning(dt);      break;
+        case State::AcidBurst:      HandleAcidBurst(dt);      break;
         case State::Recovery:       HandleRecovery(dt);       break;
         }
 
         if (_state != State::Airborne)
             TryDealContactDamage();
 
-        // Keep the boss inside the one-screen arena at all times.
-        _worldPos.x = std::clamp(_worldPos.x, 190.f, (float)kVirtualWidth  - 190.f);
-        _worldPos.y = std::clamp(_worldPos.y, 190.f, (float)kVirtualHeight - 190.f);
+        // Keep the boss inside its current room instead of clamping to screen-origin coordinates.
+        _worldPos = ClampToAbyssArena(_worldPos, _homePos);
     }
 
     HandleAnimation(dt);
@@ -261,7 +287,23 @@ void AbyssSlime::HandleChasing(float dt, Vector2 heroWorldPos)
     // Crushing Leap whenever it's off cooldown and the player isn't point blank.
     if (_jumpCooldown <= 0.f && dist > 240.f)
     {
-        BeginJump();
+        Vector2 target = (_target != nullptr) ? _target->GetFeetWorldPos() : heroWorldPos;
+        target = ClampToAbyssArena(target, _homePos);
+        if (Vector2Distance(_worldPos, target) > 150.f)
+        {
+            BeginJump();
+            return;
+        }
+        _jumpCooldown = 0.65f;
+    }
+
+    if (GetPhase() >= 1 && _acidBurstCooldown <= 0.f && dist < _acidBurstRange)
+    {
+        _state = State::AcidBurst;
+        _stateTimer = 0.f;
+        _acidBurstFired = false;
+        SetAnimation(_sharedMagicAnim, _acidBurstDuration / (float)_sheetFrameCount, true);
+        PlaySound(_attackSound);
         return;
     }
 
@@ -308,7 +350,7 @@ void AbyssSlime::HandleMelee()
         if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
         {
             _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
-            _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
+            ApplyShortPlayerShove();
         }
         _damageApplied = true;
     }
@@ -326,6 +368,16 @@ void AbyssSlime::BeginJump()
 {
     _state = State::JumpCharging;
     _stateTimer = 0.f;
+
+    if (_target != nullptr)
+    {
+        _jumpTargetPos = ClampToAbyssArena(_target->GetFeetWorldPos(), _homePos);
+    }
+    else
+    {
+        _jumpTargetPos = _worldPos;
+    }
+
     SetAnimation(_sharedJumpAnim, _jumpChargeDuration / (float)_sheetFrameCount, true);
 }
 
@@ -333,10 +385,8 @@ void AbyssSlime::HandleJumpCharge(float dt)
 {
     _stateTimer += dt;
 
-    // Track the player's live position during the crouch so the landing spot
-    // is honest — the telegraph ring in DrawEnemy shows exactly where.
-    if (_target != nullptr)
-        _jumpTargetPos = _target->GetFeetWorldPos();
+    // The landing target is locked in BeginJump. This keeps the telegraph honest
+    // and prevents forced player movement from dragging the slime to a room edge.
 
     if (_stateTimer >= _jumpChargeDuration)
     {
@@ -445,7 +495,7 @@ void AbyssSlime::HandleLanding(float dt)
         if (distToPlayer < _landingRadius)
         {
             _target->TakeFractionalDamage(1.0f, _worldPos);
-            _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
+            ApplyShortPlayerShove();
         }
         _landingDamageApplied = true;
     }
@@ -470,6 +520,54 @@ void AbyssSlime::HandleSummoning(float dt)
         _pendingSummonCount = IsEnraged() ? 4 : 3;
         _state = State::Recovery;
         _stateTimer = 0.f;
+        SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+    }
+}
+
+void AbyssSlime::HandleAcidBurst(float dt)
+{
+    _velocity = Vector2Zero();
+    _stateTimer += dt;
+
+    if (!_acidBurstFired && _stateTimer >= _acidBurstDuration * 0.45f)
+    {
+        _acidBurstFired = true;
+
+        Vector2 origin = _worldPos;
+        Vector2 aim = (_target != nullptr)
+            ? Vector2Subtract(_target->GetFeetWorldPos(), origin)
+            : Vector2{ _rightLeft, 0.f };
+        if (Vector2Length(aim) <= 0.01f)
+            aim = Vector2{ _rightLeft, 0.f };
+        aim = Vector2Normalize(aim);
+
+        float baseAngle = atan2f(aim.y, aim.x);
+        int shots = (GetPhase() >= 2) ? 7 : 5;
+        float spread = (GetPhase() >= 2) ? 0.95f : 0.70f;
+        for (int i = 0; i < shots; ++i)
+        {
+            float u = (shots <= 1) ? 0.f : ((float)i / (float)(shots - 1) - 0.5f);
+            float ang = baseAngle + u * spread;
+            float dist = 190.f + (float)i * 38.f;
+            Vector2 pos{ origin.x + cosf(ang) * dist, origin.y + sinf(ang) * dist };
+            pos = ClampToAbyssArena(pos, _homePos);
+            SpawnPuddle(pos, GetPhase() >= 2 ? 105.f : 90.f);
+        }
+
+        if (_target != nullptr && Vector2Distance(origin, _target->GetFeetWorldPos()) < _acidBurstShockRadius)
+        {
+            _target->TakeFractionalDamage(_bossDamagePerHit, origin);
+            ApplyShortPlayerShove();
+        }
+
+        _impactShakeRequested = true;
+    }
+
+    if (_stateTimer >= _acidBurstDuration)
+    {
+        _state = State::Recovery;
+        _stateTimer = 0.f;
+        _acidBurstCooldown = IsEnraged() ? _acidBurstCooldownBase * 0.6f : _acidBurstCooldownBase;
         SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     }
 }
@@ -501,7 +599,7 @@ void AbyssSlime::TryDealContactDamage()
         return;
 
     _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
-    _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
+    ApplyShortPlayerShove();
     _contactCooldown = _contactCooldownBase;
 }
 
@@ -523,6 +621,26 @@ Vector2 AbyssSlime::GetPushDirectionToPlayer() const
     if (Vector2Length(away) <= 0.01f)
         return Vector2{ 1.f, 0.f };
     return Vector2Normalize(away);
+}
+
+void AbyssSlime::ApplyShortPlayerShove()
+{
+    if (_target == nullptr || !_target->IsAlive())
+        return;
+
+    Vector2 shoveDir = GetPushDirectionToPlayer();
+    Vector2 shovePos = Vector2Add(_target->GetWorldPos(), Vector2Scale(shoveDir, _shortShoveDistance));
+    _target->SetWorldPos(shovePos);
+}
+
+void AbyssSlime::ReactToPhaseChange(int newPhase)
+{
+    BeginPhaseTransition(0.65f);
+    _impactShakeRequested = true;
+    _acidBurstCooldown = 0.8f;
+
+    float radius = (newPhase >= 2) ? 135.f : 110.f;
+    SpawnPuddle(_worldPos, radius);
 }
 
 // =============================================================================
@@ -584,14 +702,16 @@ void AbyssSlime::DrawEnemy(Vector2 cameraRef)
     DrawPuddles(cameraRef);
 
     // Landing-spot telegraph while charging / airborne.
-    if (_state == State::JumpCharging || _state == State::Airborne)
+    if (_state == State::JumpCharging || _state == State::Airborne || _state == State::AcidBurst)
     {
-        Vector2 targetScreen = Vector2Subtract(_jumpTargetPos, cameraRef);
+        Vector2 telegraphCenter = (_state == State::AcidBurst) ? _worldPos : _jumpTargetPos;
+        Vector2 targetScreen = Vector2Subtract(telegraphCenter, cameraRef);
         targetScreen.x += kVirtualWidth  / 2.f;
         targetScreen.y += kVirtualHeight / 2.f;
         float pulse = sinf((float)GetTime() * 12.f) * 0.5f + 0.5f;
-        DrawCircleLines((int)targetScreen.x, (int)targetScreen.y, _landingRadius, Fade(Color{ 160, 90, 245, 255 }, 0.5f + 0.3f * pulse));
-        DrawCircleV(targetScreen, _landingRadius * (0.35f + 0.25f * pulse), Fade(Color{ 160, 90, 245, 255 }, 0.14f));
+        float ringRadius = (_state == State::AcidBurst) ? _acidBurstShockRadius : _landingRadius;
+        DrawCircleLines((int)targetScreen.x, (int)targetScreen.y, ringRadius, Fade(Color{ 160, 90, 245, 255 }, 0.5f + 0.3f * pulse));
+        DrawCircleV(targetScreen, ringRadius * (0.35f + 0.25f * pulse), Fade(Color{ 160, 90, 245, 255 }, 0.14f));
     }
 
     // Parabolic lift while airborne sells the jump without real Z movement.
@@ -623,7 +743,7 @@ void AbyssSlime::DrawEnemy(Vector2 cameraRef)
         drawWidth * 0.34f, drawHeight * 0.12f, Fade(BLACK, 0.35f));
 
     // Summon cast glow.
-    if (_state == State::Summoning)
+    if (_state == State::Summoning || _state == State::AcidBurst || IsInPhaseTransition())
     {
         float pulse = sinf((float)GetTime() * 14.f) * 0.5f + 0.5f;
         DrawCircleV(screenPos, drawWidth * (0.45f + 0.1f * pulse), Fade(Color{ 90, 60, 220, 255 }, 0.22f));
@@ -738,7 +858,8 @@ void AbyssSlime::SetWaveScale(int wave)
     _expValue    = _bossBaseExpValue;
     _health      = Balance::Boss::kAbyssSlimeHealth;
     _maxHealth   = Balance::Boss::kAbyssSlimeHealth;
-_enrageThreshold = 0.33f;
+    _enrageThreshold = 0.33f;
+    SetPhaseThresholds({ 0.66f, 0.33f });
     _speed       = _moveSpeed;
     _attackPower = 1.f;
 }

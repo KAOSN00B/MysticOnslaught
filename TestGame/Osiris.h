@@ -87,6 +87,8 @@ private:
     bool  _pendingVolley    = false;
     Vector2 _volleyDirection{};
     int   _volleyBoltCount  = 3;
+    int   _novaChainRemaining = 0;    // phase 1+: fire a second Judgement Nova
+    bool  _pendingPhaseNova   = false;// phase change opens with a nova
     Vector2 _teleportTarget{};
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;

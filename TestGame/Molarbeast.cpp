@@ -1,4 +1,4 @@
-﻿#include "Molarbeast.h"
+#include "Molarbeast.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
@@ -8,6 +8,7 @@
 #include "raymath.h"
 #include "VirtualCanvas.h"
 
+#include <algorithm>
 #include <cmath>
 
 Texture2D Molarbeast::_sharedIdleAnim{};
@@ -48,7 +49,7 @@ void Molarbeast::Init()
 
     // Lock in stable collision dimensions from the idle sheet. These never
     // change again so every collision rect stays consistent across all
-    // animation states — melee, hurt, dash, ranged sheets can all differ in
+    // animation states � melee, hurt, dash, ranged sheets can all differ in
     // size without making the hurtbox jump around.
     _stableFrameW = _idleAnim.width / (float)_sheetFrameCount;
     _stableFrameH = _idleAnim.height;
@@ -98,7 +99,12 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _impactShakeRequested = false;
     _dashDirection = Vector2{ 1.f, 0.f };
     _queuedLavaBallTarget = _worldPos;
+    _dashChainRemaining = 0;
     _dashedEnemies.clear();
+
+    // 3 phases: 66% adds a zig-zag follow-up dash + longer lavaball volleys; 33%
+    // (also the enrage point) tightens special cadence.
+    SetPhaseThresholds({ 0.66f, 0.33f });
     _stuckTimer = 0.f;
     _stuckCheckPos = _worldPos;
     _lockedNavTarget = _worldPos;
@@ -119,6 +125,8 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
     (void)heroWorldPos;
 
     UpdateEnrageLatch(dt);   // Molarbeast doesn't use UpdateBurns, so drive it here
+    UpdatePhaseLatch(dt);    // ditto for the multi-phase latch
+    UpdateStatuses(dt);      // and the shared status effects (poison/bleed/slow/etc.)
 
     _navTarget    = navigationTarget;
     _hasNavTarget = hasNavigationTarget;
@@ -130,6 +138,9 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
     ApplyVelocity(dt);
     UpdateHit(dt);
     UpdateLaunchVisual(dt);
+
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
 
     if (_dying)
     {
@@ -315,7 +326,7 @@ void Molarbeast::TakeDamage(int damage, Vector2 attackerPos)
     }
 
     _takingDamage = true;
-    // Short per-hit guard only — prevents the same overlapping hitbox from
+    // Short per-hit guard only � prevents the same overlapping hitbox from
     // registering twice in consecutive frames. _takingDamage stays true
     // independently until the hurt animation finishes, so the visual hold
     // is not tied to this timer.
@@ -505,7 +516,7 @@ void Molarbeast::SetIdleAnimation(bool resetFrame)
 
 void Molarbeast::BuildBehaviourTree()
 {
-    // ── Node A: Melee Branch (Sequence) ──────────────────────────────────────
+    // -- Node A: Melee Branch (Sequence) --------------------------------------
     // Fires when the player enters the threat zone with the melee cooldown
     // ready. Stays RUNNING until the attack animation completes naturally.
     // Only triggers from Chasing so a dash or ranged charge cannot be
@@ -515,7 +526,7 @@ void Molarbeast::BuildBehaviourTree()
     meleeSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool
     {
         if (_target == nullptr) return false;
-        if (_state == State::MeleeAttacking) return true;   // already swinging — hold branch
+        if (_state == State::MeleeAttacking) return true;   // already swinging � hold branch
         if (_state != State::Chasing)        return false;  // never interrupt a special
         if (_meleeCooldown > 0.f)            return false;
         float dist = Vector2Distance(_worldPos, _target->GetFeetWorldPos());
@@ -541,23 +552,23 @@ void Molarbeast::BuildBehaviourTree()
         return (_state == State::MeleeAttacking) ? BTStatus::RUNNING : BTStatus::SUCCESS;
     }));
 
-    // ── Node B: Special Attack Selector (Selector) ───────────────────────────
+    // -- Node B: Special Attack Selector (Selector) ---------------------------
     // Covers the full special lifecycle in priority order:
-    //   B1. Continue an active dash  (DashCharging → Dashing)
-    //   B2. Continue an active ranged attack  (RangedCharging → RangedVolley)
+    //   B1. Continue an active dash  (DashCharging ? Dashing)
+    //   B2. Continue an active ranged attack  (RangedCharging ? RangedVolley)
     //   B3. Ride out post-special recovery
     //   B4. Trigger a brand-new special when the cooldown expires
     // Returning FAILURE from every branch lets Node C (Chasing) run.
     auto specialSel = std::make_unique<BTSelector>();
 
-    // B1 — Dash
+    // B1 � Dash
     auto dashSeq = std::make_unique<BTSequence>();
     dashSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
         return _state == State::DashCharging || _state == State::Dashing;
     }));
     dashSeq->AddChild(std::make_unique<BTAction>([this](float dt) -> BTStatus
     {
-        // Run one phase per frame — matches original switch behaviour where
+        // Run one phase per frame � matches original switch behaviour where
         // DashCharging and Dashing were separate cases that never ran together.
         if (_state == State::DashCharging)
         {
@@ -568,7 +579,7 @@ void Molarbeast::BuildBehaviourTree()
         return BTStatus::RUNNING;
     }));
 
-    // B2 — Ranged
+    // B2 � Ranged
     auto rangedSeq = std::make_unique<BTSequence>();
     rangedSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
         return _state == State::RangedCharging || _state == State::RangedVolley;
@@ -584,7 +595,7 @@ void Molarbeast::BuildBehaviourTree()
         return BTStatus::RUNNING;
     }));
 
-    // B3 — Recovery
+    // B3 � Recovery
     auto recoverySeq = std::make_unique<BTSequence>();
     recoverySeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
         return _state == State::Recovery;
@@ -595,7 +606,7 @@ void Molarbeast::BuildBehaviourTree()
         return (_state == State::Recovery) ? BTStatus::RUNNING : BTStatus::SUCCESS;
     }));
 
-    // B4 — Special trigger: returns FAILURE while the timer is still positive
+    // B4 � Special trigger: returns FAILURE while the timer is still positive
     // (allowing Node C to run), fires BeginRandomSpecial when it expires.
     // To swap "Dash" for a new move later: replace the BeginRandomSpecial call
     // here or add a new branch above B4.
@@ -611,8 +622,8 @@ void Molarbeast::BuildBehaviourTree()
     specialSel->AddChild(std::move(recoverySeq));
     specialSel->AddChild(std::move(triggerSpecial));
 
-    // ── Node C: Orbit / Movement (Action) ────────────────────────────────────
-    // Default fallback — circles the player, handles A* nav and stuck recovery.
+    // -- Node C: Orbit / Movement (Action) ------------------------------------
+    // Default fallback � circles the player, handles A* nav and stuck recovery.
     // Runs only when Nodes A and B both return FAILURE.
     auto chaseAction = std::make_unique<BTAction>([this](float dt) -> BTStatus
     {
@@ -620,7 +631,7 @@ void Molarbeast::BuildBehaviourTree()
         return BTStatus::RUNNING;
     });
 
-    // ── Root: Selector ────────────────────────────────────────────────────────
+    // -- Root: Selector --------------------------------------------------------
     auto root = std::make_unique<BTSelector>();
     root->AddChild(std::move(meleeSeq));
     root->AddChild(std::move(specialSel));
@@ -860,7 +871,7 @@ void Molarbeast::HandleMelee()
         return;
 
     // GetThreatCollisionRec already extends the hurtbox forward by
-    // _attackFrontPadding — use it directly as the melee swing hitbox.
+    // _attackFrontPadding � use it directly as the melee swing hitbox.
     Rectangle attackRec = GetThreatCollisionRec();
 
     if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
@@ -936,7 +947,8 @@ void Molarbeast::HandleRangedCharge(float dt)
         return;
 
     _state = State::RangedVolley;
-    _volleyShotsRemaining = GetRandomValue(3, 4);
+    // Longer volleys as the fight escalates: +1 shot at phase 1, +2 at phase 2.
+    _volleyShotsRemaining = GetRandomValue(3, 4) + (GetPhase() >= 2 ? 2 : (GetPhase() >= 1 ? 1 : 0));
     _volleyShotTimer = 0.f;
 }
 
@@ -1028,7 +1040,7 @@ void Molarbeast::HandleAnimation(float dt)
     case State::RangedVolley:
         if (_volleyShotsRemaining <= 0)
         {
-            // All shots fired and the sheet just played through — clean exit.
+            // All shots fired and the sheet just played through � clean exit.
             ResetSpecialCooldown();
             _state = State::Recovery;
             _recoveryTimer = _recoveryDuration;
@@ -1036,7 +1048,7 @@ void Molarbeast::HandleAnimation(float dt)
         }
         else
         {
-            // Still firing — loop the ranged sheet so it keeps cycling.
+            // Still firing � loop the ranged sheet so it keeps cycling.
             _frame = 0;
         }
         break;
@@ -1057,7 +1069,7 @@ void Molarbeast::TryDealContactDamage()
         return;
     // No contact damage during melee (its own hitbox handles damage), dash
     // (handled by HandleDash), or ranged volley (gives the player a close-range
-    // dodge window — step in to avoid lavaballs without being simultaneously punished).
+    // dodge window � step in to avoid lavaballs without being simultaneously punished).
     if (_state == State::MeleeAttacking || _state == State::Dashing || _state == State::RangedVolley)
         return;
     if (_contactCooldown > 0.f)
@@ -1118,10 +1130,25 @@ void Molarbeast::ResetContactCooldown()
 
 void Molarbeast::FinishDash(bool blockedByArena)
 {
-    _state = State::Recovery;
-    _recoveryTimer = blockedByArena ? 0.8f : _recoveryDuration;
     _impactShakeRequested = true;
     _velocity = Vector2Zero();
+
+    // Zig-zag chain (phase 1+): re-aim and dash again instead of recovering, unless
+    // a wall stopped it. Each follow-up re-aims at the player, so the path kinks.
+    if (_dashChainRemaining > 0 && !blockedByArena)
+    {
+        _dashChainRemaining--;
+        _chargeDuration = GetChargeDuration() * 0.5f;   // snappier re-aim for the chain
+        _chargeTimer = _chargeDuration;
+        _state = State::DashCharging;
+        _dashedEnemies.clear();
+        SetDashAnimation(true);
+        return;
+    }
+
+    _dashChainRemaining = 0;
+    _state = State::Recovery;
+    _recoveryTimer = blockedByArena ? 0.8f : _recoveryDuration;
     ResetSpecialCooldown();
     SetIdleAnimation(true);
 }
@@ -1134,6 +1161,7 @@ void Molarbeast::BeginRandomSpecial()
 
     if (useDash)
     {
+        _dashChainRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
         _state = State::DashCharging;
         SetDashAnimation(true);
     }
@@ -1169,12 +1197,15 @@ float Molarbeast::GetSpecialCooldownMin() const
     // Boss pressure should stay high, but the player still needs short read
     // windows between specials so the fight doesn't feel like uninterrupted
     // dash/fireball spam.
-    return IsEnraged() ? 3.5f : 4.5f;
+    // Cadence tightens by phase (and further when enraged at 30%).
+    float base = (GetPhase() >= 2) ? 3.6f : (GetPhase() >= 1 ? 4.1f : 4.5f);
+    return IsEnraged() ? std::min(base, 3.5f) : base;
 }
 
 float Molarbeast::GetSpecialCooldownMax() const
 {
-    return IsEnraged() ? 4.0f : 5.5f;
+    float base = (GetPhase() >= 2) ? 4.2f : (GetPhase() >= 1 ? 4.9f : 5.5f);
+    return IsEnraged() ? std::min(base, 4.0f) : base;
 }
 
 float Molarbeast::GetChargeDuration() const

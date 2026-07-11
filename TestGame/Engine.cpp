@@ -7149,10 +7149,48 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
         RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
 
         if (stunSeconds  > 0.f) enemy->ApplyFreeze(stunSeconds);          // stun ≈ frozen hold
-        if (bleedSeconds > 0.f) enemy->ApplyBurn(0.f, bleedDmgPerTick, playerPos);  // bleed DoT
+        if (bleedSeconds > 0.f) enemy->ApplyBleed(bleedDmgPerTick, bleedSeconds);  // real bleed DoT (shared status)
         hitCount++;
     }
     return hitCount;
+}
+
+// ── Class-ability status stamps ──────────────────────────────────────────────
+// Apply a shared status to every enemy overlapping a world rect. Class abilities
+// call these right after their DamageEnemiesInRect so each class delivers its
+// signature effect (Warrior armor-break, Rogue poison, Hunter mark, etc.).
+static void ApplyPoisonInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, int dmgPerTick, float sec)
+{
+    for (auto& e : es)
+        if (e->IsActive() && e->IsAlive() && CheckCollisionRecs(r, e->GetHitCollisionRec()))
+            e->ApplyPoison(dmgPerTick, sec);
+}
+static void ApplyVulnInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, float mult, float sec)
+{
+    for (auto& e : es)
+        if (e->IsActive() && e->IsAlive() && CheckCollisionRecs(r, e->GetHitCollisionRec()))
+            e->ApplyVulnerability(mult, sec);
+}
+static void ApplySlowInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, float mult, float sec)
+{
+    for (auto& e : es)
+        if (e->IsActive() && e->IsAlive() && CheckCollisionRecs(r, e->GetHitCollisionRec()))
+            e->ApplySlow(mult, sec);
+}
+static void ApplyMarkInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, float sec)
+{
+    for (auto& e : es)
+        if (e->IsActive() && e->IsAlive() && CheckCollisionRecs(r, e->GetHitCollisionRec()))
+            e->ApplyMark(sec);
+}
+// Burn (fire DoT) via the existing burn queue — stack a few delayed bursts so the
+// target visibly "catches fire" instead of taking one hit.
+static void ApplyBurnInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, int dmgPerTick, int ticks, Vector2 src)
+{
+    for (auto& e : es)
+        if (e->IsActive() && e->IsAlive() && CheckCollisionRecs(r, e->GetHitCollisionRec()))
+            for (int i = 1; i <= ticks; ++i)
+                e->ApplyBurn(0.4f * i, dmgPerTick, src);
 }
 
 void Engine::ApplyPlayerLifesteal(int damageDealt)
@@ -7224,20 +7262,21 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::WarCleave:
     {
         int hits = DamageEnemiesInRect(forwardRect(210.f, 200.f), dmgVal(4.f + atk * 0.8f), 1.f, 0.f, 0.f, 0);
+        ApplyVulnInRect(_enemies, forwardRect(210.f, 200.f), 1.25f, 4.f);   // armor break (staggering shockwave)
         pushVfx(WarriorVfxKind::Wave, 0.28f, 210.f, Color{ 200, 235, 255, 255 });
         if (hits) TriggerScreenShake(6.f, 0.10f);
         break;
     }
     case AbilityType::Whirlwind:
     {
-        DamageEnemiesInRect(radialRect(170.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(radialRect(170.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.6f));   // spinning blades bleed
         pushVfx(WarriorVfxKind::Whirl, 0.35f, 170.f, Color{ 235, 235, 245, 255 });
         TriggerScreenShake(5.f, 0.12f);
         break;
     }
     case AbilityType::ThrowingAxe:
     {
-        DamageEnemiesInRect(forwardRect(520.f, 90.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(forwardRect(520.f, 90.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 3.f, dmgVal(0.8f));   // deep axe wound bleeds
         pushShot(0.4f, 520.f, AbilityType::ThrowingAxe, true);
         break;
     }
@@ -7269,6 +7308,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::GroundSlam:
     {
         DamageEnemiesInRect(radialRect(340.f), dmgVal(7.f + atk * 1.5f), 1.f, 1.5f, 0.f, 0);
+        ApplyVulnInRect(_enemies, radialRect(340.f), 1.3f, 5.f);   // quake cracks armor
         pushVfx(WarriorVfxKind::Slam, 0.5f, 340.f, Color{ 235, 200, 120, 255 });
         StopSound(_explosionSound);
         PlaySound(_explosionSound);
@@ -7286,6 +7326,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::Earthshatter:
     {
         DamageEnemiesInRect(forwardRect(640.f, 130.f), dmgVal(10.f + atk * 2.0f), 1.f, 0.6f, 0.f, 0);
+        ApplyVulnInRect(_enemies, forwardRect(640.f, 130.f), 1.35f, 5.f);   // sundering spikes
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 640.f, Color{ 180, 130, 70, 255 });
         StopSound(_explosionSound);
         PlaySound(_explosionSound);
@@ -7297,13 +7338,14 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::FanOfKnives:
     {
         DamageEnemiesInRect(forwardRect(360.f, 240.f), dmgVal(4.f + atk * 0.7f), 1.f, 0.f, 0.f, 0);
+        ApplyPoisonInRect(_enemies, forwardRect(360.f, 240.f), dmgVal(1.f), 4.f);   // coated blades
         pushVfx(WarriorVfxKind::Fan, 0.3f, 360.f, Color{ 220, 225, 235, 255 });
         break;
     }
     case AbilityType::Shadowstep:
     {
         // Cut everything in the corridor ahead, then blink to the far end.
-        DamageEnemiesInRect(forwardRect(300.f, 110.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(forwardRect(300.f, 110.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.7f));   // slicing blink bleeds
         pushVfx(WarriorVfxKind::Teleport, 0.3f, 40.f, Color{ 150, 90, 220, 255 });   // puff at origin
         _player.MoveTowardFacing(300.f * facingSign);
         WarriorVfx dst; dst.kind = WarriorVfxKind::Teleport; dst.pos = _player.GetWorldPos();
@@ -7319,11 +7361,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         pool.lifetime = 3.5f; pool.radius = 130.f; pool.tint = Color{ 120, 210, 90, 255 };
         pool.tickDamage = dmgVal(1.f + atk * 0.2f); pool.tickInterval = 0.4f;
         _warriorVfx.push_back(pool);
+        ApplyPoisonInRect(_enemies, { spot.x - 130.f, spot.y - 130.f, 260.f, 260.f }, dmgVal(1.f), 5.f);   // toxic cloud
         break;
     }
     case AbilityType::Backstab:
     {
-        DamageEnemiesInRect(forwardRect(150.f, 120.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(forwardRect(150.f, 120.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 3.f, dmgVal(1.f));   // deep wound bleeds
+        ApplyVulnInRect(_enemies, forwardRect(150.f, 120.f), 1.3f, 4.f);   // exposes the struck foe (weaken)
         pushVfx(WarriorVfxKind::Flurry, 0.22f, 150.f, Color{ 255, 90, 90, 255 });
         TriggerScreenShake(6.f, 0.10f);
         break;
@@ -7331,19 +7375,22 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::SmokeBomb:
     {
         DamageEnemiesInRect(radialRect(240.f), 0, 0.f, 1.2f, 0.f, 0);   // slow nearby (stun≈hold)
+        ApplySlowInRect(_enemies, radialRect(240.f), 0.5f, 3.5f);       // lingering blinding smoke slows
         _player.GrantDamageBuff(1.6f, 5.f);                            // ambush from the smoke
         pushVfx(WarriorVfxKind::Smoke, 0.6f, 240.f, Color{ 150, 150, 160, 255 });
         break;
     }
     case AbilityType::Eviscerate:
     {
-        DamageEnemiesInRect(forwardRect(210.f, 130.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(forwardRect(210.f, 130.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 3.f, dmgVal(0.9f));   // flurry of cuts bleeds
         pushVfx(WarriorVfxKind::Flurry, 0.3f, 210.f, Color{ 235, 235, 245, 255 });
         break;
     }
     case AbilityType::DeathMark:
     {
         DamageEnemiesInRect(radialRect(1200.f), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
+        ApplyMarkInRect(_enemies, radialRect(1200.f), 6.f);   // marks the whole screen for execution
+        ApplyVulnInRect(_enemies, radialRect(1200.f), 1.3f, 6.f);
         pushVfx(WarriorVfxKind::Marks, 0.6f, 1200.f, Color{ 255, 70, 70, 255 });
         StopSound(_explosionSound);
         PlaySound(_explosionSound);
@@ -7372,12 +7419,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── HUNTER ───────────────────────────────────────────────────────────────
     case AbilityType::PiercingShot:
     {
-        DamageEnemiesInRect(forwardRect(600.f, 70.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(forwardRect(600.f, 70.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 2.5f, dmgVal(0.8f));   // barbed arrow bleeds
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::Multishot:
     {
         DamageEnemiesInRect(forwardRect(380.f, 260.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 0.f, 0);
+        ApplyPoisonInRect(_enemies, forwardRect(380.f, 260.f), dmgVal(1.f), 4.f);   // poison-tipped volley
         pushVfx(WarriorVfxKind::Fan, 0.3f, 380.f, Color{ 140, 235, 210, 255 });
         break;
     }
@@ -7420,12 +7468,15 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // A heavy armour-piercing arrow: ignores a Shieldbearer's frontal block and
         // hits harder than a normal shot, so shielded foes can't wall you out.
         DamageEnemiesInRect(forwardRect(660.f, 84.f), dmgVal(6.f + atk * 1.4f), 1.f, 0.f, 0.f, 0, true);
+        ApplyVulnInRect(_enemies, forwardRect(660.f, 84.f), 1.4f, 5.f);   // punctures armor
+        ApplyMarkInRect(_enemies, forwardRect(660.f, 84.f), 5.f);         // marks the target
         pushVfx(WarriorVfxKind::Spikes, 0.4f, 660.f, Color{ 235, 245, 205, 255 });
         break;
     }
     case AbilityType::ArrowStorm:
     {
         DamageEnemiesInRect(radialRect(1000.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 0.f, 0);
+        ApplyPoisonInRect(_enemies, radialRect(1000.f), dmgVal(1.f), 4.f);   // a rain of poisoned shafts
         pushVfx(WarriorVfxKind::Barrage, 0.6f, 1000.f, Color{ 140, 235, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(11.f, 0.35f);
@@ -7440,7 +7491,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::PiercingBarrage:
     {
-        DamageEnemiesInRect(forwardRect(900.f, 150.f), dmgVal(10.f + atk * 1.9f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(forwardRect(900.f, 150.f), dmgVal(10.f + atk * 1.9f), 1.f, 0.f, 3.f, dmgVal(1.f));   // impaling barrage bleeds
+        ApplyMarkInRect(_enemies, forwardRect(900.f, 150.f), 5.f);
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 900.f, Color{ 140, 235, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
@@ -7451,6 +7503,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::Smite:
     {
         DamageEnemiesInRect(forwardRect(210.f, 200.f), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        ApplyMarkInRect(_enemies, forwardRect(210.f, 200.f), 5.f);   // Judgment mark
         pushVfx(WarriorVfxKind::Wave, 0.28f, 210.f, Color{ 255, 235, 150, 255 });
         break;
     }
@@ -7472,6 +7525,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::HolyBolt:
     {
         DamageEnemiesInRect(forwardRect(560.f, 80.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
+        ApplyMarkInRect(_enemies, forwardRect(560.f, 80.f), 5.f);   // holy light marks for Judgment
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::HammerThrow:
@@ -7489,8 +7543,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::DivineStorm:
     {
-        int hits = DamageEnemiesInRect(radialRect(320.f), dmgVal(7.f + atk * 1.4f), 1.f, 0.f, 0.f, 0);
+        int hits = DamageEnemiesInRect(radialRect(320.f), dmgVal(7.f + atk * 1.4f), 1.f, 0.8f, 0.f, 0);   // holy stun
         _player.AddRetribution(hits);   // wrath builds per foe struck (no heal)
+        ApplyMarkInRect(_enemies, radialRect(320.f), 5.f);
         pushVfx(WarriorVfxKind::Slam, 0.5f, 320.f, Color{ 255, 235, 150, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
@@ -7507,6 +7562,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::HammerOfJustice:
     {
         DamageEnemiesInRect(forwardRect(660.f, 150.f), dmgVal(10.f + atk * 1.9f), 1.f, 1.3f, 0.f, 0);
+        ApplyMarkInRect(_enemies, forwardRect(660.f, 150.f), 6.f);   // judgment of the guilty
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 660.f, Color{ 255, 235, 150, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(13.f, 0.4f);
@@ -7517,18 +7573,22 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::ShadowBolt:
     {
         DamageEnemiesInRect(forwardRect(560.f, 80.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
+        ApplyVulnInRect(_enemies, forwardRect(560.f, 80.f), 1.25f, 4.f);   // dark curse weakens
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::DrainLife:
     {
         _player.GrantLifesteal(0.6f, 0.3f);   // this strike heals you
         DamageEnemiesInRect(forwardRect(220.f, 130.f), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        ApplyVulnInRect(_enemies, forwardRect(220.f, 130.f), 1.2f, 3.f);   // life-drain leaves them frail
         pushVfx(WarriorVfxKind::Wave, 0.3f, 220.f, Color{ 170, 90, 210, 255 });
         break;
     }
     case AbilityType::Curse:
     {
-        DamageEnemiesInRect(forwardRect(260.f, 200.f), dmgVal(2.f + atk * 0.4f), 1.f, 0.f, 4.f, dmgVal(1.f));
+        DamageEnemiesInRect(forwardRect(260.f, 200.f), dmgVal(2.f + atk * 0.4f), 1.f, 0.f, 0.f, 0);
+        ApplyVulnInRect(_enemies, forwardRect(260.f, 200.f), 1.4f, 5.f);              // curse: takes far more damage
+        ApplyPoisonInRect(_enemies, forwardRect(260.f, 200.f), dmgVal(1.f), 5.f);     // rots over time
         pushVfx(WarriorVfxKind::Wave, 0.35f, 260.f, Color{ 150, 70, 190, 255 });
         break;
     }
@@ -7539,11 +7599,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         z.lifetime = 4.f; z.radius = 150.f; z.tint = Color{ 150, 70, 190, 255 };
         z.tickDamage = dmgVal(1.f + atk * 0.25f); z.tickInterval = 0.4f;
         _warriorVfx.push_back(z);
+        ApplyPoisonInRect(_enemies, { spot.x - 150.f, spot.y - 150.f, 300.f, 300.f }, dmgVal(1.f), 5.f);   // corruption
         break;
     }
     case AbilityType::Hellfire:
     {
         DamageEnemiesInRect(radialRect(260.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 0.f, 0);
+        ApplyBurnInRect(_enemies, radialRect(260.f), dmgVal(1.f), 3, playerPos);   // hellish flames linger
         pushVfx(WarriorVfxKind::Slam, 0.45f, 260.f, Color{ 200, 60, 160, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(8.f, 0.2f);
@@ -7553,6 +7615,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         _player.GrantLifesteal(0.4f, 0.3f);
         DamageEnemiesInRect(radialRect(230.f), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        ApplySlowInRect(_enemies, radialRect(230.f), 0.6f, 3.f);   // siphoning dread slows them
         _player.GrantLifesteal(0.25f, 5.f);   // lingering siphon buff afterward
         pushVfx(WarriorVfxKind::Whirl, 0.5f, 230.f, Color{ 170, 90, 210, 255 });
         break;
@@ -7560,6 +7623,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::Cataclysm:
     {
         DamageEnemiesInRect(radialRect(1200.f), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
+        ApplyVulnInRect(_enemies, radialRect(1200.f), 1.35f, 6.f);                 // screen-wide curse
+        ApplyBurnInRect(_enemies, radialRect(1200.f), dmgVal(1.f), 3, playerPos);  // + dark fire
         pushVfx(WarriorVfxKind::Marks, 0.6f, 1200.f, Color{ 180, 70, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(13.f, 0.4f);
@@ -7575,7 +7640,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::ShadowNova:
     {
-        DamageEnemiesInRect(forwardRect(680.f, 200.f), dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 3.f, dmgVal(1.f));
+        DamageEnemiesInRect(forwardRect(680.f, 200.f), dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
+        ApplyVulnInRect(_enemies, forwardRect(680.f, 200.f), 1.4f, 6.f);              // shadow curse
+        ApplyPoisonInRect(_enemies, forwardRect(680.f, 200.f), dmgVal(1.f), 5.f);     // + corruption
         pushVfx(WarriorVfxKind::Barrage, 0.6f, 680.f, Color{ 170, 90, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
@@ -12025,6 +12092,20 @@ int Engine::ScalePlayerHit(const Enemy& target, int baseDamage, bool& outCrit) c
     int dmg = _player.ScaleOutgoingDamage(target.IsFrozen(), target.IsCharged(),
         target.IsBurning(), hpFraction, scaledBase, outCrit);
     if (_juiceForceCrit && !outCrit) { outCrit = true; dmg *= 2; }   // debug: force crit
+
+    // ── Universal status-combo reactions (NOT relic-gated) ──────────────────────
+    // These make applying statuses inherently rewarding and create cross-class
+    // synergy (a Mage's freeze lets a Warrior shatter; any class can execute a
+    // Paladin/Rogue-marked target). Relic bonuses (Permafrost/Executioner/…) stack
+    // on top via ScaleOutgoingDamage above.
+    float comboMult = 1.f;
+    if (target.IsFrozen())                             comboMult += 0.25f;   // Shatter frozen foes
+    if (target.IsMarked())
+        comboMult += (hpFraction <= 0.30f) ? 1.20f : 0.12f;                  // Execute the marked & wounded
+    dmg = (int)lroundf(dmg * comboMult);
+
+    // Vulnerability / armor break: a marked-vulnerable target takes extra damage.
+    dmg = std::max(1, (int)lroundf(dmg * target.GetIncomingDamageMult()));
     return dmg;
 }
 
@@ -13158,6 +13239,11 @@ void Engine::ClearDungeonEnemies()
 
 void Engine::ResetEliteRoomRuntime()
 {
+    if (_eliteMinibossPtr)
+    {
+        _eliteMinibossPtr->SetInvulnerable(false);
+        _eliteMinibossPtr->SetLeapFrozen(false);
+    }
     _eliteMechanic           = -1;
     _eliteMinibossPtr        = nullptr;
     _eliteCageRadius         = 0.f;
@@ -16538,6 +16624,86 @@ void Engine::DrawDungeonRun()
                 {
                     if (!enemy->IsActive()) continue;
                     enemy->DrawEnemy(shakenCamRef);
+                }
+
+                // ── Shared status-effect overlays ──────────────────────────────
+                // Drawn centrally over every enemy/boss (so no per-enemy DrawEnemy
+                // needs to know about statuses): poison bubbles, bleed drips, an
+                // armor-break crack ring, a chill haze, and an execute reticle.
+                for (const auto& enemy : _enemies)
+                {
+                    if (!enemy->IsActive() || enemy->IsDying()) continue;
+                    const bool anyStatus = enemy->IsPoisoned() || enemy->IsBleeding() ||
+                                           enemy->IsVulnerable() || enemy->IsSlowed() || enemy->IsMarked();
+                    if (!anyStatus) continue;
+
+                    Rectangle wr = enemy->GetCollisionRec();
+                    Vector2 c = Vector2Subtract(Vector2{ wr.x + wr.width * 0.5f, wr.y + wr.height * 0.5f }, shakenCamRef);
+                    c.x += sw * 0.5f; c.y += sh * 0.5f;
+                    float bodyR = std::max(60.f, std::max(wr.width, wr.height) * 0.55f);
+                    float t = (float)GetTime();
+
+                    // Chill haze (slow) — bold blue aura + orbiting frost motes.
+                    if (enemy->IsSlowed())
+                    {
+                        DrawCircleV(c, bodyR, Fade(Color{ 120, 200, 255, 255 }, 0.18f));
+                        DrawCircleLines((int)c.x, (int)c.y, bodyR, Fade(Color{ 150, 215, 255, 255 }, 0.9f));
+                        DrawCircleLines((int)c.x, (int)c.y, bodyR + 4.f, Fade(Color{ 150, 215, 255, 255 }, 0.5f));
+                        for (int i = 0; i < 5; ++i)
+                        {
+                            float a = t * 1.4f + i * (2.f * PI / 5.f);
+                            Vector2 p{ c.x + cosf(a) * bodyR, c.y + sinf(a) * bodyR * 0.7f };
+                            DrawCircleV(p, 5.f, Fade(Color{ 220, 245, 255, 255 }, 0.95f));
+                        }
+                    }
+                    // Armor break / vulnerability — thick pulsing broken orange ring + glow.
+                    if (enemy->IsVulnerable())
+                    {
+                        float pulse = 0.5f + 0.5f * sinf(t * 9.f);
+                        DrawCircleV(c, bodyR * 0.9f, Fade(Color{ 255, 130, 40, 255 }, 0.12f + 0.10f * pulse));
+                        for (int i = 0; i < 8; ++i)
+                        {
+                            float a0 = i * (2.f * PI / 8.f) + t * 0.7f;
+                            float a1 = a0 + 0.34f;
+                            Vector2 p0{ c.x + cosf(a0) * bodyR, c.y + sinf(a0) * bodyR };
+                            Vector2 p1{ c.x + cosf(a1) * bodyR, c.y + sinf(a1) * bodyR };
+                            DrawLineEx(p0, p1, 5.f, Fade(Color{ 255, 160, 60, 255 }, 0.7f + 0.3f * pulse));
+                        }
+                    }
+                    // Poison — fat green bubbles streaming up + faint green haze.
+                    if (enemy->IsPoisoned())
+                    {
+                        DrawCircleV(c, bodyR * 0.85f, Fade(Color{ 90, 210, 70, 255 }, 0.14f));
+                        for (int i = 0; i < 6; ++i)
+                        {
+                            float ph = fmodf(t * 1.0f + i * 0.17f, 1.f);
+                            float bx = c.x + sinf(t * 3.f + i * 2.1f) * bodyR * 0.6f;
+                            float by = c.y + bodyR * 0.4f - ph * bodyR * 1.7f;
+                            DrawCircleV({ bx, by }, (1.f - ph) * 9.f + 2.5f, Fade(Color{ 130, 235, 90, 255 }, 0.95f * (1.f - ph)));
+                        }
+                    }
+                    // Bleed — red droplets spraying off the body.
+                    if (enemy->IsBleeding())
+                    {
+                        for (int i = 0; i < 6; ++i)
+                        {
+                            float ph = fmodf(t * 1.8f + i * 0.22f, 1.f);
+                            float bx = c.x + (i - 2.5f) * bodyR * 0.35f;
+                            float by = c.y - bodyR * 0.1f + ph * bodyR * 1.1f;
+                            DrawCircleV({ bx, by }, 5.f * (1.f - ph * 0.5f), Fade(Color{ 210, 25, 25, 255 }, 0.95f * (1.f - ph)));
+                        }
+                    }
+                    // Marked / execute — big pulsing red reticle above the head.
+                    if (enemy->IsMarked())
+                    {
+                        float my = c.y - bodyR - 26.f;
+                        float bob = sinf(t * 6.f) * 4.f;
+                        float sc = 1.f + 0.15f * sinf(t * 8.f);
+                        Color mk = Color{ 255, 60, 60, 255 };
+                        DrawLineEx({ c.x - 16.f * sc, my + bob }, { c.x, my + 14.f * sc + bob }, 5.f, mk);
+                        DrawLineEx({ c.x + 16.f * sc, my + bob }, { c.x, my + 14.f * sc + bob }, 5.f, mk);
+                        DrawCircleLines((int)c.x, (int)(my + 4.f + bob), 20.f * sc, Fade(mk, 0.7f));
+                    }
                 }
 
                 // Warrior melee VFX (spins, waves, spikes) drawn over the enemies.

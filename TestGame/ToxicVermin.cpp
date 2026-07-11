@@ -70,7 +70,12 @@ void ToxicVermin::ResetForSpawn(Vector2 pos)
     _poisonPoolPos = pos;
     _eruptDamageApplied = false;
     _eruptChainRemaining = 0;
+    _pendingPhaseBurrow = false;
     _impactShakeRequested = false;
+
+    // 3 phases: 66% widens the toxic spit to 5 globs + a double eruption; 33% erupts
+    // THREE times in a row and fouls the ground on every surface attack.
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive = false; _forcedPushDirection = Vector2Zero(); _forcedPushSpeed = 0.f;
     _pendingBurns.clear();
@@ -134,6 +139,9 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)     _freezeTimer -= dt;
     if (_meleeCooldown > 0.f)   _meleeCooldown -= dt;
     if (_contactCooldown > 0.f) _contactCooldown -= dt;
@@ -149,6 +157,17 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         Vector2 toPlayer = Vector2Subtract(heroWorldPos, _worldPos);
         float dist = Vector2Length(toPlayer);
 
+        // Each phase change erupts with a toxic spit on the SURFACE — deliberately
+        // NOT a burrow, so a phase transition never yanks the worm underground
+        // (untouchable) and locks the player out of damaging it.
+        int newPhase = ConsumePhaseChange();
+        if (newPhase >= 0) { _pendingPhaseBurrow = true; _impactShakeRequested = true; }
+        if (_pendingPhaseBurrow && !controlled && _state == State::Surface)
+        {
+            _pendingPhaseBurrow = false;
+            _spitCooldown = 0.f;   // Surface handler will spit this frame (stays hittable)
+        }
+
         switch (_state)
         {
         case State::Surface:
@@ -161,7 +180,8 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (_burrowCooldown <= 0.f)
             {
                 _state = State::Burrowing; _stateTimer = 0.f;
-                _eruptChainRemaining = IsEnraged() ? 1 : 0;
+                // Erupt chain scales with phase: double at phase 1, triple at phase 2.
+                _eruptChainRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
                 SetAnimation(_sharedBurrowAnim, _burrowDuration / (float)_sheetFrameCount, true);
                 PlaySound(_sharedBurrowSound);
                 break;
@@ -205,6 +225,7 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                     _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
+                if (GetPhase() >= 2) { _pendingPoisonPool = true; _poisonPoolPos = _worldPos; }   // bite fouls the ground
                 _damageApplied = true;
             }
             if (_frame >= _maxFrames - 1)
@@ -223,7 +244,8 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 Vector2 aim = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
                 _pendingSpit = true;
                 _spitDirection = (Vector2LengthSqr(aim) > 0.0001f) ? Vector2Normalize(aim) : Vector2{ 1.f, 0.f };
-                _spitCount = IsEnraged() ? 5 : 3;
+                _spitCount = (GetPhase() >= 1) ? 5 : 3;
+                if (GetPhase() >= 2) { _pendingPoisonPool = true; _poisonPoolPos = _worldPos; }   // fouls the ground
                 _state = State::Recovery; _stateTimer = 0.f;
                 _spitCooldown = _spitCooldownBase;
                 SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);

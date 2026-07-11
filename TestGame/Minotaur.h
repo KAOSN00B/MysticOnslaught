@@ -94,6 +94,7 @@ private:
     int   _rushChainRemaining = 0;   // enraged: extra rushes queued after this one
     float _stompRingRadius = 0.f;
     bool  _stompDamageApplied = false;
+    bool  _pendingPhaseStomp = false;   // phase change queues a transition stomp
     bool  _impactShakeRequested = false;
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;

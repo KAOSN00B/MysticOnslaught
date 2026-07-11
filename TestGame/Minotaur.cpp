@@ -94,7 +94,13 @@ void Minotaur::ResetForSpawn(Vector2 pos)
     _rushChainRemaining = 0;
     _stompRingRadius = 0.f;
     _stompDamageApplied   = false;
+    _pendingPhaseStomp    = false;
     _impactShakeRequested = false;
+
+    // 3 phases: 66% unlocks a chained rush + skid-stomp (a whiffed rush ends in an
+    // instant stomp, punishing side-dodges); 33% makes it a TRIPLE rush chain and
+    // shortens the wall-crash stun so baiting charges into walls gets riskier.
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive    = false;
     _forcedPushDirection = Vector2Zero();
@@ -158,6 +164,9 @@ void Minotaur::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
     if (_meleeCooldown > 0.f)
@@ -173,6 +182,17 @@ void Minotaur::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget
     if (!_dying && _target != nullptr)
     {
         bool controlled = IsFrozen() || IsElectroStunned();
+
+        // Phase transition: a ground-splitting stomp, fired once he's neutral so it
+        // never cuts off a rush mid-charge.
+        int newPhase = ConsumePhaseChange();
+        if (newPhase >= 0) { _pendingPhaseStomp = true; _impactShakeRequested = true; }
+        if (_pendingPhaseStomp && (_state == State::Chasing || _state == State::Recovery))
+        {
+            _pendingPhaseStomp = false;
+            _state = State::StompWindup; _stateTimer = 0.f;
+            SetAnimation(_sharedStompAnim, _stompWindupDuration / (float)_sheetFrameCount, true);
+        }
 
         switch (_state)
         {
@@ -217,8 +237,8 @@ void Minotaur::HandleChasing(float dt, Vector2 heroWorldPos)
     {
         _state = State::RushWindup;
         _stateTimer = 0.f;
-        // Enraged bulls charge twice back-to-back.
-        _rushChainRemaining = IsEnraged() ? 1 : 0;
+        // Chained charges scale with the phase: 1 extra at phase 1, 2 extra (triple) at phase 2.
+        _rushChainRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
         SetAnimation(_sharedWalkAnim, 1.f / 16.f, true);   // fast paw-the-ground shuffle
         return;
     }
@@ -353,6 +373,17 @@ void Minotaur::EndRush(bool crashedIntoWall)
         return;
     }
 
+    // Skid-Stomp (phase 1+): if the charge whiffs and the player is close by, the bull
+    // plants and stomps instead of recovering — punishes players who dodge sideways.
+    if (GetPhase() >= 1 && _target != nullptr &&
+        Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _stompRadius * 0.9f)
+    {
+        _state = State::StompWindup;
+        _stateTimer = _stompWindupDuration * 0.4f;   // quicker than a standing stomp
+        SetAnimation(_sharedStompAnim, _stompWindupDuration / (float)_sheetFrameCount, true);
+        return;
+    }
+
     _state = State::Recovery;
     _stateTimer = IsEnraged() ? -0.1f : -0.35f;   // longer stagger than normal recovery
     _rushCooldown = IsEnraged() ? _rushCooldownBase * 0.55f : _rushCooldownBase;
@@ -363,7 +394,9 @@ void Minotaur::HandleStunned(float dt)
 {
     _velocity = Vector2Zero();
     _stateTimer += dt;
-    if (_stateTimer >= _stunDuration)
+    // Phase 2: shakes off the wall crash faster, shrinking the punish window.
+    float stunDuration = (GetPhase() >= 2) ? _stunDuration * 0.6f : _stunDuration;
+    if (_stateTimer >= stunDuration)
     {
         _state = State::Recovery;
         _stateTimer = 0.f;

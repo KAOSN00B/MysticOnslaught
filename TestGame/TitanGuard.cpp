@@ -64,10 +64,20 @@ void TitanGuard::ResetForSpawn(Vector2 pos)
     _bombCooldown = 2.6f;
     _pendingBomb = false;
     _bombTarget = pos;
-    _slamDone = false;
     _slamRingRadius = 0.f;
     _slamDamageApplied = false;
     _impactShakeRequested = false;
+    _bombsRemaining = 0;
+    _pendingSlamQueued = false;
+    _shieldDownTimer = 0.f;
+    _chargeDir = Vector2{ 1.f, 0.f };
+    _chargeTravelled = 0.f;
+
+    // 3 phases: each Bulwark Slam (at 66% and 33%) is a transition that opens a
+    // full-damage stagger window. Phase 1 unlocks the Bomb Salvo; phase 2 the
+    // Shield Charge. The shield only chips frontal hits while it's actually raised
+    // (see _shieldDownTimer) so punishing his attacks from the front is real counterplay.
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive = false; _forcedPushDirection = Vector2Zero(); _forcedPushSpeed = 0.f;
     _pendingBurns.clear();
@@ -127,9 +137,13 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)     _freezeTimer -= dt;
     if (_meleeCooldown > 0.f)   _meleeCooldown -= dt;
     if (_contactCooldown > 0.f) _contactCooldown -= dt;
+    if (_shieldDownTimer > 0.f) _shieldDownTimer -= dt;
     if (_state == State::Advancing && _bombCooldown > 0.f) _bombCooldown -= dt;
 
     if (!_dying && _target != nullptr)
@@ -138,13 +152,15 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         Vector2 toPlayer = Vector2Subtract(heroWorldPos, _worldPos);
         float dist = Vector2Length(toPlayer);
 
-        // One-time Bulwark Slam at half health.
-        if (!_slamDone && _health <= _maxHealth * 0.5f &&
-            (_state == State::Advancing || _state == State::Recovery))
+        // Phase transition (66% / 33%): a Bulwark Slam that opens a stagger window.
+        // Deferred until he's in a neutral state so it never interrupts mid-attack.
+        int newPhase = ConsumePhaseChange();
+        if (newPhase >= 0)
+            ReactToPhaseChange(newPhase);
+        if (_pendingSlamQueued && (_state == State::Advancing || _state == State::Recovery))
         {
-            _slamDone = true;
-            _state = State::SlamWindup; _stateTimer = 0.f;
-            SetAnimation(_sharedDefendAnim, _slamWindupDuration / (float)_sheetFrameCount, true);
+            _pendingSlamQueued = false;
+            BeginBulwarkSlam();
         }
 
         switch (_state)
@@ -165,9 +181,23 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 PlaySound(_attackSound);
                 break;
             }
+            // Last Bastion (phase 2): close big gaps with a shield-leading charge
+            // instead of plodding — you have to sidestep, not just outrun him.
+            if (GetPhase() >= 2 && _meleeCooldown <= 0.f && dist > 360.f && dist < 1100.f)
+            {
+                _state = State::ShieldCharge; _stateTimer = 0.f;
+                _chargeTravelled = 0.f;
+                Vector2 d = (dist > 0.01f) ? Vector2Scale(toPlayer, 1.f / dist) : Vector2{ _rightLeft, 0.f };
+                _chargeDir = d;
+                _rightLeft = (d.x >= 0.f) ? 1.f : -1.f;   // shield leads the charge
+                SetAnimation(_sharedWalkAnim, 1.f / 14.f, true);
+                PlaySound(_sharedSlamSound);
+                break;
+            }
             if (_bombCooldown <= 0.f && dist > 320.f)
             {
                 _state = State::BombThrowing; _stateTimer = 0.f;
+                _bombsRemaining = (GetPhase() >= 1) ? _bombSalvoCount : 1;   // Bomb Salvo
                 SetAnimation(_sharedBombAnim, _bombCastDuration / (float)_sheetFrameCount, true);
                 break;
             }
@@ -197,6 +227,8 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
                 _damageApplied = true;
+                // Committing to the swing drops the guard — the front is open for a beat.
+                _shieldDownTimer = _shieldDownDuration;
             }
             if (_frame >= _maxFrames - 1)
             {
@@ -211,11 +243,25 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             _stateTimer += dt;
             if (_stateTimer >= _bombCastDuration)
             {
+                // Lob one bomb; a salvo scatters the rest around the player's feet.
                 _pendingBomb = true;
-                _bombTarget = _target->GetFeetWorldPos();
-                _state = State::Recovery; _stateTimer = 0.f;
-                _bombCooldown = _bombCooldownBase;
-                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                Vector2 aim = _target->GetFeetWorldPos();
+                if (_bombsRemaining < _bombSalvoCount)   // spread the follow-ups
+                    aim.x += (float)GetRandomValue(-220, 220);
+                _bombTarget = aim;
+                _shieldDownTimer = _shieldDownDuration;   // arm raised to throw -> front open
+                _bombsRemaining--;
+
+                if (_bombsRemaining > 0)
+                {
+                    _stateTimer = _bombCastDuration - _bombSalvoSpacing;   // quick follow-up
+                }
+                else
+                {
+                    _state = State::Recovery; _stateTimer = 0.f;
+                    _bombCooldown = _bombCooldownBase;
+                    SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                }
             }
             break;
 
@@ -264,6 +310,36 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             }
             break;
 
+        case State::ShieldCharge:
+        {
+            _stateTimer += dt;
+            float step = _chargeSpeed * dt;
+            _worldPos = Vector2Add(_worldPos, Vector2Scale(_chargeDir, step));
+            _chargeTravelled += step;
+
+            // Run-over damage along the charge (once), then push through.
+            if (_target->IsAlive() && _contactCooldown <= 0.f &&
+                Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _chargeContactRadius)
+            {
+                _target->TakeFractionalDamage(1.0f, _worldPos);
+                _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
+                _contactCooldown = _contactCooldownBase;
+            }
+
+            // Stop when he's travelled far enough, reaches the player, or hits a wall.
+            bool atWall = (_worldPos.x <= 205.f || _worldPos.x >= (float)kVirtualWidth - 205.f ||
+                           _worldPos.y <= 205.f || _worldPos.y >= (float)kVirtualHeight - 205.f);
+            if (_chargeTravelled >= _chargeMaxDistance || atWall ||
+                Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _meleeRange * 0.6f)
+            {
+                _impactShakeRequested = true;
+                _state = State::Recovery; _stateTimer = 0.f;
+                _meleeCooldown = _meleeCooldownBase * 0.7f;
+                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+            }
+            break;
+        }
+
         case State::Recovery:
             _stateTimer += dt;
             if (_stateTimer >= _recoveryDuration)
@@ -273,7 +349,7 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             break;
         }
 
-        if (_state != State::MeleeAttacking && _state != State::Slamming)
+        if (_state != State::MeleeAttacking && _state != State::Slamming && _state != State::ShieldCharge)
             TryDealContactDamage();
 
         _worldPos.x = std::clamp(_worldPos.x, 200.f, (float)kVirtualWidth  - 200.f);
@@ -318,6 +394,23 @@ bool TitanGuard::ConsumeImpactShakeRequest()
     return requested;
 }
 
+void TitanGuard::BeginBulwarkSlam()
+{
+    _state = State::SlamWindup; _stateTimer = 0.f;
+    SetAnimation(_sharedDefendAnim, _slamWindupDuration / (float)_sheetFrameCount, true);
+}
+
+void TitanGuard::ReactToPhaseChange(int newPhase)
+{
+    (void)newPhase;
+    // Queue the signature Bulwark Slam; the Update loop fires it once he's neutral
+    // (so it can't cut off a mace swing mid-frame). The post-slam stagger is the
+    // guaranteed full-damage opening each phase hands the player.
+    _pendingSlamQueued = true;
+    _impactShakeRequested = true;
+    PlaySound(_sharedSlamSound);
+}
+
 void TitanGuard::HandleAnimation(float dt)
 {
     _runningTime += dt;
@@ -359,8 +452,10 @@ void TitanGuard::DrawEnemy(Vector2 cameraRef)
     DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.36f),
         drawWidth * 0.30f, drawHeight * 0.10f, Fade(BLACK, 0.35f));
 
-    // Frontal shield shimmer — permanent reminder of where NOT to attack from.
-    if (!_dying && _state != State::Staggered)
+    // Frontal shield shimmer — a reminder of where NOT to attack from. It winks out
+    // while he's staggered or has dropped his guard to attack, telegraphing the
+    // window when the front is fully open.
+    if (!_dying && _state != State::Staggered && !IsShieldDown())
     {
         float pulse = sinf((float)GetTime() * 4.f) * 0.5f + 0.5f;
         Vector2 shieldPos{ screenPos.x + _rightLeft * drawWidth * 0.34f, screenPos.y };
@@ -436,14 +531,18 @@ void TitanGuard::TakeDamage(int damage, Vector2 attackerPos)
 
     int appliedDamage = damage;
 
-    // The tower shield: frontal hits are chip damage unless he's staggered.
-    if (_state != State::Staggered)
+    // The tower shield chips frontal hits — but ONLY while it's actually raised.
+    // It drops when he's staggered, and for a beat whenever he commits to an attack
+    // (mace swing / bomb throw), so punishing his attacks from the front is real,
+    // readable counterplay instead of "nothing works unless you're behind him".
+    bool shieldRaised = (_state != State::Staggered) && !IsShieldDown();
+    if (shieldRaised)
     {
         float attackSide = attackerPos.x - _worldPos.x;
         bool fromTheFront = (attackSide * _rightLeft) > 0.f;
         if (fromTheFront)
         {
-            appliedDamage = std::max(1, damage / 5);
+            appliedDamage = std::max(1, (damage * 2) / 5);   // ~40% through a raised shield
             float pitch = GetRandomValue(85, 110) / 100.f;
             SetSoundPitch(_sharedBlockSound, pitch);
             SetSoundVolume(_sharedBlockSound, 0.45f);

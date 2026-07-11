@@ -123,6 +123,7 @@ private:
     Vector2 _queuedLavaBallTarget{};
     bool _pendingLavaBallShot = false;
     bool _impactShakeRequested = false;
+    int  _dashChainRemaining = 0;   // phase 1+: zig-zag follow-up dashes
     std::vector<const Enemy*> _dashedEnemies;
 
     static constexpr int _sheetFrameCount = 6;

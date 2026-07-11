@@ -83,6 +83,7 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _isEliteMiniboss  = false;
     _isInvulnerable   = false;
     _leapInvulnerable = false;
+    ResetStatuses();      // clear poison/bleed/slow/vuln/mark from a pooled previous life
     ResetTuningState();   // re-applied from file at the end of the reset
     _texture = _idleAnim;
     _updateTime = 1.f / 8.f;
@@ -336,8 +337,31 @@ void Enemy::SetAnimDrawOffset(int slot, Vector2 offset)
 bool Enemy::GetAnimBodyCapsuleWorld(Capsule2D& out) const
 {
     int slot = GetCurrentAnimSlot();
-    if (slot < 0 || slot >= kAnimSlots || !_animBodySet[slot])
-        return false;
+
+    // A slot only counts if it has a POSITIVE radius — a body circle authored at
+    // (or defaulting to) radius 0 must never be treated as valid, or the enemy would
+    // have a zero-size hurtbox and be impossible to hit.
+    auto usable = [this](int i) {
+        return i >= 0 && i < kAnimSlots && _animBodySet[i] && _animBodyRadius[i] > 0.f;
+    };
+
+    // If the current animation has no authored body circle, fall back to another
+    // authored slot (Idle/slot 0 first, then the first set one) instead of failing.
+    // The body barely moves between poses, so this keeps the enemy hittable in EVERY
+    // animation — without this, an enemy tuned only in its Idle pose became effectively
+    // invincible the moment it played its walk / attack / jump animation.
+    if (!usable(slot))
+    {
+        slot = -1;
+        if (usable(0))
+            slot = 0;
+        else
+            for (int i = 0; i < kAnimSlots; ++i)
+                if (usable(i)) { slot = i; break; }
+
+        if (slot < 0)
+            return false;   // no usable body circle on any slot — use other fallbacks
+    }
 
     // Offsets are authored facing right; mirror X with the sprite.
     out = Capsule2D{
@@ -1450,6 +1474,146 @@ bool Enemy::ConsumeEnrageShakeRequest()
     return r;
 }
 
+// ── Multi-phase boss system ──────────────────────────────────────────────────
+void Enemy::SetPhaseThresholds(std::vector<float> descendingHpFractions)
+{
+    _phaseThresholds = std::move(descendingHpFractions);
+    _phase = 0;
+    _pendingPhaseChange = -1;
+    _phaseTransitionTimer = 0.f;
+}
+
+void Enemy::UpdatePhaseLatch(float dt)
+{
+    if (_phaseTransitionTimer > 0.f)
+        _phaseTransitionTimer -= dt;
+
+    if (_phaseThresholds.empty())
+        return;
+
+    // Full HP → fresh/pooled spawn: reset so last fight's phase doesn't carry over.
+    if (_health >= _maxHealth)
+    {
+        _phase = 0;
+        ResetStatuses();   // also drop any status carried from a pooled previous life
+        return;
+    }
+
+    // One-way: advance through each threshold the HP has dropped below. Guarded so a
+    // single big hit that crosses several thresholds only announces the last one.
+    while (IsAlive() && _phase < (int)_phaseThresholds.size() &&
+           _health <= _maxHealth * _phaseThresholds[_phase])
+    {
+        _phase++;
+        _pendingPhaseChange = _phase;   // boss announces / reacts via ConsumePhaseChange
+    }
+}
+
+int Enemy::ConsumePhaseChange()
+{
+    int p = _pendingPhaseChange;
+    _pendingPhaseChange = -1;
+    return p;
+}
+
+// ── Shared status effects (ARPG combat-identity pass) ────────────────────────
+void Enemy::ApplyPoison(int damagePerTick, float duration, int stacks)
+{
+    if (_dying || !IsAlive() || damagePerTick <= 0) return;
+    if (IsBoss()) duration *= kBossStatusDurMult;
+    const int maxStacks = IsBoss() ? 5 : 8;   // capped, harder to overwhelm bosses
+    _poisonStacks  = std::min(maxStacks, _poisonStacks + std::max(1, stacks));
+    _poisonPerTick = std::max(_poisonPerTick, damagePerTick);
+    _poisonTimer   = std::max(_poisonTimer, duration);
+    if (_poisonTickTimer <= 0.f) _poisonTickTimer = 0.5f;
+}
+
+void Enemy::ApplyBleed(int damagePerTick, float duration)
+{
+    if (_dying || !IsAlive() || damagePerTick <= 0) return;
+    if (IsBoss()) duration *= kBossStatusDurMult;
+    _bleedPerTick = std::max(_bleedPerTick, damagePerTick);
+    _bleedTimer   = std::max(_bleedTimer, duration);
+    if (_bleedTickTimer <= 0.f) _bleedTickTimer = 0.5f;
+}
+
+void Enemy::ApplySlow(float speedMult, float duration)
+{
+    if (_dying || !IsAlive()) return;
+    if (IsBoss()) duration *= kBossStatusDurMult;
+    speedMult = std::clamp(speedMult, 0.1f, 1.f);
+    // Strongest slow currently active wins; refresh its duration.
+    _slowMult  = (_slowTimer > 0.f) ? std::min(_slowMult, speedMult) : speedMult;
+    _slowTimer = std::max(_slowTimer, duration);
+}
+
+void Enemy::ApplyVulnerability(float damageTakenMult, float duration)
+{
+    if (_dying || !IsAlive()) return;
+    if (IsBoss()) duration *= kBossStatusDurMult;
+    damageTakenMult = std::clamp(damageTakenMult, 1.f, 3.f);
+    _vulnMult  = (_vulnTimer > 0.f) ? std::max(_vulnMult, damageTakenMult) : damageTakenMult;
+    _vulnTimer = std::max(_vulnTimer, duration);
+}
+
+void Enemy::ApplyMark(float duration)
+{
+    if (_dying || !IsAlive()) return;
+    if (IsBoss()) duration *= kBossStatusDurMult;
+    _markTimer = std::max(_markTimer, duration);
+}
+
+float Enemy::GetStatusMoveSpeedMult() const
+{
+    return (_slowTimer > 0.f) ? _slowMult : 1.f;
+}
+
+void Enemy::ResetStatuses()
+{
+    _poisonTimer = _poisonTickTimer = 0.f; _poisonPerTick = 0; _poisonStacks = 0;
+    _bleedTimer  = _bleedTickTimer  = 0.f; _bleedPerTick  = 0;
+    _slowTimer   = 0.f; _slowMult = 1.f;
+    _vulnTimer   = 0.f; _vulnMult = 1.f;
+    _markTimer   = 0.f;
+}
+
+void Enemy::UpdateStatuses(float dt)
+{
+    // Poison — stacking DoT.
+    if (_poisonTimer > 0.f)
+    {
+        _poisonTimer -= dt;
+        _poisonTickTimer -= dt;
+        if (_poisonTickTimer <= 0.f && IsAlive() && !_dying)
+        {
+            _poisonTickTimer += 0.5f;
+            TakeDamage(_poisonPerTick * std::max(1, _poisonStacks), _worldPos);
+        }
+        if (_poisonTimer <= 0.f) { _poisonStacks = 0; _poisonPerTick = 0; }
+    }
+
+    // Bleed — physical DoT, hits harder while the enemy is moving.
+    if (_bleedTimer > 0.f)
+    {
+        _bleedTimer -= dt;
+        _bleedTickTimer -= dt;
+        if (_bleedTickTimer <= 0.f && IsAlive() && !_dying)
+        {
+            _bleedTickTimer += 0.5f;
+            float dx = _worldPos.x - _worldPosLastFrame.x;
+            float dy = _worldPos.y - _worldPosLastFrame.y;
+            bool moving = (dx * dx + dy * dy) > 4.f;
+            int dmg = moving ? (int)std::ceil(_bleedPerTick * 1.5f) : _bleedPerTick;
+            TakeDamage(std::max(1, dmg), _worldPos);
+        }
+        if (_bleedTimer <= 0.f) _bleedPerTick = 0;
+    }
+
+    if (_slowTimer > 0.f) { _slowTimer -= dt; if (_slowTimer <= 0.f) _slowMult = 1.f; }
+    if (_vulnTimer > 0.f) { _vulnTimer -= dt; if (_vulnTimer <= 0.f) _vulnMult = 1.f; }
+    if (_markTimer > 0.f) { _markTimer -= dt; }
+}
+
 void Enemy::UpdateBurns(float dt)
 {
     // Warchief aura decay lives here because every enemy type calls
@@ -1461,6 +1625,8 @@ void Enemy::UpdateBurns(float dt)
     // per-frame hook so no boss needs its own call (Molarbeast, which doesn't
     // call UpdateBurns, invokes UpdateEnrageLatch directly).
     UpdateEnrageLatch(dt);
+    UpdatePhaseLatch(dt);
+    UpdateStatuses(dt);
 
     int writeIndex = 0;
 

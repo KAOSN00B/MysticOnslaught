@@ -54,6 +54,7 @@ private:
         Chasing,
         Combo1,         // first swipe
         Combo2,         // forward-stepping second swipe
+        Combo3,         // phase 1+ third swipe (Rabid Combo)
         PounceCharging,
         Airborne,
         Landing,
@@ -64,7 +65,7 @@ private:
     static void EnsureSharedResourcesLoaded();
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
     void HandleChasing(float dt, Vector2 heroWorldPos);
-    void HandleCombo(bool secondSwipe, float dt);
+    void HandleCombo(int step, float dt);   // step 1..3 (3 unlocks at phase 1)
     void HandleAirborne(float dt);
     void TryDealContactDamage();
     Rectangle GetBodyContactRec() const;
@@ -85,6 +86,7 @@ private:
     float _airborneTimer    = 0.f;
     bool  _swipeDamageApplied = false;
     bool  _landingDamageApplied = false;
+    bool  _pounceChainUsed  = false;   // phase 2: one extra immediate pounce per leap
     bool  _impactShakeRequested = false;
     float _circleSign       = 1.f;
     float _stableFrameW = 0.f;

@@ -74,6 +74,8 @@ private:
     float _roarCooldown    = 0.f;
     float _pullTickTimer   = 0.f;
     bool  _slamDamageApplied = false;
+    int   _slamChainRemaining = 0;    // phase 1 = double slam, phase 2 = triple
+    bool  _pendingPhaseRoar   = false;// phase change opens with a Dream Pull -> slam
     bool  _impactShakeRequested = false;
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;

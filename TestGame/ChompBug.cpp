@@ -64,10 +64,17 @@ void ChompBug::ResetForSpawn(Vector2 pos)
     _orbitSign = (GetRandomValue(0, 1) == 0) ? -1.f : 1.f;
     _diveTimer = 0.f;
     _diveHitApplied = false;
+    _diveChainRemaining = 0;
+    _strafeSpitTimer = 0.f;
+    _pendingPhaseDive = false;
     _pendingSpit = false;
     _spitDirection = Vector2Zero();
     _spitCount = 3;
     _buzzTimer = 0.f;
+
+    // 3 phases: 66% dives twice back-to-back; 33% turns the dive into a Strafe
+    // Barrage, raining acid globs along the swoop path.
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive = false; _forcedPushDirection = Vector2Zero(); _forcedPushSpeed = 0.f;
     _pendingBurns.clear();
@@ -121,6 +128,9 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)     _freezeTimer -= dt;
     if (_contactCooldown > 0.f) _contactCooldown -= dt;
     if (_state == State::Orbiting)
@@ -132,6 +142,15 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     if (!_dying && _target != nullptr)
     {
         bool controlled = IsFrozen() || IsElectroStunned();
+
+        // Each phase change opens with a dive-bomb (queued until it's orbiting).
+        int newPhase = ConsumePhaseChange();
+        if (newPhase >= 0) _pendingPhaseDive = true;
+        if (_pendingPhaseDive && !controlled && _state == State::Orbiting)
+        {
+            _pendingPhaseDive = false;
+            _diveCooldown = 0.f;   // Orbiting handler rolls into DiveAiming this frame
+        }
 
         switch (_state)
         {
@@ -160,6 +179,7 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (_diveCooldown <= 0.f)
             {
                 _state = State::DiveAiming; _stateTimer = 0.f;
+                _diveChainRemaining = (GetPhase() >= 1) ? 1 : 0;   // double dive from phase 1
                 SetAnimation(_sharedIdleAnim, 1.f / 12.f, true);
             }
             else if (_spitCooldown <= 0.f)
@@ -210,11 +230,35 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
             }
 
+            // Strafe Barrage (phase 2): rain acid globs along the swoop path.
+            if (GetPhase() >= 2 && !_pendingSpit)
+            {
+                _strafeSpitTimer -= dt;
+                if (_strafeSpitTimer <= 0.f)
+                {
+                    _strafeSpitTimer = 0.12f;
+                    Vector2 aim = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+                    _pendingSpit = true;
+                    _spitDirection = (Vector2LengthSqr(aim) > 0.0001f) ? Vector2Normalize(aim) : Vector2{ 0.f, 1.f };
+                    _spitCount = 2;
+                }
+            }
+
             if (t >= 1.f)
             {
-                _state = State::Recovery; _stateTimer = 0.f;
-                _diveCooldown = IsEnraged() ? _diveCooldownBase * 0.5f : _diveCooldownBase;
-                SetAnimation(_sharedFlyAnim, 1.f / 12.f, true);
+                // Double Dive: re-aim and swoop again before recovering.
+                if (_diveChainRemaining > 0)
+                {
+                    _diveChainRemaining--;
+                    _state = State::DiveAiming; _stateTimer = 0.f;
+                    SetAnimation(_sharedIdleAnim, 1.f / 12.f, true);
+                }
+                else
+                {
+                    _state = State::Recovery; _stateTimer = 0.f;
+                    _diveCooldown = IsEnraged() ? _diveCooldownBase * 0.5f : _diveCooldownBase;
+                    SetAnimation(_sharedFlyAnim, 1.f / 12.f, true);
+                }
             }
             break;
         }
@@ -227,7 +271,7 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _pendingSpit = true;
                 _spitDirection = (Vector2LengthSqr(toPlayer) > 0.0001f)
                     ? Vector2Normalize(toPlayer) : Vector2{ 1.f, 0.f };
-                _spitCount = IsEnraged() ? 5 : 3;
+                _spitCount = (GetPhase() >= 1) ? 5 : 3;
                 _state = State::Recovery; _stateTimer = 0.f;
                 _spitCooldown = _spitCooldownBase;
                 SetAnimation(_sharedFlyAnim, 1.f / 12.f, true);

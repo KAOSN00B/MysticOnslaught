@@ -120,6 +120,29 @@ public:
     virtual void ApplyElectricCharge();
     virtual void ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation);
 
+    // ── Shared status effects (ARPG combat-identity pass) ───────────────────────
+    // Any class can apply these via the same funcs; bosses take reduced durations
+    // (resistance, not immunity — see kBossStatusDurMult) so control effects stay
+    // meaningful without trivialising boss fights. Damage-over-time ticks route
+    // through the universal per-frame hook (UpdateStatuses, called from UpdateBurns).
+    void ApplyPoison(int damagePerTick, float duration, int stacks = 1);  // stacking DoT
+    void ApplyBleed(int damagePerTick, float duration);                   // physical DoT, +while moving
+    void ApplySlow(float speedMult, float duration);                      // speedMult < 1
+    void ApplyVulnerability(float damageTakenMult, float duration);       // mult > 1 (armor break)
+    void ApplyMark(float duration);                                       // "marked"/execute window
+    void UpdateStatuses(float dt);
+    void ResetStatuses();                                                 // clear all on (re)spawn
+
+    bool  IsPoisoned()      const { return _poisonTimer  > 0.f; }
+    bool  IsBleeding()      const { return _bleedTimer   > 0.f; }
+    bool  IsSlowed()        const { return _slowTimer    > 0.f; }
+    bool  IsVulnerable()    const { return _vulnTimer    > 0.f; }
+    bool  IsMarked()        const { return _markTimer    > 0.f; }
+    // Multiplier applied to incoming damage (armor break / vulnerability). 1 = none.
+    float GetIncomingDamageMult() const { return (_vulnTimer > 0.f) ? _vulnMult : 1.f; }
+    // Combined movement multiplier from slow + chill. 1 = full speed, 0 = stopped.
+    float GetStatusMoveSpeedMult() const;
+
     // Ogre charge — sustained push until the enemy slides into a wall or prop.
     void StartForcedPush(Vector2 direction, float speed);
     virtual void OnForcedPushCollision();
@@ -210,6 +233,23 @@ public:
     bool IsEnraged() const { return _enrageLatched; }
     bool ConsumeEnrageShakeRequest();       // true once, on the frame enrage begins
     bool IsEnrageFlashing() const { return _enrageFlashTimer > 0.f; }
+
+    // ── Multi-phase boss system ─────────────────────────────────────────────────
+    // Generalises the enrage latch: a boss declares HP-fraction thresholds (in
+    // DESCENDING order, e.g. {0.66, 0.33}) and _phase counts how many have been
+    // crossed (0 = full-strength opening phase). One-way within a fight; auto-resets
+    // at full HP (fresh/pooled spawn). Driven every frame from UpdateBurns().
+    // A boss polls ConsumePhaseChange() to react ONCE on the frame a new phase
+    // begins (roar, unlock attacks, spawn a hazard); GetPhase() gates ongoing
+    // behaviour. Bosses can honour IsInPhaseTransition() to grant a brief
+    // invulnerable "set-piece" window while the transition animation plays.
+    void SetPhaseThresholds(std::vector<float> descendingHpFractions);
+    void UpdatePhaseLatch(float dt);
+    int  GetPhase() const { return _phase; }
+    int  GetPhaseCount() const { return (int)_phaseThresholds.size() + 1; }
+    int  ConsumePhaseChange();              // returns the new phase once, else -1
+    void BeginPhaseTransition(float seconds) { _phaseTransitionTimer = seconds; }
+    bool IsInPhaseTransition() const { return _phaseTransitionTimer > 0.f; }
     Rectangle GetCollisionRec()       const override;
     Capsule2D GetCapsule()            const override;
     virtual Rectangle GetAttackCollisionRec() const;
@@ -346,7 +386,29 @@ protected:
     bool    _enrageShakePending = false; // transition telegraph, consumed by CombatDirector
     float   _enrageFlashTimer = 0.f;   // brief visual flash window on transition
 
+    // Multi-phase boss system (see UpdatePhaseLatch). Empty thresholds = single-phase.
+    std::vector<float> _phaseThresholds;      // descending HP fractions, e.g. {0.66,0.33}
+    int     _phase              = 0;          // phases crossed so far (0 = opening phase)
+    int     _pendingPhaseChange = -1;         // new phase to announce once; -1 = none
+    float   _phaseTransitionTimer = 0.f;      // >0 while a transition set-piece plays
+
     float   _freezeTimer        = 0.f;
+
+    // ── Shared status effects (ARPG combat pass) ────────────────────────────────
+    // Bosses scale status durations by this so control never fully dominates them.
+    static constexpr float kBossStatusDurMult = 0.5f;
+    float _poisonTimer     = 0.f;   // remaining poison duration
+    float _poisonTickTimer = 0.f;   // countdown to next poison tick
+    int   _poisonPerTick   = 0;     // base damage per tick (before stacks)
+    int   _poisonStacks    = 0;     // stacking intensity (capped)
+    float _bleedTimer      = 0.f;
+    float _bleedTickTimer  = 0.f;
+    int   _bleedPerTick    = 0;
+    float _slowTimer       = 0.f;
+    float _slowMult        = 1.f;   // movement multiplier while slowed (<1)
+    float _vulnTimer       = 0.f;
+    float _vulnMult        = 1.f;   // incoming-damage multiplier while vulnerable (>1)
+    float _markTimer       = 0.f;   // "marked"/execute window
 
     // Graveyard revive — set by Engine when entering a Graveyard room
     bool    _graveReviveAvailable  = false;

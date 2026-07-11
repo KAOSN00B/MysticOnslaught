@@ -62,7 +62,13 @@ void AncientBear::ResetForSpawn(Vector2 pos)
     _roarCooldown = 4.5f;
     _pullTickTimer = 0.f;
     _slamDamageApplied = false;
+    _slamChainRemaining = 0;
+    _pendingPhaseRoar = false;
     _impactShakeRequested = false;
+
+    // 3 phases: 66% makes the pull chain into a DOUBLE slam; 33% (runes ignite) a
+    // TRIPLE slam with the faster/longer pull. Each phase opens with a Dream Pull.
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive = false; _forcedPushDirection = Vector2Zero(); _forcedPushSpeed = 0.f;
     _pendingBurns.clear();
@@ -115,6 +121,9 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)     _freezeTimer -= dt;
     if (_meleeCooldown > 0.f)   _meleeCooldown -= dt;
     if (_contactCooldown > 0.f) _contactCooldown -= dt;
@@ -125,6 +134,18 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         bool controlled = IsFrozen() || IsElectroStunned();
         Vector2 toPlayer = Vector2Subtract(heroWorldPos, _worldPos);
         float dist = Vector2Length(toPlayer);
+
+        // Each phase change opens with a Dream Pull -> (multi) slam, fired when neutral.
+        int newPhase = ConsumePhaseChange();
+        if (newPhase >= 0) { _pendingPhaseRoar = true; _impactShakeRequested = true; }
+        if (_pendingPhaseRoar && !controlled &&
+            (_state == State::Lumbering || _state == State::Recovery))
+        {
+            _pendingPhaseRoar = false;
+            _state = State::Roaring; _stateTimer = 0.f; _pullTickTimer = 0.f;
+            SetAnimation(_sharedRoarAnim, _roarDuration / (float)_sheetFrameCount, true);
+            PlaySound(_sharedRoarSound);
+        }
 
         switch (_state)
         {
@@ -207,7 +228,8 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             float duration = IsRuneIgnited() ? _roarDuration * 0.8f : _roarDuration;
             if (_stateTimer >= duration)
             {
-                // The pull always chains into the slam.
+                // The pull always chains into the slam. Phase scales how many slams follow.
+                _slamChainRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
                 _state = State::SlamWindup; _stateTimer = 0.f;
                 SetAnimation(_sharedMeleeAnim, _slamWindupDuration / (float)_sheetFrameCount, true);
             }
@@ -240,9 +262,21 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             }
             if (_stateTimer >= 0.4f)
             {
-                _state = State::Recovery; _stateTimer = 0.f;
-                _roarCooldown = IsRuneIgnited() ? _roarCooldownBase * 0.6f : _roarCooldownBase;
-                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                if (_slamChainRemaining > 0)
+                {
+                    // Multi-slam: wind up and crash down again before recovering.
+                    _slamChainRemaining--;
+                    _state = State::SlamWindup; _stateTimer = 0.f;
+                    _slamDamageApplied = false;
+                    _impactShakeRequested = true;
+                    SetAnimation(_sharedMeleeAnim, _slamWindupDuration / (float)_sheetFrameCount, true);
+                }
+                else
+                {
+                    _state = State::Recovery; _stateTimer = 0.f;
+                    _roarCooldown = IsRuneIgnited() ? _roarCooldownBase * 0.6f : _roarCooldownBase;
+                    SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                }
             }
             break;
 

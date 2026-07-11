@@ -96,6 +96,11 @@ void PumpkinJack::ResetForSpawn(Vector2 pos)
     _teleportCooldown = 2.0f;
     _teleportTarget   = pos;
     _teleportAmbush   = false;
+    _pendingPhaseSummon = false;
+
+    // 3 phases: 66% unlocks the behind-the-player ambush + 5-bolt volleys; 33% blinks
+    // more and reappears straight into a volley (blink-barrage) with bigger grave calls.
+    SetPhaseThresholds({ 0.66f, 0.33f });
 
     _forcedPushActive    = false;
     _forcedPushDirection = Vector2Zero();
@@ -160,6 +165,9 @@ void PumpkinJack::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTar
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
 
+    if (_hitTimer > 0.f)
+        _hitTimer -= dt;
+
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;
     if (_meleeCooldown > 0.f)
@@ -177,6 +185,15 @@ void PumpkinJack::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTar
     if (!_dying && _target != nullptr)
     {
         bool controlled = IsFrozen() || IsElectroStunned();
+
+        // Each phase change opens with a Grave Call summon (fired when he's chasing).
+        int newPhase = ConsumePhaseChange();
+        if (newPhase >= 0) _pendingPhaseSummon = true;
+        if (_pendingPhaseSummon && !controlled && _state == State::Chasing)
+        {
+            _pendingPhaseSummon = false;
+            _summonCooldown = 0.f;   // HandleChasing will roll straight into Summoning
+        }
 
         switch (_state)
         {
@@ -275,8 +292,9 @@ void PumpkinJack::BeginTeleport()
 {
     _state = State::TeleportOut;
     _stateTimer = 0.f;
-    // Enraged: 60% of teleports become behind-the-player ambushes.
-    _teleportAmbush  = IsEnraged() && GetRandomValue(1, 100) <= 60;
+    // Phase 1+: teleports become behind-the-player ambushes (more often at phase 2).
+    int ambushChance = (GetPhase() >= 2) ? 75 : (GetPhase() >= 1 ? 55 : 0);
+    _teleportAmbush  = GetRandomValue(1, 100) <= ambushChance;
     _teleportTarget  = PickTeleportSpot();
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     PlaySound(_sharedCastSound);
@@ -416,12 +434,21 @@ void PumpkinJack::HandleVolleyCast(float dt)
         _volleyDirection = (Vector2LengthSqr(toPlayer) > 0.0001f)
             ? Vector2Normalize(toPlayer)
             : Vector2{ _rightLeft, 0.f };
-        _volleyBoltCount = IsEnraged() ? 5 : 3;
+        _volleyBoltCount = (GetPhase() >= 1) ? 5 : 3;
 
-        _state = State::Recovery;
-        _stateTimer = 0.f;
-        _volleyCooldown = IsEnraged() ? _volleyCooldownBase * 0.7f : _volleyCooldownBase;
-        SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+        // Blink-Barrage (phase 2): instead of recovering, vanish again for another
+        // strike so the volleys come from all sides.
+        if (GetPhase() >= 2 && _teleportCooldown <= 1.0f)
+        {
+            BeginTeleport();
+        }
+        else
+        {
+            _state = State::Recovery;
+            _stateTimer = 0.f;
+            _volleyCooldown = IsEnraged() ? _volleyCooldownBase * 0.7f : _volleyCooldownBase;
+            SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+        }
     }
 }
 
@@ -432,7 +459,7 @@ void PumpkinJack::HandleSummoning(float dt)
 
     if (_stateTimer >= _summonCastDuration)
     {
-        _pendingSummonCount = IsEnraged() ? 3 : 2;
+        _pendingSummonCount = (GetPhase() >= 2) ? 4 : (GetPhase() >= 1 ? 3 : 2);
         _state = State::Recovery;
         _stateTimer = 0.f;
         _summonCooldown = _summonCooldownBase;

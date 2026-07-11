@@ -134,32 +134,24 @@ static std::string ShopUpgradePreview(const Character& player, UpgradeType t)
         return "";
     }
 }
+// Names/descriptions come from the single source of truth in AbilityType.h so
+// every class ability shows its real name & text (not a generic "Ability").
 static const char* ShopAbilityName(AbilityType t)
 {
-    switch (t)
-    {
-    case AbilityType::FireSpread:      return "Fire Spread";
-    case AbilityType::IceSpread:       return "Ice Spread";
-    case AbilityType::ElectricSpread:  return "Electric Spread";
-    case AbilityType::FireBolt:        return "Fire Bolt";
-    case AbilityType::IceBolt:         return "Ice Bolt";
-    case AbilityType::ElectricBolt:    return "Electric Bolt";
-    default:                           return "Ability";
-    }
+    return GetAbilityName(t);
 }
 
+// One-line card description: the curated two-line text flattened to a single line
+// with the mana cost appended (ultimates already say "all MP" in their text).
 static const char* ShopAbilityDesc(AbilityType t)
 {
-    switch (t)
-    {
-    case AbilityType::FireSpread:      return "8-way fire burst  2 MP";
-    case AbilityType::IceSpread:       return "8-way ice burst  2 MP";
-    case AbilityType::ElectricSpread:  return "8-way shock burst  2 MP";
-    case AbilityType::FireBolt:        return "Aimed fire bolt  4 MP";
-    case AbilityType::IceBolt:         return "Aimed ice bolt  4 MP";
-    case AbilityType::ElectricBolt:    return "Aimed shock bolt  4 MP";
-    default:                           return "";
-    }
+    static std::string s;
+    s.clear();
+    for (const char* p = GetAbilityDesc(t); *p; ++p)
+        s += (*p == '\n') ? ' ' : *p;
+    if (!IsUltimateAbility(t))
+        s += "  " + std::to_string(GetAbilityManaCost(t)) + " MP";
+    return s.c_str();
 }
 
 static int ShopAbilityPrice(AbilityType t)
@@ -1160,6 +1152,11 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         const float btnW = (cw - 8.f) * 0.5f;
         Vector2 mpLeft = GetVirtualMousePos();
 
+        // Ability inspect: hovering an owned slot (mouse) or holding Y/Triangle while
+        // its slot is focused (gamepad) shows that ability's full description below.
+        AbilityType inspectAbil = AbilityType::None;
+        const bool inspectHeld  = IsGamepadButtonDown(0, GAMEPAD_BUTTON_RIGHT_FACE_UP);
+
         for (int i = 0; i < slotCount; i++)
         {
             AbilityType ab = player.GetLearnedAbility(i);
@@ -1216,6 +1213,11 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                     (int)(sr.y + slotH * 0.5f - slotFs * 0.5f),
                     (int)slotFs, Fade(RAYWHITE, 0.30f));
             }
+
+            // Mouse hover over an owned slot inspects that ability.
+            if (ab != AbilityType::None && CheckCollisionPointRec(mpLeft, sr))
+                inspectAbil = ab;
+
             cy += slotH + slotGap;
 
             // ── Upg / Rem buttons — only when slot is occupied ────────────
@@ -1232,6 +1234,9 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
                 bool gpUpgFocus = (_gamepadLPActive && _gamepadLPIdx == lpDrawEntry);
                 bool gpRemFocus = (_gamepadLPActive && _gamepadLPIdx == lpDrawEntry + 1);
+                // Holding Y/Triangle while this owned slot is focused inspects it.
+                if (inspectHeld && (gpUpgFocus || gpRemFocus))
+                    inspectAbil = ab;
                 lpDrawEntry += 2;
 
                 bool upgHov = CheckCollisionPointRec(mpLeft, upgBtn) || gpUpgFocus;
@@ -1303,6 +1308,33 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                     DrawTexturePro(idleTex, src, dst, {}, 0.f, WHITE);
                 }
             }
+        }
+
+        // ── Ability inspect card (hover / Y-Triangle) — drawn on top of the
+        //    portrait so the player can read what an owned ability actually does.
+        if (inspectAbil != AbilityType::None)
+        {
+            const char* inName  = GetAbilityName(inspectAbil);
+            const char* inDesc  = GetAbilityDesc(inspectAbil);   // curated two-line text
+            const char* inMana  = IsUltimateAbility(inspectAbil)
+                                ? "Ultimate - drains all mana"
+                                : TextFormat("Mana cost: %d", GetAbilityManaCost(inspectAbil));
+
+            float bw = cw;
+            float bh = 158.f;
+            float bx = lx + cp;
+            float by = ly + lh - kBorderDst - bh - 6.f;   // anchored to panel bottom
+            DrawRectangleRounded({ bx, by, bw, bh }, 0.10f, 6, Fade(Color{ 12, 14, 22, 255 }, 0.95f));
+            DrawRectangleRoundedLines({ bx, by, bw, bh }, 0.10f, 6, Color{ 120, 150, 220, 255 });
+
+            float tx = bx + 14.f;
+            float ty = by + 12.f;
+            int nameFs2 = (int)std::min(_uiSlotFs, 34.f);
+            DrawText(inName, (int)tx, (int)ty, nameFs2, kGold);
+            ty += nameFs2 + 8.f;
+            DrawText(inDesc, (int)tx, (int)ty, (int)_uiItemDescFs, RAYWHITE);   // renders 2 lines
+            ty += _uiItemDescFs * 2.f + 10.f;
+            DrawText(inMana, (int)tx, (int)ty, (int)std::max(18.f, _uiItemDescFs - 2.f), SKYBLUE);
         }
     }
     EndScissorMode();

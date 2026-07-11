@@ -81,6 +81,9 @@ private:
     Vector2 _diveEnd{};
     float _diveTimer       = 0.f;
     bool  _diveHitApplied  = false;
+    int   _diveChainRemaining = 0;    // phase 1+: back-to-back dives
+    float _strafeSpitTimer = 0.f;     // phase 2: drops globs along the dive path
+    bool  _pendingPhaseDive = false;  // phase change opens with a dive
     bool  _pendingSpit     = false;
     Vector2 _spitDirection{};
     int   _spitCount       = 3;

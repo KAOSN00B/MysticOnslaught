@@ -102,7 +102,8 @@ private:
     int     _pendingSummonCount = 0;
     float   _teleportCooldown = 0.f;
     Vector2 _teleportTarget{};
-    bool    _teleportAmbush = false;   // enraged behind-the-player teleport
+    bool    _teleportAmbush = false;   // phase 1+ behind-the-player teleport
+    bool    _pendingPhaseSummon = false; // phase change opens with a Grave Call
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;
 

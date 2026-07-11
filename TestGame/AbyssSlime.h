@@ -64,6 +64,7 @@ private:
         Airborne,       // travelling toward the landing spot
         Landing,        // shockwave frame
         Summoning,      // Abyss Call cast
+        AcidBurst,      // phase 1+ ranged spray (arc of puddles + shockwave)
         Recovery
     };
 
@@ -76,11 +77,14 @@ private:
     void HandleAirborne(float dt);
     void HandleLanding(float dt);
     void HandleSummoning(float dt);
+    void HandleAcidBurst(float dt);
     void HandleRecovery(float dt);
     void HandleAnimation(float dt);
+    void ReactToPhaseChange(int newPhase);   // transition set-piece on entering a phase
     void TryDealContactDamage();
     Rectangle GetBodyContactRec() const;
     Vector2 GetPushDirectionToPlayer() const;
+    void ApplyShortPlayerShove();
     void BeginJump();
 
     // Corrosive puddle left behind by hop/leap landings.
@@ -109,6 +113,8 @@ private:
     bool  _summonedAt33     = false;
     int   _pendingSummonCount = 0;
     bool  _impactShakeRequested = false;
+    float _acidBurstCooldown = 0.f;
+    bool  _acidBurstFired    = false;   // one-shot per AcidBurst swing
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;
 
@@ -136,12 +142,17 @@ private:
     static constexpr float _meleeCooldownBase = 1.9f;
     static constexpr float _contactCooldownBase = 0.75f;
     static constexpr float _bossDamagePerHit  = 0.5f;
-    static constexpr float _bossPushSpeed     = 1350.f;
+    static constexpr float _bossPushSpeed     = 1350.f;   // legacy full forced-push speed; avoid for slime jumps
+    static constexpr float _shortShoveDistance = 95.f;    // small bump, not push-to-wall
     static constexpr float _jumpChargeDuration = 0.85f;
     static constexpr float _jumpCooldownBase  = 4.6f;
     static constexpr float _landingRadius     = 230.f;
     static constexpr float _recoveryDuration  = 0.5f;
     static constexpr float _summonDuration    = 1.4f;
+    static constexpr float _acidBurstDuration    = 0.9f;   // rear-up + spray cast time
+    static constexpr float _acidBurstCooldownBase = 4.0f;
+    static constexpr float _acidBurstRange     = 620.f;    // won't spray if player is farther
+    static constexpr float _acidBurstShockRadius = 210.f;  // close-range shockwave on cast
     static constexpr int   _bossBaseExpValue  = 15;
 
     static Texture2D _sharedIdleAnim;

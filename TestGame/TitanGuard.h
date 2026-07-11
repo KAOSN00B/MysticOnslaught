@@ -62,6 +62,7 @@ private:
         SlamWindup,     // Bulwark Slam telegraph (Defend anim)
         Slamming,       // shockwave
         Staggered,      // post-slam opening
+        ShieldCharge,   // phase 2 gap-closer, shield leading
         Recovery
     };
 
@@ -71,6 +72,9 @@ private:
     Rectangle GetBodyContactRec() const;
     Vector2 GetPushDirectionToPlayer() const;
     void HandleAnimation(float dt);
+    void BeginBulwarkSlam();                 // shared by the two phase transitions
+    void ReactToPhaseChange(int newPhase);
+    bool IsShieldDown() const { return _shieldDownTimer > 0.f; }  // front is fully open
 
     State _state = State::Advancing;
     float _stateTimer      = 0.f;
@@ -79,10 +83,14 @@ private:
     float _bombCooldown    = 0.f;
     bool  _pendingBomb     = false;
     Vector2 _bombTarget{};
-    bool  _slamDone        = false;   // once at 50% HP
     float _slamRingRadius  = 0.f;
     bool  _slamDamageApplied = false;
     bool  _impactShakeRequested = false;
+    int   _bombsRemaining  = 0;       // Bomb Salvo (phase 1+) fires several in a row
+    bool  _pendingSlamQueued = false; // phase change wants a Bulwark Slam when neutral
+    float _shieldDownTimer = 0.f;     // shield lowered to attack -> front fully open
+    Vector2 _chargeDir{ 1.f, 0.f };   // Shield Charge (phase 2)
+    float _chargeTravelled = 0.f;
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;
 
@@ -100,6 +108,12 @@ private:
     static constexpr float _slamRadius          = 330.f;
     static constexpr float _staggerDuration     = 2.0f;
     static constexpr float _recoveryDuration    = 0.55f;
+    static constexpr int   _bombSalvoCount      = 3;       // bombs per salvo when phase 1+
+    static constexpr float _bombSalvoSpacing    = 0.35f;   // gap between salvo bombs
+    static constexpr float _shieldDownDuration  = 0.6f;    // front-open window after he attacks
+    static constexpr float _chargeSpeed         = 620.f;   // Shield Charge travel speed
+    static constexpr float _chargeMaxDistance   = 900.f;
+    static constexpr float _chargeContactRadius = 150.f;   // charge run-over hit radius
     static constexpr int   _bossBaseExpValue    = 15;
 
     static Texture2D _sharedIdleAnim;

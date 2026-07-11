@@ -89,6 +89,7 @@ private:
     Vector2 _poisonPoolPos{};
     bool  _eruptDamageApplied = false;
     int   _eruptChainRemaining = 0;
+    bool  _pendingPhaseBurrow = false;   // phase change dives for an eruption
     bool  _impactShakeRequested = false;
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;
