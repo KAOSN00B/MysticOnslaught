@@ -162,6 +162,14 @@ public:
     // Shieldbearer overrides it to skip its frontal block (Hunter Puncture Shot).
     virtual void TakeDamageUnblockable(int damage, Vector2 attackerPos) { TakeDamage(damage, attackerPos); }
 
+    // ── Blocked-hit feedback ──────────────────────────────────────────────────
+    // When a hit is denied (bodyguard/leap i-frames, or a Shieldbearer's frontal
+    // block) TakeDamage records WHY instead of applying damage. The hit code then
+    // reads it once to show the matching floating word ("SHIELDED" / "BLOCKED")
+    // instead of a phantom damage number. See VFXManager::SpawnFloatingLabel.
+    enum class HitBlockReason { None, Shielded, Blocked };
+    HitBlockReason ConsumeHitBlock() { HitBlockReason r = _hitBlock; _hitBlock = HitBlockReason::None; return r; }
+
     // Dream Realm flicker
     bool    IsFlickerInWindup()   const { return _flickerInWindup; }
     Vector2 GetFlickerTarget()    const { return _flickerTarget; }
@@ -356,6 +364,10 @@ protected:
     bool _isEliteMiniboss = false;
     bool _isInvulnerable  = false;   // bodyguard shield (engine-driven)
     bool _leapInvulnerable = false;  // gap-closer wind-up (engine-driven)
+    // Why the most recent hit was denied; set by TakeDamage / a subclass block,
+    // cleared when the hit code reads it via ConsumeHitBlock(). Subclasses (e.g.
+    // Shieldbearer) set this before returning early from their own TakeDamage.
+    HitBlockReason _hitBlock = HitBlockReason::None;
 
     bool  _attacking    = false;
     bool  _damageApplied = false;
@@ -450,7 +462,7 @@ protected:
     // Sprite-only draw offset for the attack animation — compensates for
     // the weapon swing requiring the body to be off-centre in the art.
     // X is multiplied by _rightLeft so the correction mirrors correctly.
-    float _attackVisualOffsetX = 20.f;
+    float _attackVisualOffsetX = 0.f;
     float _attackVisualOffsetY = 0.f;
 
     float _attackCooldown = 0.f;

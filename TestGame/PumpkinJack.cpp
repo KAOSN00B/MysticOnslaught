@@ -624,7 +624,7 @@ void PumpkinJack::DrawEnemy(Vector2 cameraRef)
     drawWidth  *= teleportScale;
     drawHeight *= teleportScale;
 
-    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.36f),
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.50f),
         drawWidth * 0.28f, drawHeight * 0.10f, Fade(BLACK, 0.35f * teleportScale));
 
     // Shield shimmer while defending — clear "don't attack now" signal.

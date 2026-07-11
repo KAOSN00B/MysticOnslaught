@@ -124,7 +124,10 @@ void VFXManager::DrawFloatingTexts(Vector2 worldOffset)
         // Spawn "pop": briefly overshoot the font size, then settle.
         float pop  = (t < 0.18f) ? (1.f + (0.18f - t) / 0.18f * 0.6f) : 1.f;
         int   fs   = (int)(22.f * ft.scale * pop);
-        const char* txt = TextFormat("%d", ft.value);
+        // Word labels (IMMUNE / BLOCKED / ...) render verbatim; otherwise the
+        // numeric damage value is formatted.
+        const char* txt = ft.label.empty() ? TextFormat("%d", ft.value)
+                                            : ft.label.c_str();
         int   tw    = MeasureText(txt, fs);
         float alpha = 1.f - t;
         // Dark outline so big numbers read over any background.
@@ -250,6 +253,38 @@ void VFXManager::SpawnFloatingText(Vector2 worldPos, int value, Color color, flo
     ft.scale     = scale;
     ft.spawnTime = (float)GetTime();
     _floatingTexts.push_back(ft);
+}
+
+void VFXManager::SpawnFloatingLabel(Vector2 worldPos, const char* text, Color color, float scale)
+{
+    if (text == nullptr || text[0] == '\0')
+        return;
+    FloatingText ft;
+    ft.worldPos  = worldPos;
+    ft.label     = text;                  // shown verbatim; no damage-number scaling
+    ft.color     = color;
+    ft.scale     = scale;
+    ft.spawnTime = (float)GetTime();
+    _floatingTexts.push_back(ft);
+}
+
+void VFXManager::SpawnSpriteFx(Texture2D* strip, Vector2 worldPos, int frameCount,
+                               float scale, float frameTime, Color tint, Vector2 direction)
+{
+    if (strip == nullptr || strip->id == 0 || frameCount <= 0)
+        return;
+    AnimatedEffect effect{};
+    effect.texture     = strip;
+    effect.worldPos    = worldPos;
+    effect.direction   = direction;
+    effect.tint        = tint;
+    effect.scale       = scale;
+    effect.frameTime   = frameTime;
+    effect.frameWidth  = 64;   // owned FX strips are 64px cells
+    effect.frameHeight = 64;
+    effect.frameCount  = frameCount;
+    effect.active      = true;
+    _effects.push_back(effect);
 }
 
 void VFXManager::SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed)

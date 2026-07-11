@@ -168,6 +168,8 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
 
     _worldPosLastFrame = _worldPos;
 
+    UpdateHit(dt);
+
     // Ogre forced push — slide until Engine::HandleCollisions stops us.
     if (_forcedPushActive)
     {
@@ -181,7 +183,6 @@ void Cyclops::Update(float dt, Vector2 heroWorldPos,
         _velocity = Vector2Zero();
 
     ApplyVelocity(dt);
-    UpdateHit(dt);
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
@@ -506,6 +507,9 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
+
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + launchLift + drawHeight * 0.50f),
+        drawWidth * 0.30f, drawHeight * 0.06f, Fade(BLACK, 0.32f));
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 

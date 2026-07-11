@@ -82,6 +82,16 @@ struct EliteMechanicsContext
     std::function<void(float, float)> triggerScreenShake;
 };
 
+// Boss impact/cast FX ids — map 1:1 to FX_Boss*.png sheets loaded by the Engine.
+enum class BossFx
+{
+    SlimeSlam = 0, SlimeSplash, AbyssSummon, PounceImpact, CrushingSlam, BulwarkSlam,
+    ToxicEruption, PoisonPool, DreamPull, DashDust, HeavyStrike, DiveImpact,
+    ClawSwipe, BloodHowl, DivineSlash, SandStep, TeleportStrike, PumpkinSummon,
+    ChitinBurst,
+    Count
+};
+
 struct EnemyRuntimeContext
 {
     Character* player = nullptr;
@@ -96,6 +106,10 @@ struct EnemyRuntimeContext
     std::function<void(Vector2)> spawnSmallSlime;               // Abyss Slime summons
     std::function<Enemy*(Vector2)> spawnBasicEnemy;             // Pumpkin Jack summons
     std::function<void(Vector2)> spawnBossPoisonPool;           // Toxic Vermin pools
+    // Play a themed owned FX_Boss*.png sprite at a world position. The int is a
+    // BossFx id (see Engine); lets boss impact/cast moments show real art instead
+    // of only procedural rings. Safe no-op if unset.
+    std::function<void(Vector2, int)> spawnBossFx;
 };
 
 struct EnemyDeathContext

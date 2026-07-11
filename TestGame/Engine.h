@@ -291,6 +291,11 @@ private:
     int       _abilityFxFrames[(int)AbilityType::Count]{};
     void SpawnAbilityFx(AbilityType type, Vector2 playerPos, Vector2 facing, float facingSign);
 
+    // Owned boss impact/cast FX sheets (FX_Boss*.png), indexed by BossFx id.
+    std::vector<Texture2D> _bossFx;
+    std::vector<int>       _bossFxFrames;
+    void SpawnBossFx(Vector2 worldPos, int fxId);
+
     // Relic icons, one per archetype (PowerUps/Relic_<archetype>.png).
     Texture2D _relicIcons[7]{};
     const Texture2D* GetRelicIcon(RelicType type) const;

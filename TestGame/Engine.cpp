@@ -223,6 +223,8 @@ Engine::~Engine()
         if (_abilityIcons[i].id != 0) UnloadTexture(_abilityIcons[i]);
         if (_abilityFx[i].id != 0) UnloadTexture(_abilityFx[i]);
     }
+    for (Texture2D& bf : _bossFx)
+        if (bf.id != 0) UnloadTexture(bf);
     if (_audioInitialised)
     {
         UnloadSound(_pickupSound);
@@ -449,6 +451,25 @@ void Engine::Init()
             _abilityFx[i] = LoadTexture(AssetPath(TextFormat("PowerUps/FX_%s.png", fxStem)).c_str());
             if (_abilityFx[i].id != 0 && _abilityFx[i].height > 0)
                 _abilityFxFrames[i] = _abilityFx[i].width / 64;   // 64px cells
+        }
+    }
+
+    // Owned boss impact/cast FX sheets — order MUST match enum BossFx (CombatDirector.h).
+    {
+        static const char* kBossFxNames[] = {
+            "SlimeSlam", "SlimeSplash", "AbyssSummon", "PounceImpact", "CrushingSlam", "BulwarkSlam",
+            "ToxicEruption", "PoisonPool", "DreamPull", "DashDust", "HeavyStrike", "DiveImpact",
+            "ClawSwipe", "BloodHowl", "DivineSlash", "SandStep", "TeleportStrike", "PumpkinSummon",
+            "ChitinBurst",
+        };
+        const int n = (int)(sizeof(kBossFxNames) / sizeof(kBossFxNames[0]));
+        _bossFx.assign(n, Texture2D{});
+        _bossFxFrames.assign(n, 0);
+        for (int i = 0; i < n; ++i)
+        {
+            _bossFx[i] = LoadTexture(AssetPath(TextFormat("PowerUps/FX_Boss%s.png", kBossFxNames[i])).c_str());
+            if (_bossFx[i].id != 0 && _bossFx[i].height > 0)
+                _bossFxFrames[i] = _bossFx[i].width / 64;   // 64px cells
         }
     }
 
@@ -2239,6 +2260,7 @@ void Engine::UpdateGamePlay(float dt)
         enemyRuntimeCtx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
         enemyRuntimeCtx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
         enemyRuntimeCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
+        enemyRuntimeCtx.spawnBossFx = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
         _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
 
         HandlePlayerMeleeDamage();
@@ -7241,7 +7263,14 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         return tunedOr(Rectangle{ playerPos.x - radius, playerPos.y - radius, radius * 2.f, radius * 2.f });
     };
 
+    // Whether this ability has a real owned FX sheet (FX_<Ability>.png). If so,
+    // SpawnAbilityFx (called at the end) plays it and the prototype shape below is
+    // suppressed — the raylib shapes are now only a FALLBACK for abilities lacking art.
+    const bool hasFxSheet = ((int)ability >= 0 && (int)ability < (int)AbilityType::Count &&
+                             _abilityFx[(int)ability].id != 0 && _abilityFxFrames[(int)ability] > 0);
+
     auto pushVfx = [&](WarriorVfxKind kind, float lifetime, float radius, Color tint) {
+        if (hasFxSheet) return;   // owned sprite FX replaces the prototype shape
         WarriorVfx v; v.kind = kind; v.pos = playerPos; v.dir = facing;
         v.timer = 0.f; v.lifetime = lifetime; v.radius = radius; v.tint = tint;
         _warriorVfx.push_back(v);
@@ -7282,7 +7311,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Rend:
     {
-        _player.MoveTowardFacing(120.f * facingSign);   // lunge forward
+        _player.MoveTowardFacing(120.f);   // lunge forward
         playerPos = _player.GetWorldPos();
         DamageEnemiesInRect(forwardRect(150.f, 140.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 3.f, dmgVal(1.f));
         pushVfx(WarriorVfxKind::Wave, 0.25f, 150.f, Color{ 220, 60, 60, 255 });
@@ -7290,7 +7319,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::ShieldBash:
     {
-        _player.MoveTowardFacing(90.f * facingSign);
+        _player.MoveTowardFacing(90.f);
         playerPos = _player.GetWorldPos();
         DamageEnemiesInRect(forwardRect(150.f, 150.f), dmgVal(2.f + atk * 0.4f), 1.f, 1.3f, 0.f, 0);
         pushVfx(WarriorVfxKind::Bash, 0.25f, 150.f, Color{ 255, 240, 190, 255 });
@@ -7347,7 +7376,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // Cut everything in the corridor ahead, then blink to the far end.
         DamageEnemiesInRect(forwardRect(300.f, 110.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.7f));   // slicing blink bleeds
         pushVfx(WarriorVfxKind::Teleport, 0.3f, 40.f, Color{ 150, 90, 220, 255 });   // puff at origin
-        _player.MoveTowardFacing(300.f * facingSign);
+        _player.MoveTowardFacing(300.f);
         WarriorVfx dst; dst.kind = WarriorVfxKind::Teleport; dst.pos = _player.GetWorldPos();
         dst.dir = facing; dst.lifetime = 0.3f; dst.radius = 40.f; dst.tint = Color{ 150, 90, 220, 255 };
         _warriorVfx.push_back(dst);
@@ -7458,7 +7487,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Roll:
     {
-        _player.MoveTowardFacing(240.f * facingSign);
+        _player.MoveTowardFacing(240.f);
         _player.GrantDamageBuff(1.4f, 3.f);   // brief "deadeye" after repositioning
         pushVfx(WarriorVfxKind::Teleport, 0.3f, 40.f, Color{ 200, 235, 220, 255 });
         break;
@@ -7656,6 +7685,14 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // Overlay the ability's dedicated animated FX (uses the final player position,
     // which lunges above have already updated).
     SpawnAbilityFx(ability, playerPos, facing, facingSign);
+}
+
+void Engine::SpawnBossFx(Vector2 worldPos, int fxId)
+{
+    if (fxId < 0 || fxId >= (int)_bossFx.size()) return;
+    if (_bossFx[fxId].id == 0 || _bossFxFrames[fxId] <= 0) return;
+    // Bosses are big — scale the impact sprite up so it reads at boss scale.
+    _vfx.SpawnSpriteFx(&_bossFx[fxId], worldPos, _bossFxFrames[fxId], 7.f, 1.f / 24.f);
 }
 
 void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, float facingSign)
@@ -16140,6 +16177,7 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.spawnSmallSlime    = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
         eCtx.spawnBasicEnemy    = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
         eCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
+        eCtx.spawnBossFx        = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
         if (_currentBiome == Biome::DreamRealm)

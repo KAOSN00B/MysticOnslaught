@@ -97,6 +97,7 @@ void Phantom::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget*
 
     _worldPosLastFrame = _worldPos;
     _bobTimer += dt;
+    UpdateHit(dt);
 
     if (_forcedPushActive)
     {
@@ -105,7 +106,6 @@ void Phantom::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget*
     }
 
     ApplyVelocity(dt);
-    UpdateHit(dt);
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
@@ -232,6 +232,9 @@ void Phantom::DrawEnemy(Vector2 heroWorldPos)
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
                     screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
+    DrawEllipse((int)(screenPos.x + animDrawOffset.x),
+        (int)(screenPos.y - sinf(_bobTimer * 2.6f) * 6.f + drawHeight * 0.50f + animDrawOffset.y),
+        drawWidth * 0.24f, drawHeight * 0.055f, Fade(BLACK, _phased ? 0.12f : 0.20f));
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_health != _maxHealth && !_phased)

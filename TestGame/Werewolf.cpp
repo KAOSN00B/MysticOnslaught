@@ -464,7 +464,7 @@ void Werewolf::DrawEnemy(Vector2 cameraRef)
                  IsFrenzied()       ? Color{ 255, 150, 150, 255 } :
                                       WHITE;
 
-    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.36f),
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.50f),
         drawWidth * 0.28f, drawHeight * 0.10f, Fade(BLACK, 0.35f));
 
     // Howl rings.

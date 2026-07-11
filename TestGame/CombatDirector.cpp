@@ -409,8 +409,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
 
         if (Ogre* ogre = enemy->AsOgre())
         {
-            if (ogre->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(8.f, 0.14f);
+            if (ogre->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(8.f, 0.14f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(ogre->GetWorldPos(), (int)BossFx::HeavyStrike);
+            }
         }
 
         if (SkeletonArcher* archer = enemy->AsSkeletonArcher())
@@ -450,8 +453,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                 molarbeast->OnLavaBallSpawned();
             }
 
-            if (molarbeast->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(8.f, 0.14f);
+            if (molarbeast->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(8.f, 0.14f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(molarbeast->GetWorldPos(), (int)BossFx::HeavyStrike);
+            }
         }
 
         if (AbyssSlime* abyssSlime = enemy->AsAbyssSlime())
@@ -470,8 +476,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                 }
             }
 
-            if (abyssSlime->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(9.f, 0.16f);
+            if (abyssSlime->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(9.f, 0.16f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(abyssSlime->GetWorldPos(), (int)BossFx::SlimeSlam);
+            }
         }
 
         if (PumpkinJack* pumpkinJack = enemy->AsPumpkinJack())
@@ -513,20 +522,29 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
 
         if (Minotaur* minotaur = enemy->AsMinotaur())
         {
-            if (minotaur->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(10.f, 0.18f);
+            if (minotaur->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(10.f, 0.18f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(minotaur->GetWorldPos(), (int)BossFx::CrushingSlam);
+            }
         }
 
         if (BomberImp* bomber = enemy->AsBomberImp())
         {
-            if (bomber->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(7.f, 0.14f);
+            if (bomber->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(7.f, 0.14f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(bomber->GetWorldPos(), (int)BossFx::HeavyStrike);
+            }
         }
 
         if (Werewolf* werewolf = enemy->AsWerewolf())
         {
-            if (werewolf->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(8.f, 0.14f);
+            if (werewolf->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(8.f, 0.14f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(werewolf->GetWorldPos(), (int)BossFx::PounceImpact);
+            }
         }
 
         if (ChompBug* chompBug = enemy->AsChompBug())
@@ -596,8 +614,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                 ctx.lavaBalls->push_back(bomb);
                 titanGuard->OnBombThrown();
             }
-            if (titanGuard->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(11.f, 0.2f);
+            if (titanGuard->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(11.f, 0.2f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(titanGuard->GetWorldPos(), (int)BossFx::BulwarkSlam);
+            }
         }
 
         if (ToxicVermin* vermin = enemy->AsToxicVermin())
@@ -621,17 +642,26 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             }
             // Poison pools left by burrows and eruptions.
             Vector2 poolPos;
-            if (vermin->ConsumePoisonPoolRequest(poolPos) && ctx.spawnBossPoisonPool)
-                ctx.spawnBossPoisonPool(poolPos);
+            if (vermin->ConsumePoisonPoolRequest(poolPos))
+            {
+                if (ctx.spawnBossPoisonPool) ctx.spawnBossPoisonPool(poolPos);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(poolPos, (int)BossFx::PoisonPool);
+            }
 
-            if (vermin->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(9.f, 0.16f);
+            if (vermin->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(9.f, 0.16f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(vermin->GetWorldPos(), (int)BossFx::ToxicEruption);
+            }
         }
 
         if (AncientBear* bear = enemy->AsAncientBear())
         {
-            if (bear->ConsumeImpactShakeRequest() && ctx.triggerScreenShake)
-                ctx.triggerScreenShake(12.f, 0.22f);
+            if (bear->ConsumeImpactShakeRequest())
+            {
+                if (ctx.triggerScreenShake) ctx.triggerScreenShake(12.f, 0.22f);
+                if (ctx.spawnBossFx) ctx.spawnBossFx(bear->GetWorldPos(), (int)BossFx::CrushingSlam);
+            }
         }
     }
 

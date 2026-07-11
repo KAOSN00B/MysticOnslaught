@@ -274,6 +274,9 @@ void BomberImp::DrawEnemy(Vector2 heroWorldPos)
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
                     screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
+    DrawEllipse((int)(screenPos.x + animDrawOffset.x),
+        (int)(screenPos.y - sinf(_bobTimer * 5.f) * 5.f + drawHeight * 0.50f + animDrawOffset.y),
+        drawWidth * 0.24f, drawHeight * 0.055f, Fade(BLACK, 0.20f));
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_isEliteMiniboss)

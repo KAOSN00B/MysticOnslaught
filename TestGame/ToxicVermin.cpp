@@ -423,7 +423,7 @@ void ToxicVermin::DrawEnemy(Vector2 cameraRef)
         return;   // body hidden while underground
     }
 
-    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.34f),
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.50f),
         drawWidth * 0.30f, drawHeight * 0.10f, Fade(BLACK, 0.35f));
 
     bool burning = !_pendingBurns.empty();

@@ -345,6 +345,14 @@ bool Enemy::GetAnimBodyCapsuleWorld(Capsule2D& out) const
         return i >= 0 && i < kAnimSlots && _animBodySet[i] && _animBodyRadius[i] > 0.f;
     };
 
+    // Gameplay body collision should stay anchored during normal attack poses.
+    // The attack melee box remains authored per animation; this only prevents
+    // the enemy's solid/hurt body from hopping when an attack body circle was
+    // placed forward to line up with the weapon frame.
+    if (slot == 2 && usable(0))
+        slot = 0;
+    else if (slot == 2 && usable(1))
+        slot = 1;
     // If the current animation has no authored body circle, fall back to another
     // authored slot (Idle/slot 0 first, then the first set one) instead of failing.
     // The body barely moves between poses, so this keeps the enemy hittable in EVERY
@@ -526,6 +534,8 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
 
     _worldPosLastFrame = _worldPos;
 
+    UpdateHit(dt);
+
     // Slide in the push direction; Engine::HandleCollisions stops us on walls/props.
     if (_forcedPushActive)
     {
@@ -536,7 +546,6 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
     if (_attacking)
         _velocity = Vector2Zero();
     ApplyVelocity(dt);
-    UpdateHit(dt);
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
@@ -1039,8 +1048,10 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     if (!_isActive)
         return;
 
-    float w = _width * _scale;
-    float h = _height * _scale;
+    float baseW = _width * _scale;
+    float baseH = _height * _scale;
+    float w = baseW;
+    float h = baseH;
 
     // External launch effects briefly make enemies read as if they were thrown
     // upward by the ogre charge. The sprite grows slightly and lifts off the
@@ -1091,6 +1102,10 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
             DrawCircleV(Vector2{ screenPos.x + flickerX * 0.7f, screenPos.y + flickerY - 6.f }, 3.f, Fade(YELLOW, 0.45f));
         }
     }
+
+    float shadowX = screenPos.x + visualOffsetX;
+    float shadowY = screenPos.y + launchLift + baseH * 0.5f + visualOffsetY - 2.f;
+    DrawEllipse((int)shadowX, (int)shadowY, baseW * 0.28f, baseH * 0.06f, Fade(BLACK, 0.28f));
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
@@ -1224,9 +1239,22 @@ void Enemy::ApplyFreeze(float duration)
 
 void Enemy::TakeDamage(int damage, Vector2 attackerPos)
 {
+    // Fresh hit — clear any stale block reason from a previous damage source.
+    _hitBlock = HitBlockReason::None;
+
     // If the revive one-shot invul window is active, ignore all damage.
     if (_graveReviveInvulTimer > 0.f)
         return;
+
+    // Bodyguard shield (immune while its fodder live) or leap wind-up i-frames
+    // deny the hit outright. Flag it so the hit code shows "SHIELDED" feedback
+    // instead of a damage number. TakeDamageUnblockable routes here too, so a
+    // Shieldbearer's Enemy::TakeDamage call still respects an active shield.
+    if (_isInvulnerable || _leapInvulnerable)
+    {
+        _hitBlock = HitBlockReason::Shielded;
+        return;
+    }
 
     // Check whether this hit would kill us and the revive is still available.
     bool wouldKill = (_health - damage <= 0);

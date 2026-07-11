@@ -175,6 +175,8 @@ void SkeletonArcher::Update(float dt, Vector2 heroWorldPos,
 
     _worldPosLastFrame = _worldPos;
 
+    UpdateHit(dt);
+
     if (_forcedPushActive)
     {
         _worldPos = Vector2Add(_worldPos, Vector2Scale(_forcedPushDirection, _forcedPushSpeed * dt));
@@ -185,7 +187,6 @@ void SkeletonArcher::Update(float dt, Vector2 heroWorldPos,
         _velocity = Vector2Zero();
 
     ApplyVelocity(dt);
-    UpdateHit(dt);
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
@@ -432,6 +433,9 @@ void SkeletonArcher::DrawEnemy(Vector2 cameraRef)
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
                     screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
+    DrawEllipse((int)(screenPos.x + animDrawOffset.x),
+        (int)(screenPos.y + _launchVisualLift * launchRatio + drawHeight * 0.50f + animDrawOffset.y),
+        drawWidth * 0.28f, drawHeight * 0.055f, Fade(BLACK, 0.30f));
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_graveReviveInvulTimer > 0.f)

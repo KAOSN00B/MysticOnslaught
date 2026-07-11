@@ -2,6 +2,7 @@
 #include "raylib.h"
 #include "Character.h"
 #include <vector>
+#include <string>
 
 // ── VFXManager ────────────────────────────────────────────────────────────────
 // Owns all animated sprite effects and floating damage/heal numbers.
@@ -49,8 +50,22 @@ public:
     // digit balance still reads as satisfying RPG-sized numbers.
     void SpawnFloatingText(Vector2 worldPos, int value, Color color, float scale = 1.f);
 
+    // Floating WORD label (e.g. "IMMUNE", "BLOCKED", "SHIELDED", "CRIT!").
+    // Same rise-and-fade behaviour as a damage number, but shows text verbatim
+    // and is NOT multiplied by the cosmetic damage-number scale. This is the
+    // primitive that combat-readability callouts (blocked-damage feedback,
+    // boss-state labels) are built on.
+    void SpawnFloatingLabel(Vector2 worldPos, const char* text, Color color, float scale = 1.f);
+
     // A short burst of impact sparks flying out from a hit/kill.
     void SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed);
+
+    // Generic one-shot sprite FX from any 64px-cell horizontal strip (boss impacts,
+    // ground bursts, etc.). Plays once and removes itself. The reusable path the FX
+    // pass is built on — callers just hand it a loaded strip.
+    void SpawnSpriteFx(Texture2D* strip, Vector2 worldPos, int frameCount,
+                       float scale = 5.f, float frameTime = 1.f / 22.f,
+                       Color tint = WHITE, Vector2 direction = { 1.f, 0.f });
 
     // Cosmetic damage-number multiplier (tuned live via the debug juice panel).
     void SetDamageNumberScale(int s) { _damageNumberScale = (s > 0) ? s : 1; }
@@ -77,11 +92,12 @@ private:
 
     struct FloatingText
     {
-        Vector2 worldPos  = {};
-        int     value     = 0;
-        Color   color     = WHITE;
-        float   spawnTime = 0.f;
-        float   scale     = 1.f;
+        Vector2     worldPos  = {};
+        int         value     = 0;
+        std::string label;                 // when non-empty, drawn instead of `value`
+        Color       color     = WHITE;
+        float       spawnTime = 0.f;
+        float       scale     = 1.f;
         static constexpr float kLifetime = 0.75f;
     };
 

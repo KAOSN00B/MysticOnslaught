@@ -155,6 +155,7 @@ void FlameWisp::Update(float dt, Vector2 heroWorldPos,
 
     _worldPosLastFrame = _worldPos;
     _hoverBobTimer += dt;
+    UpdateHit(dt);
 
     if (_forcedPushActive)
     {
@@ -163,7 +164,6 @@ void FlameWisp::Update(float dt, Vector2 heroWorldPos,
     }
 
     ApplyVelocity(dt);
-    UpdateHit(dt);
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
@@ -346,6 +346,9 @@ void FlameWisp::DrawEnemy(Vector2 cameraRef)
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
                     screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
+    DrawEllipse((int)(screenPos.x + animDrawOffset.x),
+        (int)(screenPos.y - sinf(_hoverBobTimer * 2.4f) * 7.f + drawHeight * 0.50f + animDrawOffset.y),
+        drawWidth * 0.22f, drawHeight * 0.055f, Fade(BLACK, 0.17f));
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 
     if (_graveReviveInvulTimer > 0.f)

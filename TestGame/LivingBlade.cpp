@@ -100,6 +100,7 @@ void LivingBlade::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTar
 
     _worldPosLastFrame = _worldPos;
     _wobbleTimer += dt;
+    UpdateHit(dt);
 
     if (_forcedPushActive)
     {
@@ -108,7 +109,6 @@ void LivingBlade::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTar
     }
 
     ApplyVelocity(dt);
-    UpdateHit(dt);
     UpdateBurns(dt);
     UpdateElectricCharge(dt);
     UpdateLaunchVisual(dt);
@@ -250,6 +250,8 @@ void LivingBlade::DrawEnemy(Vector2 heroWorldPos)
     Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x + animDrawOffset.x, screenPos.y + animDrawOffset.y, drawWidth, drawHeight };
+    DrawEllipse((int)(screenPos.x + animDrawOffset.x), (int)(screenPos.y + drawHeight * 0.48f + animDrawOffset.y),
+        drawWidth * 0.20f, drawHeight * 0.05f, Fade(BLACK, 0.20f));
     DrawTexturePro(_texture, source, dest,
         Vector2{ drawWidth * 0.5f, drawHeight * 0.5f }, rotation, tint);
 

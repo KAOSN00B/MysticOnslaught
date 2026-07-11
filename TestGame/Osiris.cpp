@@ -454,7 +454,7 @@ void Osiris::DrawEnemy(Vector2 cameraRef)
     float drawW = drawWidth * teleportScale;
     float drawH = drawHeight * teleportScale;
 
-    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawH * 0.36f),
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawH * 0.50f),
         drawW * 0.26f, drawH * 0.09f, Fade(BLACK, 0.35f * teleportScale));
 
     bool burning = !_pendingBurns.empty();

@@ -739,7 +739,7 @@ void AbyssSlime::DrawEnemy(Vector2 cameraRef)
                                   WHITE;
 
     // Shadow stays on the floor while the body lifts.
-    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.34f),
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.50f),
         drawWidth * 0.34f, drawHeight * 0.12f, Fade(BLACK, 0.35f));
 
     // Summon cast glow.

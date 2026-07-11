@@ -449,7 +449,7 @@ void TitanGuard::DrawEnemy(Vector2 cameraRef)
     screenPos.x += kVirtualWidth  / 2.f;
     screenPos.y += kVirtualHeight / 2.f;
 
-    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.36f),
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + drawHeight * 0.50f),
         drawWidth * 0.30f, drawHeight * 0.10f, Fade(BLACK, 0.35f));
 
     // Frontal shield shimmer — a reminder of where NOT to attack from. It winks out

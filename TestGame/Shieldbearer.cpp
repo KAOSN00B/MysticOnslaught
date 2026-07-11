@@ -104,6 +104,9 @@ void Shieldbearer::TakeDamage(int damage, Vector2 attackerPos)
             SetSoundPitch(_sharedBlockSound, pitch);
             SetSoundVolume(_sharedBlockSound, 0.5f);
             PlaySound(_sharedBlockSound);
+            // Tell the hit code the shield ate this hit so it shows a "BLOCKED"
+            // callout (attack from behind) instead of nothing.
+            _hitBlock = HitBlockReason::Blocked;
             return;   // fully blocked
         }
     }
