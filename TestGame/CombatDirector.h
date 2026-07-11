@@ -110,6 +110,9 @@ struct EnemyRuntimeContext
     // BossFx id (see Engine); lets boss impact/cast moments show real art instead
     // of only procedural rings. Safe no-op if unset.
     std::function<void(Vector2, int)> spawnBossFx;
+    // Show a floating boss-state word (ENRAGED / PHASE SHIFT / ...) at a world
+    // position. Safe no-op if unset. See Enemy::ConsumeBossCallout.
+    std::function<void(Vector2, const char*)> spawnBossCallout;
 };
 
 struct EnemyDeathContext

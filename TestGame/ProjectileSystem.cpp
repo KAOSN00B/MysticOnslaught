@@ -135,6 +135,27 @@ void ProjectileSystem::UpdateSpreadProjectiles(std::vector<SpreadProjectile>& pr
                 hitDamage = isBolt ? ctx.player->GetBoltHitDamage(element) : ctx.player->GetSpreadHitDamage(element);
 
             enemy->TakeDamage(hitDamage, ctx.player->GetWorldPos());
+
+            // Denied by a shield / i-frames: show the reason, consume the
+            // projectile, and skip the damage number + on-hit status effects.
+            Enemy::HitBlockReason blk = enemy->ConsumeHitBlock();
+            if (blk != Enemy::HitBlockReason::None)
+            {
+                Color labelColor{ 170, 200, 255, 255 };
+                const char* word = "SHIELDED";
+                if (blk == Enemy::HitBlockReason::Blocked)
+                    word = "BLOCKED";
+                else if (blk == Enemy::HitBlockReason::Immune)
+                {
+                    word = "IMMUNE";
+                    labelColor = Color{ 190, 190, 210, 255 };
+                }
+                ctx.vfx->SpawnFloatingLabel(enemy->GetWorldPos(), word, labelColor);
+                ctx.vfx->SpawnImpactBurst(enemy->GetWorldPos(), labelColor, 5, 200.f);
+                projectile.Destroy();
+                break;
+            }
+
             {
                 Color dmgColor = (element == AbilityType::IceSpread || element == AbilityType::IceBolt) ? SKYBLUE :
                     (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt) ? YELLOW : ORANGE;

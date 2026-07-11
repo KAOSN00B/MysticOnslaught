@@ -508,8 +508,8 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
 
-    DrawEllipse((int)screenPos.x, (int)(screenPos.y + launchLift + drawHeight * 0.50f),
-        drawWidth * 0.30f, drawHeight * 0.06f, Fade(BLACK, 0.32f));
+    DrawEllipse((int)screenPos.x, (int)(screenPos.y + launchLift + drawHeight * 0.18f),
+        drawWidth * 0.24f, drawHeight * 0.04f, Fade(BLACK, 0.30f));
 
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
 

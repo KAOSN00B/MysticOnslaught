@@ -1242,9 +1242,13 @@ void Enemy::TakeDamage(int damage, Vector2 attackerPos)
     // Fresh hit — clear any stale block reason from a previous damage source.
     _hitBlock = HitBlockReason::None;
 
-    // If the revive one-shot invul window is active, ignore all damage.
+    // If the revive one-shot invul window is active, deny the hit visibly so it
+    // reads as protection instead of a broken/missing damage number.
     if (_graveReviveInvulTimer > 0.f)
+    {
+        _hitBlock = HitBlockReason::Immune;
         return;
+    }
 
     // Bodyguard shield (immune while its fodder live) or leap wind-up i-frames
     // deny the hit outright. Flag it so the hit code shows "SHIELDED" feedback
@@ -1492,6 +1496,7 @@ void Enemy::UpdateEnrageLatch(float dt)
         _enrageLatched      = true;
         _enrageShakePending = true;   // telegraph consumed by CombatDirector
         _enrageFlashTimer   = 0.6f;
+        _bossCallout        = "ENRAGED";   // floating word, consumed by the runtime
     }
 }
 
@@ -1534,6 +1539,7 @@ void Enemy::UpdatePhaseLatch(float dt)
     {
         _phase++;
         _pendingPhaseChange = _phase;   // boss announces / reacts via ConsumePhaseChange
+        _bossCallout = "PHASE SHIFT";   // floating word, consumed by the runtime
     }
 }
 

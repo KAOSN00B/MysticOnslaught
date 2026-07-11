@@ -167,7 +167,7 @@ public:
     // block) TakeDamage records WHY instead of applying damage. The hit code then
     // reads it once to show the matching floating word ("SHIELDED" / "BLOCKED")
     // instead of a phantom damage number. See VFXManager::SpawnFloatingLabel.
-    enum class HitBlockReason { None, Shielded, Blocked };
+    enum class HitBlockReason { None, Shielded, Blocked, Immune };
     HitBlockReason ConsumeHitBlock() { HitBlockReason r = _hitBlock; _hitBlock = HitBlockReason::None; return r; }
 
     // Dream Realm flicker
@@ -258,6 +258,15 @@ public:
     int  ConsumePhaseChange();              // returns the new phase once, else -1
     void BeginPhaseTransition(float seconds) { _phaseTransitionTimer = seconds; }
     bool IsInPhaseTransition() const { return _phaseTransitionTimer > 0.f; }
+
+    // ── Boss-state callout ────────────────────────────────────────────────────
+    // A floating word ("ENRAGED" / "PHASE SHIFT" / "SHIELD DOWN") announced on a
+    // state transition. Set from the enrage/phase latches (or by the engine for
+    // shield changes); the runtime polls it once per enemy and shows it via
+    // VFXManager::SpawnFloatingLabel. Kept separate from the shake/phase
+    // consumers so nothing double-consumes. `text` must be a string literal.
+    void        RequestBossCallout(const char* text) { _bossCallout = text; }
+    const char* ConsumeBossCallout() { const char* c = _bossCallout; _bossCallout = nullptr; return c; }
     Rectangle GetCollisionRec()       const override;
     Capsule2D GetCapsule()            const override;
     virtual Rectangle GetAttackCollisionRec() const;
@@ -397,6 +406,7 @@ protected:
     bool    _enrageLatched    = false; // one-way once crossed (until full-HP respawn)
     bool    _enrageShakePending = false; // transition telegraph, consumed by CombatDirector
     float   _enrageFlashTimer = 0.f;   // brief visual flash window on transition
+    const char* _bossCallout  = nullptr; // pending floating word, consumed by the runtime
 
     // Multi-phase boss system (see UpdatePhaseLatch). Empty thresholds = single-phase.
     std::vector<float> _phaseThresholds;      // descending HP fractions, e.g. {0.66,0.33}

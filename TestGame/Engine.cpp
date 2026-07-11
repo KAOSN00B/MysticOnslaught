@@ -2261,6 +2261,7 @@ void Engine::UpdateGamePlay(float dt)
         enemyRuntimeCtx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
         enemyRuntimeCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         enemyRuntimeCtx.spawnBossFx = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
+        enemyRuntimeCtx.spawnBossCallout = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
         _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
 
         HandlePlayerMeleeDamage();
@@ -7167,6 +7168,16 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
         // frontal block (and any future block); normal hits respect the shield.
         if (ignoreShield) enemy->TakeDamageUnblockable(dmg, playerPos);
         else              enemy->TakeDamage(dmg, playerPos);
+
+        // Hit denied by a shield / i-frames? Show the reason instead of a
+        // phantom damage number, and skip lifesteal + status (nothing landed).
+        Enemy::HitBlockReason blk = enemy->ConsumeHitBlock();
+        if (blk != Enemy::HitBlockReason::None)
+        {
+            ShowBlockedHitFeedback(enemy->GetWorldPos(), blk);
+            continue;
+        }
+
         ApplyPlayerLifesteal(dmg);
         RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
 
@@ -8291,6 +8302,31 @@ void Engine::RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bo
             enemyPos.x - (_cameraPos.x - _shakeOffset.x) + kVirtualWidth  * 0.5f,
             enemyPos.y - (_cameraPos.y - _shakeOffset.y) + kVirtualHeight * 0.5f };
     }
+}
+
+void Engine::ShowBlockedHitFeedback(Vector2 enemyPos, Enemy::HitBlockReason reason)
+{
+    Color labelColor{ 170, 200, 255, 255 };
+    const char* word = "SHIELDED";
+    if (reason == Enemy::HitBlockReason::Blocked)
+        word = "BLOCKED";
+    else if (reason == Enemy::HitBlockReason::Immune)
+    {
+        word = "IMMUNE";
+        labelColor = Color{ 190, 190, 210, 255 };
+    }
+    _vfx.SpawnFloatingLabel(enemyPos, word, labelColor);
+    // A few pale sparks sell the denial without implying damage was dealt.
+    _vfx.SpawnImpactBurst(enemyPos, labelColor, 5, 200.f);
+}
+
+void Engine::ShowBossCallout(Vector2 enemyPos, const char* text)
+{
+    if (text == nullptr) return;
+    // Big and warm so a phase change reads as an event; raised above the boss so
+    // it clears the health bar. Rises/fades like any floating label.
+    const Color kCalloutColor{ 255, 140, 40, 255 };
+    _vfx.SpawnFloatingLabel(Vector2{ enemyPos.x, enemyPos.y - 70.f }, text, kCalloutColor, 1.8f);
 }
 
 void Engine::ApplyPendingReflect()
@@ -16178,6 +16214,7 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.spawnBasicEnemy    = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
         eCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         eCtx.spawnBossFx        = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
+        eCtx.spawnBossCallout   = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
         if (_currentBiome == Biome::DreamRealm)

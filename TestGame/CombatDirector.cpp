@@ -247,7 +247,12 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
             { anyGruntAlive = true; break; }
         }
         if (!anyGruntAlive)
+        {
             (*ctx.eliteMinibossPtr)->SetInvulnerable(false);
+            // Payoff callout: the shield only drops once its bodyguards fall, so
+            // announce it — this is what teaches the "kill the adds first" rule.
+            (*ctx.eliteMinibossPtr)->RequestBossCallout("SHIELD DOWN");
+        }
     }
 
     if (*ctx.eliteEnrageWarningTimer > 0.f)
@@ -406,6 +411,12 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
         // ignite / final phase gets a big screen shake so the phase change reads.
         if (enemy->IsBoss() && enemy->ConsumeEnrageShakeRequest() && ctx.triggerScreenShake)
             ctx.triggerScreenShake(12.f, 0.35f);
+
+        // Floating state word (ENRAGED / PHASE SHIFT) announced on a transition.
+        // Independent of the shake consumer above so both fire on the same frame.
+        if (const char* callout = enemy->ConsumeBossCallout())
+            if (ctx.spawnBossCallout)
+                ctx.spawnBossCallout(enemy->GetWorldPos(), callout);
 
         if (Ogre* ogre = enemy->AsOgre())
         {

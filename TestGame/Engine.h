@@ -492,6 +492,10 @@ private:
     // Central hit feedback: floating number (pop on crit), impact sparks, and on
     // crit → slow-mo + focus, on kill → hit-stop (boss kill → cinematic slow-mo).
     void  RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bool isBoss, Color textColor);
+    // Floating "SHIELDED" / "BLOCKED" callout when a hit is denied (see Enemy::ConsumeHitBlock).
+    void  ShowBlockedHitFeedback(Vector2 enemyPos, Enemy::HitBlockReason reason);
+    // Big floating boss-state word (ENRAGED / PHASE SHIFT) on a state transition.
+    void  ShowBossCallout(Vector2 enemyPos, const char* text);
     void GrantRelic(RelicType type);              // adds relic + shows a toast
     RelicType RollRandomRelic() const;            // weighted by rarity, unowned
     void DrawOwnedRelics() const;                 // HUD strip
