@@ -165,6 +165,86 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
             18, BLACK);
     }
 
+    // Warrior Rage meter — thin orange bar under mana, pulsing when full so the
+    // player knows their abilities are at maximum power (class-identity resource).
+    if (ctx.player->GetClass() == PlayerClass::Warrior)
+    {
+        const float rageBarY = manaBarY + kNewBarH + kNewBarGap;
+        const float rageBarH = kNewBarH * 0.6f;
+        float ragePct = ctx.player->GetRagePercent();
+
+        Color rageFill = { 255, 120, 30, 230 };
+        if (ragePct >= 1.f)   // full bar pulses to signal max power
+        {
+            float pulse = sinf((float)GetTime() * 8.f) * 0.5f + 0.5f;
+            rageFill = { 255, (unsigned char)(120 + 90 * pulse), 30, 255 };
+        }
+
+        DrawRectangleRounded({ barX, rageBarY, kNewBarW * ragePct, rageBarH }, 0.3f, 6, rageFill);
+        DrawRectangleRoundedLines({ barX, rageBarY, kNewBarW, rageBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+
+        const char* rageLabel = "RAGE";
+        DrawText(rageLabel,
+            (int)(barX + kNewBarW / 2.f - MeasureText(rageLabel, 14) / 2.f),
+            (int)(rageBarY + rageBarH / 2.f - 7.f),
+            14, Fade(BLACK, 0.8f));
+    }
+
+    // Paladin Faith meter — same slot as the Rage bar, in holy gold. Pulses when
+    // full so the player knows Divine Storm is at maximum radius.
+    if (ctx.player->GetClass() == PlayerClass::Paladin)
+    {
+        const float faithBarY = manaBarY + kNewBarH + kNewBarGap;
+        const float faithBarH = kNewBarH * 0.6f;
+        float faithPct = ctx.player->GetFaithPercent();
+
+        Color faithFill = { 235, 200, 90, 230 };
+        if (faithPct >= 1.f)
+        {
+            float pulse = sinf((float)GetTime() * 8.f) * 0.5f + 0.5f;
+            faithFill = { 255, (unsigned char)(215 + 40 * pulse), 120, 255 };
+        }
+
+        DrawRectangleRounded({ barX, faithBarY, kNewBarW * faithPct, faithBarH }, 0.3f, 6, faithFill);
+        DrawRectangleRoundedLines({ barX, faithBarY, kNewBarW, faithBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
+
+        const char* faithLabel = "FAITH";
+        DrawText(faithLabel,
+            (int)(barX + kNewBarW / 2.f - MeasureText(faithLabel, 14) / 2.f),
+            (int)(faithBarY + faithBarH / 2.f - 7.f),
+            14, Fade(BLACK, 0.8f));
+    }
+
+    // Rogue combo pips — five diamonds in the Rage-bar slot; filled ones show the
+    // banked combo points Eviscerate will spend. All five flash when full.
+    if (ctx.player->GetClass() == PlayerClass::Rogue)
+    {
+        const float pipRowY   = manaBarY + kNewBarH + kNewBarGap;
+        const float pipRowH   = kNewBarH * 0.6f;
+        const int   maxPips   = ctx.player->GetMaxComboPoints();   // Deep Reserves can raise this
+        const int   comboPips = ctx.player->GetComboPoints();
+        const float pipStep   = kNewBarW / (float)maxPips;
+        const float pipHalf   = pipRowH * 0.5f;
+
+        for (int pip = 0; pip < maxPips; pip++)
+        {
+            float cx = barX + pipStep * (pip + 0.5f);
+            float cy = pipRowY + pipHalf;
+            bool  lit = (pip < comboPips);
+            Color pipColor = lit ? Color{ 255, 90, 90, 255 } : Fade(WHITE, 0.18f);
+            if (lit && comboPips >= maxPips)   // full bank flashes: finisher is primed
+            {
+                float pulse = sinf((float)GetTime() * 8.f) * 0.5f + 0.5f;
+                pipColor = { 255, (unsigned char)(90 + 130 * pulse), 90, 255 };
+            }
+            // Diamond = two triangles (counter-clockwise winding so raylib fills them).
+            DrawTriangle(Vector2{ cx - pipHalf, cy }, Vector2{ cx, cy + pipHalf },
+                         Vector2{ cx + pipHalf, cy }, pipColor);
+            DrawTriangle(Vector2{ cx + pipHalf, cy }, Vector2{ cx, cy - pipHalf },
+                         Vector2{ cx - pipHalf, cy }, pipColor);
+        }
+    }
+
     if (ctx.currentRoomType == RoomType::Elite && ctx.eliteMechanic >= 0)
     {
         static constexpr const char* kMechanicNames[] = {

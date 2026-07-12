@@ -1,0 +1,202 @@
+MYSTIC ONSLAUGHT - PHASE 1 POWER-SOURCE AUDIT
+================================================
+Date: 2026-07-11
+Scope: player attack, HP, mana, healing, armour, regeneration, damage multipliers,
+XP pacing, and overlapping run/meta rewards. Village and editor systems excluded.
+
+EXECUTIVE FINDINGS
+------------------
+The original snowball did not come from one number. A level automatically granted
+HP, healing, attack, max mana, and mana refill, then immediately offered another
+stat card. Shops, relics, meta unlocks, pickups, boss recovery, and class healing
+stacked on top. This made every reward source independently reasonable but the
+combined run much stronger than the enemy curve expected.
+
+The largest confirmed runaway sources were: automatic all-stat level gains;
+class ability levels multiplying damage by 2x and then 3x; enemy-count-based XP;
+Zeph offering up to six uncapped stat purchases alongside ability purchases;
+several large relic damage multipliers; permanent mana regeneration up to 2x;
+and a full heal after choosing to continue beyond a boss. Phases 1-2 address the
+first three. Shop, sustain, relic, and meta corrections remain later phases.
+
+LEVEL AND POWER-CHOICE SOURCES
+------------------------------
+Character::AddExp previously added +1 max HP, healed 1, added +0.4 attack, added
++5 max mana, and refilled that mana on every level. GenerateLevelUpOptions then
+offered three more stat cards, including attack, percentage HP, mana regeneration,
+armour, speed, and mixed epic packages. This double reward was the clearest early
+run snowball and also erased chip damage through automatic healing.
+
+ApplyUpgrade contains common, rare, and epic stat packages. Before this phase,
+common upgrades included +1 attack, +3 max HP plus heal, +6 mana plus refill,
++12% reach, +18 speed, and armour. Rare/epic cards can still add percentage HP,
+healing, attack, mana regeneration, speed, and armour in combinations. Elite,
+treasure, and shop reward contexts can still offer those stronger packages and
+must be reviewed with the shop/reward economy rather than removed blindly.
+
+Ability upgrades are another major source. Mage abilities use a small authored
+upgrade bonus, but class abilities used their raw ability level as a damage
+multiplier: level 2 dealt 2x base and level 3 dealt 3x base. Phase 2 changes that
+class formula to +25% per ability level, producing 1.0x, 1.25x, and 1.5x.
+
+XP SOURCES AND PACING
+---------------------
+Dungeon enemies previously paid individual XP based on enemy type, with elites
+commonly worth 4-6 and bosses paying 10 times wave depth. More enemies therefore
+meant more levels, so harder/swarm rooms also paid enough power to invalidate
+later difficulty. Contracts could further multiply XP. The old Character curve
+was hardcoded separately from GameBalance.h, so displayed design constants were
+not the actual runtime thresholds.
+
+Phase 2 moves the dungeon route to room-clear XP: 12 standard, 18 elite, and 30
+boss XP. Legacy/wave mode retains kill XP for compatibility. GameBalance.h now
+owns the level cap and threshold function. The curve begins at 20 XP and rises by
+8 per level, with level 9 as the cap. Starting at level 1, this permits at most
+eight Power Choices and targets roughly 6-8 over a full route.
+
+SHOP SOURCES - PHASE 3 TARGET
+-----------------------------
+ShopManager currently builds a pool containing all 17 common/rare/epic stat
+upgrades, shuffles it, and offers up to six stat items. It separately offers up
+to six unowned class abilities. Purchases have no per-run stat-category cap, and
+rerolls can search the same broad power pool. This makes gold convert too cleanly
+into permanent run power and duplicates both level and relic progression.
+
+The next shop phase should replace most inventory with tactical supplies, capped
+rare stats, class-aware ability modifiers, risk bargains, and services. Direct
+attack/HP/mana purchases need per-run caps and steep repeat pricing. The six
+common shared effects were reduced in Phase 2 and their shop previews synchronized,
+but inventory structure and purchase caps have intentionally not been rebuilt yet.
+
+RELIC SOURCES - LATER TUNING TARGET
+-----------------------------------
+Relics add broad damage through Keen Edge, Bloodlust, Glass Cannon, Momentum,
+Reaper, Berserker, status synergies, Executioner, and Deadeye crits. The runtime
+values are generally lower than some Relic.cpp descriptions, which is a UX bug,
+but several additive multipliers can coexist and Deadeye then multiplies the
+result. Relic acquisition after elite/boss rewards can overlap with their stat
+card reward, creating two power rewards from one encounter.
+
+Defensive/sustain relics include extra armour capacity, immediate armour refills,
+percentage max HP plus healing, flat HP plus healing, healing every five kills,
+four HP on elite/boss kills, and +22 percentage points of healing-drop chance.
+Arcane Battery also adds mana and regeneration. Later tuning should preserve
+build identity while reducing generic damage stacking and repeated free healing.
+
+META-PROGRESSION SOURCES - LATER TUNING TARGET
+-----------------------------------------------
+Poe's meta tree can grant +30/+60/+120 starting gold, retain up to 60% gold on
+death, give +2/+4 starting HP, multiply mana regeneration by 1.5x/2x, add one
+starting armour, unlock fifth and sixth ability slots, grant a random starting
+relic, and provide a once-per-run revive at 40% HP. These are direct permanent
+advantages, so a completed profile begins each run substantially ahead of a new
+profile instead of mainly having broader build choices.
+
+The largest meta risks are 2x mana regeneration, +4 HP relative to single-digit
+class health, a free relic, and Second Wind. A future meta pass should shift most
+of this toward unlock breadth, village utility, alternate starting choices, and
+information rather than raw combat superiority. No meta values changed in
+Phases 1-2 so existing saves remain compatible while the run baseline is tested.
+
+HEALING, MANA, AND ARMOUR SOURCES - PHASE 4 TARGET
+--------------------------------------------------
+Healing comes from one-HP enemy drops, timed drops, Scavenger's drop bonus,
+Vampirism, Reaper, Bulwark, HP upgrade cards, War Cry, low-health recovery when
+entering Zeph's room, Second Wind, and a full heal when continuing after a boss.
+The full boss heal and repeated kill/drop healing are the strongest sustain
+loops. Phase 2 removes automatic level healing and common Max Health card healing.
+
+Mana regenerates passively from a class base, then scales through Arcane Mind,
+Arcane Colossus, Arcane Battery, and permanent Mana Flow meta unlocks. Max-mana
+upgrades also previously refilled mana. Phase 2 removes the common Max Mana card's
+refill, but regeneration multipliers remain. Armour is both a refill resource and
+an expandable capacity through relics/meta, so it can absorb many mistakes when
+combined with healing and should be measured in telemetry before further cuts.
+
+PHASE 2 IMPLEMENTED BASELINE
+----------------------------
+- GameBalance.h is the runtime source for max level and XP thresholds.
+- Dungeon XP is awarded for clearing rooms, not for every enemy spawned.
+- Levels no longer automatically add HP, attack, mana, healing, or mana refill.
+- Normal levels are called Power Choices and prioritize learned ability upgrades.
+- Remaining Power Choice cards are modest defense/utility options, with no flat
+  attack card forced into the normal pool.
+- Class ability upgrades now scale at +25% per level instead of 2x/3x damage.
+- Common attack/range/HP/mana/speed gains were reduced, and HP/mana no longer
+  heal or refill when those common upgrades are selected.
+- Card and Zeph preview values were synchronized with the changed common effects.
+
+VALIDATION QUESTIONS FOR PLAYTESTING
+------------------------------------
+Record player level after each act, number of Power Choices offered, chosen cards,
+room clear time, damage taken, healing gained, mana starvation/overflow, and boss
+fight duration. A healthy first target is 1-2 choices in Act 1, 6-8 across a full
+run, weak enemies dying in 2-4 basics, and mistakes remaining visible across more
+than one room. If progression feels too slow, adjust room-clear XP in GameBalance.h
+before restoring kill XP or automatic stats.
+
+Do not tune enemy HP upward until this baseline has been played. If the player is
+still too strong, inspect shop purchases, relic combinations, full boss healing,
+meta mana/HP, and heal-drop counts in that order. Those systems currently have a
+larger combined effect than the modest enemy health curve.
+
+IMPROVEMENT PASS ADDENDUM (second audit sweep, 2026-07-11 evening)
+------------------------------------------------------------------
+Additional findings from a deeper file-level sweep, plus what the improvement
+pass already fixed in code. Line references are approximate after edits.
+
+NEWLY DOCUMENTED POWER SOURCES (missed above; mostly Phase 4 targets):
+1. FULL HEAL ON EVERY ROOM ENTRY - the single biggest sustain lever in the game.
+   Character::Revive() sets health to max and is called from the dungeon
+   room-entry path (Engine.cpp ~768). Damage therefore only matters within one
+   room; inter-room attrition is zero. Phase 4 must split Revive() into a true
+   respawn (full heal, keep) and a RefreshForRoomEntry() (state reset, NO heal).
+   Other Revive call sites: debug tile-room entry (~882), village entry (~2522,
+   correct to keep), dungeon-view debug entry (~16651).
+2. LIFESTEAL COMPOUNDING - GrantLifesteal callers: Warrior Rampage 0.25/7s,
+   Rogue Blade Dance 0.3/6s, Warlock Drain Life 0.6 burst + 0.25/5s lingering,
+   Warlock Demon Form 0.35/8s (Engine.cpp ApplyPlayerLifesteal drains it). A %
+   of damage dealt scales with every damage buff, so damage growth buys sustain
+   automatically. Phase 4 candidate: per-room lifesteal cap rather than nerfing
+   the class identity grants themselves.
+3. DEAD META CONTENT - the Deep Pockets gold-retention unlocks (20/40/60%) are
+   fully overridden by the one-wallet death wipe (Engine.cpp ~8984 comment).
+   Players can spend Echoes on an unlock that does nothing. Either hide the
+   three cards or repurpose them (e.g. small starting-gold bonus) in the meta
+   pass. Do not reorder the unlock table - saves store it.
+4. BOSS XP in legacy/wave mode still pays 10 x wave (CombatDirector.cpp ~840),
+   uncapped - fine for the demo arena, but do not port it back to dungeon mode.
+
+FIXED IN THE IMPROVEMENT PASS (code changes, Debug|x64 clean):
+- GameBalance.h truth pass: deleted the dead Balance::Player block (real stats
+  live in PlayerClass.cpp kClassTable; the old constants were never read) and
+  promoted the hardcoded class-ability level step (0.25f in Engine's dmgVal)
+  to Balance::AbilityDamage::kClassLevelStep.
+- Rare/epic Power Choice PREVIEW DRIFT: card texts promised far more than
+  ApplyUpgrade delivers (Iron Constitution +25% shown vs x1.15 real; Swift Feet
+  x1.15 vs x1.08; Arcane Mind +25 mana vs +8; War God x1.20 vs +15%; Resilience
+  +30% vs x1.18; Blade Storm x1.18/x1.18 vs +1.5/x1.08; Juggernaut +20%/+1 vs
+  x1.12/+2; Iron Skin claimed 1 armour but grants 2). All previews now state
+  the real effect. Commons were already synchronized in the first Phase 2 pass.
+- RELIC DESCRIPTION DRIFT fixed in Relic.cpp (code is canon, per design call):
+  Ember Heart/Permafrost/Overcharge 40-60% -> real +25%; Executioner +120% ->
+  +35%; Deadeye double -> +50% crit; Glass Cannon +80% -> +35%; Second Wind
+  +30% -> +20%; Swift Boots +14% -> +8%; Arcane Battery +40/+40% -> +8/+12%.
+- Character.h UpgradeType enum comments corrected to the real values.
+
+NEW POWER CHOICE CARDS (Phase 2 "build identity" improvement):
+- Mana Flow (common): +1 max mana, +15% mana regen. Tempo compensation for the
+  removed +5-mana-per-level without re-inflating the pool.
+- Class Attunement (rare): +25% class resource gain (Warrior Rage / Paladin
+  Faith / Rogue Combo Points, with a fractional bank so +25% is real for combo
+  points). Only offered to those three classes.
+- Overload (rare, TRADEOFF): +15% class ability damage but every cast costs
+  +1 mana. Routed through Character::GetAbilityCost so the charge site, the
+  cast gate, the HUD ready-check, and Zeph's inspect card all show/charge the
+  real surcharged cost. Ultimates (drain-all) are exempt.
+- Pool shape per level-up: up to 2 learned-ability upgrade cards, then a 45%
+  chance one slot is a build-shaping rare (Attunement/Overload), remaining
+  slots from the modest utility pool (now including Mana Flow).
+TUNING POINTS: the 45% build-card chance, Overload stack behavior (each stack
++15% dmg / +1 mana - self-limiting since base costs are 1-4), and Attunement
+stacking (uncapped for now; watch Paladin Faith uptime in telemetry).

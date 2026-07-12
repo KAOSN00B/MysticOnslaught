@@ -5,6 +5,7 @@
 #include "VirtualCanvas.h"
 #include "Character.h"
 #include "VirtualCanvas.h"
+#include "ElementalCombos.h"
 
 #include <algorithm>
 #include <cmath>
@@ -160,6 +161,18 @@ void ProjectileSystem::UpdateSpreadProjectiles(std::vector<SpreadProjectile>& pr
                 Color dmgColor = (element == AbilityType::IceSpread || element == AbilityType::IceBolt) ? SKYBLUE :
                     (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt) ? YELLOW : ORANGE;
                 ctx.vfx->SpawnFloatingText(enemy->GetWorldPos(), hitDamage, dmgColor);
+            }
+
+            // Mage elemental combos: read the status the PREVIOUS cast left on the
+            // target (fire shatters frozen, electric conducts, etc.) BEFORE this
+            // hit applies its own element below. See ElementalCombos.h.
+            int comboBonus = ResolveElementalCombo(*enemy, element, ctx.vfx);
+            // Combo Resonance class card scales the reaction payoff.
+            comboBonus = (int)roundf(comboBonus * ctx.player->GetComboBonusMult());
+            if (comboBonus > 0)
+            {
+                enemy->TakeDamage(comboBonus, ctx.player->GetWorldPos());
+                ctx.vfx->SpawnFloatingText(enemy->GetWorldPos(), comboBonus, GOLD);
             }
 
             Character::CastType hitEffectType = Character::CastType::FireSpread;

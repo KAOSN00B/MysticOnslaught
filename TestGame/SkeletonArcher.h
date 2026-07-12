@@ -34,6 +34,8 @@ public:
 
     void ApplyFreeze(float duration) override;
     SkeletonArcher* AsSkeletonArcher() override { return this; }
+    EnemyRole GetEncounterRole() const override { return EnemyRole::Ranged; }
+    int       GetSpawnCost()     const override { return 2; }
     const char* GetTuningName() const override { return "SkeletonArcher"; }
 
     // Arrow firing interface (read by CombatDirector after Update)

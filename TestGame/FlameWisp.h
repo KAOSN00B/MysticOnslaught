@@ -33,6 +33,8 @@ public:
     Capsule2D GetCapsule()      const override;
 
     FlameWisp* AsFlameWisp() override { return this; }
+    EnemyRole GetEncounterRole() const override { return EnemyRole::Zoner; }
+    int       GetSpawnCost()     const override { return 3; }
     const char* GetTuningName() const override { return "FlameWisp"; }
     bool UsesDirectPursuit()      const override { return true; }
     bool IgnoresPropCollisions()  const override { return true; }

@@ -126,7 +126,7 @@ void OverlayRenderer::DrawExpTally(const ExpTallyRenderContext& ctx) const
     const float cx = sw * 0.5f;
     const int levelsGained = std::max(0, ctx.player->GetLevel() - ctx.tallyStartLevel);
 
-    const char* title = (levelsGained > 0) ? "Level Up!" : "Room Cleared!";
+    const char* title = (levelsGained > 0) ? "Power Choice Earned!" : "Room Cleared!";
     static constexpr int kTitleSize = 52;
     int titleW = MeasureText(title, kTitleSize);
     DrawText(title, (int)(cx - titleW * 0.5f), (int)(sh * 0.28f), kTitleSize, RAYWHITE);
@@ -140,29 +140,13 @@ void OverlayRenderer::DrawExpTally(const ExpTallyRenderContext& ctx) const
 
     if (levelsGained > 0)
     {
-        auto prevInt = [levelsGained](int currentValue, int perLevelGain) -> int
-        {
-            return currentValue - perLevelGain * levelsGained;
-        };
-        auto prevFloat = [levelsGained](float currentValue, float perLevelGain) -> float
-        {
-            return currentValue - perLevelGain * (float)levelsGained;
-        };
-
-        std::string hpLine   = "HP  " + std::to_string(prevInt((int)ctx.player->GetMaxHealthValue(), Character::kLevelHpGain))
-            + " -> " + std::to_string((int)ctx.player->GetMaxHealthValue());
-        std::string atkLine  = "ATK  " + std::to_string((int)std::ceil(prevFloat(ctx.player->GetAttackPowerValue(), Character::kLevelAttackGain)))
-            + " -> " + std::to_string((int)std::ceil(ctx.player->GetAttackPowerValue()));
-        std::string manaLine = "MP  " + std::to_string(prevInt(ctx.player->GetMaxMana(), Character::kLevelManaGain))
-            + " -> " + std::to_string(ctx.player->GetMaxMana());
-
-        // Armour does not auto-gain on level-up — it is earned through upgrades only.
-
-        static constexpr int kGainSize = 24;
-        float gainY = sh * 0.465f;
-        DrawText(hpLine.c_str(),   (int)(cx - MeasureText(hpLine.c_str(),   kGainSize) * 0.5f), (int)gainY,          kGainSize, Color{190, 255, 190, 255});
-        DrawText(atkLine.c_str(),  (int)(cx - MeasureText(atkLine.c_str(),  kGainSize) * 0.5f), (int)(gainY + 30.f), kGainSize, Color{255, 210, 160, 255});
-        DrawText(manaLine.c_str(), (int)(cx - MeasureText(manaLine.c_str(), kGainSize) * 0.5f), (int)(gainY + 60.f), kGainSize, Color{165, 195, 255, 255});
+        const char* choiceLine = (levelsGained == 1)
+            ? "Choose one upgrade to shape this run."
+            : TextFormat("%d choices waiting - one for each level.", levelsGained);
+        static constexpr int kChoiceSize = 24;
+        DrawText(choiceLine,
+            (int)(cx - MeasureText(choiceLine, kChoiceSize) * 0.5f),
+            (int)(sh * 0.49f), kChoiceSize, Color{190, 220, 255, 255});
     }
 
     static const Color kExpFill = { 255, 210, 0, 230 };
@@ -196,7 +180,7 @@ void OverlayRenderer::DrawExpTally(const ExpTallyRenderContext& ctx) const
     {
         const char* hint = nullptr;
         if (ctx.tallyLevelUpsRemaining > 0 && !ctx.tallyChoiceChaining)
-            hint = (ctx.promptMode == InputPromptMode::Gamepad) ? "A: Choose an Upgrade!" : (ctx.promptMode == InputPromptMode::Touch) ? "Tap to choose an upgrade!" : "Space / Enter  -  Choose an Upgrade!";
+            hint = (ctx.promptMode == InputPromptMode::Gamepad) ? "A: Choose Power" : (ctx.promptMode == InputPromptMode::Touch) ? "Tap to choose power" : "Space / Enter  -  Choose Power";
         else
             hint = PromptContinue(ctx.promptMode);
         int hintW = MeasureText(hint, 26);

@@ -765,7 +765,15 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     else { _roomModHpMult = 1.f; _roomModDmgMult = 1.f; }
 
     _player.SetWorldPos(playerSpawnPos);
-    _player.Revive();
+    // Sustain rework: entering a room no longer heals — HP carries between
+    // rooms. Death still fully heals via Revive() on the village respawn path.
+    _player.RefreshForRoomEntry();
+    _roomLifestealHealed = 0;   // per-room sustain caps reset here
+    _roomHealDrops       = 0;
+    // Telemetry: stamp the room so the clear block can measure it.
+    _roomEnterTime = GetTime();
+    _roomEnterGold = _player.GetGold();
+    _player.ResetTelemetryCounters();
     _cameraPos = { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
     _props.clear();
 
@@ -879,7 +887,7 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
     _player.SetWorldPos({ sw * 0.5f, sh * 0.5f });
-    _player.Revive();
+    _player.RefreshForRoomEntry();   // debug path — same no-heal rule as live rooms
     _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
     _cameraPos = { sw * 0.5f, sh * 0.5f };
 
@@ -1414,11 +1422,17 @@ void Engine::SpawnEnemies()
     ctx.eliteLeapTimer = &_eliteLeapTimer;
     ctx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
     ctx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
+    ctx.playerPos = _player.GetWorldPos();
     ctx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
     ctx.spawnCyclops = [&](Vector2 pos) { return SpawnCyclops(pos); };
     ctx.spawnOgre = [&](Vector2 pos) { return SpawnOgre(pos); };
     ctx.spawnMolarbeast = [&](Vector2 pos) { SpawnMolarbeast(pos); };
     ctx.spawnBossSupportAdds = [&]() { SpawnBossSupportAdds(); };
+    ctx.spawnSkeletonArcher = [&](Vector2 pos) { return SpawnSkeletonArcher(pos); };
+    ctx.spawnFlameWisp      = [&](Vector2 pos) { return SpawnFlameWisp(pos); };
+    ctx.spawnShieldbearer   = [&](Vector2 pos) { return SpawnShieldbearer(pos); };
+    ctx.spawnPhantom        = [&](Vector2 pos) { return SpawnPhantom(pos); };
+    ctx.spawnWarchief       = [&](Vector2 pos) { return SpawnWarchief(pos); };
     _combatDirector.SpawnEnemies(ctx);
 }
 
@@ -1913,6 +1927,26 @@ void Engine::Update(float dt)
         bool gpLeave = _shop.UpdateGamepadNav(GetFrameTime(), _player);
         if (gpLeave || _shop.Update(_player, _debug.IsActive()))
         {
+            ShopContractType accepted = _shop.ConsumeAcceptedContract();
+            if (accepted != ShopContractType::Count)
+            {
+                RunModifier contract;
+                contract.shopContract = accepted;
+                contract.active = false;
+                contract.roomsRemaining = 1;
+                contract.tint = Color{ 215, 155, 70, 255 };
+                switch (accepted)
+                {
+                case ShopContractType::Untouched:       contract.label = "UNTOUCHED"; break;
+                case ShopContractType::ArcaneRestraint: contract.label = "ARCANE RESTRAINT"; break;
+                case ShopContractType::AgainstTheClock: contract.label = "AGAINST THE CLOCK"; break;
+                default: break;
+                }
+                _runModifiers.push_back(contract);
+                _contractToastText = contract.label + " ARMED FOR NEXT FIGHT";
+                _contractToastTimer = 3.f;
+            }
+
             if (_levelUpReturnState == GameState::DungeonRun)
                 _gameState = GameState::DungeonRun;
             else if (_levelUpReturnState == GameState::VillagePlayground ||
@@ -4243,6 +4277,7 @@ void Engine::UpdateEnemyCount(float dt)
     ctx.bossesDefeated = &_bossesDefeated;
     ctx.demoCompleted = &_demoCompleted;
     ctx.pendingExp = &_pendingExp;
+    ctx.awardKillExp = (_gameState != GameState::DungeonRun);
     ctx.spawnEnemyDrop = [&](Vector2 worldPos, bool isOgre, bool isBoss) { SpawnEnemyDrop(worldPos, isOgre, isBoss); };
     ctx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
     ctx.spawnPoisonCloud = [&](Vector2 pos) { SpawnPoisonCloud(pos, Sporeling::kPoisonCloudRadius); };
@@ -4794,7 +4829,7 @@ void Engine::DrawAbilityBar()
     {
         AbilityType ability = _player.GetLearnedAbility(i);
         bool isEmpty = (ability == AbilityType::None);
-        bool canCast = !isEmpty && _player.GetMana() >= GetAbilityManaCost(ability);
+        bool canCast = !isEmpty && _player.GetMana() >= _player.GetAbilityCost(ability);   // includes Overload surcharge
         float x = startX + i * (slotSize + slotGap);
         Rectangle slot{ x, slotY, slotSize, slotSize };
         bool hovered = !isEmpty && CheckCollisionPointRec(mouse, slot);
@@ -4976,6 +5011,154 @@ void Engine::GenerateStartingAbilityOptions()
 
 void Engine::GenerateLevelUpOptions(LevelUpOfferContext context)
 {
+    _levelUpOfferContext = context;
+
+    if (context == LevelUpOfferContext::NormalLevel)
+    {
+        // Power Choices prioritize the abilities this run is actually using.
+        // Up to two cards improve learned abilities; remaining cards are modest
+        // defensive/utility options, never a mandatory flat damage increase.
+        UpgradeType abilityPool[kAllAbilityCount];
+        int abilityCount = 0;
+        for (int i = 0; i < kAllAbilityCount; i++)
+        {
+            AbilityType ability = kAllAbilities[i];
+            if (_player.HasLearnedAbility(ability) && _player.CanUpgradeAbility(ability))
+                abilityPool[abilityCount++] = UpgradeTypeForAbility(ability);
+        }
+        for (int i = 0; i < abilityCount; i++)
+        {
+            int j = GetRandomValue(i, abilityCount - 1);
+            UpgradeType tmp = abilityPool[i]; abilityPool[i] = abilityPool[j]; abilityPool[j] = tmp;
+        }
+
+        // Utility pool is class-aware: Attack Range only matters to the three
+        // melee classes — Mage / Hunter / Warlock never see it.
+        PlayerClass cls = _player.GetClass();
+        bool isMelee = (cls == PlayerClass::Warrior || cls == PlayerClass::Paladin
+                        || cls == PlayerClass::Rogue);
+        UpgradeType utilityPool[6];
+        int utilityCount = 0;
+        if (isMelee) utilityPool[utilityCount++] = UpgradeType::AttackRange;
+        utilityPool[utilityCount++] = UpgradeType::MaxHealth;
+        utilityPool[utilityCount++] = UpgradeType::MaxMana;
+        utilityPool[utilityCount++] = UpgradeType::Defense;
+        utilityPool[utilityCount++] = UpgradeType::MoveSpeed;
+        utilityPool[utilityCount++] = UpgradeType::ManaFlow;
+        for (int i = 0; i < utilityCount; i++)
+        {
+            int j = GetRandomValue(i, utilityCount - 1);
+            UpgradeType tmp = utilityPool[i]; utilityPool[i] = utilityPool[j]; utilityPool[j] = tmp;
+        }
+
+        // Class card pool: 8 build-shaping cards per class, plus the generic
+        // build rares (Class Attunement for gain-resource classes, Overload
+        // for everyone). These make Power Choices speak the class's language.
+        UpgradeType specialPool[10];
+        int specialCount = 0;
+        switch (cls)
+        {
+        case PlayerClass::Mage:
+            specialPool[specialCount++] = UpgradeType::MagePyromancy;
+            specialPool[specialCount++] = UpgradeType::MageInfernalMastery;
+            specialPool[specialCount++] = UpgradeType::MageCryomancy;
+            specialPool[specialCount++] = UpgradeType::MageGlacialMastery;
+            specialPool[specialCount++] = UpgradeType::MageStormAttunement;
+            specialPool[specialCount++] = UpgradeType::MageTempestMastery;
+            specialPool[specialCount++] = UpgradeType::MageComboResonance;
+            specialPool[specialCount++] = UpgradeType::MageArcaneHaste;
+            break;
+        case PlayerClass::Warrior:
+            specialPool[specialCount++] = UpgradeType::WarriorSmolderingFury;
+            specialPool[specialCount++] = UpgradeType::WarriorFuriousMight;
+            specialPool[specialCount++] = UpgradeType::WarriorBattleTrance;
+            specialPool[specialCount++] = UpgradeType::WarriorUnbreakable;
+            specialPool[specialCount++] = UpgradeType::WarriorColossus;
+            specialPool[specialCount++] = UpgradeType::WarriorWarlordsReach;
+            specialPool[specialCount++] = UpgradeType::WarriorBattleMeditation;
+            specialPool[specialCount++] = UpgradeType::WarriorWeaponMaster;
+            break;
+        case PlayerClass::Hunter:
+            specialPool[specialCount++] = UpgradeType::HunterPredatorsRhythm;
+            specialPool[specialCount++] = UpgradeType::HunterQuarry;
+            specialPool[specialCount++] = UpgradeType::HunterApexPredator;
+            specialPool[specialCount++] = UpgradeType::HunterFletcher;
+            specialPool[specialCount++] = UpgradeType::HunterTrappersCunning;
+            specialPool[specialCount++] = UpgradeType::HunterSwiftQuiver;
+            specialPool[specialCount++] = UpgradeType::HunterSurvivalist;
+            specialPool[specialCount++] = UpgradeType::HunterFocusedBreathing;
+            break;
+        case PlayerClass::Rogue:
+            specialPool[specialCount++] = UpgradeType::RogueDeepReserves;
+            specialPool[specialCount++] = UpgradeType::RogueRuthlessFinisher;
+            specialPool[specialCount++] = UpgradeType::RogueExsanguinate;
+            specialPool[specialCount++] = UpgradeType::RogueToxinExpert;
+            specialPool[specialCount++] = UpgradeType::RogueMasterPoisoner;
+            specialPool[specialCount++] = UpgradeType::RogueFleetFootwork;
+            specialPool[specialCount++] = UpgradeType::RogueShadowConditioning;
+            specialPool[specialCount++] = UpgradeType::RogueOpportunist;
+            break;
+        case PlayerClass::Paladin:
+            specialPool[specialCount++] = UpgradeType::PaladinHolyMight;
+            specialPool[specialCount++] = UpgradeType::PaladinDivineWrath;
+            specialPool[specialCount++] = UpgradeType::PaladinZealotsFury;
+            specialPool[specialCount++] = UpgradeType::PaladinMirroredAegis;
+            specialPool[specialCount++] = UpgradeType::PaladinDevotion;
+            specialPool[specialCount++] = UpgradeType::PaladinCrusadersVitality;
+            specialPool[specialCount++] = UpgradeType::PaladinSanctuary;
+            specialPool[specialCount++] = UpgradeType::PaladinDivineConduit;
+            break;
+        case PlayerClass::Warlock:
+            specialPool[specialCount++] = UpgradeType::WarlockGrimHarvest;
+            specialPool[specialCount++] = UpgradeType::WarlockDarkPact;
+            specialPool[specialCount++] = UpgradeType::WarlockSoulBargain;
+            specialPool[specialCount++] = UpgradeType::WarlockLingeringMalice;
+            specialPool[specialCount++] = UpgradeType::WarlockVoidAttunement;
+            specialPool[specialCount++] = UpgradeType::WarlockCorruptedVitality;
+            specialPool[specialCount++] = UpgradeType::WarlockSoulConduit;
+            specialPool[specialCount++] = UpgradeType::WarlockOccultPower;
+            break;
+        default: break;
+        }
+        if (isMelee) specialPool[specialCount++] = UpgradeType::ClassAttunement;
+        specialPool[specialCount++] = UpgradeType::Overload;
+        for (int i = 0; i < specialCount; i++)
+        {
+            int j = GetRandomValue(i, specialCount - 1);
+            UpgradeType tmp = specialPool[i]; specialPool[i] = specialPool[j]; specialPool[j] = tmp;
+        }
+
+        int optionCount = 0;
+        int abilityOffers = std::min(2, abilityCount);
+        for (int i = 0; i < abilityOffers; i++)
+            _levelUpOptions[optionCount++] = abilityPool[i];
+        // Each remaining slot: 55% chance of a class/build card so Power
+        // Choices regularly ask a class question; utilities fill the rest.
+        int sIdx = 0, uIdx = 0;
+        while (optionCount < 3)
+        {
+            if (sIdx < specialCount && GetRandomValue(0, 99) < 55)
+                _levelUpOptions[optionCount++] = specialPool[sIdx++];
+            else if (uIdx < utilityCount)
+                _levelUpOptions[optionCount++] = utilityPool[uIdx++];
+            else if (sIdx < specialCount)
+                _levelUpOptions[optionCount++] = specialPool[sIdx++];
+            else
+                break;
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            int j = GetRandomValue(i, 2);
+            UpgradeType tmp = _levelUpOptions[i]; _levelUpOptions[i] = _levelUpOptions[j]; _levelUpOptions[j] = tmp;
+        }
+
+        _showUltimateRow   = false;
+        _ultimateRowPicked = false;
+        _regularRowPicked  = false;
+        return;
+    }
+
     // Separate pools by rarity. Ability learn/upgrade cards remain on the boss
     // reward screen; these offers are purely the RPG stat-growth layer.
     UpgradeType commonPool[6] = {
@@ -4991,8 +5174,6 @@ void Engine::GenerateLevelUpOptions(LevelUpOfferContext context)
         UpgradeType::WarGod,    UpgradeType::Resilience, UpgradeType::BladeStorm,
         UpgradeType::Juggernaut, UpgradeType::ArcaneColossus
     };
-
-    _levelUpOfferContext = context;
 
     auto shufflePool = [](UpgradeType* pool, int size) {
         for (int i = 0; i < size; i++)
@@ -6325,7 +6506,7 @@ void Engine::DrawLevelUpChoice()
     else if (showUlt)
         title = "Now choose your Ultimate:";
     else if (showReg)
-        title = "Level Up  -  Choose a stat upgrade:";
+        title = "POWER CHOICE  -  Shape your build:";
     else
         title = "LEVEL UP!";
 
@@ -6386,24 +6567,25 @@ void Engine::DrawLevelUpChoice()
         {
         case UpgradeType::AttackPower:
             name = "Attack Power";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.10f);
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 0.5f);
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::AttackRange:
             name = "Attack Range";
             desc = "Range " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
-                + float1String(_player.GetAttackRangeMultiplierValue() * 1.10f) + "x";
+                + float1String(_player.GetAttackRangeMultiplierValue() + 0.08f) + "x";
             icon = &_upgradeAttackRangeTex;
             break;
         case UpgradeType::MaxHealth:
             name = "Max Health";
-            desc = linePreview("HP", _player.GetMaxHealthValue(),
-                _player.GetMaxHealthValue() + std::max(1, (int)std::ceil(_player.GetMaxHealthValue() * 0.15f)));
+            desc = linePreview("HP", _player.GetMaxHealthValue(), _player.GetMaxHealthValue() + 2.f)
+                + "\nDoes not heal";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::MaxMana:
             name = "Max Mana";
-            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 15));
+            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 4))
+                + "\nDoes not refill";
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::Defense:
@@ -6416,85 +6598,356 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::MoveSpeed:
             name = "Move Speed";
-            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() * 1.10f);
+            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() + 12.f);
             icon = &_upgradeMoveSpeedTex;
             break;
         // -- Rare --------------------------------------------------------------
         case UpgradeType::IronConstitution:
             name = "Iron Constitution";
             desc = linePreview("HP", _player.GetMaxHealthValue(),
-                _player.GetMaxHealthValue() + std::max(2, (int)std::ceil(_player.GetMaxHealthValue() * 0.25f)));
+                std::ceil(_player.GetMaxHealthValue() * 1.15f))
+                + "\nHeals the gained HP";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::SwiftFeet:
             name = "Swift Feet";
-            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() * 1.15f);
+            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() * 1.08f);
             icon = &_upgradeMoveSpeedTex;
             break;
         case UpgradeType::Ferocity:
             name = "Ferocity";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.15f);
+            desc = linePreview("Atk", _player.GetAttackPowerValue(),
+                _player.GetAttackPowerValue() + std::max(1.0f, _player.GetAttackPowerValue() * 0.10f));
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::ArcaneMind:
             name = "Arcane Mind";
-            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 25))
-                + "\nRegen " + std::to_string(roundedStat(_player.GetManaRegenPerSecond()))
-                + " -> " + std::to_string(roundedStat(_player.GetManaRegenPerSecond() * 1.20f));
+            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 8))
+                + "\nRegen +10%";
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::IronSkin:
             name = "Iron Skin";
             desc = "Armour " + std::to_string(_player.GetArmour()) + " -> "
-                + std::to_string(std::min(_player.GetArmour() + 1, _player.GetMaxArmour()))
+                + std::to_string(std::min(_player.GetArmour() + 2, _player.GetMaxArmour()))
                 + " / " + std::to_string(_player.GetMaxArmour())
-                + "\nAbsorbs 1 hit";
+                + "\nAbsorbs 2 hits";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::BladeEdge:
             name = "Blade Edge";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.10f)
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 1.f)
                 + "\nRange " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
-                + float1String(_player.GetAttackRangeMultiplierValue() * 1.08f) + "x";
+                + float1String(_player.GetAttackRangeMultiplierValue() + 0.10f) + "x";
             icon = &_upgradeAttackRangeTex;
             break;
         // -- Epic --------------------------------------------------------------
         case UpgradeType::WarGod:
             name = "War God";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.20f)
+            desc = linePreview("Atk", _player.GetAttackPowerValue(),
+                _player.GetAttackPowerValue() + std::max(1.75f, _player.GetAttackPowerValue() * 0.15f))
                 + "\nRange " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
-                + float1String(_player.GetAttackRangeMultiplierValue() * 1.10f) + "x";
+                + float1String(_player.GetAttackRangeMultiplierValue() + 0.12f) + "x";
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::Resilience:
             name = "Resilience";
             desc = linePreview("HP", _player.GetMaxHealthValue(),
-                _player.GetMaxHealthValue() + std::max(2, (int)std::ceil(_player.GetMaxHealthValue() * 0.30f)))
-                + "\nHeal +3";
+                std::ceil(_player.GetMaxHealthValue() * 1.18f))
+                + "\nHeals the gained HP";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::BladeStorm:
             name = "Blade Storm";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() * 1.18f)
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 1.5f)
                 + "\nSpeed " + std::to_string(roundedStat(_player.GetMoveSpeedValue())) + " -> "
-                + std::to_string(roundedStat(_player.GetMoveSpeedValue() * 1.18f));
+                + std::to_string(roundedStat(_player.GetMoveSpeedValue() * 1.08f));
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::Juggernaut:
             name = "Juggernaut";
             desc = linePreview("HP", _player.GetMaxHealthValue(),
-                _player.GetMaxHealthValue() + std::max(2, (int)std::ceil(_player.GetMaxHealthValue() * 0.20f)))
+                std::ceil(_player.GetMaxHealthValue() * 1.12f))
                 + "\nArmour " + std::to_string(_player.GetArmour()) + " -> "
-                + std::to_string(std::min(_player.GetArmour() + 1, _player.GetMaxArmour()))
+                + std::to_string(std::min(_player.GetArmour() + 2, _player.GetMaxArmour()))
                 + " / " + std::to_string(_player.GetMaxArmour());
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::ArcaneColossus:
             name = "Arcane Colossus";
-            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 30))
+            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 10))
                 + "\nAtk " + std::to_string(roundedStat(_player.GetAttackPowerValue()))
-                + " -> " + std::to_string(roundedStat(_player.GetAttackPowerValue() * 1.15f));
+                + " -> " + std::to_string(roundedStat(_player.GetAttackPowerValue() + 1.5f))
+                + "\nRegen +15%";
             icon = &_upgradeMagicTex;
+            break;
+        // -- Power Choice additions ---------------------------------------------
+        case UpgradeType::ManaFlow:
+            name = "Mana Flow";
+            desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 1))
+                + "\nRegen +15%";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::ClassAttunement:
+        {
+            name = "Class Attunement";
+            const char* resourceName = "Resource";
+            switch (_player.GetClass())
+            {
+            case PlayerClass::Warrior: resourceName = "Rage";         break;
+            case PlayerClass::Paladin: resourceName = "Faith";        break;
+            case PlayerClass::Rogue:   resourceName = "Combo Points"; break;
+            default: break;
+            }
+            desc = std::string(resourceName) + " gain +25%";
+            icon = &_upgradeMagicTex;
+            break;
+        }
+        case UpgradeType::Overload:
+            name = "Overload";
+            desc = "Abilities +15% damage\nBUT casts cost +1 mana";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        // -- Class-specific Power Choice cards --------------------------------
+        case UpgradeType::MagePyromancy:
+            name = "Pyromancy";
+            desc = "Fire spells deal\n+20% damage";
+            icon = &_abilityIconFireTex;
+            break;
+        case UpgradeType::MageInfernalMastery:
+            name = "Infernal Mastery";
+            desc = "Fire spells deal\n+35% damage";
+            icon = &_abilityIconFireTex;
+            break;
+        case UpgradeType::MageCryomancy:
+            name = "Cryomancy";
+            desc = "Ice spells deal\n+20% damage";
+            icon = &_abilityIconIceTex;
+            break;
+        case UpgradeType::MageGlacialMastery:
+            name = "Glacial Mastery";
+            desc = "Ice spells deal\n+35% damage";
+            icon = &_abilityIconIceTex;
+            break;
+        case UpgradeType::MageStormAttunement:
+            name = "Storm Attunement";
+            desc = "Electric spells deal\n+20% damage";
+            icon = &_abilityIconElectricTex;
+            break;
+        case UpgradeType::MageTempestMastery:
+            name = "Tempest Mastery";
+            desc = "Electric spells deal\n+35% damage";
+            icon = &_abilityIconElectricTex;
+            break;
+        case UpgradeType::MageComboResonance:
+            name = "Combo Resonance";
+            desc = "Elemental combo reactions\ndeal DOUBLE bonus damage";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::MageArcaneHaste:
+            name = "Arcane Haste";
+            desc = "Mana regen +20%";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::WarriorSmolderingFury:
+            name = "Smoldering Fury";
+            desc = "Rage decays 50% slower\nout of combat";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::WarriorFuriousMight:
+            name = "Furious Might";
+            desc = "Full-Rage damage bonus\n+50% -> +70%";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::WarriorBattleTrance:
+            name = "Battle Trance";
+            desc = "Rage gain +25% AND\nfull-Rage bonus +10%";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::WarriorUnbreakable:
+            name = "Unbreakable";
+            desc = "+1 armour, +1 max HP";
+            icon = &_upgradeDefenseTex;
+            break;
+        case UpgradeType::WarriorColossus:
+            name = "Colossus";
+            desc = "+2 max HP, +0.5 attack";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::WarriorWarlordsReach:
+            name = "Warlord's Reach";
+            desc = "Attack range +0.10x";
+            icon = &_upgradeAttackRangeTex;
+            break;
+        case UpgradeType::WarriorBattleMeditation:
+            name = "Battle Meditation";
+            desc = "Heal 1 HP when a\nroom is cleared";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::WarriorWeaponMaster:
+            name = "Weapon Master";
+            desc = "Class abilities +8% damage";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::HunterPredatorsRhythm:
+            name = "Predator's Rhythm";
+            desc = "Every 2nd shot marks prey\n(instead of every 3rd)";
+            icon = &_upgradeAttackRangeTex;
+            break;
+        case UpgradeType::HunterQuarry:
+            name = "Hunter's Quarry";
+            desc = "Marked enemies take\n+15% more damage";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::HunterApexPredator:
+            name = "Apex Predator";
+            desc = "Marked enemies take\n+30% more damage";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::HunterFletcher:
+            name = "Fletcher";
+            desc = "+0.5 attack power";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::HunterTrappersCunning:
+            name = "Trapper's Cunning";
+            desc = "Class abilities +10% damage";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::HunterSwiftQuiver:
+            name = "Swift Quiver";
+            desc = "+12 move speed";
+            icon = &_upgradeMoveSpeedTex;
+            break;
+        case UpgradeType::HunterSurvivalist:
+            name = "Survivalist";
+            desc = "+1 max HP, +1 armour";
+            icon = &_upgradeDefenseTex;
+            break;
+        case UpgradeType::HunterFocusedBreathing:
+            name = "Focused Breathing";
+            desc = "Mana regen +15%";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::RogueDeepReserves:
+            name = "Deep Reserves";
+            desc = "+1 max combo point\n(up to 7)";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::RogueRuthlessFinisher:
+            name = "Ruthless Finisher";
+            desc = "Eviscerate +5% damage\nper combo point";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::RogueExsanguinate:
+            name = "Exsanguinate";
+            desc = "Eviscerate +10% damage\nper combo point";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::RogueToxinExpert:
+            name = "Toxin Expert";
+            desc = "Poison ticks +50% damage";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::RogueMasterPoisoner:
+            name = "Master Poisoner";
+            desc = "Poison ticks +100% damage";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::RogueFleetFootwork:
+            name = "Fleet Footwork";
+            desc = "+12 move speed";
+            icon = &_upgradeMoveSpeedTex;
+            break;
+        case UpgradeType::RogueShadowConditioning:
+            name = "Shadow Conditioning";
+            desc = "+1 max HP";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::RogueOpportunist:
+            name = "Opportunist";
+            desc = "Combo gain +25% AND\nEviscerate +5%/point";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::PaladinHolyMight:
+            name = "Holy Might";
+            desc = "Holy abilities +10% damage";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::PaladinDivineWrath:
+            name = "Divine Wrath";
+            desc = "Holy abilities +18% damage";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::PaladinZealotsFury:
+            name = "Zealot's Fury";
+            desc = "Retribution +6% damage\nper stack (base 12%)";
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::PaladinMirroredAegis:
+            name = "Mirrored Aegis";
+            desc = "Reflected damage\n50% stronger";
+            icon = &_upgradeDefenseTex;
+            break;
+        case UpgradeType::PaladinDevotion:
+            name = "Devotion";
+            desc = "Faith gain +15%";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::PaladinCrusadersVitality:
+            name = "Crusader's Vitality";
+            desc = "+2 max HP";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::PaladinSanctuary:
+            name = "Sanctuary";
+            desc = "+2 armour AND heal 1 HP\non room clear";
+            icon = &_upgradeDefenseTex;
+            break;
+        case UpgradeType::PaladinDivineConduit:
+            name = "Divine Conduit";
+            desc = "+2 max mana,\nmana regen +15%";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::WarlockGrimHarvest:
+            name = "Grim Harvest";
+            desc = "Lifesteal 50% stronger";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::WarlockDarkPact:
+            name = "Dark Pact";
+            desc = "Cursed enemies take\n+10% more damage";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::WarlockSoulBargain:
+            name = "Soul Bargain";
+            desc = "Cursed enemies take\n+25% more damage";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::WarlockLingeringMalice:
+            name = "Lingering Malice";
+            desc = "Curses last +50% longer";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::WarlockVoidAttunement:
+            name = "Void Attunement";
+            desc = "Mana regen +20%";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::WarlockCorruptedVitality:
+            name = "Corrupted Vitality";
+            desc = "+2 max HP";
+            icon = &_upgradeHealthTex;
+            break;
+        case UpgradeType::WarlockSoulConduit:
+            name = "Soul Conduit";
+            desc = "Lifesteal +50% AND\ncurses +25% longer";
+            icon = &_upgradeMagicTex;
+            break;
+        case UpgradeType::WarlockOccultPower:
+            name = "Occult Power";
+            desc = "Class abilities +8% damage";
+            icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::LearnFireSpread:
             name = "Fire Spread";
@@ -6543,13 +6996,21 @@ void Engine::DrawLevelUpChoice()
             break;
         default:
         {
-            // Class abilities (Warrior kit etc.): name/desc from shared metadata.
+            // Learned ability upgrades show their real name and level change.
             AbilityType ab = AbilityForLearnType(type);
             if (ab == AbilityType::None) ab = AbilityForUpgradeType(type);
             if (ab != AbilityType::None)
             {
                 name = GetAbilityName(ab);
-                desc = GetAbilityDesc(ab);
+                if (AbilityForUpgradeType(type) != AbilityType::None)
+                {
+                    int currentLevel = _player.GetAbilityLevel(ab);
+                    desc = "Level " + std::to_string(currentLevel) + " -> "
+                        + std::to_string(std::min(3, currentLevel + 1))
+                        + "\nPower and effects improve";
+                }
+                else
+                    desc = GetAbilityDesc(ab);
                 icon = GetAbilityIcon(ab);
                 if (!icon) icon = &_upgradeAttackPowerTex;
             }
@@ -6951,6 +7412,9 @@ void Engine::HandlePlayerMeleeDamage()
             int dmg  = ScalePlayerHit(*enemy, std::max(1, base), crit);
             enemy->TakeDamage(dmg, _player.GetWorldPos());
             ApplyPlayerLifesteal(dmg);
+            _player.AddRage(8.f);         // Warrior: every landed swing stokes Rage (no-op for others)
+            _player.AddComboPoints(1);    // Rogue: quick strikes bank combo points (no-op for others)
+            _player.AddFaith(4.f);        // Paladin: righteous blows build Faith (no-op for others)
             RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
             _vfx.SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
             hitAny = true;
@@ -7179,6 +7643,9 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
         }
 
         ApplyPlayerLifesteal(dmg);
+        _player.AddRage(4.f);         // Warrior: ability hits build Rage per enemy struck (no-op for others)
+        _player.AddComboPoints(1);    // Rogue: ability hits bank combo per enemy struck (no-op for others)
+        _player.AddFaith(3.f);        // Paladin: holy hits build Faith per enemy struck (no-op for others)
         RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
 
         if (stunSeconds  > 0.f) enemy->ApplyFreeze(stunSeconds);          // stun ≈ frozen hold
@@ -7216,6 +7683,13 @@ static void ApplyMarkInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r
         if (e->IsActive() && e->IsAlive() && CheckCollisionRecs(r, e->GetHitCollisionRec()))
             e->ApplyMark(sec);
 }
+// Warlock curse tag — cursed enemies take bonus Warlock damage (ScalePlayerHit).
+static void ApplyCurseInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, float sec)
+{
+    for (auto& e : es)
+        if (e->IsActive() && e->IsAlive() && CheckCollisionRecs(r, e->GetHitCollisionRec()))
+            e->ApplyCurse(sec);
+}
 // Burn (fire DoT) via the existing burn queue — stack a few delayed bursts so the
 // target visibly "catches fire" instead of taking one hit.
 static void ApplyBurnInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, int dmgPerTick, int ticks, Vector2 src)
@@ -7230,12 +7704,20 @@ void Engine::ApplyPlayerLifesteal(int damageDealt)
 {
     if (!_player.IsLifestealActive() || damageDealt <= 0)
         return;
+    // Sustain rework: lifesteal heals at most kLifestealCapPerRoom HP per room.
+    // Lifesteal is a % of damage dealt, so without a cap every damage upgrade
+    // silently buys more healing — this bounds that loop without touching the
+    // class-identity grants (Rampage / Blade Dance / Drain Life / Demon Form).
+    if (_roomLifestealHealed >= Balance::Sustain::kLifestealCapPerRoom)
+        return;
     _lifestealAccum += damageDealt * _player.GetLifestealFraction();
     if (_lifestealAccum >= 1.f)
     {
         int heal = (int)_lifestealAccum;
         _lifestealAccum -= (float)heal;
+        heal = std::min(heal, Balance::Sustain::kLifestealCapPerRoom - _roomLifestealHealed);
         _player.Heal(heal);
+        _roomLifestealHealed += heal;
     }
 }
 
@@ -7248,8 +7730,29 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     int     level = std::max(1, _player.GetAbilityLevel(ability));
     float   buff  = _player.GetClassDamageMult();
 
+    // Warrior Rage: abilities hit harder as the bar fills (base +50% at full;
+    // the Furious Might class card raises the ceiling).
+    buff *= 1.f + _player.GetRageFullBonus() * _player.GetRagePercent();
+
+    // Paladin Faith: abilities hit up to +40% harder at full Faith — conviction
+    // built by holding ground pays out through holy power (see Character::AddFaith).
+    buff *= 1.f + 0.4f * _player.GetFaithPercent();
+
+    // Overload Power Choice: permanent ability damage bought at +1 mana cost —
+    // the tradeoff card, so it multiplies here rather than adding attack power.
+    buff *= _player.GetAbilityPowerMult();
+
     // Helper to scale a base value by ability level and the active damage buff.
-    auto dmgVal = [&](float base) { return std::max(1, (int)roundf(base * level * buff)); };
+    auto dmgVal = [&](float base) {
+        float levelMult = 1.f + Balance::AbilityDamage::kClassLevelStep * (level - 1);
+        return std::max(1, (int)roundf(base * levelMult * buff));
+    };
+    // Class-card dials: poison tick potency (Toxin Expert) and curse window
+    // length (Lingering Malice). Both default to 1.0 for unaffected classes.
+    auto poisonVal = [&](float base) {
+        return std::max(1, (int)roundf(dmgVal(base) * _player.GetPoisonPotency()));
+    };
+    const float curseDur = _player.GetCurseDurationMult();
 
     // Attack Editor override: if a hitbox was saved for this ability, use it
     // (centred at the box offset from the player, mirrored by facing). No file =
@@ -7339,17 +7842,27 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::WarCry:
     {
+        // Identity: the roar is a RAGE battery + toughness, not just flat damage —
+        // +30 Rage, one armour slot (absorbs the next hit), and the damage buff.
         _player.GrantDamageBuff(1.4f, 6.f);
+        _player.AddRage(30.f);
+        _player.AddArmour(1);
         _player.Heal(2);
+        _vfx.SpawnFloatingLabel(playerPos, "RAGE!", Color{ 255, 140, 40, 255 }, 1.4f);
         pushVfx(WarriorVfxKind::Cry, 0.6f, 160.f, Color{ 255, 180, 60, 255 });
         TriggerScreenShake(4.f, 0.15f);
         break;
     }
     case AbilityType::GroundSlam:
     {
-        DamageEnemiesInRect(radialRect(340.f), dmgVal(7.f + atk * 1.5f), 1.f, 1.5f, 0.f, 0);
-        ApplyVulnInRect(_enemies, radialRect(340.f), 1.3f, 5.f);   // quake cracks armor
-        pushVfx(WarriorVfxKind::Slam, 0.5f, 340.f, Color{ 235, 200, 120, 255 });
+        // Identity payoff: the quake CONSUMES all Rage — up to +45% radius at a
+        // full bar (the damage itself already scaled with Rage via `buff` above,
+        // so the radius is the spend reward and avoids double-dipping).
+        float rageFraction = _player.ConsumeAllRage();
+        float slamRadius   = 340.f * (1.f + 0.45f * rageFraction);
+        DamageEnemiesInRect(radialRect(slamRadius), dmgVal(7.f + atk * 1.5f), 1.f, 1.5f, 0.f, 0);
+        ApplyVulnInRect(_enemies, radialRect(slamRadius), 1.3f, 5.f);   // quake cracks armor
+        pushVfx(WarriorVfxKind::Slam, 0.5f, slamRadius, Color{ 235, 200, 120, 255 });
         StopSound(_explosionSound);
         PlaySound(_explosionSound);
         TriggerScreenShake(14.f, 0.4f);
@@ -7378,7 +7891,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::FanOfKnives:
     {
         DamageEnemiesInRect(forwardRect(360.f, 240.f), dmgVal(4.f + atk * 0.7f), 1.f, 0.f, 0.f, 0);
-        ApplyPoisonInRect(_enemies, forwardRect(360.f, 240.f), dmgVal(1.f), 4.f);   // coated blades
+        ApplyPoisonInRect(_enemies, forwardRect(360.f, 240.f), poisonVal(1.f), 4.f);   // coated blades
         pushVfx(WarriorVfxKind::Fan, 0.3f, 360.f, Color{ 220, 225, 235, 255 });
         break;
     }
@@ -7401,13 +7914,16 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         pool.lifetime = 3.5f; pool.radius = 130.f; pool.tint = Color{ 120, 210, 90, 255 };
         pool.tickDamage = dmgVal(1.f + atk * 0.2f); pool.tickInterval = 0.4f;
         _warriorVfx.push_back(pool);
-        ApplyPoisonInRect(_enemies, { spot.x - 130.f, spot.y - 130.f, 260.f, 260.f }, dmgVal(1.f), 5.f);   // toxic cloud
+        ApplyPoisonInRect(_enemies, { spot.x - 130.f, spot.y - 130.f, 260.f, 260.f }, poisonVal(1.f), 5.f);   // toxic cloud
         break;
     }
     case AbilityType::Backstab:
     {
-        DamageEnemiesInRect(forwardRect(150.f, 120.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 3.f, dmgVal(1.f));   // deep wound bleeds
+        int struck = DamageEnemiesInRect(forwardRect(150.f, 120.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 3.f, dmgVal(1.f));   // deep wound bleeds
         ApplyVulnInRect(_enemies, forwardRect(150.f, 120.f), 1.3f, 4.f);   // exposes the struck foe (weaken)
+        // Identity: the opener banks TWO extra combo points when it connects
+        // (on top of the per-hit point), setting up Eviscerate's payoff.
+        if (struck > 0) _player.AddComboPoints(2);
         pushVfx(WarriorVfxKind::Flurry, 0.22f, 150.f, Color{ 255, 90, 90, 255 });
         TriggerScreenShake(6.f, 0.10f);
         break;
@@ -7422,7 +7938,17 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Eviscerate:
     {
-        DamageEnemiesInRect(forwardRect(210.f, 130.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 3.f, dmgVal(0.9f));   // flurry of cuts bleeds
+        // Identity payoff: the FINISHER spends every banked combo point for up to
+        // +75% damage at 5 points (see Character::AddComboPoints). Spent BEFORE
+        // the hit so the flurry that lands doesn't refill what it just consumed.
+        int   combo      = _player.ConsumeAllComboPoints();
+        float finishMult = 1.f + _player.GetEvisceratePerCombo() * combo;
+        if (combo >= 3)
+            _vfx.SpawnFloatingLabel(playerPos, TextFormat("FINISHER x%d", combo),
+                                    Color{ 235, 235, 245, 255 }, 1.3f);
+        DamageEnemiesInRect(forwardRect(210.f, 130.f),
+            std::max(1, (int)roundf(dmgVal(5.f + atk * 1.1f) * finishMult)),
+            1.f, 0.f, 3.f, dmgVal(0.9f));   // flurry of cuts bleeds
         pushVfx(WarriorVfxKind::Flurry, 0.3f, 210.f, Color{ 235, 235, 245, 255 });
         break;
     }
@@ -7460,12 +7986,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::PiercingShot:
     {
         DamageEnemiesInRect(forwardRect(600.f, 70.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 2.5f, dmgVal(0.8f));   // barbed arrow bleeds
+        ApplyMarkInRect(_enemies, forwardRect(600.f, 70.f), 6.f);   // marks everything the arrow pierces (Hunter identity)
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::Multishot:
     {
         DamageEnemiesInRect(forwardRect(380.f, 260.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 0.f, 0);
-        ApplyPoisonInRect(_enemies, forwardRect(380.f, 260.f), dmgVal(1.f), 4.f);   // poison-tipped volley
+        ApplyPoisonInRect(_enemies, forwardRect(380.f, 260.f), poisonVal(1.f), 4.f);   // poison-tipped volley
         pushVfx(WarriorVfxKind::Fan, 0.3f, 380.f, Color{ 140, 235, 210, 255 });
         break;
     }
@@ -7516,7 +8043,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::ArrowStorm:
     {
         DamageEnemiesInRect(radialRect(1000.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 0.f, 0);
-        ApplyPoisonInRect(_enemies, radialRect(1000.f), dmgVal(1.f), 4.f);   // a rain of poisoned shafts
+        ApplyPoisonInRect(_enemies, radialRect(1000.f), poisonVal(1.f), 4.f);   // a rain of poisoned shafts
         pushVfx(WarriorVfxKind::Barrage, 0.6f, 1000.f, Color{ 140, 235, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(11.f, 0.35f);
@@ -7557,8 +8084,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::ShieldOfFaith:   // "Aegis" — reflect + smite buff (no heal)
     {
+        // Identity: the vow is also a FAITH battery — +30 Faith and one armour
+        // slot alongside the reflect, mirroring how War Cry feeds Rage.
         _player.GrantDamageBuff(1.5f, 6.f);
         _player.GrantReflect(0.5f, 6.f);
+        _player.AddFaith(30.f);
+        _player.AddArmour(1);
+        _vfx.SpawnFloatingLabel(playerPos, "FAITH!", Color{ 255, 235, 150, 255 }, 1.4f);
         pushVfx(WarriorVfxKind::Cry, 0.6f, 160.f, Color{ 255, 235, 150, 255 });
         break;
     }
@@ -7583,10 +8115,16 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::DivineStorm:
     {
-        int hits = DamageEnemiesInRect(radialRect(320.f), dmgVal(7.f + atk * 1.4f), 1.f, 0.8f, 0.f, 0);   // holy stun
+        // Identity payoff: the nova CONSUMES all Faith — up to +45% radius at a
+        // full bar (damage already scaled with Faith via `buff` above, so the
+        // radius is the spend reward and avoids double-dipping — same pattern
+        // as the Warrior's Rage-fuelled Ground Slam).
+        float faithFraction = _player.ConsumeAllFaith();
+        float novaRadius    = 320.f * (1.f + 0.45f * faithFraction);
+        int hits = DamageEnemiesInRect(radialRect(novaRadius), dmgVal(7.f + atk * 1.4f), 1.f, 0.8f, 0.f, 0);   // holy stun
         _player.AddRetribution(hits);   // wrath builds per foe struck (no heal)
-        ApplyMarkInRect(_enemies, radialRect(320.f), 5.f);
-        pushVfx(WarriorVfxKind::Slam, 0.5f, 320.f, Color{ 255, 235, 150, 255 });
+        ApplyMarkInRect(_enemies, radialRect(novaRadius), 5.f);
+        pushVfx(WarriorVfxKind::Slam, 0.5f, novaRadius, Color{ 255, 235, 150, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
         break;
@@ -7613,7 +8151,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::ShadowBolt:
     {
         DamageEnemiesInRect(forwardRect(560.f, 80.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
-        ApplyVulnInRect(_enemies, forwardRect(560.f, 80.f), 1.25f, 4.f);   // dark curse weakens
+        ApplyVulnInRect(_enemies, forwardRect(560.f, 80.f), 1.25f, 4.f);    // dark curse weakens
+        ApplyCurseInRect(_enemies, forwardRect(560.f, 80.f), 5.f * curseDur);          // primes the +25% cursed bonus
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::DrainLife:
@@ -7628,7 +8167,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         DamageEnemiesInRect(forwardRect(260.f, 200.f), dmgVal(2.f + atk * 0.4f), 1.f, 0.f, 0.f, 0);
         ApplyVulnInRect(_enemies, forwardRect(260.f, 200.f), 1.4f, 5.f);              // curse: takes far more damage
-        ApplyPoisonInRect(_enemies, forwardRect(260.f, 200.f), dmgVal(1.f), 5.f);     // rots over time
+        ApplyPoisonInRect(_enemies, forwardRect(260.f, 200.f), poisonVal(1.f), 5.f);     // rots over time
+        ApplyCurseInRect(_enemies, forwardRect(260.f, 200.f), 7.f * curseDur);                   // the signature: a long curse window
         pushVfx(WarriorVfxKind::Wave, 0.35f, 260.f, Color{ 150, 70, 190, 255 });
         break;
     }
@@ -7639,7 +8179,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         z.lifetime = 4.f; z.radius = 150.f; z.tint = Color{ 150, 70, 190, 255 };
         z.tickDamage = dmgVal(1.f + atk * 0.25f); z.tickInterval = 0.4f;
         _warriorVfx.push_back(z);
-        ApplyPoisonInRect(_enemies, { spot.x - 150.f, spot.y - 150.f, 300.f, 300.f }, dmgVal(1.f), 5.f);   // corruption
+        ApplyPoisonInRect(_enemies, { spot.x - 150.f, spot.y - 150.f, 300.f, 300.f }, poisonVal(1.f), 5.f);   // corruption
+        ApplyCurseInRect(_enemies, { spot.x - 150.f, spot.y - 150.f, 300.f, 300.f }, 5.f * curseDur);                 // pool curses everything it touches
         break;
     }
     case AbilityType::Hellfire:
@@ -7664,6 +8205,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         DamageEnemiesInRect(radialRect(1200.f), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
         ApplyVulnInRect(_enemies, radialRect(1200.f), 1.35f, 6.f);                 // screen-wide curse
+        ApplyCurseInRect(_enemies, radialRect(1200.f), 6.f * curseDur);                       // everything on screen is primed
         ApplyBurnInRect(_enemies, radialRect(1200.f), dmgVal(1.f), 3, playerPos);  // + dark fire
         pushVfx(WarriorVfxKind::Marks, 0.6f, 1200.f, Color{ 180, 70, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
@@ -7682,7 +8224,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         DamageEnemiesInRect(forwardRect(680.f, 200.f), dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
         ApplyVulnInRect(_enemies, forwardRect(680.f, 200.f), 1.4f, 6.f);              // shadow curse
-        ApplyPoisonInRect(_enemies, forwardRect(680.f, 200.f), dmgVal(1.f), 5.f);     // + corruption
+        ApplyCurseInRect(_enemies, forwardRect(680.f, 200.f), 6.f * curseDur);                   // primes the cursed bonus
+        ApplyPoisonInRect(_enemies, forwardRect(680.f, 200.f), poisonVal(1.f), 5.f);     // + corruption
         pushVfx(WarriorVfxKind::Barrage, 0.6f, 680.f, Color{ 170, 90, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
@@ -8643,6 +9186,22 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 int dmg = ScalePlayerHit(*enemy, base, basicCrit);
                 enemy->TakeDamage(dmg, _player.GetWorldPos());
                 ApplyPlayerLifesteal(dmg);
+
+                // Hunter class identity: every 3rd landed shot MARKS the target,
+                // feeding the marked-prey damage bonus (see ScalePlayerHit). This
+                // makes sustained focus fire on one enemy the Hunter's brain.
+                if (_player.GetClass() == PlayerClass::Hunter)
+                {
+                    _hunterShotsSinceMark++;
+                    if (_hunterShotsSinceMark >= _player.GetHunterMarkEvery())   // Predator's Rhythm lowers this
+                    {
+                        _hunterShotsSinceMark = 0;
+                        enemy->ApplyMark(5.f);
+                        _vfx.SpawnFloatingLabel(enemy->GetWorldPos(), "MARKED",
+                                                 Color{ 255, 90, 90, 255 });
+                    }
+                }
+
                 RegisterHitFx(enemy->GetWorldPos(), dmg, basicCrit, !enemy->IsAlive(), enemy->IsBoss(), RAYWHITE);
                 _vfx.SpawnHitEffect(elementToCastType(element), projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
@@ -8841,14 +9400,18 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
     }
 
     // Rare bonus heal drop — Scavenger raises it; ascension lowers it; the Cursed
-    // room affix trades danger for a better chance at healing.
+    // room affix trades danger for a better chance at healing. Sustain rework:
+    // total heal drops (chance + timed) are CAPPED per room so drop-chance
+    // stacking can't turn a long fight into a healing fountain.
     int healChance = kEnemyDropChancePercent + _player.GetHealDropBonusPercent() - _ascensionMods.healDropPenaltyPct;
     if (GetRoomAffixDef(_currentRoomAffix).bonusLoot) healChance += 25;
-    if (GetRandomValue(1, 100) <= healChance)
+    if (_roomHealDrops < Balance::Sustain::kMaxHealDropsPerRoom
+        && GetRandomValue(1, 100) <= healChance)
     {
         auto p = std::make_unique<HealPickup>();
         p->Init(dropPos);
         _pickups.push_back(std::move(p));
+        _roomHealDrops++;
     }
 }
 
@@ -8859,6 +9422,11 @@ void Engine::SpawnTimedPickup()
     // the boss dies; it resets naturally after kDefaultTimedPickupInterval.
     if (IsBossFightActive())
         return;
+
+    // Sustain rework: timed heals share the per-room cap with kill drops.
+    if (_roomHealDrops >= Balance::Sustain::kMaxHealDropsPerRoom)
+        return;
+    _roomHealDrops++;
 
     // Timed pickups are heals only. Mana gems removed from the timed pool -
     // passive regen covers mana recovery between waves.
@@ -9720,6 +10288,7 @@ void Engine::ResolveActiveModifiersOnRoomClear()
     int bonusXp   = _player.TakeContractBonusXp();
 
     std::string lastName;
+    std::string shopContractResult;
     bool resolvedAny = false;
     for (auto it = _runModifiers.begin(); it != _runModifiers.end(); )
     {
@@ -9727,12 +10296,73 @@ void Engine::ResolveActiveModifiersOnRoomClear()
         {
             lastName = it->label;
             resolvedAny = true;
+
+            if (it->shopContract != ShopContractType::Count)
+            {
+                bool succeeded = false;
+                switch (it->shopContract)
+                {
+                case ShopContractType::Untouched:
+                    succeeded = _player.GetTelemDamageTaken() <= 0.01f;
+                    break;
+                case ShopContractType::ArcaneRestraint:
+                    succeeded = _player.GetTelemAbilityCasts() <= 2;
+                    break;
+                case ShopContractType::AgainstTheClock:
+                {
+                    float limit = (_currentRoomType == RoomType::Boss) ? 150.f
+                                : (_currentRoomType == RoomType::Elite) ? 75.f : 50.f;
+                    succeeded = (float)(GetTime() - _roomEnterTime) <= limit;
+                    break;
+                }
+                default: break;
+                }
+
+                if (succeeded)
+                {
+                    if (it->shopContract == ShopContractType::Untouched)
+                    {
+                        AbilityType target = AbilityType::None;
+                        int lowestLevel = 999;
+                        for (AbilityType ability : kAllAbilities)
+                        {
+                            if (IsUltimateAbility(ability) || !_player.HasLearnedAbility(ability) ||
+                                !_player.CanUpgradeAbility(ability)) continue;
+                            int level = _player.GetAbilityLevel(ability);
+                            if (level < lowestLevel) { lowestLevel = level; target = ability; }
+                        }
+                        if (target != AbilityType::None)
+                            _player.UpgradeAbility(target);
+                        else
+                            _player.GrantShopWard();
+                    }
+                    else if (it->shopContract == ShopContractType::ArcaneRestraint)
+                    {
+                        _player.GrantShopWard();
+                        _player.GrantShopFreeCast(2);
+                    }
+                    else if (it->shopContract == ShopContractType::AgainstTheClock)
+                    {
+                        ++_pendingRelicChoices;
+                    }
+                    shopContractResult = it->label + " COMPLETE - REWARD EARNED";
+                }
+                else
+                {
+                    shopContractResult = it->label + " FAILED - NO EXTRA PENALTY";
+                }
+            }
             it = _runModifiers.erase(it);
         }
         else ++it;
     }
 
-    if (resolvedAny)
+    if (!shopContractResult.empty())
+    {
+        _contractToastText  = shopContractResult;
+        _contractToastTimer = 4.f;
+    }
+    else if (resolvedAny)
     {
         _contractToastText  = TextFormat("%s HONORED   +%d gold   +%d XP", lastName.c_str(), bonusGold, bonusXp);
         _contractToastTimer = 4.f;
@@ -12017,6 +12647,17 @@ void Engine::SpawnPoisonCloud(Vector2 pos, float radius)
     cloud.timer  = 5.5f;
     cloud.radius = radius;
     _poisonClouds.push_back(cloud);
+
+    // Persistent visual is now an animated poison-pool sprite (FX_BossPoisonPool)
+    // instead of prototype Raylib ellipses. The cloud above keeps its own circular
+    // collision/damage; this decal only draws it, and lives exactly as long.
+    const int fx = (int)BossFx::PoisonPool;
+    if (fx < (int)_bossFx.size() && _bossFx[fx].id != 0 && _bossFxFrames[fx] > 0)
+    {
+        const float decalScale = (2.f * radius) / 64.f;   // 64px cell → cover the radius
+        _vfx.SpawnHazardDecal(&_bossFx[fx], pos, _bossFxFrames[fx], decalScale, cloud.timer,
+                              Color{ 220, 255, 200, 235 });
+    }
 }
 
 void Engine::UpdatePoisonClouds(float dt)
@@ -12126,31 +12767,11 @@ void Engine::DrawWarlockMinions(Vector2 worldOffset) const
 
 void Engine::DrawPoisonClouds(Vector2 worldOffset) const
 {
-    for (const PoisonCloud& cloud : _poisonClouds)
-    {
-        Vector2 screenPos{ cloud.pos.x + worldOffset.x + kVirtualWidth  / 2.f,
-                           cloud.pos.y + worldOffset.y + kVirtualHeight / 2.f };
-
-        float alpha  = (cloud.timer < 1.2f) ? (cloud.timer / 1.2f) : 1.f;
-        float wobble = sinf((float)GetTime() * 3.4f + cloud.pos.x * 0.013f) * 5.f;
-
-        DrawEllipse((int)screenPos.x, (int)screenPos.y,
-            cloud.radius + wobble, (cloud.radius + wobble) * 0.55f,
-            Fade(Color{ 70, 160, 40, 255 }, 0.28f * alpha));
-        DrawEllipse((int)screenPos.x, (int)screenPos.y,
-            (cloud.radius + wobble) * 0.68f, (cloud.radius + wobble) * 0.38f,
-            Fade(Color{ 130, 220, 70, 255 }, 0.26f * alpha));
-
-        // Rising spore bubbles.
-        for (int i = 0; i < 3; i++)
-        {
-            float bubblePhase = fmodf((float)GetTime() * 0.7f + i * 0.33f, 1.f);
-            DrawCircleV(Vector2{ screenPos.x + sinf((float)GetTime() * 2.f + i * 2.1f) * cloud.radius * 0.4f,
-                                 screenPos.y - bubblePhase * 40.f },
-                5.f - bubblePhase * 3.f,
-                Fade(Color{ 160, 240, 90, 255 }, 0.4f * (1.f - bubblePhase) * alpha));
-        }
-    }
+    // The poison pool's visual is now a looping FX_BossPoisonPool decal spawned in
+    // SpawnPoisonCloud (drawn by VFXManager), so there is no prototype Raylib shape
+    // to render here anymore. Kept as a hook in case a future overlay (contact
+    // shadow, edge glow) wants to layer on top of the sprite.
+    (void)worldOffset;
 }
 
 // =============================================================================
@@ -12175,6 +12796,14 @@ int Engine::ScalePlayerHit(const Enemy& target, int baseDamage, bool& outCrit) c
     if (target.IsFrozen())                             comboMult += 0.25f;   // Shatter frozen foes
     if (target.IsMarked())
         comboMult += (hpFraction <= 0.30f) ? 1.20f : 0.12f;                  // Execute the marked & wounded
+    // Hunter class identity: marked prey takes +30% from ALL Hunter damage on top
+    // of the universal mark bonus — marking priority targets is the class's brain.
+    if (target.IsMarked() && _player.GetClass() == PlayerClass::Hunter)
+        comboMult += _player.GetMarkedBonus();   // Hunter's Quarry cards raise this
+    // Warlock class identity: cursed targets take +25% from ALL Warlock damage —
+    // curse first, then collect. Delayed but powerful is the class's brain.
+    if (target.IsCursed() && _player.GetClass() == PlayerClass::Warlock)
+        comboMult += _player.GetCursedBonus();   // Dark Pact cards raise this
     dmg = (int)lroundf(dmg * comboMult);
 
     // Vulnerability / armor break: a marked-vulnerable target takes extra damage.
@@ -12696,6 +13325,42 @@ Vector2 Engine::GetDungeonSpawnPos(float cellW, float cellH) const
 
     // Fallback: far corner of the room.
     return { (float)kVirtualWidth * 0.75f, (float)kVirtualHeight * 0.5f };
+}
+
+Vector2 Engine::GetDungeonSpawnPosForRole(EnemyRole role, float cellW, float cellH) const
+{
+    // Grunts/chargers spawn anywhere valid.
+    if (role == EnemyRole::Grunt || role == EnemyRole::Charger)
+        return GetDungeonSpawnPos(cellW, cellH);
+
+    // For tactical roles, sample several already-valid candidates and pick the one
+    // that best matches the role's intent: ranged/support to the back, tanks at
+    // mid-range, assassins off to a side. Every candidate comes from
+    // GetDungeonSpawnPos, so validity/min-distance are guaranteed regardless.
+    Vector2 player    = _player.GetWorldPos();
+    Vector2 best      = GetDungeonSpawnPos(cellW, cellH);
+    float   bestScore = -1e9f;
+    for (int sample = 0; sample < 6; sample++)
+    {
+        Vector2 candidate = GetDungeonSpawnPos(cellW, cellH);
+        float   dist      = Vector2Distance(candidate, player);
+        float   score     = 0.f;
+        switch (role)
+        {
+        case EnemyRole::Ranged: case EnemyRole::HeavyRanged: case EnemyRole::Zoner:
+        case EnemyRole::Support: case EnemyRole::Summoner:
+            score = dist; break;                                 // farthest = back line
+        case EnemyRole::Tank:
+            score = -fabsf(dist - cellW * 5.f); break;           // hold mid-range
+        case EnemyRole::Assassin:
+            score = fabsf(candidate.x - player.x)
+                    - fabsf(candidate.y - player.y) * 0.5f; break;   // reward off-angle
+        default:
+            score = 0.f; break;
+        }
+        if (score > bestScore) { bestScore = score; best = candidate; }
+    }
+    return best;
 }
 
 void Engine::RollRoomAffix(int roomIdx, RoomType type)
@@ -13230,18 +13895,30 @@ void Engine::SpawnDungeonRoomEnemies()
                 if (roll <= 0) { typeId = entry.typeId; break; }
             }
 
+            Enemy* spawned = nullptr;
             switch (typeId)
             {
-            case 1: SpawnSkeletonArcher(p);           break;
-            case 2: SpawnSlime(p, SlimeSize::Big);    break;
-            case 3: SpawnFlameWisp(p);                break;
-            case 4: SpawnSporeling(p);                break;
-            case 5: SpawnShieldbearer(p);             break;
-            case 6: SpawnPhantom(p);                  break;
-            case 7: SpawnBomberImp(p);                break;
-            case 8: SpawnWarchief(p); warchiefSpawnedThisRoom = true; break;
-            case 9: SpawnLivingBlade(p);              break;
-            default: SpawnBasicEnemy(p);              break;
+            case 1: spawned = SpawnSkeletonArcher(p);        break;
+            case 2: spawned = SpawnSlime(p, SlimeSize::Big); break;
+            case 3: spawned = SpawnFlameWisp(p);             break;
+            case 4: spawned = SpawnSporeling(p);             break;
+            case 5: spawned = SpawnShieldbearer(p);          break;
+            case 6: spawned = SpawnPhantom(p);               break;
+            case 7: spawned = SpawnBomberImp(p);             break;
+            case 8: spawned = SpawnWarchief(p); warchiefSpawnedThisRoom = true; break;
+            case 9: spawned = SpawnLivingBlade(p);           break;
+            default: spawned = SpawnBasicEnemy(p);           break;
+            }
+
+            // Role-based placement: nudge specialised roles to sensible spots
+            // (ranged/support to the back, tanks mid, assassins off-angle). The
+            // target is always a valid GetDungeonSpawnPos candidate, so this can't
+            // put an enemy in a wall. Grunts keep their original spread.
+            if (spawned != nullptr)
+            {
+                EnemyRole role = spawned->GetEncounterRole();
+                if (role != EnemyRole::Grunt && role != EnemyRole::Charger)
+                    spawned->Teleport(GetDungeonSpawnPosForRole(role, cellW, cellH));
             }
         };
 
@@ -13280,6 +13957,19 @@ void Engine::SpawnDungeonRoomEnemies()
             if (!enemy->IsActive() || enemy->IsBoss()) continue;
             enemy->SetGraveReviveAvailable(true);
         }
+    }
+
+    // Zeph Risk Bargains land on the first COMBAT room that actually spawns
+    // after purchase (so a rest room between doesn't dodge the debt). Pressure
+    // debt = one extra enemy + 10% faster attacks for everyone in the room;
+    // the wager additionally flags the room for a payout on clear.
+    _shopWagerRoomActive = _player.ConsumeShopWager();
+    if (_player.ConsumeShopPressureDebt())
+    {
+        SpawnBasicEnemy(GetDungeonSpawnPos(cellW, cellH));
+        for (auto& enemy : _enemies)
+            if (enemy->IsActive())
+                enemy->QuickenAttacks(0.9f);
     }
 
     roomState.enemiesInitialized = true;
@@ -14981,7 +15671,10 @@ void Engine::UpdateBossChoice()
         // Push onward (double-or-nothing): a breath + a bounty, the wager opens,
         // and this same character continues to the next domain.
         StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
-        _player.Heal(99999);                       // clamps to max — the boss-clear breath
+        // Sustain rework: the boss-clear breath is PARTIAL (40% of max), not a
+        // full reset — pushing onward should still carry some scars.
+        _player.Heal(std::max(2, (int)std::ceil(
+            _player.GetMaxHealthValue() * Balance::Sustain::kBossClearHealFraction)));
         _player.AddGold(50 + _worldZone * 50);     // bravery bounty (tunable)
         _wagerAccessGranted = true;                // cursed wager appears next shop
         OpenWorldMap();
@@ -16379,6 +17072,45 @@ void Engine::UpdateDungeonRun(float dt)
                 if (e->IsActive()) { allDead = false; break; }
             if (allDead)
             {
+                int roomClearExp = Balance::Levelling::kStandardRoomClearExp;
+                if (_currentRoomType == RoomType::Elite)
+                    roomClearExp = Balance::Levelling::kEliteRoomClearExp;
+                else if (_currentRoomType == RoomType::Boss)
+                    roomClearExp = Balance::Levelling::kBossRoomClearExp;
+
+                // Zeph's Wager payout: the harder room was cleared, so the
+                // gamble pays bonus gold and +25% of the room's clear XP.
+                if (_shopWagerRoomActive)
+                {
+                    _shopWagerRoomActive = false;
+                    roomClearExp += roomClearExp / 4;
+                    _player.AddGold(40);
+                    _message = "Zeph's Wager pays out: +40 gold, bonus XP";
+                }
+                _pendingExp += (float)roomClearExp;
+
+                // Class cards with "heal on room clear" (Battle Meditation /
+                // Sanctuary) — sustain that respects the no-auto-heal economy.
+                if (_player.GetHealOnRoomClear() > 0)
+                    _player.Heal(_player.GetHealOnRoomClear());
+
+                // Telemetry: record the cleared room for the debug overlay.
+                {
+                    RoomTelemetry& rec = _roomTelemetry[_roomTelemetryCount % kTelemetryHistory];
+                    rec.act          = _currentAct;
+                    rec.room         = _currentRoom;
+                    snprintf(rec.roomType, sizeof(rec.roomType), "%s", GetDebugRoomTypeName(_currentRoomType));
+                    rec.clearSeconds = (float)(GetTime() - _roomEnterTime);
+                    rec.dmgTaken     = (int)std::ceil(_player.GetTelemDamageTaken());
+                    rec.healed       = (int)_player.GetTelemHealed();
+                    rec.healDrops    = _roomHealDrops;
+                    rec.xpGained     = roomClearExp;
+                    rec.goldDelta    = _player.GetGold() - _roomEnterGold;
+                    rec.playerLevel  = _player.GetLevel();
+                    rec.powerLevel   = 1 + (_wave - 1) / Balance::Curve::kRoomsPerPowerLevel;
+                    _roomTelemetryCount++;
+                }
+
                 _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
                 _dungeonRoomStates[_dungeonRoomIdx].enemiesInitialized = true;
                 _dungeonRoomStates[_dungeonRoomIdx].survivors.clear();
@@ -16518,7 +17250,7 @@ void Engine::UpdateDungeonRun(float dt)
             float hw = kVirtualWidth  * 0.5f;
             float hh = kVirtualHeight * 0.5f;
             _player.SetWorldPos({ hw, hh });
-            _player.Revive();
+            _player.RefreshForRoomEntry();   // debug path — same no-heal rule as live rooms
             _cameraPos = { hw, hh };
             _dungeonView = DungeonView::Play;
 
@@ -17031,7 +17763,10 @@ void Engine::DrawDungeonRun()
             {
                 DrawDebugToggleTab();
                 if (_debug.IsOpen())
+                {
                     _debug.Draw(_currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
+                    DrawRoomTelemetry();   // per-room balance readout (Phase 5)
+                }
             }
             if (_isHitboxEditorActive)
                 DrawHitboxEditor();
@@ -17457,6 +18192,37 @@ void Engine::DrawDebugToggleTab()
         (int)(debugTab.x + debugTab.width * 0.5f - tabW * 0.5f),
         (int)(debugTab.y + debugTab.height * 0.5f - tabSz * 0.5f),
         tabSz, RAYWHITE);
+}
+
+void Engine::DrawRoomTelemetry() const
+{
+    // Balance telemetry readout — one line per cleared room, newest first.
+    // Rendered beside the debug panel so playtest tuning reads real numbers.
+    const int shown = std::min(_roomTelemetryCount, kTelemetryHistory);
+    if (shown == 0) return;
+
+    const int   lineH = 20;
+    const int   fs    = 16;
+    const float x     = 12.f;
+    float       y     = (float)kVirtualHeight - 40.f - (shown + 1) * lineH;
+
+    DrawRectangle((int)x - 6, (int)y - 6, 560, (shown + 1) * lineH + 12, Fade(BLACK, 0.62f));
+    DrawText("ROOM TELEMETRY  (clear s | dmg | heal | drops | xp | gold | lvl | pwr)",
+             (int)x, (int)y, fs, Color{ 255, 214, 150, 255 });
+    y += lineH;
+
+    for (int i = 0; i < shown; i++)
+    {
+        // Newest record first: walk the ring backwards from the last write.
+        int idx = (_roomTelemetryCount - 1 - i) % kTelemetryHistory;
+        const RoomTelemetry& rec = _roomTelemetry[idx];
+        DrawText(TextFormat("A%d-R%d %-8s %5.1fs  dmg %2d  heal %2d  drops %d  xp %2d  gold %+3d  L%d  P%d",
+                            rec.act, rec.room, rec.roomType, rec.clearSeconds,
+                            rec.dmgTaken, rec.healed, rec.healDrops,
+                            rec.xpGained, rec.goldDelta, rec.playerLevel, rec.powerLevel),
+                 (int)x, (int)y, fs, (i == 0) ? RAYWHITE : Fade(RAYWHITE, 0.7f));
+        y += lineH;
+    }
 }
 
 // Sets player touch direction/attack/dash from _touch, then scans for new

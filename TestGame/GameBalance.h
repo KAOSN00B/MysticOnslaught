@@ -16,22 +16,32 @@
 // (prices). Included via Enemy.h and Engine.h so it reaches all of them.
 // =============================================================================
 
-// ── Player base stats (reference defaults; per-class values live in PlayerClass.cpp)
-namespace Balance::Player
-{
-    inline constexpr int   kStartHealth      = 8;
-    inline constexpr float kStartAttackPower = 3.f;
-    inline constexpr float kStartSpeed       = 380.f;
-    inline constexpr int   kStartMana        = 0;
-    inline constexpr int   kStartMaxMana     = 10;
-}
+// ── Player base stats ────────────────────────────────────────────────────────
+// Per-class base stats live in PlayerClass.cpp (kClassTable) — classes differ,
+// so a single shared constant here would lie. A Balance::Player block used to
+// sit here but was never read by any code; it was removed in the balance truth
+// pass so nobody tunes dead numbers.
 
 // ── Player levelling ─────────────────────────────────────────────────────────
 namespace Balance::Levelling
 {
-    inline constexpr int kMaxLevel         = 20;
-    inline constexpr int kExpToNextBase    = 15;   // threshold at level 1
-    inline constexpr int kExpThresholdStep = 20;   // added each level-up (15->35->55...)
+    // Level 1 is the run start, so level 9 represents eight Power Choices.
+    // The full-run target is 6-8 choices; room-clear XP below makes enemy count
+    // irrelevant to that pacing.
+    inline constexpr int kMaxLevel         = 9;
+    inline constexpr int kExpToNextBase    = 20;  // level 1 -> 2
+    inline constexpr int kExpThresholdStep = 8;   // 20, 28, 36, 44, ...
+
+    inline constexpr int ExpToNextForLevel(int currentLevel)
+    {
+        return kExpToNextBase + (currentLevel - 1) * kExpThresholdStep;
+    }
+
+    // Dungeon-run XP is awarded once when a combat room is cleared. These
+    // values produce roughly 90 XP per six-room act before optional contracts.
+    inline constexpr int kStandardRoomClearExp = 12;
+    inline constexpr int kEliteRoomClearExp    = 18;
+    inline constexpr int kBossRoomClearExp     = 30;
 }
 
 // ── Ability damage ───────────────────────────────────────────────────────────
@@ -42,6 +52,11 @@ namespace Balance::AbilityDamage
     inline constexpr float kBoltBase       = 3.0f;   // 3x spread per shot
     inline constexpr float kBoltBurnBase   = 2.0f;
     inline constexpr float kUpgradeBonus   = 0.25f;  // _abilityDamageMultiplier per upgrade
+
+    // Class-ability damage per ability level above 1 (Engine dmgVal). Level 3
+    // = 1.5x base. The pre-rework formula was a raw x2/x3 level multiplier —
+    // the single biggest damage snowball in the run.
+    inline constexpr float kClassLevelStep = 0.25f;
 }
 
 // ── Enemy power-level curve ──────────────────────────────────────────────────
@@ -52,9 +67,18 @@ namespace Balance::AbilityDamage
 namespace Balance::Curve
 {
     inline constexpr int   kRoomsPerPowerLevel = 5;      // power up every N rooms entered
-    inline constexpr float kHealthPerLevel     = 0.16f;  // +16% max HP per level above 1
+    // Balance rework: HP ramp softened 0.16 -> 0.12 because the player no
+    // longer auto-gains +0.4 attack per level — deep enemies should press
+    // harder (cadence below), not just take longer to kill.
+    inline constexpr float kHealthPerLevel     = 0.12f;  // +12% max HP per level above 1
     inline constexpr float kDamagePerLevel     = 0.08f;  // +8%  damage
     inline constexpr float kSpeedPerLevel      = 0.04f;  // +4%  move speed
+
+    // Attack cadence by depth — the new pressure lever. Enemies attack more
+    // often as the run deepens (delay shrinks 5%/level), floored so no enemy
+    // ever attacks faster than 65% of its authored gap.
+    inline constexpr float kAttackDelayPerLevel  = 0.05f;
+    inline constexpr float kMinAttackDelayFactor = 0.65f;
 }
 
 // ── Grunt (basic enemy) base profile at power level 1 ────────────────────────
@@ -109,12 +133,27 @@ namespace Balance::Boss
     inline constexpr float kAbyssSlimeHealth  = kBaseHealth * kRoleFinal;    // ~71
 }
 
+// ── Sustain ──────────────────────────────────────────────────────────────────
+// The roguelite pressure model: HP is a resource that carries BETWEEN rooms.
+// Entering a room no longer heals at all; recovery comes only from pickups,
+// Zeph, abilities/relics — and all repeatable sources are capped per room so
+// damage growth can't buy unlimited healing.
+namespace Balance::Sustain
+{
+    inline constexpr float kBossClearHealFraction = 0.40f;  // partial breath after a boss, not a reset
+    inline constexpr int   kMaxHealDropsPerRoom   = 2;      // chance + timed heal pickups combined
+    inline constexpr int   kLifestealCapPerRoom   = 6;      // HP returned by lifesteal per room
+    inline constexpr float kManaRegenPerSecond    = 0.25f;  // base regen (was 0.2) — compensates the
+                                                            // removed +5 mana per level
+}
+
 // ── Economy ──────────────────────────────────────────────────────────────────
 namespace Balance::Economy
 {
     inline constexpr int   kHealDropChancePercent = 8;     // bonus heal-drop base chance
     inline constexpr int   kRerollBaseCost        = 45;
     inline constexpr int   kRerollStep            = 35;    // added per reroll
+    inline constexpr int   kReserveStockCost      = 15;    // lock one card through rerolls
     inline constexpr float kActPriceInflation     = 0.25f; // +25% shop prices per act
 }
 

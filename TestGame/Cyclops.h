@@ -47,6 +47,8 @@ public:
     void TakeDamage(int damage, Vector2 attackerPos) override;
     void ApplyElectricCharge() override;
     Cyclops* AsCyclops() override { return this; }
+    EnemyRole GetEncounterRole() const override { return EnemyRole::HeavyRanged; }
+    int       GetSpawnCost()     const override { return 4; }
 
     // Laser firing interface (read by Engine after Update)
     bool    WantsToFire()      const { return _wantsToFire; }

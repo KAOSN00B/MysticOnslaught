@@ -28,6 +28,8 @@ public:
     Rectangle GetCollisionRec() const override;
 
     Warchief* AsWarchief() override { return this; }
+    EnemyRole GetEncounterRole() const override { return EnemyRole::Support; }
+    int       GetSpawnCost()     const override { return 4; }
     const char* GetTuningName() const override { return "Warchief"; }
 
     void PlayAttackSound() override;

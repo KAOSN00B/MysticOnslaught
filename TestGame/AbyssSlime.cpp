@@ -15,6 +15,8 @@ Texture2D AbyssSlime::_sharedJumpAnim{};
 Texture2D AbyssSlime::_sharedFallAnim{};
 Texture2D AbyssSlime::_sharedHurtAnim{};
 Texture2D AbyssSlime::_sharedDeathAnim{};
+Texture2D AbyssSlime::_sharedAcidPoolTex{};
+int       AbyssSlime::_acidPoolFrames = 0;
 Sound     AbyssSlime::_sharedAttackSound{};
 Sound     AbyssSlime::_sharedHurtSound{};
 Sound     AbyssSlime::_sharedDeathSound{};
@@ -474,14 +476,22 @@ void AbyssSlime::DrawPuddles(Vector2 cameraRef) const
 
         // Fade out over the last 1.5 seconds of life.
         float alpha = (puddle.timer < 1.5f) ? (puddle.timer / 1.5f) : 1.f;
-        float wobble = sinf((float)GetTime() * 3.f + puddle.pos.x * 0.01f) * 4.f;
 
-        DrawEllipse((int)screenPos.x, (int)screenPos.y,
-            puddle.radius + wobble, (puddle.radius + wobble) * 0.55f,
-            Fade(Color{ 100, 50, 190, 255 }, 0.30f * alpha));
-        DrawEllipse((int)screenPos.x, (int)screenPos.y,
-            (puddle.radius + wobble) * 0.72f, (puddle.radius + wobble) * 0.40f,
-            Fade(Color{ 165, 110, 245, 255 }, 0.28f * alpha));
+        // Animated toxic-pool sprite instead of prototype Raylib ellipses. A
+        // per-position phase offset keeps a cluster of puddles from animating in
+        // lockstep. Collision/damage still uses puddle.radius (see UpdatePuddles).
+        if (_sharedAcidPoolTex.id != 0 && _acidPoolFrames > 0)
+        {
+            const int   cell  = _sharedAcidPoolTex.height;   // square 64px cells
+            const float phase = (float)GetTime() * 10.f + puddle.pos.x * 0.05f + puddle.pos.y * 0.03f;
+            const int   frame = ((int)phase) % _acidPoolFrames;
+            Rectangle src{ (float)(frame * cell), 0.f, (float)cell, (float)cell };
+            const float diam = puddle.radius * 2.2f;         // cover the collision radius
+            Rectangle dst{ screenPos.x, screenPos.y, diam, diam };
+            Color tint = Fade(Color{ 170, 255, 120, 255 }, alpha);   // toxic acid green
+            DrawTexturePro(_sharedAcidPoolTex, src, dst,
+                Vector2{ diam * 0.5f, diam * 0.5f }, 0.f, tint);
+        }
     }
 }
 
@@ -878,6 +888,11 @@ void AbyssSlime::EnsureSharedResourcesLoaded()
     _sharedFallAnim  = LoadTexture(AssetPath("Bosses/AbyssSlimeFall.png").c_str());
     _sharedHurtAnim  = LoadTexture(AssetPath("Bosses/AbyssSlimeHurt.png").c_str());
     _sharedDeathAnim = LoadTexture(AssetPath("Bosses/AbyssSlimeDeath.png").c_str());
+    // Lingering acid puddles now render as an animated toxic-pool sprite. Cells are
+    // square (64px), so frame count = width / height.
+    _sharedAcidPoolTex = LoadTexture(AssetPath("PowerUps/FX_BossPoisonPool.png").c_str());
+    _acidPoolFrames = (_sharedAcidPoolTex.height > 0)
+        ? (_sharedAcidPoolTex.width / _sharedAcidPoolTex.height) : 0;
     _sharedAttackSound = LoadSound(AssetPath("Sounds/SwordSwipe2.ogg").c_str());
     _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
     _sharedDeathSound  = LoadSound(AssetPath("Sounds/MonsterDeath.ogg").c_str());
@@ -898,6 +913,7 @@ void AbyssSlime::UnloadSharedResources()
     UnloadTexture(_sharedFallAnim);
     UnloadTexture(_sharedHurtAnim);
     UnloadTexture(_sharedDeathAnim);
+    UnloadTexture(_sharedAcidPoolTex);
     UnloadSound(_sharedAttackSound);
     UnloadSound(_sharedHurtSound);
     UnloadSound(_sharedDeathSound);

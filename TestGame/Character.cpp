@@ -202,7 +202,7 @@ void Character::Init()
     _gold           = 0;
     _cells          = 0;
     _level          = 1;
-    _expToNextLevel = 24;
+    _expToNextLevel = Balance::Levelling::ExpToNextForLevel(_level);
 
     // Relics are per-run — wipe the loadout on a fresh Init.
     for (int i = 0; i < (int)RelicType::Count; i++)
@@ -218,6 +218,44 @@ void Character::Init()
     _armour    = classInfo.startArmour;
     _maxArmour = kMaxArmour;  // reset max to base each run
     _attackRangeMultiplier = 1.5f;
+    _shopWhetstoneHits = 0;
+    _shopFreeCasts     = 0;
+    _shopWardHits      = 0;
+    _shopGoldPickups   = 0;
+    _shopCellPickups   = 0;
+
+    // Run-scoped Power Choice / class-identity / bargain state. Character is a
+    // long-lived Engine member, so every run-scoped field MUST reset here —
+    // default member initializers only apply at construction, not per run.
+    _rage = 0.f; _faith = 0.f; _comboPoints = 0; _comboFraction = 0.f;
+    _classResourceGainMult = 1.f;
+    _abilityPowerMult      = 1.f;
+    _abilityCostBonus      = 0;
+    _fireDamageMult = _iceDamageMult = _electricDamageMult = 1.f;
+    _comboBonusMult     = 1.f;
+    _rageDecayMult      = 1.f;
+    _rageFullBonus      = 0.5f;
+    _retributionPerStack = 0.12f;
+    _reflectPotency     = 1.f;
+    _hunterMarkEvery    = 3;
+    _markedBonus        = 0.30f;
+    _cursedBonus        = 0.25f;
+    _curseDurationMult  = 1.f;
+    _lifestealPotency   = 1.f;
+    _maxComboPointsRun  = kMaxComboPoints;
+    _evisceratePerCombo = 0.15f;
+    _poisonPotency      = 1.f;
+    _healOnRoomClear    = 0;
+    _shopPressureDebtRooms = 0;
+    _shopWagerArmed     = false;
+    _shopRareStatBought = false;
+    _shopBloodPriceUsed = false;
+    _telemDamageTaken   = 0.f;
+    _telemHealed        = 0.f;
+    _damageBuffMult = 1.f; _damageBuffTimer = 0.f;
+    _lifestealFraction = 0.f; _lifestealTimer = 0.f;
+    _reflectFraction = 0.f; _reflectTimer = 0.f;
+    _retributionStacks = 0; _retributionTimer = 0.f;
 
     _invincibleTimer = 0.f;
     _dashTimer = 0.f;
@@ -377,6 +415,11 @@ void Character::AddGoldFromDrop(int amount)
 {
     if (HasRelic(RelicType::MidasTouch))
         amount = (int)std::ceil(amount * 1.60f);
+    if (_shopGoldPickups > 0)
+    {
+        amount = (int)std::ceil(amount * 1.25f);
+        --_shopGoldPickups;
+    }
     if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
         amount = (int)std::ceil(amount * _wagerRewardMult);
     if (_contractGoldMult > 1.f)                         // Risk Shrine contract
@@ -402,6 +445,11 @@ void Character::AddCellsFromDrop(int amount)
 {
     if (_cellGainMultiplier > 1.f)                       // Cell Surge meta unlock
         amount = (int)std::ceil(amount * _cellGainMultiplier);
+    if (_shopCellPickups > 0)
+    {
+        amount = (int)std::ceil(amount * 1.25f);
+        --_shopCellPickups;
+    }
     if (HasRelic(RelicType::SoulSiphon))
         amount = (int)std::ceil(amount * 1.60f);
     if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
@@ -431,6 +479,11 @@ void Character::Update(float dt)
     if (_retributionTimer > 0.f) { _retributionTimer -= dt; if (_retributionTimer <= 0.f) _retributionStacks = 0; }
     if (_lifestealTimer  > 0.f) _lifestealTimer  -= dt;
     if (_basicAttackCdTimer > 0.f) _basicAttackCdTimer -= dt;
+
+    // Warrior Rage bleeds off slowly, so it rewards STAYING in the fight rather
+    // than banking a full bar between rooms.
+    if (_class == PlayerClass::Warrior && _rage > 0.f)
+        _rage = std::max(0.f, _rage - 4.f * _rageDecayMult * dt);   // Smoldering Fury slows this
 
     // Passive mana regen — paused during ultimate sequences.
     if (!_manaRegenPaused && _mana < _maxMana)
@@ -674,11 +727,16 @@ void Character::TriggerAbilityCast(int slot)
         return;
     }
 
-    int cost = GetAbilityManaCost(ability);
+    ++_telemAbilityCasts;
 
-    // Ultimates drain every point of mana; other abilities deduct their fixed cost.
+    int cost = GetAbilityCost(ability);   // includes the Overload surcharge
+
+    // Freecast Seal applies only to normal abilities; ultimates still require
+    // and drain their full commitment.
     if (AbilityDrainsAllMana(ability))
         _mana = 0;
+    else if (_shopFreeCasts > 0)
+        --_shopFreeCasts;
     else
         _mana -= cost;
 
@@ -903,10 +961,38 @@ void Character::Revive()
     GrantInvulnerability(1.5f);  // brief i-frames so respawn isn't immediately punished
 }
 
+void Character::RefreshForRoomEntry()
+{
+    // Revive() minus the heal. Entering a room resets transient combat state
+    // (push, burn ticks, hit flashes) but HP carries over — mistakes follow you
+    // from room to room, which is the heart of the sustain rework. True
+    // respawns (death -> village) still use Revive() and its full heal.
+    _dying       = false;
+    _takingDamage = false;
+    _hitTimer    = 0.f;
+    _deathTimer  = 0.4f;
+    _velocity    = Vector2Zero();
+    _forcedPushActive    = false;
+    _forcedPushDirection = Vector2Zero();
+    _forcedPushSpeed     = 0.f;
+    _forcedPushStunTimer = 0.f;
+    _pendingBurnTicks.clear();
+    if (_health < 1.f) _health = 1.f;   // safety clamp — never enter a room dead
+    GrantInvulnerability(1.5f);         // brief i-frames so entry isn't punished
+}
+
 void Character::TakeDamage(int damage, Vector2 attackerPos)
 {
     if (_hasIFrames || _dashInvincible || _forcedPushActive)
         return;
+
+    // Warrior Rage — getting hit stokes the fire. Triggers even if armour eats
+    // the hit (pain is pain), mirroring how Paladin Retribution counts below.
+    AddRage(12.f);
+
+    // Paladin Faith — standing your ground and taking the blow strengthens
+    // conviction. Same "even if armour absorbs it" rule as Rage/Retribution.
+    AddFaith(15.f);
 
     // Paladin Retribution — every hit that connects fuels the counter, and Aegis
     // reflects a fraction back at the attacker. Triggers even if armour eats the
@@ -933,6 +1019,14 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
         return;
     }
 
+    if (_shopWardHits > 0)
+    {
+        --_shopWardHits;
+        damage = std::max(0, damage - 1);
+        if (damage <= 0)
+            return;
+    }
+
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
 
@@ -957,7 +1051,16 @@ void Character::TakeFractionalDamage(float damage, Vector2 attackerPos)
         return;
     }
 
+    if (_shopWardHits > 0)
+    {
+        --_shopWardHits;
+        damage = std::max(0.f, damage - 1.f);
+        if (damage <= 0.f)
+            return;
+    }
+
     _health -= damage;
+    _telemDamageTaken += damage;   // balance telemetry (per-room, read by Engine)
 
     if (_health > 0.f)
     {
@@ -1106,6 +1209,7 @@ void Character::ApplyBurnTickDamage(float damage, Vector2 sourcePos)
         return;
 
     _health -= damage;
+    _telemDamageTaken += damage;   // balance telemetry (per-room, read by Engine)
 
     if (_health > 0.f)
     {
@@ -1151,7 +1255,10 @@ bool Character::CanCastAbility(AbilityType type) const
     if (AbilityDrainsAllMana(type))
         return _mana >= GetUltimateManaRequired();
 
-    return _mana >= GetAbilityManaCost(type);
+    if (_shopFreeCasts > 0)
+        return true;
+
+    return _mana >= GetAbilityCost(type);   // includes the Overload surcharge
 }
 
 int Character::GetUltimateManaRequired() const
@@ -1232,7 +1339,7 @@ float Character::GetClassDamageMult() const
 {
     float m = _damageBuffTimer > 0.f ? _damageBuffMult : 1.f;
     if (_retributionTimer > 0.f)             // Paladin: recent hits taken boost damage
-        m *= (1.f + _retributionStacks * kRetributionPerStack);
+        m *= (1.f + _retributionStacks * _retributionPerStack);   // Zealot's Fury raises the rate
     return m;
 }
 
@@ -1245,7 +1352,9 @@ void Character::GrantDamageBuff(float mult, float duration)
 
 void Character::GrantLifesteal(float fraction, float duration)
 {
-    _lifestealFraction = fraction;
+    // Grim Harvest class card strengthens every lifesteal grant (capped so the
+    // per-room lifesteal cap stays the real governor).
+    _lifestealFraction = std::min(0.9f, fraction * _lifestealPotency);
     _lifestealTimer    = std::max(_lifestealTimer, duration);
 }
 
@@ -1374,29 +1483,36 @@ int Character::GetAbilityUpgradeBonus(AbilityType type) const
     return abilityLevel - 1;
 }
 
+// All five elemental damage pipelines multiply by the per-element class-card
+// dial (Pyromancy / Cryomancy / Storm Attunement) on top of the generic bonus.
 int Character::GetSpreadHitDamage(AbilityType type) const
 {
-    return (int)((_spreadBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
+    return (int)((_spreadBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier
+                 * GetElementDamageMult(type));
 }
 
 int Character::GetSpreadBurnDamage(AbilityType type) const
 {
-    return (int)((_spreadBurnBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
+    return (int)((_spreadBurnBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier
+                 * GetElementDamageMult(type));
 }
 
 int Character::GetBoltHitDamage(AbilityType type) const
 {
-    return (int)((_boltBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
+    return (int)((_boltBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier
+                 * GetElementDamageMult(type));
 }
 
 int Character::GetBoltBurnDamage(AbilityType type) const
 {
-    return (int)((_boltBurnBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
+    return (int)((_boltBurnBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier
+                 * GetElementDamageMult(type));
 }
 
 int Character::GetUltimateHitDamage(AbilityType type) const
 {
-    return (int)((_ultimateBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier);
+    return (int)((_ultimateBaseDamage + GetAbilityUpgradeBonus(type)) * _abilityDamageMultiplier
+                 * GetElementDamageMult(type));
 }
 
 void Character::AddExp(int amount)
@@ -1419,17 +1535,9 @@ void Character::AddExp(int amount)
         _exp -= _expToNextLevel;
         _level++;
 
-        // Normal leveling is now pure RPG baseline progression:
-        // small automatic gains to the core stats every level.
-        _maxHealth += kLevelHpGain;
-        Heal(kLevelHpGain);
-        _attackPower += kLevelAttackGain;
-        _maxMana += kLevelManaGain;
-        _mana = std::min(_mana + kLevelManaGain, _maxMana);
-
-        // Slower pacing: early levels take a few rooms, then the runway
-        // stretches steadily so later levels still feel earned.
-        _expToNextLevel = 12 + _level * 12; // 24, 36, 48, 60, 72 ...
+        // Levels grant a Power Choice in Engine. No automatic HP, healing,
+        // attack, mana, or sustain is bundled into the level itself.
+        _expToNextLevel = Balance::Levelling::ExpToNextForLevel(_level);
     }
 
     // Clamp leftover EXP at max level
@@ -1439,13 +1547,17 @@ void Character::AddExp(int amount)
 
 void Character::Heal(int amount)
 {
+    float before = _health;
     _health += amount;
 
     if (_health >= _maxHealth)
         _health = _maxHealth;
 
     if (amount > 0)
+    {
         _pendingHealEffects += amount;
+        _telemHealed += _health - before;   // balance telemetry (actual HP gained)
+    }
 }
 
 void Character::RestoreMana(int amount)
@@ -1472,24 +1584,22 @@ void Character::ApplyUpgrade(UpgradeType type)
     {
     // ── Common ────────────────────────────────────────────────────────────────
     case UpgradeType::AttackPower:
-        _attackPower += 1.0f;
+        _attackPower += 0.5f;
         break;
     case UpgradeType::AttackRange:
-        _attackRangeMultiplier += 0.12f;
+        _attackRangeMultiplier += 0.08f;
         break;
     case UpgradeType::MaxHealth:
-        _maxHealth += 3;
-        Heal(3);
+        _maxHealth += 2;
         break;
     case UpgradeType::MaxMana:
-        _maxMana += 6;
-        _mana = std::min(_mana + 3, _maxMana);
+        _maxMana += 4;
         break;
     case UpgradeType::Defense:
         AddArmour(1);
         break;
     case UpgradeType::MoveSpeed:
-        _speed += 18.0f;
+        _speed += 12.0f;
         break;
     // ── Rare ──────────────────────────────────────────────────────────────────
     case UpgradeType::IronConstitution:
@@ -1547,6 +1657,98 @@ void Character::ApplyUpgrade(UpgradeType type)
         _attackPower += 1.5f;
         _manaRegenMultiplier += 0.15f;
         break;
+    // ── Power Choice additions ────────────────────────────────────────────────
+    case UpgradeType::ManaFlow:
+        _maxMana += 1;
+        _manaRegenMultiplier += 0.15f;
+        break;
+    case UpgradeType::ClassAttunement:
+        _classResourceGainMult += 0.25f;
+        break;
+    case UpgradeType::Overload:
+        // The tradeoff card: permanent ability damage, paid on every cast.
+        _abilityPowerMult += 0.15f;
+        _abilityCostBonus += 1;
+        break;
+    // -- Class-specific Power Choice cards ------------------------------------
+    // Mage
+    case UpgradeType::MagePyromancy:       _fireDamageMult     += 0.20f; break;
+    case UpgradeType::MageInfernalMastery: _fireDamageMult     += 0.35f; break;
+    case UpgradeType::MageCryomancy:       _iceDamageMult      += 0.20f; break;
+    case UpgradeType::MageGlacialMastery:  _iceDamageMult      += 0.35f; break;
+    case UpgradeType::MageStormAttunement: _electricDamageMult += 0.20f; break;
+    case UpgradeType::MageTempestMastery:  _electricDamageMult += 0.35f; break;
+    case UpgradeType::MageComboResonance:  _comboBonusMult     += 1.0f;  break;
+    case UpgradeType::MageArcaneHaste:     _manaRegenMultiplier += 0.20f; break;
+    // Warrior
+    case UpgradeType::WarriorSmolderingFury: _rageDecayMult *= 0.5f; break;
+    case UpgradeType::WarriorFuriousMight:   _rageFullBonus += 0.20f; break;
+    case UpgradeType::WarriorBattleTrance:
+        _classResourceGainMult += 0.25f;
+        _rageFullBonus         += 0.10f;
+        break;
+    case UpgradeType::WarriorUnbreakable:
+        AddArmour(1);
+        _maxHealth += 1.f;
+        break;
+    case UpgradeType::WarriorColossus:
+        _maxHealth   += 2.f;
+        _attackPower += 0.5f;
+        break;
+    case UpgradeType::WarriorWarlordsReach:  _attackRangeMultiplier += 0.10f; break;
+    case UpgradeType::WarriorBattleMeditation: _healOnRoomClear += 1; break;
+    case UpgradeType::WarriorWeaponMaster:   _abilityPowerMult += 0.08f; break;
+    // Hunter
+    case UpgradeType::HunterPredatorsRhythm: _hunterMarkEvery = std::max(2, _hunterMarkEvery - 1); break;
+    case UpgradeType::HunterQuarry:          _markedBonus += 0.15f; break;
+    case UpgradeType::HunterApexPredator:    _markedBonus += 0.30f; break;
+    case UpgradeType::HunterFletcher:        _attackPower += 0.5f;  break;
+    case UpgradeType::HunterTrappersCunning: _abilityPowerMult += 0.10f; break;
+    case UpgradeType::HunterSwiftQuiver:     _speed += 12.f; break;
+    case UpgradeType::HunterSurvivalist:
+        _maxHealth += 1.f;
+        AddArmour(1);
+        break;
+    case UpgradeType::HunterFocusedBreathing: _manaRegenMultiplier += 0.15f; break;
+    // Rogue
+    case UpgradeType::RogueDeepReserves:     _maxComboPointsRun = std::min(7, _maxComboPointsRun + 1); break;
+    case UpgradeType::RogueRuthlessFinisher: _evisceratePerCombo += 0.05f; break;
+    case UpgradeType::RogueExsanguinate:     _evisceratePerCombo += 0.10f; break;
+    case UpgradeType::RogueToxinExpert:      _poisonPotency += 0.5f; break;
+    case UpgradeType::RogueMasterPoisoner:   _poisonPotency += 1.0f; break;
+    case UpgradeType::RogueFleetFootwork:    _speed += 12.f; break;
+    case UpgradeType::RogueShadowConditioning: _maxHealth += 1.f; break;
+    case UpgradeType::RogueOpportunist:
+        _classResourceGainMult += 0.25f;
+        _evisceratePerCombo    += 0.05f;
+        break;
+    // Paladin
+    case UpgradeType::PaladinHolyMight:      _abilityPowerMult += 0.10f; break;
+    case UpgradeType::PaladinDivineWrath:    _abilityPowerMult += 0.18f; break;
+    case UpgradeType::PaladinZealotsFury:    _retributionPerStack += 0.06f; break;
+    case UpgradeType::PaladinMirroredAegis:  _reflectPotency += 0.5f; break;
+    case UpgradeType::PaladinDevotion:       _classResourceGainMult += 0.15f; break;
+    case UpgradeType::PaladinCrusadersVitality: _maxHealth += 2.f; break;
+    case UpgradeType::PaladinSanctuary:
+        AddArmour(2);
+        _healOnRoomClear += 1;
+        break;
+    case UpgradeType::PaladinDivineConduit:
+        _maxMana += 2;
+        _manaRegenMultiplier += 0.15f;
+        break;
+    // Warlock
+    case UpgradeType::WarlockGrimHarvest:    _lifestealPotency += 0.5f; break;
+    case UpgradeType::WarlockDarkPact:       _cursedBonus += 0.10f; break;
+    case UpgradeType::WarlockSoulBargain:    _cursedBonus += 0.25f; break;
+    case UpgradeType::WarlockLingeringMalice: _curseDurationMult += 0.5f; break;
+    case UpgradeType::WarlockVoidAttunement: _manaRegenMultiplier += 0.20f; break;
+    case UpgradeType::WarlockCorruptedVitality: _maxHealth += 2.f; break;
+    case UpgradeType::WarlockSoulConduit:
+        _lifestealPotency  += 0.5f;
+        _curseDurationMult += 0.25f;
+        break;
+    case UpgradeType::WarlockOccultPower:    _abilityPowerMult += 0.08f; break;
     case UpgradeType::LearnFireSpread:
         LearnAbility(AbilityType::FireSpread);
         break;
@@ -1608,6 +1810,35 @@ void Character::ApplyUpgrade(UpgradeType type)
 
 UpgradeRarity Character::GetUpgradeRarity(UpgradeType type) const
 {
+    // Power Choice additions sit after the epic block in the enum, so they need
+    // explicit rarities before the index-range fallbacks below.
+    if (type == UpgradeType::ManaFlow)                                          return UpgradeRarity::Common;
+    if (type == UpgradeType::ClassAttunement || type == UpgradeType::Overload)  return UpgradeRarity::Rare;
+
+    // Class-specific cards: explicit commons/epics, everything else rare.
+    switch (type)
+    {
+    case UpgradeType::MageArcaneHaste:      case UpgradeType::WarriorWarlordsReach:
+    case UpgradeType::WarriorWeaponMaster:  case UpgradeType::HunterFletcher:
+    case UpgradeType::HunterSwiftQuiver:    case UpgradeType::HunterFocusedBreathing:
+    case UpgradeType::RogueFleetFootwork:   case UpgradeType::RogueShadowConditioning:
+    case UpgradeType::PaladinDevotion:      case UpgradeType::PaladinCrusadersVitality:
+    case UpgradeType::WarlockVoidAttunement:case UpgradeType::WarlockCorruptedVitality:
+    case UpgradeType::WarlockOccultPower:
+        return UpgradeRarity::Common;
+    case UpgradeType::MageInfernalMastery:  case UpgradeType::MageGlacialMastery:
+    case UpgradeType::MageTempestMastery:   case UpgradeType::WarriorBattleTrance:
+    case UpgradeType::WarriorColossus:      case UpgradeType::HunterPredatorsRhythm:
+    case UpgradeType::HunterApexPredator:   case UpgradeType::RogueExsanguinate:
+    case UpgradeType::RogueMasterPoisoner:  case UpgradeType::RogueOpportunist:
+    case UpgradeType::PaladinDivineWrath:   case UpgradeType::PaladinSanctuary:
+    case UpgradeType::WarlockSoulBargain:   case UpgradeType::WarlockSoulConduit:
+        return UpgradeRarity::Epic;
+    default: break;
+    }
+    if ((int)type >= (int)UpgradeType::MagePyromancy && (int)type <= (int)UpgradeType::WarlockOccultPower)
+        return UpgradeRarity::Rare;
+
     int t = (int)type;
     if (t <= (int)UpgradeType::MoveSpeed)       return UpgradeRarity::Common;  // 0-5
     if (t <= (int)UpgradeType::BladeEdge)        return UpgradeRarity::Rare;    // 6-11
@@ -1648,6 +1879,15 @@ AbilityType AbilityForLearnType(UpgradeType type)
 {
     switch (type)
     {
+    case UpgradeType::LearnFireSpread:       return AbilityType::FireSpread;
+    case UpgradeType::LearnIceSpread:        return AbilityType::IceSpread;
+    case UpgradeType::LearnElectricSpread:   return AbilityType::ElectricSpread;
+    case UpgradeType::LearnFireBolt:         return AbilityType::FireBolt;
+    case UpgradeType::LearnIceBolt:          return AbilityType::IceBolt;
+    case UpgradeType::LearnElectricBolt:     return AbilityType::ElectricBolt;
+    case UpgradeType::LearnFireUltimate:     return AbilityType::FireUltimate;
+    case UpgradeType::LearnIceUltimate:      return AbilityType::IceUltimate;
+    case UpgradeType::LearnElectricUltimate: return AbilityType::ElectricUltimate;
     case UpgradeType::LearnWarCleave:    return AbilityType::WarCleave;
     case UpgradeType::LearnWhirlwind:    return AbilityType::Whirlwind;
     case UpgradeType::LearnThrowingAxe:  return AbilityType::ThrowingAxe;
@@ -1701,6 +1941,15 @@ AbilityType AbilityForUpgradeType(UpgradeType type)
 {
     switch (type)
     {
+    case UpgradeType::UpgradeFireSpread:       return AbilityType::FireSpread;
+    case UpgradeType::UpgradeIceSpread:        return AbilityType::IceSpread;
+    case UpgradeType::UpgradeElectricSpread:   return AbilityType::ElectricSpread;
+    case UpgradeType::UpgradeFireBolt:         return AbilityType::FireBolt;
+    case UpgradeType::UpgradeIceBolt:          return AbilityType::IceBolt;
+    case UpgradeType::UpgradeElectricBolt:     return AbilityType::ElectricBolt;
+    case UpgradeType::UpgradeFireUltimate:     return AbilityType::FireUltimate;
+    case UpgradeType::UpgradeIceUltimate:      return AbilityType::IceUltimate;
+    case UpgradeType::UpgradeElectricUltimate: return AbilityType::ElectricUltimate;
     case UpgradeType::UpgradeWarCleave:    return AbilityType::WarCleave;
     case UpgradeType::UpgradeWhirlwind:    return AbilityType::Whirlwind;
     case UpgradeType::UpgradeThrowingAxe:  return AbilityType::ThrowingAxe;

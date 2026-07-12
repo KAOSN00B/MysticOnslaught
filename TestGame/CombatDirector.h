@@ -45,12 +45,22 @@ struct CombatSpawnContext
     float* eliteLeapTimer = nullptr;
     float* eliteHazardSpawnTimer = nullptr;
 
+    // Player world position — used to place role-based spawns (ranged in back,
+    // tanks between player and back line, assassins off-angle).
+    Vector2 playerPos{};
+
     std::function<bool(Vector2)> isSpawnPositionValid;
     std::function<Enemy*(Vector2)> spawnBasicEnemy;
     std::function<Enemy*(Vector2)> spawnCyclops;
     std::function<Enemy*(Vector2)> spawnOgre;
     std::function<void(Vector2)> spawnMolarbeast;
     std::function<void()> spawnBossSupportAdds;
+    // Role enemies the encounter director composes fights from (see EnemyRole).
+    std::function<Enemy*(Vector2)> spawnSkeletonArcher;   // Ranged
+    std::function<Enemy*(Vector2)> spawnFlameWisp;        // Zoner
+    std::function<Enemy*(Vector2)> spawnShieldbearer;     // Tank
+    std::function<Enemy*(Vector2)> spawnPhantom;          // Assassin
+    std::function<Enemy*(Vector2)> spawnWarchief;         // Support
 };
 
 struct EliteMechanicsContext
@@ -125,6 +135,7 @@ struct EnemyDeathContext
     int* bossesDefeated = nullptr;
     bool* demoCompleted = nullptr;
     float* pendingExp = nullptr;
+    bool awardKillExp = true;  // legacy/wave mode; dungeon mode pays once per room
     std::function<void(Vector2, bool, bool)> spawnEnemyDrop;
     std::function<void(Vector2)> spawnSmallSlime;    // big slime death split
     std::function<void(Vector2)> spawnPoisonCloud;   // sporeling death burst

@@ -41,6 +41,29 @@ struct ShopTextures
     int        abilityIconCount = 0;
 };
 
+enum class ShopWareType
+{
+    IronrootTonic,
+    FieldDressing,
+    ManaPrism,
+    SharpeningStone,
+    FreecastSeal,
+    WardCharm,
+    GildedCompass,
+    EchoSatchel,
+    Count
+};
+
+// Zeph brokers one difficult job per visit. Contracts cost no gold, arm for the
+// next combat room, and only grant their reward after the objective succeeds.
+enum class ShopContractType
+{
+    Untouched,
+    ArcaneRestraint,
+    AgainstTheClock,
+    Count
+};
+
 class ShopManager
 {
 public:
@@ -77,26 +100,44 @@ public:
 
     // ── Inventory ─────────────────────────────────────────────────────────
     void GenerateInventory(const Character& player);
+    static const char* GetWareName(ShopWareType type);
+    static bool ApplyWare(Character& player, ShopWareType type);
+    ShopContractType ConsumeAcceptedContract()
+    {
+        ShopContractType accepted = _acceptedContract;
+        _acceptedContract = ShopContractType::Count;
+        return accepted;
+    }
 
     // ── Queries ───────────────────────────────────────────────────────────
     bool        IsNearNpc()    const { return _nearNpc; }
     Vector2     GetNpcPos()    const { return _npcPos;  }
     Rectangle   GetNpcTouchBtnRect(float sx, float sy) const;
     void        SetPromptMode(InputPromptMode mode) { _promptMode = mode; }
+    bool        PurchasedThisVisit() const { return _purchaseMadeThisVisit; }
 
 private:
     struct ShopItem
     {
         bool        isAbility   = false;
-        UpgradeType upgradeType = UpgradeType::AttackPower;
+        bool        isContract  = false;
+        bool        upgradesAbility = false;
+        ShopWareType wareType   = ShopWareType::IronrootTonic;
+        ShopContractType contractType = ShopContractType::Count;
+        UpgradeType upgradeType = UpgradeType::AttackPower; // legacy draw compatibility
         AbilityType abilityType = AbilityType::None;
         int         price       = 0;
         bool        purchased   = false;
+        bool        reserved    = false;   // Reserve Stock: survives rerolls
     };
+
+    // Reroll that honours Reserve Stock: reserved cards survive regeneration.
+    void RerollInventory(Character& player);
 
     std::vector<ShopItem> _inventory;
     const MetaProgressionManager* _meta = nullptr;   // set once by Engine after Init
-    int         _tab            = 0;    // 0 = wares, 1 = abilities
+    int         _tab            = 0;    // retained for old UI editor data; shop is one page
+    bool        _gamepadReservePending = false;   // X on a card -> reserve it
     std::string _dialogue;
     Vector2     _npcPos         = {};
     bool        _nearNpc        = false;
@@ -106,6 +147,8 @@ private:
     int         _rerollCost     = 20;
     int         _act            = 1;    // current act, set on Enter()
     int         _dailyDealIndex = -1;   // index of discounted item (-1 = none)
+    bool        _purchaseMadeThisVisit = false;
+    ShopContractType _acceptedContract = ShopContractType::Count;
 
     ShopTextures _tex;
 
@@ -155,40 +198,40 @@ private:
     bool  _isUIEditorActive      = false;
     int   _uiEditorSelectedIndex = 0;
 
-    float _uiPad             = 18.0f;   // 0  outer padding
-    float _uiLeftPanelW     = 0.23f;   // 1  left panel width as screen-width multiplier
-    float _uiTitleFs        = 35.0f;   // 2  "PLAYER" / "ZEPH'S WARES" font size
-    float _uiStatFs         = 42.0f;   // 3  stat row font size
-    float _uiSlotFs         = 42.0f;   // 4  ability name in slot
-    float _uiSlotBtnFs      = 32.0f;   // 5  Upg/Rem button text
+    float _uiPad             = 37.0f;   // 0  outer padding
+    float _uiLeftPanelW     = 0.28f;   // 1  left panel width as screen-width multiplier
+    float _uiTitleFs        = 37.0f;   // 2  "PLAYER" / "ZEPH'S WARES" font size
+    float _uiStatFs         = 44.0f;   // 3  stat row font size
+    float _uiSlotFs         = 37.0f;   // 4  ability name in slot
+    float _uiSlotBtnFs      = 31.0f;   // 5  Upg/Rem button text
     float _uiHpFs           = 47.0f;   // 6  HP/MP bar label
-    float _uiTabH           = 63.0f;   // 7  Wares/Abilities tab height
-    float _uiBuyBtnH        = 44.0f;   // 8  buy button height
+    float _uiTabH           = 70.0f;   // 7  Wares/Abilities tab height
+    float _uiBuyBtnH        = 51.0f;   // 8  buy button height
     float _uiItemNameFs     = 33.0f;   // 9  shop item name font size
-    float _uiItemDescFs     = 24.0f;   // 10 shop item description font size
-    float _uiItemTextOffsetY = 20.0f;  // 11 Y gap between icon bottom and item name/desc
-    float _uiPriceFs        = 34.0f;   // 12 buy button price text font size
-    float _uiDialNameFs     = 47.0f;   // 13 "Zeph:" name tag font size
-    float _uiDialTextFs     = 41.0f;   // 14 dialogue text font size
+    float _uiItemDescFs     = 30.0f;   // 10 shop item description font size
+    float _uiItemTextOffsetY = 12.0f;  // 11 Y gap between icon bottom and item name/desc
+    float _uiPriceFs        = 39.0f;   // 12 buy button price text font size
+    float _uiDialNameFs     = 54.0f;   // 13 "Zeph:" name tag font size
+    float _uiDialTextFs     = 39.0f;   // 14 dialogue text font size
     float _uiPotionH        = 59.0f;   // 15 reserved legacy shop spacing
-    float _uiPotionFs       = 32.0f;   // 16 reserved legacy shop text
-    float _uiAbilTitleFs    = 36.0f;   // 17 "ABILITIES" section header font size
-    float _uiBtnH           = 75.0f;   // 18 Leave / Reroll button height
-    float _uiLeaveW         = 201.0f;  // 19 Leave button width
-    float _uiRerollW        = 249.0f;  // 20 Reroll button width
-    float _uiBtnFs          = 26.0f;   // 21 Leave / Reroll text (auto-shrinks to fit)
-    float _uiRarityFs       = 22.0f;   // 22 Rarity label font size
-    float _uiRarityPad      = 9.0f;    // 23 Rarity label offset from card corner
-    float _uiZephScale      = 1.4f;    // 24 Zeph portrait uniform scale (1.0 = 180px tall)
-    float _uiZephPosX       = 559.f;   // 25 Zeph portrait X center (screen space)
+    float _uiPotionFs       = 35.0f;   // 16 reserved legacy shop text
+    float _uiAbilTitleFs    = 39.0f;   // 17 "ABILITIES" section header font size
+    float _uiBtnH           = 63.0f;   // 18 Leave / Reroll button height
+    float _uiLeaveW         = 225.0f;  // 19 Leave button width
+    float _uiRerollW        = 275.0f;  // 20 Reroll button width
+    float _uiBtnFs          = 32.0f;   // 21 Leave / Reroll text (auto-shrinks to fit)
+    float _uiRarityFs       = 27.0f;   // 22 Rarity label font size
+    float _uiRarityPad      = 12.0f;   // 23 Rarity label offset from card corner
+    float _uiZephScale      = 1.3f;    // 24 Zeph portrait uniform scale (1.0 = 180px tall)
+    float _uiZephPosX       = 636.f;   // 25 Zeph portrait X center (screen space)
     float _uiZephPosY       = 846.f;   // 26 Zeph portrait Y center (screen space)
-    float _uiDialPosX       = 632.f;   // 27 Dialogue text block X start (screen space)
-    float _uiDialPosY       = 906.f;   // 28 Dialogue text block Y center (screen space)
+    float _uiDialPosX       = 707.f;   // 27 Dialogue text block X start (screen space)
+    float _uiDialPosY       = 897.f;   // 28 Dialogue text block Y center (screen space)
 
     // NPC touch button (appears above Zeph in touch mode when near)
     float _uiNpcBtnW        = 220.f;   // 29 button width
     float _uiNpcBtnH        = 75.f;    // 30 button height
-    float _uiNpcBtnOffsetX  = 0.f;     // 31 X offset from Zeph screen centre
+    float _uiNpcBtnOffsetX  = 4.f;     // 31 X offset from Zeph screen centre
     float _uiNpcBtnOffsetY  = -165.f;  // 32 Y offset (negative = above Zeph)
     float _uiNpcBtnFs       = 34.f;    // 33 button label font size
 };

@@ -181,35 +181,141 @@ void CombatDirector::SpawnEnemies(const CombatSpawnContext& ctx) const
         return;
     }
 
-    int regularCount = 0, cyclopsCount = 0, ogreCount = 0;
-    if (ctx.currentAct == 1)
+    // ── Encounter composition (normal rooms) ──────────────────────────────────
+    // Rather than a fixed enemy count, compose the fight from tactical ROLES against
+    // a depth-scaled spawn BUDGET, chosen via an encounter TEMPLATE and placed by
+    // role (ranged in back, tanks between player and back line, assassins off-angle).
+    // Role + cost come from each enemy type (Enemy::GetEncounterRole/GetSpawnCost).
+    // Difficulty curve: early rooms stay simple (Swarm/Balanced only); role variety
+    // and budget grow with depth before raw stats do.
+    const int depth  = (ctx.currentAct - 1) * 5 + ctx.currentRoom;   // 1, 2, 3, ...
+    int       budget = 3 + depth;                                    // grunt-equivalents
+    const int tier   = (depth <= 2) ? 0 : (depth <= 6 ? 1 : 2);      // role complexity
+
+    // Farthest corner from the player = the back line where ranged/support belong.
+    Vector2 backLine{ mapW * 0.5f, mapH * 0.5f };
     {
-        switch (ctx.currentRoom)
+        const float m = 400.f;
+        const Vector2 corners[4] = { { m, m }, { mapW - m, m }, { m, mapH - m }, { mapW - m, mapH - m } };
+        float bestDist = -1.f;
+        for (const Vector2& c : corners)
         {
-        case 1: regularCount = 2; cyclopsCount = 0; ogreCount = 0; break;
-        case 2: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
-        case 3: regularCount = 4; cyclopsCount = 1; ogreCount = 0; break;
-        case 4: regularCount = 5; cyclopsCount = 1; ogreCount = 0; break;
-        case 5: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
-        default: regularCount = 4; cyclopsCount = 0; ogreCount = 0; break;
-        }
-    }
-    else
-    {
-        switch (ctx.currentRoom)
-        {
-        case 1: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
-        case 2: regularCount = 7; cyclopsCount = 1; ogreCount = 1; break;
-        case 3: regularCount = 7; cyclopsCount = 2; ogreCount = 1; break;
-        case 4: regularCount = 8; cyclopsCount = 2; ogreCount = 2; break;
-        case 5: regularCount = 8; cyclopsCount = 2; ogreCount = 2; break;
-        default: regularCount = 6; cyclopsCount = 1; ogreCount = 1; break;
+            float d = Vector2Distance(c, ctx.playerPos);
+            if (d > bestDist) { bestDist = d; backLine = c; }
         }
     }
 
-    for (int i = 0; i < regularCount; i++) ctx.spawnBasicEnemy(spawnPos());
-    for (int i = 0; i < cyclopsCount; i++) ctx.spawnCyclops(spawnPos());
-    for (int i = 0; i < ogreCount; i++) ctx.spawnOgre(spawnPos());
+    // Snap a desired point to a nearby valid spawn (small jitter search).
+    auto validNear = [&](Vector2 want) -> Vector2 {
+        if (ctx.isSpawnPositionValid(want)) return want;
+        for (int a = 0; a < 12; a++)
+        {
+            Vector2 p{ want.x + (float)GetRandomValue(-160, 160), want.y + (float)GetRandomValue(-160, 160) };
+            if (ctx.isSpawnPositionValid(p)) return p;
+        }
+        return want;
+    };
+
+    // Place a spawn according to its tactical role.
+    auto posForRole = [&](EnemyRole role) -> Vector2 {
+        switch (role)
+        {
+        case EnemyRole::Ranged:
+        case EnemyRole::HeavyRanged:
+        case EnemyRole::Zoner:
+        case EnemyRole::Support:
+        case EnemyRole::Summoner:
+            return validNear(backLine);                                     // safe back line
+        case EnemyRole::Tank:
+            return validNear(Vector2Lerp(ctx.playerPos, backLine, 0.55f));  // screen the back line
+        case EnemyRole::Assassin:
+        {
+            Vector2 toBack = Vector2Subtract(backLine, ctx.playerPos);
+            Vector2 side{ -toBack.y, toBack.x };                            // perpendicular = off-angle
+            if (Vector2Length(side) > 0.01f) side = Vector2Normalize(side);
+            float reach = (GetRandomValue(0, 1) ? 1.f : -1.f) * 360.f;
+            return validNear(Vector2Add(ctx.playerPos, Vector2Scale(side, reach)));
+        }
+        default:
+            return spawnPos();                                             // grunts/chargers: anywhere
+        }
+    };
+
+    // Spend `cost` of the budget and spawn one unit at its role position.
+    auto trySpawn = [&](const std::function<Enemy*(Vector2)>& fn, EnemyRole role, int cost) {
+        if (!fn || budget < cost) return;
+        fn(posForRole(role));
+        budget -= cost;
+    };
+
+    // Fill whatever budget remains with cheap grunts (guarded against runaway loops).
+    auto fillGrunts = [&]() {
+        int guard = 0;
+        while (budget > 0 && guard++ < 40)
+        {
+            ctx.spawnBasicEnemy(posForRole(EnemyRole::Grunt));
+            budget -= 1;
+        }
+    };
+
+    // Pick an encounter template appropriate to the depth tier (early tiers keep
+    // only the fair, simple compositions).
+    enum class Template { Swarm, Balanced, TankRanged, ZonerPressure, HeavyRanged, SupportSwarm, AssassinPressure };
+    Template tmpl;
+    if (tier == 0)
+    {
+        const Template pool[] = { Template::Swarm, Template::Balanced };
+        tmpl = pool[GetRandomValue(0, 1)];
+    }
+    else if (tier == 1)
+    {
+        const Template pool[] = { Template::Balanced, Template::TankRanged, Template::ZonerPressure,
+                                  Template::HeavyRanged, Template::SupportSwarm };
+        tmpl = pool[GetRandomValue(0, 4)];
+    }
+    else
+    {
+        const Template pool[] = { Template::TankRanged, Template::ZonerPressure, Template::HeavyRanged,
+                                  Template::SupportSwarm, Template::AssassinPressure, Template::Balanced };
+        tmpl = pool[GetRandomValue(0, 5)];
+    }
+
+    switch (tmpl)
+    {
+    case Template::Swarm:            // many low-cost bodies, no heavy unit
+        fillGrunts();
+        break;
+    case Template::Balanced:         // one ranged, one heavy anchor, filler grunts
+        trySpawn(ctx.spawnSkeletonArcher, EnemyRole::Ranged, 2);
+        trySpawn(ctx.spawnCyclops,        EnemyRole::HeavyRanged, 4);
+        fillGrunts();
+        break;
+    case Template::TankRanged:       // shieldbearer screens archers/wisps behind it
+        trySpawn(ctx.spawnShieldbearer,   EnemyRole::Tank, 3);
+        trySpawn(ctx.spawnSkeletonArcher, EnemyRole::Ranged, 2);
+        if (tier >= 2) trySpawn(ctx.spawnFlameWisp, EnemyRole::Zoner, 3);
+        fillGrunts();
+        break;
+    case Template::ZonerPressure:    // flame wisps control the floor; grunts push you in
+        trySpawn(ctx.spawnFlameWisp, EnemyRole::Zoner, 3);
+        if (tier >= 2) trySpawn(ctx.spawnFlameWisp, EnemyRole::Zoner, 3);
+        fillGrunts();
+        break;
+    case Template::HeavyRanged:      // cyclops anchor plus a blocker
+        trySpawn(ctx.spawnCyclops,      EnemyRole::HeavyRanged, 4);
+        trySpawn(ctx.spawnShieldbearer, EnemyRole::Tank, 3);
+        fillGrunts();
+        break;
+    case Template::SupportSwarm:     // warchief buffs a swarm from safety
+        trySpawn(ctx.spawnWarchief, EnemyRole::Support, 4);
+        fillGrunts();
+        break;
+    case Template::AssassinPressure: // phantom strikes off-angle while ranged pins you
+        trySpawn(ctx.spawnPhantom,        EnemyRole::Assassin, 3);
+        trySpawn(ctx.spawnSkeletonArcher, EnemyRole::Ranged, 2);
+        fillGrunts();
+        break;
+    }
 }
 
 void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, float dt) const
@@ -730,12 +836,13 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
 
             if (isBoss)
             {
-                *ctx.pendingExp += 10.f * ctx.wave;
+                if (ctx.awardKillExp)
+                    *ctx.pendingExp += 10.f * ctx.wave;
                 (*ctx.bossesDefeated)++;
                 if (*ctx.bossesDefeated >= 2)
                     *ctx.demoCompleted = true;
             }
-            else if (!IsBossFightActive(*ctx.enemies))
+            else if (ctx.awardKillExp && !IsBossFightActive(*ctx.enemies))
             {
                 *ctx.pendingExp += (float)enemy->GetExpValue();
             }

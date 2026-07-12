@@ -1117,6 +1117,41 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
         DrawCircleLines((int)screenPos.x, (int)screenPos.y, 42.f, Fade(Color{ 160, 255, 200, 255 }, pulse * 0.5f));
     }
 
+    // Hunter Mark indicator — a pulsing red chevron hovering above a marked enemy,
+    // so the player always knows which target their bonus damage applies to.
+    if (IsMarked())
+    {
+        float bob    = sinf((float)GetTime() * 6.f) * 4.f;                 // gentle hover
+        float pulse  = sinf((float)GetTime() * 9.f) * 0.25f + 0.75f;       // alpha pulse
+        float tipY   = screenPos.y - h * 0.5f - 14.f + bob;                // chevron tip
+        float half   = 11.f;                                               // half-width
+        Color markColor = Fade(Color{ 255, 70, 70, 255 }, pulse);
+        // Downward-pointing triangle (counter-clockwise winding so raylib fills it).
+        DrawTriangle(Vector2{ screenPos.x - half, tipY - 14.f },
+                     Vector2{ screenPos.x,        tipY },
+                     Vector2{ screenPos.x + half, tipY - 14.f }, markColor);
+        DrawTriangleLines(Vector2{ screenPos.x - half, tipY - 14.f },
+                          Vector2{ screenPos.x,        tipY },
+                          Vector2{ screenPos.x + half, tipY - 14.f }, Fade(BLACK, pulse * 0.6f));
+    }
+
+    // Warlock Curse indicator — a pulsing purple diamond above a cursed enemy.
+    // Offset sideways when a Hunter Mark is also up so the two never overlap.
+    if (IsCursed())
+    {
+        float bob    = sinf((float)GetTime() * 5.f) * 4.f;
+        float pulse  = sinf((float)GetTime() * 8.f) * 0.25f + 0.75f;
+        float cx     = screenPos.x + (IsMarked() ? 24.f : 0.f);
+        float cy     = screenPos.y - h * 0.5f - 21.f + bob;   // diamond centre
+        float half   = 8.f;
+        Color curseColor = Fade(Color{ 190, 90, 255, 255 }, pulse);
+        // Diamond = two triangles (counter-clockwise winding so raylib fills them).
+        DrawTriangle(Vector2{ cx - half, cy }, Vector2{ cx, cy + half },
+                     Vector2{ cx + half, cy }, curseColor);
+        DrawTriangle(Vector2{ cx + half, cy }, Vector2{ cx, cy - half },
+                     Vector2{ cx - half, cy }, curseColor);
+    }
+
     if (_health != _maxHealth)
         DrawHealthBar(screenPos, w, h);
     if (_isEliteMiniboss)
@@ -1448,6 +1483,14 @@ void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
     _health      = _maxHealth;
     _attackPower *= (1.f + Balance::Curve::kDamagePerLevel * t);
     _speed       *= (1.f + Balance::Curve::kSpeedPerLevel  * t);
+
+    // Attack cadence pressure: deeper enemies strike more OFTEN, not just
+    // harder — difficulty from tempo instead of ever-spongier HP. Floored so
+    // no depth turns an authored rhythm into a blender.
+    const float delayFactor = std::max(Balance::Curve::kMinAttackDelayFactor,
+                                       1.f - Balance::Curve::kAttackDelayPerLevel * t);
+    _attackDelay *= delayFactor;
+
     _expValue    += (enemyPowerLevel - 1);
 }
 
@@ -1609,6 +1652,7 @@ void Enemy::ResetStatuses()
     _slowTimer   = 0.f; _slowMult = 1.f;
     _vulnTimer   = 0.f; _vulnMult = 1.f;
     _markTimer   = 0.f;
+    _curseTimer  = 0.f;
 }
 
 void Enemy::UpdateStatuses(float dt)
@@ -1646,6 +1690,7 @@ void Enemy::UpdateStatuses(float dt)
     if (_slowTimer > 0.f) { _slowTimer -= dt; if (_slowTimer <= 0.f) _slowMult = 1.f; }
     if (_vulnTimer > 0.f) { _vulnTimer -= dt; if (_vulnTimer <= 0.f) _vulnMult = 1.f; }
     if (_markTimer > 0.f) { _markTimer -= dt; }
+    if (_curseTimer > 0.f) { _curseTimer -= dt; }
 }
 
 void Enemy::UpdateBurns(float dt)

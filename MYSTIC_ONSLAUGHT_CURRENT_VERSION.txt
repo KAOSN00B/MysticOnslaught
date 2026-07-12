@@ -1,0 +1,116 @@
+MYSTIC ONSLAUGHT - CURRENT VERSION OVERVIEW
+Last updated: 2026-07-11
+
+This file is the current game-direction summary for Mystic Onslaught.
+It supersedes the older brainstorming docs about rooms, village ideas, and
+the old all-in-one editor direction.
+
+Core Game Shape
+---------------
+Mystic Onslaught is a top-down action roguelite with a village meta layer.
+The dungeon is the pressure test. The village is the place where the world
+breathes, the player rests, and long-term identity grows.
+
+The game should feel like:
+- a combat-first roguelite with readable action
+- a village-builder-lite / home-base layer
+- a game where runs feed the village, and the village changes future runs
+
+Current Design Pillars
+----------------------
+1. Combat should stay skillful and not become a flat stat treadmill.
+2. Player classes should feel distinct through mechanics, not just damage.
+3. Enemy pressure should come from composition, aggression, and roles.
+4. The village should give ownership, identity, and a reason to return.
+5. Meta progression should expand options more than raw power.
+
+Combat Direction
+----------------
+The current combat direction is:
+- class identity systems for Warrior, Rogue, Paladin, Hunter, Mage, and Warlock
+- stronger build expression through ability choices and synergies
+- less dependence on automatic stat snowballing
+- enemy difficulty that scales mostly through room depth, roles, and pressure
+
+The current balance goal is to avoid a run where the player becomes overpowered
+after only a couple of level-ups and pickups.
+
+Village Direction
+-----------------
+The village is meant to be a small but lived-in hub, not a giant empty map.
+It should start compact and only grow when new systems need the space.
+
+Current village anchor points:
+- Graveyard: death / respawn / Poe space
+- Shop: Zeph's shop
+- Bestiary / sanctuary space
+- 3 to 4 villager houses
+- 5 to 6 visible NPCs, with some interior NPCs later
+- player decoration space: trees, flowers, mushrooms, benches, signs, fences
+
+The village should feel cozy, readable, and personal.
+Player-made decoration is important.
+Houses should exist as meaningful landmarks, not just filler.
+
+Village Progression Intent
+-------------------------
+The village grows because the player earns it through dungeon runs.
+The player brings back gold/resources, banks progress, unlocks services, and
+fills the village with life.
+
+The intended loop is:
+1. Dungeon run.
+2. Earn gold, cells, relics, unlocks, and choices.
+3. Return to village.
+4. Bank progress and spend it on village growth / services.
+5. Village changes and gives new options for the next run.
+
+Village Building Direction
+--------------------------
+The current direction is not a giant freeform editor.
+The current direction is authored PNG village assets plus metadata.
+
+Village pieces should use:
+- PNG art
+- `.vasset` metadata
+- colliders
+- named markers like Zeph, Poe, and Respawn
+
+The important idea is that the game knows what the asset is, where it blocks,
+and where interactable points live.
+
+What Still Matters For The Build
+--------------------------------
+The village needs:
+- a compact but satisfying footprint
+- a reason for houses to exist
+- room for custom decoration
+- service buildings that matter to progression
+- a clear respawn/death anchor
+- a bestiary or creature sanctuary concept
+
+What Is Not The Focus Right Now
+-------------------------------
+- giant all-in-one tile editor rebuild
+- fully procedural houses
+- turning the village into a second combat game
+- overcomplicating the village before the core loop is stable
+
+Current Technical Notes
+-----------------------
+The active village asset pipeline uses readable sidecar metadata files.
+The technical docs for that are still valid:
+- `VILLAGE_METADATA_MODEL.md`
+- `VILLAGE_ASSET_PIPELINE_PLAN.txt`
+
+Those files describe the asset format and runtime loading direction.
+This file describes the current game version and overall direction.
+
+Practical Rule
+--------------
+If a new idea does not help one of these goals, it should probably wait:
+- make combat more interesting
+- make the village feel alive
+- make the player care about long-term progress
+- keep the game readable and not too bloated
+

@@ -6,9 +6,209 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <string>
 
 // ── File-local helpers ────────────────────────────────────────────────────────
+
+const char* ShopManager::GetWareName(ShopWareType type)
+{
+    switch (type)
+    {
+    case ShopWareType::IronrootTonic:   return "Ironroot Tonic";
+    case ShopWareType::FieldDressing:   return "Field Dressing";
+    case ShopWareType::ManaPrism:       return "Mana Prism";
+    case ShopWareType::SharpeningStone: return "Sharpening Stone";
+    case ShopWareType::FreecastSeal:    return "Freecast Seal";
+    case ShopWareType::WardCharm:       return "Ward Charm";
+    case ShopWareType::GildedCompass:   return "Gilded Compass";
+    case ShopWareType::EchoSatchel:     return "Echo Satchel";
+    default:                            return "Unknown Ware";
+    }
+}
+
+static const char* ShopContractName(ShopContractType type)
+{
+    switch (type)
+    {
+    case ShopContractType::Untouched:        return "Untouched";
+    case ShopContractType::ArcaneRestraint:  return "Arcane Restraint";
+    case ShopContractType::AgainstTheClock:  return "Against the Clock";
+    default:                                 return "Unknown Contract";
+    }
+}
+
+static const char* ShopContractObjective(ShopContractType type)
+{
+    switch (type)
+    {
+    case ShopContractType::Untouched:       return "Clear the next fight without losing HP.";
+    case ShopContractType::ArcaneRestraint: return "Clear the next fight using at most 2 abilities.";
+    case ShopContractType::AgainstTheClock: return "Clear the next fight before Zeph's timer expires.";
+    default:                                return "";
+    }
+}
+
+static const char* ShopContractReward(ShopContractType type)
+{
+    switch (type)
+    {
+    case ShopContractType::Untouched:       return "Reward: upgrade your weakest ability.";
+    case ShopContractType::ArcaneRestraint: return "Reward: Ward Charm + 2 free casts.";
+    case ShopContractType::AgainstTheClock: return "Reward: choose a relic.";
+    default:                                return "";
+    }
+}
+
+static float DrawShopWrappedText(const std::string& text, float centerX, float y,
+                                 float maxWidth, int fontSize, Color color,
+                                 int maxLines = 3)
+{
+    std::istringstream words(text);
+    std::vector<std::string> lines;
+    std::string line;
+    std::string word;
+    while (words >> word)
+    {
+        std::string trial = line.empty() ? word : line + " " + word;
+        if (!line.empty() && MeasureText(trial.c_str(), fontSize) > (int)maxWidth)
+        {
+            lines.push_back(line);
+            line = word;
+        }
+        else
+        {
+            line = trial;
+        }
+    }
+    if (!line.empty()) lines.push_back(line);
+
+    if ((int)lines.size() > maxLines)
+    {
+        lines.resize(maxLines);
+        std::string& last = lines.back();
+        while (!last.empty() && MeasureText((last + "...").c_str(), fontSize) > (int)maxWidth)
+            last.pop_back();
+        last += "...";
+    }
+
+    for (const std::string& wrapped : lines)
+    {
+        int width = MeasureText(wrapped.c_str(), fontSize);
+        DrawText(wrapped.c_str(), (int)(centerX - width * 0.5f), (int)y, fontSize, color);
+        y += fontSize + 3.f;
+    }
+    return y;
+}
+
+static const char* ShopWareDesc(ShopWareType type)
+{
+    switch (type)
+    {
+    case ShopWareType::IronrootTonic:   return "Gain 1 armour. It lasts until broken.";
+    case ShopWareType::FieldDressing:   return "Recover 1 HP. Limited emergency care.";
+    case ShopWareType::ManaPrism:       return "Restore 2 mana. No maximum increase.";
+    case ShopWareType::SharpeningStone: return "Your next 6 basic hits deal +15% damage.";
+    case ShopWareType::FreecastSeal:   return "Next normal ability costs no mana.";
+    case ShopWareType::WardCharm:      return "Next unarmoured hit deals 1 less damage.";
+    case ShopWareType::GildedCompass:  return "Next 5 gold finds are worth 25% more.";
+    case ShopWareType::EchoSatchel:    return "Next 5 Echo pickups give +25% Echoes.";
+    default:                           return "";
+    }
+}
+
+static int ShopWarePrice(ShopWareType type)
+{
+    switch (type)
+    {
+    case ShopWareType::ManaPrism:       return 35;
+    case ShopWareType::IronrootTonic:   return 45;
+    case ShopWareType::SharpeningStone: return 45;
+    case ShopWareType::GildedCompass:  return 40;
+    case ShopWareType::EchoSatchel:    return 40;
+    case ShopWareType::FreecastSeal:   return 50;
+    case ShopWareType::FieldDressing:  return 55;
+    case ShopWareType::WardCharm:      return 65;
+    default:                           return 50;
+    }
+}
+
+static bool ShopWareDailyDealEligible(ShopWareType type)
+{
+    return type != ShopWareType::Count;
+}
+
+static UpgradeRarity ShopWareRarity(ShopWareType type)
+{
+    switch (type)
+    {
+    case ShopWareType::WardCharm:
+    case ShopWareType::FreecastSeal:
+        return UpgradeRarity::Rare;
+    default:
+        return UpgradeRarity::Common;
+    }
+}
+
+static std::string ShopWarePreview(const Character& player, ShopWareType type)
+{
+    switch (type)
+    {
+    case ShopWareType::IronrootTonic:
+        return TextFormat("Armour %d/%d -> %d/%d", player.GetArmour(), player.GetMaxArmour(),
+            std::min(player.GetMaxArmour(), player.GetArmour() + 1), player.GetMaxArmour());
+    case ShopWareType::FieldDressing:
+        return TextFormat("HP %.0f -> %.0f", player.GetHealthValue(),
+            std::min(player.GetMaxHealthValue(), player.GetHealthValue() + 1.f));
+    case ShopWareType::ManaPrism:
+        return TextFormat("Mana %d -> %d", player.GetMana(), std::min(player.GetMaxMana(), player.GetMana() + 2));
+    case ShopWareType::SharpeningStone:
+        return TextFormat("Charged hits: %d -> %d", player.GetShopWhetstoneHits(),
+            std::min(12, player.GetShopWhetstoneHits() + 6));
+    case ShopWareType::FreecastSeal:
+        return TextFormat("Free casts: %d -> %d", player.GetShopFreeCasts(),
+            std::min(2, player.GetShopFreeCasts() + 1));
+    case ShopWareType::WardCharm:
+        return TextFormat("Ward charges: %d -> %d", player.GetShopWardHits(),
+            std::min(2, player.GetShopWardHits() + 1));
+    case ShopWareType::GildedCompass:
+        return TextFormat("Boosted pickups: %d -> %d", player.GetShopGoldPickups(),
+            std::min(10, player.GetShopGoldPickups() + 5));
+    case ShopWareType::EchoSatchel:
+        return TextFormat("Boosted pickups: %d -> %d", player.GetShopCellPickups(),
+            std::min(10, player.GetShopCellPickups() + 5));
+    default:
+        return "";
+    }
+}
+
+bool ShopManager::ApplyWare(Character& player, ShopWareType type)
+{
+    switch (type)
+    {
+    case ShopWareType::IronrootTonic:
+        if (player.GetArmour() >= player.GetMaxArmour()) return false;
+        player.AddArmour(1); return true;
+    case ShopWareType::FieldDressing:
+        if (player.GetHealthValue() >= player.GetMaxHealthValue()) return false;
+        player.Heal(1); return true;
+    case ShopWareType::ManaPrism:
+        if (player.GetMana() >= player.GetMaxMana()) return false;
+        player.RestoreMana(2); return true;
+    case ShopWareType::SharpeningStone:
+        player.GrantShopWhetstone(); return true;
+    case ShopWareType::FreecastSeal:
+        player.GrantShopFreeCast(); return true;
+    case ShopWareType::WardCharm:
+        player.GrantShopWard(); return true;
+    case ShopWareType::GildedCompass:
+        player.GrantShopGoldCompass(); return true;
+    case ShopWareType::EchoSatchel:
+        player.GrantShopEchoSatchel(); return true;
+    default:
+        return false;
+    }
+}
 
 static const char* ShopUpgradeName(UpgradeType t)
 {
@@ -31,6 +231,11 @@ static const char* ShopUpgradeName(UpgradeType t)
     case UpgradeType::BladeStorm:       return "Blade Storm Rig";
     case UpgradeType::Juggernaut:       return "Juggernaut Frame";
     case UpgradeType::ArcaneColossus:   return "Overchannel Core";
+    // Power Choice additions — not sold by Zeph, but named here so any shared
+    // UI path that meets them shows a real label instead of "Unknown".
+    case UpgradeType::ManaFlow:         return "Mana Flow";
+    case UpgradeType::ClassAttunement:  return "Class Attunement";
+    case UpgradeType::Overload:         return "Overload";
     default:                            return "Unknown";
     }
 }
@@ -41,8 +246,8 @@ static const char* ShopUpgradeDesc(UpgradeType t)
     {
     case UpgradeType::AttackPower:      return "Basic hits gain modest damage.";
     case UpgradeType::AttackRange:      return "Slightly wider melee reach.";
-    case UpgradeType::MaxHealth:        return "A small max HP bump and heal.";
-    case UpgradeType::MaxMana:          return "Larger mana pool, small refill.";
+    case UpgradeType::MaxHealth:        return "A small max HP bump. Does not heal.";
+    case UpgradeType::MaxMana:          return "Larger mana pool. Does not refill it.";
     case UpgradeType::Defense:          return "Gain 1 armour slot now.";
     case UpgradeType::MoveSpeed:        return "A small movement speed bump.";
     case UpgradeType::IronConstitution: return "+15% max HP and heal the gain.";
@@ -56,6 +261,9 @@ static const char* ShopUpgradeDesc(UpgradeType t)
     case UpgradeType::BladeStorm:       return "Damage plus +8% move speed.";
     case UpgradeType::Juggernaut:       return "+12% max HP and 2 armour.";
     case UpgradeType::ArcaneColossus:   return "Max MP, damage, slight regen.";
+    case UpgradeType::ManaFlow:         return "+1 max mana, +15% mana regen.";
+    case UpgradeType::ClassAttunement:  return "Class resource gain +25%.";
+    case UpgradeType::Overload:         return "+15% ability damage, casts cost +1 mana.";
     default:                            return "";
     }
 }
@@ -97,17 +305,17 @@ static std::string ShopUpgradePreview(const Character& player, UpgradeType t)
     switch (t)
     {
     case UpgradeType::AttackPower:
-        return TextFormat("Melee %d -> %d", (int)atk, (int)(atk + 1.0f));
+        return TextFormat("Melee %.1f -> %.1f", atk, atk + 0.5f);
     case UpgradeType::AttackRange:
-        return FormatStatPreview("Reach", rangePct, rangePct + 12.f);
+        return FormatStatPreview("Reach", rangePct, rangePct + 8.f);
     case UpgradeType::MaxHealth:
-        return FormatStatPreview("Max HP", hp, hp + 3.f);
+        return FormatStatPreview("Max HP", hp, hp + 2.f);
     case UpgradeType::MaxMana:
-        return TextFormat("Max MP %d -> %d", player.GetMaxMana(), player.GetMaxMana() + 6);
+        return TextFormat("Max MP %d -> %d", player.GetMaxMana(), player.GetMaxMana() + 4);
     case UpgradeType::Defense:
         return TextFormat("Armour %d/%d -> %d/%d", player.GetArmour(), player.GetMaxArmour(), std::min(player.GetMaxArmour(), player.GetArmour() + 1), player.GetMaxArmour());
     case UpgradeType::MoveSpeed:
-        return FormatStatPreview("Speed", speed + 0.f, speed + 18.f);
+        return FormatStatPreview("Speed", speed, speed + 12.f);
     case UpgradeType::IronConstitution:
         return FormatStatPreview("Max HP", hp, std::ceil(hp * 1.15f));
     case UpgradeType::SwiftFeet:
@@ -243,6 +451,8 @@ void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
     _gamepadLPIdx          = 0;
     _gamepadLPUpgSlot      = -1;
     _gamepadLPRemSlot      = -1;
+    _purchaseMadeThisVisit = false;
+    _acceptedContract      = ShopContractType::Count;
     _dialogue        = "Welcome to Zeph's Wares! What do you need?";
     _introFirstEntry = true;
     _introPhase      = IntroPhase::Off;
@@ -574,7 +784,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
     const float pad = _uiPad;
 
     Vector2 mouse   = GetVirtualMousePos();
-    bool    clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+    bool    clicked  = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+    bool    rclicked = IsMouseButtonPressed(MOUSE_RIGHT_BUTTON);   // Reserve Stock
 
     // ── Layout (must match Draw exactly) ─────────────────────────────────
     static constexpr float kBorderDst_u  = 32.f;
@@ -609,9 +820,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
         {
             player.AddGold(-_rerollCost);
             _rerollCost += Balance::Economy::kRerollStep;
-            GenerateInventory(player);
+            RerollInventory(player);
             _gamepadCursorIdx = 0;
-            _dialogue = "Fresh stock, just for you!";
         }
         else
         {
@@ -628,9 +838,8 @@ bool ShopManager::Update(Character& player, bool debugActive)
         {
             player.AddGold(-_rerollCost);
             _rerollCost += Balance::Economy::kRerollStep;
-            GenerateInventory(player);
+            RerollInventory(player);
             _gamepadCursorIdx = 0;
-            _dialogue = "Fresh stock, just for you!";
         }
         else { _dialogue = "You don't have enough gold for a reroll!"; }
         return false;
@@ -741,25 +950,18 @@ bool ShopManager::Update(Character& player, bool debugActive)
         }
     }
 
-    // ── Tab buttons ───────────────────────────────────────────────────────
+    // ── Content area ──────────────────────────────────────────────────────
+    // One-page shop: the header strip (drawn in Draw) replaces the old tab
+    // buttons; the strip's geometry is kept so the grid position is unchanged.
     const float titleH = 46.f;
     const float tabH   = _uiTabH;
-    const float tabW   = (shopW - iPad * 2.f) * 0.5f - 4.f;
     const float tabY   = shopY + titleH;
-    Rectangle tabWares = { shopX + iPad,               tabY, tabW, tabH };
-    Rectangle tabAb    = { shopX + iPad + tabW + 8.f,  tabY, tabW, tabH };
-
-    if (clicked && CheckCollisionPointRec(mouse, tabWares)) _tab = 0;
-    if (clicked && CheckCollisionPointRec(mouse, tabAb))    _tab = 1;
-
-    // ── Content area ──────────────────────────────────────────────────────
     const float contentY = tabY + tabH + iPad;
     const float contentH = shopH - titleH - tabH - iPad * 2.f;
     const float contentW = shopW - iPad * 2.f;
 
-    if (_tab == 0)
     {
-        // 2 rows × 3 cols of items
+        // 2 rows × 3 cols of mixed items (wares + abilities, one grid)
         const float cols   = 3.f, rows = 2.f, gap = 10.f;
         const float itemW  = (contentW - gap * (cols - 1.f)) / cols;
         const float itemH  = (contentH - gap * (rows - 1.f)) / rows;
@@ -769,7 +971,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
         for (int idx = 0; idx < (int)_inventory.size(); idx++)
         {
             ShopItem& item = _inventory[idx];
-            if (item.purchased || item.isAbility) continue;
+            if (item.purchased) continue;
 
             int   col  = displayIdx % 3;
             int   row  = displayIdx / 3;
@@ -777,71 +979,82 @@ bool ShopManager::Update(Character& player, bool debugActive)
             float iy   = contentY + row * (itemH + gap);
 
             Rectangle cardRect = { ix, iy, itemW, itemH };
+
+            // Reserve Stock: right-click (gamepad: X) locks this card so it
+            // survives rerolls, for a small fee. One reserved card at a time.
+            bool reserveActivated = (rclicked && CheckCollisionPointRec(mouse, cardRect)) ||
+                                    (_gamepadReservePending && displayIdx == _gamepadCursorIdx);
+            if (reserveActivated)
+            {
+                _gamepadReservePending = false;
+                bool anotherReserved = false;
+                for (const auto& other : _inventory)
+                    if (other.reserved && !other.purchased) { anotherReserved = true; break; }
+                if (item.isContract)
+                    _dialogue = "Contracts cannot be reserved. The work changes daily.";
+                else if (item.reserved)
+                    _dialogue = "That one's already set aside for you.";
+                else if (anotherReserved)
+                    _dialogue = "I can only hold ONE item aside at a time.";
+                else if (player.GetGold() >= Balance::Economy::kReserveStockCost)
+                {
+                    player.AddGold(-Balance::Economy::kReserveStockCost);
+                    item.reserved = true;
+                    _dialogue = "Reserved! That one survives any reroll.";
+                }
+                else
+                {
+                    _dialogue = TextFormat("Reserving costs %d gold, friend.",
+                                           Balance::Economy::kReserveStockCost);
+                }
+            }
+
             bool cardActivated = (clicked && CheckCollisionPointRec(mouse, cardRect)) ||
                                  (_gamepadConfirmPending && displayIdx == _gamepadCursorIdx);
             if (cardActivated)
             {
                 _gamepadConfirmPending = false;
-                if (item.isAbility && player.GetLearnedCount() >= 3)
+                if (item.isAbility && !item.upgradesAbility && player.GetLearnedCount() >= 3)
                 {
                     _dialogue = "You can only hold 3 abilities. Remove one first.";
                     return false;
                 }
-                if (player.GetGold() >= item.price)
+                if (item.isContract)
                 {
-                    player.AddGold(-item.price);
-                    if (item.isAbility)
-                        player.LearnAbility(item.abilityType);
-                    else
-                        player.ApplyUpgrade(item.upgradeType);
+                    if (_acceptedContract != ShopContractType::Count)
+                    {
+                        _dialogue = "One contract at a time. Finish the work first.";
+                        return false;
+                    }
+                    _acceptedContract = item.contractType;
                     item.purchased = true;
+                    _purchaseMadeThisVisit = true;
                     _gamepadCursorIdx = 0;
-                    _dialogue      = "Pleasure doing business with you!";
-                }
-                else
-                {
-                    _dialogue = "I'm sorry, it seems you're a bit short on gold...";
-                }
-            }
-            displayIdx++;
-        }
-    }
-    else
-    {
-        // 2 rows × 3 cols of purchasable ability items
-        const float cols   = 3.f, rows = 2.f, gap = 10.f;
-        const float itemW  = (contentW - gap * (cols - 1.f)) / cols;
-        const float itemH  = (contentH - gap * (rows - 1.f)) / rows;
-        const float buyH   = _uiBuyBtnH;
-        int displayIdx = 0;
-
-        for (int idx = 0; idx < (int)_inventory.size(); idx++)
-        {
-            ShopItem& item = _inventory[idx];
-            if (item.purchased || !item.isAbility) continue;
-
-            int   col  = displayIdx % 3;
-            int   row  = displayIdx / 3;
-            float ix   = shopX + iPad + col * (itemW + gap);
-            float iy   = contentY + row * (itemH + gap);
-
-            Rectangle cardRect = { ix, iy, itemW, itemH };
-            bool cardActivated = (clicked && CheckCollisionPointRec(mouse, cardRect)) ||
-                                 (_gamepadConfirmPending && displayIdx == _gamepadCursorIdx);
-            if (cardActivated)
-            {
-                _gamepadConfirmPending = false;
-                if (player.GetLearnedCount() >= 3)
-                {
-                    _dialogue = "You can only hold 3 abilities. Remove one first.";
+                    _dialogue = "Contract accepted. It begins in your next fight.";
                 }
                 else if (player.GetGold() >= item.price)
                 {
                     player.AddGold(-item.price);
-                    player.LearnAbility(item.abilityType);
+                    if (item.isAbility)
+                    {
+                        if (item.upgradesAbility)
+                            player.UpgradeAbility(item.abilityType);
+                        else
+                            player.LearnAbility(item.abilityType);
+                    }
+                    else
+                    {
+                        if (!ApplyWare(player, item.wareType))
+                        {
+                            player.AddGold(item.price);
+                            _dialogue = "That ware would have no effect right now.";
+                            return false;
+                        }
+                    }
                     item.purchased = true;
+                    _purchaseMadeThisVisit = true;
                     _gamepadCursorIdx = 0;
-                    _dialogue = "A fine choice. Put it to good use!";
+                    _dialogue      = "Pleasure doing business with you!";
                 }
                 else
                 {
@@ -859,6 +1072,7 @@ bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
 {
     _gamepadConfirmPending = false;
     _gamepadRerollPending  = false;
+    _gamepadReservePending = false;
     _gamepadLPUpgSlot      = -1;
     _gamepadLPRemSlot      = -1;
 
@@ -869,10 +1083,10 @@ bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
     }
     _gamepadNavActive = true;
 
-    // Count visible items in the current tab
+    // Count visible items — one mixed page, so every unpurchased item counts.
     int itemCount = 0;
     for (const auto& item : _inventory)
-        if (!item.purchased && (_tab == 0 ? !item.isAbility : item.isAbility))
+        if (!item.purchased)
             ++itemCount;
     itemCount = std::min(itemCount, 6);
     if (itemCount > 0) _gamepadCursorIdx = std::min(_gamepadCursorIdx, itemCount - 1);
@@ -918,19 +1132,6 @@ bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
             if (isRem) _gamepadLPRemSlot = slotIdx;
             else       _gamepadLPUpgSlot = slotIdx;
         }
-    }
-    else if (_gamepadTabActive)
-    {
-        // Tab row: left/right cycles between WARES and ABILITIES tabs
-        if (navLeft || navRight) { _gamepadTabCursor ^= 1; _gamepadNavCooldown = kNavCooldown; }
-        if (gpA)
-        {
-            _tab              = _gamepadTabCursor;
-            _gamepadTabActive = false;
-            _gamepadCursorIdx = 0;
-            _gamepadNavCooldown = kNavCooldown;
-        }
-        if (navDown) { _gamepadTabActive = false; _gamepadNavCooldown = kNavCooldown; }
     }
     else if (_gamepadBottomActive)
     {
@@ -979,13 +1180,6 @@ bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
             _gamepadCursorIdx -= 3;
             _gamepadNavCooldown = kNavCooldown;
         }
-        else if (navUp    && row == 0)
-        {
-            // Enter tab row — highlight tab first, A to switch
-            _gamepadTabActive  = true;
-            _gamepadTabCursor  = _tab;
-            _gamepadNavCooldown = kNavCooldown;
-        }
         else if (navDown && _gamepadCursorIdx + 3 < itemCount)
         {
             _gamepadCursorIdx += 3;
@@ -999,6 +1193,9 @@ bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
         }
 
         if (gpA) _gamepadConfirmPending = true;
+        // X / Square reserves the highlighted card (Reserve Stock).
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_LEFT))
+            _gamepadReservePending = true;
     }
 
     // B / Circle = leave the shop from anywhere
@@ -1318,7 +1515,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             const char* inDesc  = GetAbilityDesc(inspectAbil);   // curated two-line text
             const char* inMana  = IsUltimateAbility(inspectAbil)
                                 ? "Ultimate - drains all mana"
-                                : TextFormat("Mana cost: %d", GetAbilityManaCost(inspectAbil));
+                                : TextFormat("Mana cost: %d", player.GetAbilityCost(inspectAbil));   // includes Overload surcharge
 
             float bw = cw;
             float bh = 158.f;
@@ -1353,33 +1550,23 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                    { shopX + shopW - iPad, shopY + titleH - 4.f },
                    1.f, Fade(kGold, 0.30f));
 
-        const float tabW   = (shopW - iPad * 2.f) * 0.5f - 4.f;
+        // One-page shop: the old WARES/ABILITIES tabs are gone. A single header
+        // strip keeps the same geometry so the card grid below doesn't move.
         const float tabY   = shopY + titleH;
-        Rectangle tabWares = { shopX + iPad,               tabY, tabW, tabH };
-        Rectangle tabAb    = { shopX + iPad + tabW + 8.f,  tabY, tabW, tabH };
-
-        auto drawTab = [&](Rectangle r, const char* label, bool active, bool gpCursor)
+        Rectangle tabStrip = { shopX + iPad, tabY, shopW - iPad * 2.f, tabH };
+        smallBox(tabStrip, Color{ 20, 25, 40, 180 }, Color{ 80, 100, 140, 180 });
         {
-            Vector2 mTab = GetVirtualMousePos();
-            bool hov = CheckCollisionPointRec(mTab, r) || gpCursor;
-            Color bg = active ? Color{40,60,110,240} : (hov ? Color{30,38,65,220} : Color{20,25,40,180});
-            Color bo = active ? Color{100,150,255,255} : (hov ? Color{120,150,220,240} : Color{80,100,140,180});
-            if (gpCursor && !active)
-                DrawRectangleRoundedLines({ r.x - 3.f, r.y - 3.f, r.width + 6.f, r.height + 6.f },
-                                         0.2f, 6, Color{255, 200, 0, 240});
-            smallBox(r, bg, bo);
-            float fs = std::min(_uiStatFs, r.height - 8.f);
+            const char* stripLabel = "TODAY'S STOCK - SUPPLIES, CONTRACTS & ABILITIES";
+            float fs = std::min(_uiStatFs, tabStrip.height - 8.f);
             fs = std::max(8.f, fs);
-            while (fs > 8.f && MeasureText(label, (int)fs) > (int)(r.width - 16.f))
+            while (fs > 8.f && MeasureText(stripLabel, (int)fs) > (int)(tabStrip.width - 16.f))
                 fs -= 1.f;
-            int tw = MeasureText(label, (int)fs);
-            DrawText(label,
-                (int)(r.x + r.width  * 0.5f - tw * 0.5f),
-                (int)(r.y + r.height * 0.5f - fs * 0.5f),
-                (int)fs, active ? RAYWHITE : (hov ? Color{200,210,230,255} : kDim));
-        };
-        drawTab(tabWares, "WARES",     _tab == 0, _gamepadTabActive && _gamepadTabCursor == 0);
-        drawTab(tabAb,    "ABILITIES", _tab == 1, _gamepadTabActive && _gamepadTabCursor == 1);
+            int tw = MeasureText(stripLabel, (int)fs);
+            DrawText(stripLabel,
+                (int)(tabStrip.x + tabStrip.width  * 0.5f - tw * 0.5f),
+                (int)(tabStrip.y + tabStrip.height * 0.5f - fs * 0.5f),
+                (int)fs, kDim);
+        }
 
         const float contentY = tabY + tabH + iPad;
         const float contentH = shopH - titleH - tabH - iPad * 2.f;
@@ -1388,6 +1575,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         // Icon lookup — maps item type to the appropriate texture pointer
         auto getShopIcon = [&](const ShopItem& si) -> Texture2D*
         {
+            if (si.isContract)
+                return _tex.upgradeSpeed;
             if (si.isAbility)
             {
                 switch (si.abilityType)
@@ -1408,29 +1597,31 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 }
                 }
             }
-            switch (si.upgradeType)
+            // Wares map to the nearest stat-icon family.
+            switch (si.wareType)
             {
-            case UpgradeType::AttackPower: case UpgradeType::Ferocity:
-            case UpgradeType::WarGod:      case UpgradeType::BladeStorm:
+            case ShopWareType::SharpeningStone:
                 return _tex.upgradeAttack;
-            case UpgradeType::AttackRange: case UpgradeType::BladeEdge:
-                return _tex.upgradeRange;
-            case UpgradeType::MaxHealth:   case UpgradeType::IronConstitution:
-            case UpgradeType::Resilience:  case UpgradeType::Juggernaut:
+            case ShopWareType::FieldDressing:
                 return _tex.upgradeHealth;
-            case UpgradeType::MaxMana:     case UpgradeType::ArcaneMind:
-            case UpgradeType::ArcaneColossus:
+            case ShopWareType::ManaPrism:
+            case ShopWareType::FreecastSeal:
+            case ShopWareType::EchoSatchel:
                 return _tex.upgradeMagic;
-            case UpgradeType::Defense:     case UpgradeType::IronSkin:
+            case ShopWareType::IronrootTonic:
+            case ShopWareType::WardCharm:
                 return _tex.upgradeDefense;
-            case UpgradeType::MoveSpeed:   case UpgradeType::SwiftFeet:
+            case ShopWareType::GildedCompass:
                 return _tex.upgradeSpeed;
             default: return nullptr;
             }
         };
 
-        if (_tab == 0)
         {
+            // One mixed grid: abilities and wares share the same 2×3 layout, in
+            // the SAME order the purchase loop walks — draw and click can never
+            // disagree again (the old tabbed draw skipped ability items while
+            // the click loop counted them, misaligning the whole grid).
             const float cols = 3.f, rows = 2.f, gap = 10.f;
             const float itemW = (contentW - gap * (cols - 1.f)) / cols;
             const float itemH = (contentH - gap * (rows - 1.f)) / rows;
@@ -1438,12 +1629,22 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             const float iconSz = std::min(itemW * 0.40f, itemH * 0.35f);
             const float nameFs = _uiItemNameFs;
             const float descFsBase = _uiItemDescFs;
-            int availableWares = 0;
-            for (const auto& item : _inventory)
-                if (!item.purchased && !item.isAbility)
-                    availableWares++;
+            bool slotsFull = (player.GetLearnedCount() >= 3);
 
-            if (availableWares == 0)
+            // Category badge text — what the item IS, in merchant language.
+            auto ShopItemCategoryLabel = [](const ShopItem& it) -> const char*
+            {
+                if (it.isAbility)
+                    return it.upgradesAbility ? "UPGRADE" : "ABILITY";
+                return it.isContract ? "CONTRACT" : "SUPPLY";
+            };
+
+            int availableItems = 0;
+            for (const auto& item : _inventory)
+                if (!item.purchased)
+                    availableItems++;
+
+            if (availableItems == 0)
             {
                 DrawText("Nothing left in stock.", (int)(shopX + iPad + 8.f),
                     (int)(contentY + 20.f), 18, kDim);
@@ -1453,14 +1654,18 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             for (int idx = 0; idx < (int)_inventory.size(); idx++)
             {
                 const ShopItem& item = _inventory[idx];
-                if (item.purchased || item.isAbility) continue;
+                if (item.purchased) continue;
 
                 int   col = displayIdx % 3, row = displayIdx / 3;
                 float ix  = shopX + iPad + col * (itemW + gap);
                 float iy  = contentY + row * (itemH + gap);
 
-                UpgradeRarity rar = ShopUpgradeRarity(item.upgradeType);
-                Color rarCol    = ShopRarityColor(rar);
+                // Card colour: wares tint by rarity; abilities keep their
+                // signature purple so the two kinds read apart at a glance.
+                UpgradeRarity rar = item.isAbility ? UpgradeRarity::Rare : ShopWareRarity(item.wareType);
+                Color rarCol = item.isContract ? Color{ 215, 155, 70, 255 }
+                             : item.isAbility  ? Color{ 120, 80, 220, 255 }
+                                               : ShopRarityColor(rar);
                 Color cardBg    = { (uint8_t)(rarCol.r / 3), (uint8_t)(rarCol.g / 3), (uint8_t)(rarCol.b / 3), 220 };
                 Color cardBgHov = { (uint8_t)(rarCol.r / 2), (uint8_t)(rarCol.g / 2), (uint8_t)(rarCol.b / 2), 240 };
                 Color cardBo    = Fade(rarCol, 0.55f);
@@ -1474,17 +1679,17 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
                 BeginScissorMode((int)ix + 6, (int)iy, (int)itemW - 6, (int)itemH);
 
-                // Rarity label — top-left corner
+                // Category badge — top-left corner. Merchant language (what the
+                // item IS), not levelling-screen rarity words.
                 {
-                    const char* rarLbl = (rar == UpgradeRarity::Common) ? "COMMON" :
-                                         (rar == UpgradeRarity::Rare)   ? "RARE"   : "LEGENDARY";
+                    const char* catLbl = ShopItemCategoryLabel(item);
                     constexpr int kInner = 3;
                     int rlFs = (int)_uiRarityFs;
-                    int rlW  = MeasureText(rarLbl, rlFs);
+                    int rlW  = MeasureText(catLbl, rlFs);
                     float rlX = ix + 6.f + _uiRarityPad;
                     float rlY = iy + _uiRarityPad;
                     DrawRectangle((int)rlX, (int)rlY, rlW + kInner * 2, rlFs + kInner * 2, Fade(BLACK, 0.65f));
-                    DrawText(rarLbl, (int)(rlX + kInner), (int)(rlY + kInner), rlFs, WHITE);
+                    DrawText(catLbl, (int)(rlX + kInner), (int)(rlY + kInner), rlFs, WHITE);
                 }
 
                 const float iconCX = ix + itemW * 0.5f;
@@ -1508,33 +1713,60 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 }
 
                 float cy2 = iconCY + iconSz * 0.5f + _uiItemTextOffsetY;
-                const char* name = ShopUpgradeName(item.upgradeType);
-                const char* desc = ShopUpgradeDesc(item.upgradeType);
-                std::string preview = ShopUpgradePreview(player, item.upgradeType);
+                // Resolve card text by item kind (the old path pushed everything
+                // through the legacy UpgradeType tables, mislabelling wares).
+                const char* name;
+                const char* desc;
+                std::string preview;
+                if (item.isAbility)
+                {
+                    name = ShopAbilityName(item.abilityType);
+                    desc = ShopAbilityDesc(item.abilityType);
+                    preview = item.upgradesAbility
+                        ? TextFormat("Lv %d -> %d", player.GetAbilityLevel(item.abilityType),
+                                                    player.GetAbilityLevel(item.abilityType) + 1)
+                        : (slotsFull ? "Ability slots full" : "Learn: new ability");
+                }
+                else if (item.isContract)
+                {
+                    name = ShopContractName(item.contractType);
+                    desc = ShopContractObjective(item.contractType);
+                    preview = ShopContractReward(item.contractType);
+                }
+                else
+                {
+                    name = GetWareName(item.wareType);
+                    desc = ShopWareDesc(item.wareType);
+                    preview = ShopWarePreview(player, item.wareType);
+                }
 
-                int nw = MeasureText(name, (int)nameFs);
+                float fittedNameFs = nameFs;
+                while (fittedNameFs > 26.f && MeasureText(name, (int)fittedNameFs) > (int)(itemW - 20.f))
+                    fittedNameFs -= 1.f;
+                int nw = MeasureText(name, (int)fittedNameFs);
                 DrawText(name, (int)(ix + itemW * 0.5f - nw * 0.5f + 3.f),
-                    (int)cy2, (int)nameFs, RAYWHITE);
-                cy2 += nameFs + 3.f;
+                    (int)cy2, (int)fittedNameFs, RAYWHITE);
+                cy2 += fittedNameFs + 3.f;
 
                 const float maxDescW = itemW - 20.f;
-                float descFs = descFsBase;
-                while (descFs > 8.f && MeasureText(desc, (int)descFs) > (int)maxDescW)
-                    descFs -= 1.f;
-                int dw = MeasureText(desc, (int)descFs);
-                DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
-                    (int)cy2, (int)descFs, kDim);
-                cy2 += descFs + 3.f;
+                int descFs = (int)std::max(26.f, descFsBase);
+                cy2 = DrawShopWrappedText(desc, ix + itemW * 0.5f + 3.f, cy2,
+                                          maxDescW, descFs, kDim, 2);
+                int previewFs = std::max(25, std::min(descFs, 28));
+                DrawShopWrappedText(preview, ix + itemW * 0.5f + 3.f, cy2,
+                                    maxDescW, previewFs, Color{ 190, 255, 180, 235 }, 2);
 
-                float prevFs = std::min(descFsBase, 28.f);
-                while (prevFs > 8.f && MeasureText(preview.c_str(), (int)prevFs) > (int)maxDescW)
-                    prevFs -= 1.f;
-                int pw = MeasureText(preview.c_str(), (int)prevFs);
-                DrawText(preview.c_str(), (int)(ix + itemW * 0.5f - pw * 0.5f + 3.f),
-                    (int)cy2, (int)prevFs, Color{ 190, 255, 180, 235 });
-
-                // Daily deal badge
-                if (idx == _dailyDealIndex)
+                // Corner badge: RESERVED (locked through rerolls) beats DEAL.
+                if (item.reserved)
+                {
+                    const char* keptLbl = "RESERVED";
+                    int dlFs = 13, dlW = MeasureText(keptLbl, dlFs);
+                    DrawRectangle((int)(ix + itemW - dlW - 10.f), (int)iy, dlW + 10, 20,
+                        Color{ 90, 160, 255, 230 });
+                    DrawText(keptLbl, (int)(ix + itemW - dlW - 5.f), (int)(iy + 3.f),
+                        dlFs, BLACK);
+                }
+                else if (idx == _dailyDealIndex)
                 {
                     const char* dealLbl = "DEAL!";
                     int dlFs = 13, dlW = MeasureText(dealLbl, dlFs);
@@ -1546,115 +1778,20 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
                 EndScissorMode();
 
-                bool canAfford = (player.GetGold() >= item.price);
-                Color buyBg = canAfford ? Color{30,90,30,220} : Color{60,30,30,180};
-                Color buyBo = canAfford ? Color{80,200,80,255} : Color{160,60,60,200};
-                Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
-                smallBox(buyBtn, buyBg, buyBo);
-                int prFs = (int)_uiPriceFs;
-                const char* prLbl = (idx == _dailyDealIndex)
-                    ? TextFormat("%dg  DEAL", item.price)
-                    : TextFormat("%dg", item.price);
-                int prW = MeasureText(prLbl, prFs);
-                DrawText(prLbl,
-                    (int)(buyBtn.x + buyBtn.width * 0.5f - prW * 0.5f),
-                    (int)(buyBtn.y + buyBtn.height * 0.5f - prFs * 0.5f),
-                    prFs, canAfford ? Color{180,255,180,255} : Color{255,140,140,220});
-                displayIdx++;
-            }
-        }
-        else
-        {
-            // 2 rows × 3 cols of purchasable abilities (mirrors wares tab layout)
-            const float cols = 3.f, rows = 2.f, gap = 10.f;
-            const float itemW = (contentW - gap * (cols - 1.f)) / cols;
-            const float itemH = (contentH - gap * (rows - 1.f)) / rows;
-            const float buyH   = _uiBuyBtnH;
-            const float iconSz = std::min(itemW * 0.40f, itemH * 0.35f);
-            const float nameFs = _uiItemNameFs;
-            const float descFsBase = _uiItemDescFs;
-            bool slotsFull = (player.GetLearnedCount() >= 3);
-
-            int availableAbilities = 0;
-            for (const auto& item : _inventory)
-                if (!item.purchased && item.isAbility)
-                    availableAbilities++;
-
-            if (availableAbilities == 0)
-            {
-                DrawText("No abilities available.", (int)(shopX + iPad + 8.f),
-                    (int)(contentY + 20.f), 18, kDim);
-            }
-
-            int displayIdx = 0;
-            for (int idx = 0; idx < (int)_inventory.size(); idx++)
-            {
-                const ShopItem& item = _inventory[idx];
-                if (item.purchased || !item.isAbility) continue;
-
-                int   col = displayIdx % 3, row = displayIdx / 3;
-                float ix  = shopX + iPad + col * (itemW + gap);
-                float iy  = contentY + row * (itemH + gap);
-
-                Color cardBg = Color{18, 20, 32, 220};
-                Color cardBo = Color{80, 60, 140, 140};
-                Vector2 mpos = GetVirtualMousePos();
-                bool    hov  = CheckCollisionPointRec(mpos, { ix, iy, itemW, itemH })
-                               || (_gamepadNavActive && displayIdx == _gamepadCursorIdx);
-                if (hov && !slotsFull) { cardBg = Color{28,24,52,240}; cardBo = Color{120,80,200,220}; }
-                smallBox({ ix, iy, itemW, itemH }, cardBg, cardBo);
-
-                DrawRectangle((int)ix, (int)iy, 5, (int)itemH, Fade(Color{120,80,220,255}, 0.80f));
-
-                BeginScissorMode((int)ix + 6, (int)iy, (int)itemW - 6, (int)itemH);
-
-                const float iconCX = ix + itemW * 0.5f;
-                const float iconCY = iy + 8.f + iconSz * 0.5f;
-                Texture2D* icon = getShopIcon(item);
-                if (icon && icon->id != 0)
-                {
-                    float scale = std::min(iconSz / (float)icon->width,
-                                          iconSz / (float)icon->height);
-                    float iw = icon->width  * scale;
-                    float ih = icon->height * scale;
-                    DrawTexturePro(*icon,
-                        { 0, 0, (float)icon->width, (float)icon->height },
-                        { iconCX - iw * 0.5f, iconCY - ih * 0.5f, iw, ih },
-                        {}, 0.f, WHITE);
-                }
-                else
-                {
-                    DrawCircleV({ iconCX, iconCY }, iconSz * 0.4f, Fade(Color{120,80,220,255}, 0.35f));
-                    DrawCircleLinesV({ iconCX, iconCY }, iconSz * 0.4f, Fade(Color{120,80,220,255}, 0.70f));
-                }
-
-                float cy2 = iconCY + iconSz * 0.5f + 10.f;
-                const char* name = ShopAbilityName(item.abilityType);
-                const char* desc = ShopAbilityDesc(item.abilityType);
-
-                int nw = MeasureText(name, (int)nameFs);
-                DrawText(name, (int)(ix + itemW * 0.5f - nw * 0.5f + 3.f),
-                    (int)cy2, (int)nameFs, RAYWHITE);
-                cy2 += nameFs + 3.f;
-
-                const float maxDescW = itemW - 20.f;
-                float descFs = descFsBase;
-                while (descFs > 8.f && MeasureText(desc, (int)descFs) > (int)maxDescW)
-                    descFs -= 1.f;
-                int dw = MeasureText(desc, (int)descFs);
-                DrawText(desc, (int)(ix + itemW * 0.5f - dw * 0.5f + 3.f),
-                    (int)cy2, (int)descFs, kDim);
-
-                EndScissorMode();
-
-                bool canAfford = (player.GetGold() >= item.price);
-                bool canBuy    = canAfford && !slotsFull;
+                // A NEW ability with full slots is blocked (upgrades still fine).
+                bool blocked   = item.isAbility && !item.upgradesAbility && slotsFull;
+                bool canAfford = item.isContract || (player.GetGold() >= item.price);
+                bool canBuy    = canAfford && !blocked;
                 Color buyBg = canBuy ? Color{30,90,30,220} : Color{60,30,30,180};
                 Color buyBo = canBuy ? Color{80,200,80,255} : Color{160,60,60,200};
                 Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
                 smallBox(buyBtn, buyBg, buyBo);
                 int prFs = (int)_uiPriceFs;
-                const char* prLbl = slotsFull ? "SLOTS FULL" : TextFormat("%dg", item.price);
+                const char* prLbl = blocked ? "SLOTS FULL"
+                    : item.isContract ? "ACCEPT"
+                    : (idx == _dailyDealIndex)
+                        ? TextFormat("%dg  DEAL", item.price)
+                        : TextFormat("%dg", item.price);
                 int prW = MeasureText(prLbl, prFs);
                 DrawText(prLbl,
                     (int)(buyBtn.x + buyBtn.width * 0.5f - prW * 0.5f),
@@ -1872,81 +2009,139 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
 
+void ShopManager::RerollInventory(Character& player)
+{
+    // Reserve Stock: a reserved, unpurchased card survives the reroll. Capture
+    // it, regenerate, then swap it back over the last same-kind slot so the
+    // grid stays a full page (kept price and all — the lock was already paid).
+    ShopItem kept{};
+    bool     hasKept = false;
+    for (const ShopItem& item : _inventory)
+        if (item.reserved && !item.purchased) { kept = item; hasKept = true; break; }
+
+    GenerateInventory(player);
+
+    if (hasKept)
+    {
+        for (int i = (int)_inventory.size() - 1; i >= 0; --i)
+        {
+            if (_inventory[i].isAbility != kept.isAbility) continue;
+            _inventory[i] = kept;
+            if (_dailyDealIndex == i) _dailyDealIndex = -1;   // keep the locked price honest
+            break;
+        }
+        _dialogue = "Fresh stock! I kept your reserved item aside.";
+    }
+    else
+    {
+        _dialogue = "Fresh stock, just for you!";
+    }
+}
+
 void ShopManager::GenerateInventory(const Character& player)
 {
     _inventory.clear();
 
-    static constexpr UpgradeType kStatUpgrades[] = {
-        UpgradeType::AttackPower, UpgradeType::AttackRange,
-        UpgradeType::MaxHealth,   UpgradeType::MaxMana,
-        UpgradeType::Defense,     UpgradeType::MoveSpeed,
-        UpgradeType::IronConstitution, UpgradeType::SwiftFeet,
-        UpgradeType::Ferocity,    UpgradeType::ArcaneMind,
-        UpgradeType::IronSkin,    UpgradeType::BladeEdge,
-        UpgradeType::WarGod,      UpgradeType::Resilience,
-        UpgradeType::BladeStorm,  UpgradeType::Juggernaut,
-        UpgradeType::ArcaneColossus
-    };
-    // The shop sells every learnable non-ultimate attack for the active class.
-    // (Ultimates are earned on the boss-reward screen, never bought here.)
+    const float abilityInflation = 1.0f + Balance::Economy::kActPriceInflation * (float)(_act - 1);
+    const float wareInflation    = 1.0f + 0.15f * (float)(_act - 1);
 
-    // Price inflation per act above Act 1 (Act 1 = 1.0×, Act 2 = 1.25×, ...)
-    const float inflation = 1.0f + Balance::Economy::kActPriceInflation * (float)(_act - 1);
-
-    // Build unowned ability pool
-    std::vector<ShopItem> abilityPool;
+    // Exactly two class-legal ability offers. Prefer new abilities, then fill
+    // from useful upgrades when the class has learned most of its kit.
+    std::vector<ShopItem> newAbilityPool;
+    std::vector<ShopItem> upgradePool;
     for (auto a : kAllAbilities)
     {
         if (IsUltimateAbility(a)) continue;
-        // Meta + class gate: abilities locked at the Poe's Altar or outside
-        // this class's kit never show up for sale.
         if (_meta != nullptr && !_meta->IsAbilityUnlocked(a)) continue;
         if (!player.ClassAllows(a)) continue;
 
-        bool owned = false;
-        for (int i = 0; i < player.GetLearnedCount(); i++)
-            if (player.GetLearnedAbility(i) == a) { owned = true; break; }
-        if (owned) continue;
         ShopItem item;
         item.isAbility   = true;
         item.abilityType = a;
-        item.price       = (int)(ShopAbilityPrice(a) * inflation + 0.5f);
-        abilityPool.push_back(item);
+        if (!player.HasLearnedAbility(a))
+        {
+            item.price = (int)(ShopAbilityPrice(a) * abilityInflation + 0.5f);
+            newAbilityPool.push_back(item);
+        }
+        else if (player.CanUpgradeAbility(a))
+        {
+            item.upgradesAbility = true;
+            item.price = (int)((110 + (player.GetAbilityLevel(a) - 1) * 70) * abilityInflation + 0.5f);
+            upgradePool.push_back(item);
+        }
     }
 
-    // Offer a focused set instead of dumping every legal spell into one shop.
-    for (int i = (int)abilityPool.size() - 1; i > 0; i--)
-        std::swap(abilityPool[i], abilityPool[GetRandomValue(0, i)]);
-    int abilitySlots = std::min((int)abilityPool.size(), 6);
-    for (int i = 0; i < abilitySlots; i++)
-        _inventory.push_back(abilityPool[i]);
+    auto shuffleItems = [](std::vector<ShopItem>& items) {
+        for (int i = (int)items.size() - 1; i > 0; --i)
+            std::swap(items[i], items[GetRandomValue(0, i)]);
+    };
+    shuffleItems(newAbilityPool);
+    shuffleItems(upgradePool);
 
-    // Build stat pool and shuffle
-    std::vector<ShopItem> statPool;
-    for (auto u : kStatUpgrades)
+    // Two class-legal ability cards. Act 1 prioritizes assembling a kit; later
+    // acts prioritize upgrades, while the secondary pool fills any open slot.
+    int abilityOffers = 0;
+    const std::vector<ShopItem>& primary   = (_act <= 1) ? newAbilityPool : upgradePool;
+    const std::vector<ShopItem>& secondary = (_act <= 1) ? upgradePool    : newAbilityPool;
+    for (int i = 0; i < (int)primary.size() && abilityOffers < 2; ++i)
     {
-        ShopItem item;
-        item.isAbility   = false;
-        item.upgradeType = u;
-        item.price       = (int)(ShopUpgradePrice(u) * inflation + 0.5f);
-        statPool.push_back(item);
+        _inventory.push_back(primary[i]);
+        ++abilityOffers;
     }
-    for (int i = (int)statPool.size() - 1; i > 0; i--)
-        std::swap(statPool[i], statPool[GetRandomValue(0, i)]);
+    for (int i = 0; i < (int)secondary.size() && abilityOffers < 2; ++i)
+    {
+        _inventory.push_back(secondary[i]);
+        ++abilityOffers;
+    }
 
-    int statSlots = std::min((int)statPool.size(), 6);
-    for (int i = 0; i < statSlots; i++)
-        _inventory.push_back(statPool[i]);
+    // Three real products plus one free contract make up the rest of Zeph's
+    // six-card page. If fewer than two legal abilities exist, supplies fill the
+    // empty spaces so the grid remains complete.
+    std::vector<ShopWareType> warePool = {
+        ShopWareType::SharpeningStone, ShopWareType::FreecastSeal,
+        ShopWareType::WardCharm, ShopWareType::GildedCompass,
+        ShopWareType::EchoSatchel
+    };
+    if (player.GetArmour() < player.GetMaxArmour())
+        warePool.push_back(ShopWareType::IronrootTonic);
+    if (player.GetHealthValue() < player.GetMaxHealthValue())
+        warePool.push_back(ShopWareType::FieldDressing);
+    if (player.GetMana() < player.GetMaxMana())
+        warePool.push_back(ShopWareType::ManaPrism);
 
-    // Final shuffle so abilities don't always appear first
+    for (int i = (int)warePool.size() - 1; i > 0; --i)
+        std::swap(warePool[i], warePool[GetRandomValue(0, i)]);
+
+    auto pushWare = [&](ShopWareType type) {
+        ShopItem item;
+        item.wareType = type;
+        item.price = (int)(ShopWarePrice(type) * wareInflation + 0.5f);
+        _inventory.push_back(item);
+    };
+    const int wareCount = 5 - abilityOffers; // contract always occupies the sixth slot
+    for (int i = 0; i < std::min(wareCount, (int)warePool.size()); ++i)
+        pushWare(warePool[i]);
+
+    ShopItem contract;
+    contract.isContract = true;
+    contract.contractType = (ShopContractType)GetRandomValue(0, (int)ShopContractType::Count - 1);
+    contract.price = 0;
+    _inventory.push_back(contract);
+
+    // One mixed page, so shuffle the ability offers among the wares.
     for (int i = (int)_inventory.size() - 1; i > 0; i--)
         std::swap(_inventory[i], _inventory[GetRandomValue(0, i)]);
 
-    // Daily deal: one random item gets 25% off
+    // Daily Deal applies only to a purchased ware, never an ability or contract.
     _dailyDealIndex = -1;
-    if (!_inventory.empty())
+    std::vector<int> wareIndices;
+    for (int i = 0; i < (int)_inventory.size(); ++i)
+        if (!_inventory[i].isAbility && !_inventory[i].isContract &&
+            ShopWareDailyDealEligible(_inventory[i].wareType))
+            wareIndices.push_back(i);
+    if (!wareIndices.empty())
     {
-        _dailyDealIndex = GetRandomValue(0, (int)_inventory.size() - 1);
+        _dailyDealIndex = wareIndices[GetRandomValue(0, (int)wareIndices.size() - 1)];
         _inventory[_dailyDealIndex].price =
             std::max(1, (int)(_inventory[_dailyDealIndex].price * 0.75f));
     }

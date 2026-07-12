@@ -163,6 +163,9 @@ private:
     static Texture2D _sharedFallAnim;
     static Texture2D _sharedHurtAnim;
     static Texture2D _sharedDeathAnim;
+    // Animated acid-pool sprite for lingering puddles (replaces prototype ellipses).
+    static Texture2D _sharedAcidPoolTex;
+    static int       _acidPoolFrames;
     static Sound     _sharedAttackSound;
     static Sound     _sharedHurtSound;
     static Sound     _sharedDeathSound;

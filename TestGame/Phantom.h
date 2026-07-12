@@ -31,6 +31,8 @@ public:
     Capsule2D GetCapsule() const override;
 
     Phantom* AsPhantom() override { return this; }
+    EnemyRole GetEncounterRole() const override { return EnemyRole::Assassin; }
+    int       GetSpawnCost()     const override { return 3; }
     const char* GetTuningName() const override { return "Phantom"; }
     bool UsesDirectPursuit()     const override { return true; }
     bool IgnoresPropCollisions() const override { return true; }

@@ -239,6 +239,7 @@ private:
         Color tint          = Color{ 235, 180, 90, 255 };
         bool  active        = false;    // false = armed/pending, true = applying now
         int   roomsRemaining = 1;       // combat rooms it covers once active
+        ShopContractType shopContract = ShopContractType::Count;
     };
     std::vector<RunModifier> _runModifiers;
     static constexpr int kMaxAcceptedModifiers = 2;   // accepted-danger cap (A4)
@@ -578,7 +579,37 @@ private:
         float   vy           = 0.f;   // vertical drift over lifetime (fan spreads)
     };
     std::vector<WarriorVfx> _warriorVfx;
+
+    // Hunter class identity: counts landed basic shots; every 3rd shot marks the
+    // target (see the projectile.IsBasic() hit path).
+    int _hunterShotsSinceMark = 0;
     float _lifestealAccum = 0.f;   // fractional HP banked from lifesteal hits
+    // Per-room sustain caps (reset on room entry — see Balance::Sustain).
+    int   _roomLifestealHealed = 0;   // HP healed via lifesteal this room
+    int   _roomHealDrops       = 0;   // heal pickups spawned this room (chance + timed)
+
+    // ── Balance telemetry (Phase 5) ───────────────────────────────────────────
+    // One record per cleared combat room; shown in the debug panel overlay so
+    // balance tuning reads real numbers instead of vibes.
+    struct RoomTelemetry
+    {
+        int   act = 0, room = 0;
+        char  roomType[12] = "";
+        float clearSeconds = 0.f;   // room entry -> all enemies dead
+        int   dmgTaken = 0;         // player HP lost during the room
+        int   healed = 0;           // player HP recovered during the room
+        int   healDrops = 0;        // heal pickups spawned
+        int   xpGained = 0;         // room-clear XP awarded (after wager bonus)
+        int   goldDelta = 0;        // wallet change across the room
+        int   playerLevel = 0;      // level when the room cleared
+        int   powerLevel = 0;       // enemy power level for the room
+    };
+    static constexpr int kTelemetryHistory = 8;
+    RoomTelemetry _roomTelemetry[kTelemetryHistory]{};
+    int    _roomTelemetryCount = 0;      // total records written (ring index derives)
+    double _roomEnterTime = 0.0;         // GetTime() stamp on room entry
+    int    _roomEnterGold = 0;           // wallet snapshot on room entry
+    void   DrawRoomTelemetry() const;    // debug-panel companion overlay
     void GenerateStartingAbilityOptions();
     void DrawStartingAbilityChoice();
     void EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates);
@@ -1280,6 +1311,9 @@ private:
     std::unordered_map<int, DungeonRoomState> _dungeonRoomStates;
     bool  _dungeonEnemiesSpawned  = false;
     float _bossNoEnemyTimer       = 0.f;   // seconds since boss room had 0 active enemies
+    // Zeph's Wager: set when the wagered combat room spawns; pays out bonus
+    // gold + clear XP in the room-clear block, then resets.
+    bool  _shopWagerRoomActive    = false;
 
     bool _hasMagicGem = false;
     bool _magicGemSpawned = false;
@@ -1385,6 +1419,9 @@ private:
 
     // Dungeon run combat helpers
     Vector2   GetDungeonSpawnPos(float cellW, float cellH) const;
+    // Role-aware placement: picks a valid spawn biased for the enemy's role
+    // (ranged in back, tanks mid, assassins off-angle). See EnemyRole.
+    Vector2   GetDungeonSpawnPosForRole(EnemyRole role, float cellW, float cellH) const;
     void      SpawnDungeonRoomEnemies();
     void      ClearDungeonEnemies();
     void      SaveDungeonRoomEnemyState();
@@ -1412,4 +1449,3 @@ private:
     // Resolves all active enemies out of tile walls and props. Ends forced pushes on impact.
     void ResolveDungeonEnemyCollisions();
 };
-

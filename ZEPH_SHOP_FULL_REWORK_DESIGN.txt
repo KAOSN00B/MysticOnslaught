@@ -1,0 +1,922 @@
+MYSTIC ONSLAUGHT - ZEPH'S SHOP FULL INVENTORY REWORK
+====================================================
+Date: 2026-07-11
+Status: Design and implementation specification
+Scope: What Zeph sells, how stock is generated, prices, limits, effects, and code
+structure. The current shop screen layout and general visual presentation stay.
+
+1. PURPOSE
+----------
+Zeph's shop should remain one of the most important breaks in a dungeon run. It
+gives the player a moment to breathe, inspect the build, spend earned gold, and
+make a decision about the next stretch. The problem is not the current UI. The
+problem is that the inventory converts gold into too much clean permanent power.
+Buying attack, max HP, max mana, speed, regeneration, armour, epic stat packages,
+and new abilities from the same shop makes Zeph a second level-up system.
+
+The new shop should feel closer to a clever roguelite merchant. Most purchases
+should solve a short-term problem, alter an ability, reshape the build, or ask
+the player to accept a risk. Permanent raw stats can remain because they are
+easy to understand and occasionally exciting, but they must be rare, expensive,
+and capped. A player should leave thinking, "I changed my plan," rather than,
+"all my numbers went up again."
+
+This rework deliberately preserves the existing two-tab, six-card layout:
+
+- WARES: tactical supplies, services, risk bargains, and scarce rare stats.
+- ABILITIES: new abilities, upgrades/modifiers for owned abilities, and one
+  class-signature offer when possible.
+
+Only small card-label additions are required. The screen dimensions, Zeph art,
+navigation, buy buttons, before/after area, reroll button, and general placement
+can remain as they are.
+
+2. DESIGN PILLARS
+-----------------
+PILLAR A - EVERY PURCHASE HAS A JOB
+
+An item should answer a recognizable need: survive the next room, improve a
+specific move, repair a weak build, trade safety for a payoff, change an ability,
+or prepare for a boss. Generic bundles that simply improve everything should be
+removed from Zeph's normal stock.
+
+PILLAR B - TEMPORARY POWER IS ALLOWED TO FEEL STRONG
+
+A next-room item can be noticeably powerful because it expires. This lets Zeph
+sell exciting effects without permanently trivializing the rest of the run.
+Temporary purchases also make the player look at the map and plan when to spend.
+
+PILLAR C - PERMANENT POWER IS SCARCE
+
+Permanent attack, health, mana, armour capacity, and regeneration should never
+fill six slots. A run may buy one Rare Stat item from Zeph, with perhaps a second
+allowed only through a costly bargain. This keeps the shop useful without letting
+gold become an unlimited stat conversion resource.
+
+PILLAR D - CLASS IDENTITY COMES FIRST
+
+Ability stock must understand the active class and the abilities the player owns.
+A Warrior should see Rage decisions. A Rogue should see combo and poison choices.
+A Hunter should see mark, projectile, and trap choices. Paladin offers should use
+Faith, armour, and reflection. Warlock offers should use curse, health cost, and
+drain. Mage offers should emphasize elemental sequencing rather than three copies
+of the same damage spell in different colours.
+
+PILLAR E - THE SHOP NEVER SOLVES THE RUN
+
+Zeph may stabilize a bad run, but should not fully heal the player, fully restore
+all resources, max every ability, and add permanent damage during one visit.
+The player must choose what matters most. Gold should run out before all desirable
+options are purchased.
+
+3. CURRENT SYSTEM DIAGNOSIS
+---------------------------
+The current `GenerateInventory` function creates a pool containing all seventeen
+common, rare, and epic stat upgrades. It shuffles that pool and places up to six
+on WARES. It also finds unowned non-ultimate abilities for the active class and
+places up to six on ABILITIES. A complete visit can therefore expose twelve
+permanent run upgrades before rerolls.
+
+The current pool includes direct attack, range, max HP, max mana, armour, speed,
+percentage attack, percentage HP, mana regeneration, combined damage/range,
+combined damage/speed, combined HP/armour, and combined mana/damage/regeneration.
+There are no per-run category caps. Rerolls search the same power pool again.
+Act inflation raises prices, but it does not fix the underlying issue because a
+successful player also earns more gold and can still buy several clean upgrades.
+
+Abilities are also treated only as owned or unowned. Zeph cannot improve the
+shape of an owned move, create a tradeoff, swap a move, or help a build that
+already has full slots. This makes the ABILITIES tab less useful later in a run
+while the WARES tab remains an unrestricted stat source.
+
+4. TARGET VISIT STRUCTURE
+-------------------------
+Each shop visit should generate exactly six WARES and up to six ABILITIES. Stock
+must be assembled by slot rules, not by shuffling one giant list.
+
+WARES SLOT RECIPE
+
+Slot 1: Tactical Supply - defensive or emergency preparation.
+Slot 2: Tactical Supply - offensive, mana, scouting, or utility preparation.
+Slot 3: Service - reshape, reserve, cleanse, salvage, or reveal.
+Slot 4: Risk Bargain - strong upside with a visible cost.
+Slot 5: Flex - another supply, service, or bargain based on player state.
+Slot 6: Rare Shelf - usually a premium item; may contain a capped Rare Stat,
+        premium service, relic offer, or high-risk class item.
+
+ABILITIES SLOT RECIPE
+
+Slot 1: Modifier for an owned normal ability.
+Slot 2: Modifier for a different owned normal ability, when possible.
+Slot 3: Class-signature modifier using Rage, Combo, Mark, Faith, Curse, or Elements.
+Slot 4: One unowned class ability, if the player has a legal slot or swap path.
+Slot 5: Upgrade/modifier, replacement service, or second new ability.
+Slot 6: Rare ability offer, advanced modifier, or locked until later acts.
+
+When a required pool is empty, the generator substitutes from a defined fallback
+pool. It must never duplicate the same item ID in one visit. It should also avoid
+offering two mutually exclusive modifiers for the same ability unless the point
+of the offer is explicitly to choose between them.
+
+5. ITEM CATEGORIES
+------------------
+Every shop item needs an explicit category. Category determines its stock slot,
+price band, persistence, purchase cap, and card badge.
+
+TACTICAL SUPPLY
+
+A run effect lasting for the next combat room, next boss, or a small number of
+uses. Supplies may be strong because they expire. They should not silently turn
+into permanent stats. Unused next-room supplies persist until the player enters
+a combat room, so buying one before a non-combat room does not waste it.
+
+BUILD MODIFIER
+
+A permanent-for-this-run change to one ability or class mechanic. Most modifiers
+should include a tradeoff, limitation, or narrower purpose. A modifier should
+change how the player uses the move, not merely say "+20% damage." Modifiers are
+the main long-term power Zeph sells.
+
+NEW ABILITY
+
+An unowned, non-ultimate ability valid for the active class and meta unlocks.
+New abilities remain useful, but the shop offers at most two per visit and no
+more than two purchased from Zeph per run. Boss and Power Choice rewards remain
+important sources of ability growth.
+
+RARE STAT
+
+A small permanent stat increase. Only one Rare Stat purchase is allowed per run.
+Rare Stats are expensive, cannot receive the Daily Deal discount, and do not
+reappear after the cap is reached. They should never be percentage packages that
+grow stronger because the player already stacked the stat.
+
+RISK BARGAIN
+
+A strong immediate or permanent upside paired with a specific downside. The
+downside must appear on the card before purchase and must not be hidden in small
+text. Some bargains cost little or no gold because risk is their real price.
+
+SERVICE
+
+A one-time operation on the current build or run: swap an ability, reserve an
+item, cleanse a drawback, reroll one card, reveal map information, salvage a
+relic, or bank currency. Services create value without adding raw combat power.
+
+6. WARES - FIRST IMPLEMENTATION CATALOGUE
+-----------------------------------------
+The following catalogue is intentionally larger than six items so visits vary.
+The first implementation should begin with the simpler entries marked CORE.
+
+TACTICAL SUPPLIES
+
+CORE - Iron Token
+Effect: Start the next combat room with 1 filled armour.
+Limit: Cannot raise current armour above its normal maximum.
+Base price: 35 gold.
+Purpose: Reliable safety without permanently increasing defence.
+
+CORE - Freecast Seal
+Effect: The first non-ultimate ability cast in the next combat room costs 0 mana.
+Base price: 40 gold.
+Purpose: Lets a low-mana build open aggressively without increasing regeneration.
+
+CORE - Field Whetstone
+Effect: Basic attacks deal 12% more damage in the next combat room.
+Base price: 35 gold.
+Purpose: Temporary help for a basic-attack-focused room or mana-starved build.
+
+CORE - Focus Draught
+Effect: Ability cooldowns recover 15% faster in the next combat room.
+Base price: 45 gold.
+Purpose: Temporary ability tempo; does not alter mana regeneration.
+
+CORE - Surveyor's Chalk
+Effect: Reveal the reward/type of the next two reachable map nodes.
+Base price: 25 gold.
+Purpose: Information has value without raising combat stats.
+
+CORE - Emergency Stitch
+Effect: Heal 1 HP immediately.
+Condition: Only appears below 50% health and only once per shop visit.
+Base price: 55 gold.
+Purpose: Limited recovery, deliberately not a full potion or reset.
+
+Ward Bell
+Effect: The first direct hit in the next room consumes the bell and deals 0 HP
+damage, but still removes armour first if armour is present.
+Base price: 60 gold.
+Purpose: Expensive protection against one mistake, not sustained immunity.
+
+Hunter's Lantern
+Effect: Elite and dangerous support enemies are outlined for the next room.
+Base price: 25 gold.
+Purpose: Readability and target-priority utility.
+
+Mana Shard
+Effect: Restore 2 mana now. Does not increase max mana or regeneration.
+Condition: Cannot be bought at full mana; one per visit.
+Base price: 30 gold.
+Purpose: Small emergency resource without infinite sustain.
+
+SERVICES
+
+CORE - Reserve Stock
+Effect: Lock one unpurchased card so it survives the next reroll.
+Base price: 15 gold.
+Limit: One reserved card at a time.
+Purpose: Reduces frustrating randomness without granting power by itself.
+
+CORE - Forget and Learn
+Effect: Replace one owned non-ultimate ability with one offered unowned ability.
+The new ability enters at level 1. The removed ability's upgrades are lost.
+Base price: 65 gold plus the new ability's normal price.
+Purpose: Lets a full build pivot rather than making the tab useless.
+
+CORE - Clean Contract
+Effect: Remove one optional contract/bargain downside. Does not remove Ascension
+rules, boss mechanics, or biome rules.
+Base price: 80 gold.
+Purpose: A costly escape valve for a run-specific risk.
+
+Targeted Reroll
+Effect: Reroll one selected unpurchased card instead of the full shop.
+Base price: 30 gold, then +25 for each use in the same visit.
+Purpose: Gives control without repeatedly fishing six slots at once.
+
+Relic Appraisal
+Effect: Reveal three relics and choose one to replace an owned relic. The old
+relic is destroyed. No net increase to relic count.
+Base price: 120 gold.
+Limit: Once per run.
+Purpose: Repairs a mismatched build without adding another relic stack.
+
+Cell Banking
+Effect: Bank carried cells immediately, but Zeph keeps 25% of the amount.
+Base price: No gold; the conversion loss is the price.
+Purpose: A safety decision between meta progress and run greed.
+
+RISK BARGAINS
+
+CORE - Blood Price
+Effect: Upgrade one owned normal ability by one level.
+Downside: Lose 1 max HP for the rest of the run; current HP clamps if necessary.
+Gold price: 40.
+Limit: Once per run.
+Purpose: Strong build direction with a permanent, understandable cost.
+
+CORE - Hunted Purse
+Effect: Gain 60 gold now.
+Downside: The next combat room adds an Assassin or Ranged pressure enemy and
+enemies attack 10% faster.
+Gold price: 0.
+Purpose: Lets a poor player engage with the shop by borrowing against difficulty.
+
+CORE - Zeph's Wager
+Effect: Next combat room awards +50% gold and +25% room-clear XP.
+Downside: Enemies move 12% faster and the room spawns one extra role threat.
+Gold price: 20.
+Purpose: Voluntary difficulty for players who want to accelerate the run.
+
+Overchannel Note
+Effect: Max mana +4 for the rest of the run.
+Downside: Passive mana regeneration is 15% slower.
+Gold price: 80.
+Purpose: Larger planned bursts versus slower recovery.
+
+Glass Contract
+Effect: Deal 18% more damage during the next boss fight.
+Downside: Healing pickups cannot spawn during that fight.
+Gold price: 55.
+Purpose: Faster boss attempt at the cost of forgiveness.
+
+Collector's Debt
+Effect: Take one Rare Shelf item for 50% price.
+Downside: The next 60 gold collected is paid to Zeph before entering the wallet.
+Limit: One active debt.
+Purpose: Timing flexibility without creating free value.
+
+RARE STATS
+
+CORE - Tempered Heart
+Effect: +1 max HP. Does not heal.
+Base price: 150 gold.
+
+CORE - Honed Edge
+Effect: +0.5 attack power.
+Base price: 180 gold.
+
+CORE - Deep Reservoir
+Effect: +4 max mana. Does not refill mana.
+Base price: 145 gold.
+
+Reinforced Harness
+Effect: +1 maximum armour capacity and fill that new slot.
+Base price: 210 gold.
+
+Rare Stat rules:
+- Only one Rare Stat may be purchased from Zeph per run.
+- Rare Stats do not receive Daily Deal discounts.
+- Rare Stats cannot appear in Act 1's first shop unless generated in Slot 6.
+- Percentage HP, percentage attack, and combined epic stat packages are removed
+  from normal shop stock.
+- Once the cap is reached, Slot 6 becomes a premium modifier, relic service, or
+  high-tier tactical supply.
+
+7. ABILITIES - STOCK RULES
+--------------------------
+The ABILITIES tab should become useful at every stage of a run. Early shops can
+help the player learn a second or third move. Later shops should mostly modify
+owned moves and class mechanics. A full ability bar should trigger swap services,
+not an empty or unusable tab.
+
+NEW ABILITY RULES
+
+- Only abilities legal for the active class and unlocked through meta progression.
+- Never sell ultimates; boss rewards remain the main ultimate source.
+- Offer at most two unowned abilities per visit.
+- A player may buy at most two new abilities from Zeph per run.
+- Base price: 100 for normal abilities, 135 for high-impact bolts/zones.
+- Second Zeph ability purchased in a run costs +50%.
+- If normal slots are full, buying opens the existing replace-ability flow.
+- New abilities always enter at level 1.
+
+ABILITY UPGRADE RULES
+
+- A plain level upgrade may appear, but at most one per visit.
+- First purchased ability level: 100 gold.
+- Second purchased ability level in the same run: 170 gold.
+- Third purchased ability level in the same run: 260 gold.
+- No ability may exceed level 3.
+- Plain level upgrades compete with modifiers; they do not get a separate free
+  inventory lane.
+
+BUILD MODIFIER RULES
+
+- Maximum three Zeph modifiers per run.
+- Maximum two modifiers attached to the same ability.
+- Mutually exclusive modifiers use a shared group ID and cannot coexist.
+- A card always names the affected ability and states both upside and downside.
+- Base price: 90 common, 135 rare, 190 signature.
+- Modifiers are permanent for the run unless explicitly marked next-room/boss.
+- Rerolls should weight offers toward owned abilities that have no modifier yet.
+
+8. CLASS-SPECIFIC MODIFIER CATALOGUE
+------------------------------------
+These are target designs. Start implementation with two CORE modifiers per class,
+then expand after telemetry confirms the system is stable.
+
+MAGE - ELEMENTAL SEQUENCING
+
+CORE - Focused Bolt
+Targets: Fire Bolt, Ice Bolt, or Electric Bolt.
+Upside: The bolt pierces one additional enemy.
+Downside: Cooldown +15%.
+Reason: Better positioning and lining up targets, not just more damage.
+
+CORE - Elemental Wake
+Targets: Any elemental bolt.
+Upside: Leaves a short elemental trail after hitting an enemy.
+Downside: Direct hit damage -10%.
+Reason: Converts a samey projectile into space control.
+
+Thermal Shock
+Target: Ice ability while a Fire ability is owned, or vice versa.
+Upside: Steam/Thaw elemental combos have 25% larger area.
+Downside: The triggering status lasts 20% less time.
+
+Conductive Frost
+Target: Electric ability while an Ice ability is owned.
+Upside: Hitting a frozen target arcs to one nearby enemy.
+Downside: Electric mana cost +1.
+
+Elemental Commitment
+Class signature.
+Upside: Repeating the same element builds one stack of Focus, up to three; the
+third cast gains a larger status effect.
+Downside: Switching elements removes all Focus.
+
+WARRIOR - RAGE AND COMMITMENT
+
+CORE - Wide Cleave
+Target: Cleave Wave.
+Upside: Width +30% and stronger knockback.
+Downside: Damage -12%.
+
+CORE - Relentless Whirl
+Target: Whirlwind.
+Upside: Generates extra Rage for each distinct enemy hit.
+Downside: Mana cost +1.
+
+Executioner's Rend
+Target: Rend.
+Upside: Bleed ticks faster against enemies below 35% HP.
+Downside: Initial hit damage -15%.
+
+Anchored Cry
+Target: War Cry.
+Upside: Gain 15 additional Rage and 1 armour.
+Downside: Move speed -15% while the War Cry buff is active.
+
+Seismic Release
+Target: Ground Slam.
+Upside: Consuming at least 60 Rage sends a second smaller shockwave.
+Downside: Ground Slam always consumes all Rage and costs +1 mana.
+
+ROGUE - COMBO, POISON, AND POSITION
+
+CORE - Venom Fan
+Target: Fan of Knives.
+Upside: Knives apply a short poison.
+Downside: Direct hit damage -15%.
+
+CORE - Patient Eviscerate
+Target: Eviscerate.
+Upside: Each combo point adds more finisher damage than normal.
+Downside: Eviscerate deals 20% less damage at zero combo points.
+
+Lingering Vial
+Target: Poison Vial.
+Upside: Pool duration +40%.
+Downside: Pool radius -20%.
+
+Predator Step
+Target: Shadowstep.
+Upside: Passing through a poisoned enemy grants one extra combo point.
+Downside: Shadowstep cooldown +15%.
+
+Clean Escape
+Target: Smoke Bomb.
+Upside: First attack from smoke applies vulnerability.
+Downside: Smoke slow is weaker.
+
+HUNTER - MARKS, LINES, AND TRAPS
+
+CORE - Barbed Piercer
+Target: Piercing Shot.
+Upside: Marked enemies struck refresh the mark and bleed.
+Downside: Projectile width -20%.
+
+CORE - Quick-Set Trap
+Target: Freezing Trap or Explosive Trap.
+Upside: Trap arms 35% faster.
+Downside: Only one trap may be active at a time.
+
+Split Mark
+Target: Multishot.
+Upside: The centre arrow applies Mark.
+Downside: Outer arrows deal 15% less damage.
+
+Prepared Roll
+Target: Roll.
+Upside: The next projectile after rolling pierces once.
+Downside: Roll cooldown +20%.
+
+Deadeye's Patience
+Class signature.
+Upside: Standing still briefly increases projectile speed and mark duration.
+Downside: Moving immediately clears the bonus.
+
+PALADIN - FAITH, ARMOUR, AND RETRIBUTION
+
+CORE - Consecrated Stand
+Target: Consecrate.
+Upside: Standing inside the area generates Faith over time.
+Downside: Area radius -20%.
+
+CORE - Burdened Aegis
+Target: Aegis.
+Upside: Reflection is stronger and grants extra Faith when triggered.
+Downside: Move speed -15% while Aegis is active.
+
+Judgment Bolt
+Target: Holy Bolt.
+Upside: Marked or cursed enemies are briefly stunned.
+Downside: Mana cost +1.
+
+Returning Hammer
+Target: Hammer Throw.
+Upside: Hammer damages enemies again while returning.
+Downside: Outbound damage -15%.
+
+Overflowing Faith
+Class signature.
+Upside: Faith gained at full Faith converts into brief armour protection.
+Downside: Divine Storm consumes 20 additional Faith-equivalent power before its
+maximum radius bonus is reached.
+
+WARLOCK - CURSE, HEALTH COST, AND DRAIN
+
+CORE - Hungry Drain
+Target: Drain Life.
+Upside: Healing from the hit is stronger.
+Downside: Missing costs 1 HP; cannot kill the player.
+
+CORE - Spreading Curse
+Target: Curse.
+Upside: A cursed enemy spreads a shorter curse to one nearby enemy on death.
+Downside: Initial curse duration -20%.
+
+Deep Corruption
+Target: Corruption Pool.
+Upside: Cursed enemies take faster pool ticks.
+Downside: Pool radius -20%.
+
+Unstable Hellfire
+Target: Hellfire.
+Upside: Radius +30% and applies curse.
+Downside: Costs 1 HP when cast; cannot kill the player.
+
+Soul Credit
+Class signature.
+Upside: Killing a cursed enemy restores a small amount of mana on a cooldown.
+Downside: Passive mana regeneration -15%.
+
+9. INVENTORY GENERATION ALGORITHM
+---------------------------------
+Inventory generation should be deterministic for the visit seed and assembled
+in steps. This prevents a reroll, pause, or save/load from changing stock without
+the player paying for it.
+
+Step 1: Build a `ShopGenerationContext` containing class, act, room depth, current
+HP/mana, gold, known abilities and levels, modifiers already owned, run purchase
+caps, relics, active contracts, reroll count, and whether a boss is nearby.
+
+Step 2: Filter every item definition by eligibility. Examples: Emergency Stitch
+requires low HP; a trap modifier requires the trap; Clean Contract requires an
+optional downside; Rare Stats require the run cap to be unused; a new ability
+requires class/meta eligibility; max-level abilities reject plain upgrades.
+
+Step 3: Fill mandatory category slots using weighted pools. The generator should
+weight useful state responses without guaranteeing them. Low HP increases the
+weight of defensive supplies, low mana increases Freecast/Mana Shard, a full
+ability bar increases swap services, and an upcoming boss increases boss supplies.
+
+Step 4: Enforce uniqueness, mutual exclusion, and target diversity. Two ability
+modifier slots should prefer different abilities. A modifier already owned should
+not return unless explicitly stackable.
+
+Step 5: Set prices from base price, act inflation, repeat-purchase surcharge, and
+item-specific rules. Price is stored on the generated item so previews and saves
+remain stable.
+
+Step 6: Choose one Daily Deal only from Tactical Supplies, Services, non-signature
+Build Modifiers, or new abilities. Never discount Rare Stats, debt repayments,
+free bargains, or emergency healing.
+
+Step 7: Save stock IDs, targets, prices, purchased flags, and the visit seed.
+
+10. PRICING AND GOLD ECONOMY
+----------------------------
+Recommended base bands:
+
+- Information and small utility: 15-30 gold.
+- Tactical next-room power: 30-60 gold.
+- Emergency healing: 55-70 gold.
+- Services: 30-120 gold depending on permanence.
+- New normal ability: 100-135 gold.
+- Common ability modifier: 90-115 gold.
+- Rare/signature modifier: 135-190 gold.
+- Plain ability level upgrade: 100, then 170, then 260 per run.
+- Rare Stat: 145-210 gold and one per run.
+- Risk Bargain: 0-80 gold because the downside carries part of the price.
+
+Act inflation should be reduced from 25% to approximately 15% per act for
+temporary supplies and services. Permanent effects may use 20% per act. The
+current 25% blanket inflation makes late utility unattractive while successful
+players can still afford premium permanent power. Category-specific inflation
+keeps basic tools relevant throughout the run.
+
+Reroll rules:
+
+- Full-stock reroll starts at 50 gold and increases by 50 each use.
+- Maximum two full rerolls per shop visit.
+- Purchased cards stay purchased; reroll replaces only unsold cards.
+- A reserved card survives the reroll.
+- Rerolls do not reset emergency-item limits or run purchase caps.
+- The same item cannot return immediately after being rerolled away.
+- Targeted Reroll is separate and escalates 30, 55, 80.
+
+11. POOR-PLAYER AND BAD-RNG PROTECTION
+--------------------------------------
+Every visit should offer a decision even at zero gold, but not free healing or
+free permanent power. The guaranteed Risk Bargain slot serves this purpose.
+Hunted Purse gives spending money in exchange for a harder next room. Zeph's
+Wager lets a confident player buy into better future rewards. Cell Banking gives
+safety at a conversion loss. These options create engagement without rewarding
+arriving poor more than arriving prepared.
+
+The shop also needs anti-frustration rules. At least one WARES item should cost
+60 gold or less. At least one ABILITIES card should be usable with the current
+build. If no new abilities or legal modifiers exist, the tab should generate
+plain upgrades, replacement services, or a class-signature modifier rather than
+showing empty cards.
+
+Do not grant a free reroll each visit. A free reroll encourages fishing and makes
+the first stock feel disposable. Instead, generate purposeful stock and provide
+Reserve Stock plus Targeted Reroll as controlled tools.
+
+12. REQUIRED RUNTIME DATA MODEL
+-------------------------------
+Do not continue expanding the existing `bool isAbility` item into dozens of
+special-case branches. Introduce a real shop item model while retaining adapter
+support for current ability cards during migration.
+
+Recommended enums:
+
+`ShopItemCategory`
+- TacticalSupply
+- BuildModifier
+- NewAbility
+- AbilityUpgrade
+- RareStat
+- RiskBargain
+- Service
+
+`ShopDuration`
+- Immediate
+- NextCombatRoom
+- NextBoss
+- TimedUses
+- RunPermanent
+
+`ShopEffectKind`
+- ArmourNextRoom
+- FirstCastFree
+- CooldownNextRoom
+- RevealNodes
+- HealImmediate
+- RestoreManaImmediate
+- AddAbility
+- UpgradeAbility
+- AddAbilityModifier
+- AddRareStat
+- AddContract
+- RemoveContract
+- ReplaceAbility
+- ReserveStock
+- TargetedReroll
+- BankCells
+- ReplaceRelic
+
+Recommended `ShopItemDef` fields:
+
+- stable string or enum ID
+- display name
+- description
+- downside text
+- category
+- rarity
+- base price
+- duration
+- active class restriction or Any
+- target ability or None
+- modifier group ID
+- minimum act
+- maximum purchases per run
+- maximum purchases per visit
+- eligible-state predicate/key
+- effect kind and numeric parameters
+- icon family
+- Daily Deal eligibility
+- debug availability
+
+Recommended generated `ShopOffer` fields:
+
+- pointer/ID to definition
+- resolved target ability
+- resolved price
+- purchased flag
+- reserved flag
+- visit seed/source slot
+
+Recommended run state:
+
+- purchased item IDs and counts
+- active tactical effects
+- ability modifier IDs by ability
+- Rare Stat purchases from Zeph
+- new abilities purchased from Zeph
+- plain ability upgrades purchased from Zeph
+- active debts/contracts
+- rerolls used this visit
+- shop visit index and seed
+
+13. EFFECT HOOKS
+----------------
+Shop effects should be applied through a small number of explicit hooks rather
+than scattered name checks.
+
+- OnShopPurchase: immediate healing, mana, ability replacement, banking.
+- OnCombatRoomStart: activate next-room armour, free cast, cooldown, damage.
+- OnAbilityCast: first-cast-free and ability modifier behavior.
+- OnAbilityHit: pierce, status, mark, curse, Rage/Faith/combo effects.
+- OnEnemyKilled: spreading curse, Soul Credit, bargain rewards.
+- OnCombatRoomClear: expire supplies, resolve wagers, collect debts.
+- OnBossStart/End: next-boss items and healing restrictions.
+- OnGoldCollected: Collector's Debt repayment before wallet gain.
+
+The modifier query should look like `HasAbilityModifier(AbilityType, ModifierId)`
+or return a compact modifier set for the ability. Avoid one boolean field per
+shop item in Character. A data-driven list keeps future modifiers manageable.
+
+14. UI COMPATIBILITY
+--------------------
+The current UI layout stays. Only the information presented on existing cards
+needs to become more explicit.
+
+WARES remains the left tab and ABILITIES remains the right tab. WARES cards can
+show a small category label such as SUPPLY, SERVICE, BARGAIN, or RARE STAT in the
+existing rarity-label area. ABILITIES cards can show NEW, MODIFIER, UPGRADE, or
+SIGNATURE. This does not require moving panels or changing card dimensions.
+
+Every card needs:
+
+- item name
+- category badge
+- affected ability when relevant
+- duration: NEXT ROOM, NEXT BOSS, or THIS RUN
+- concise upside
+- downside in a contrasting colour when present
+- price
+- purchase cap state such as `1/RUN`
+- before/after values only when a numeric preview is genuinely useful
+
+The card should never display a false stat preview. Modifiers should describe
+behavior, not force themselves into `4 -> 4` formatting. Disabled cards should
+state the reason: cap reached, ability not owned, debt active, full health, or
+already modified.
+
+15. WHAT LEAVES THE NORMAL SHOP
+-------------------------------
+The following current items should no longer be generated as ordinary WARES:
+
+- Iron Constitution
+- Swift Feet
+- Ferocity
+- Arcane Mind
+- Blade Edge
+- War God's Mark
+- Last Stand Plate / Resilience
+- Blade Storm Rig
+- Juggernaut Frame
+- Overchannel Core / Arcane Colossus
+
+These packages combine too many permanent benefits and duplicate Power Choices
+and relics. Their names/icons can be reused for future modifiers or Rare Shelf
+items, but their existing effects should not remain in the normal random pool.
+
+The simple Attack Power, Max Health, Max Mana, and armour-related effects move to
+the one-per-run Rare Stat shelf at smaller fixed values. Attack Range and Move
+Speed are better expressed as ability-specific modifiers or temporary supplies.
+Emergency Plate should become a temporary armour refill, not a permanent armour
+capacity purchase.
+
+Do not delete `UpgradeType` or these effects globally. Level, treasure, debug,
+and legacy reward systems may still reference them. The shop rework should stop
+sourcing them from its inventory and migrate other systems separately.
+
+16. IMPLEMENTATION PHASES
+-------------------------
+SHOP PHASE A - FOUNDATION
+
+Add category, duration, item definition, generated offer, and run purchase-state
+types. Keep the current draw code working through a compatibility adapter. Move
+prices and inventory rules into `GameBalance.h` or a dedicated `ShopCatalog` file.
+Do not implement all modifiers yet.
+
+SHOP PHASE B - CORE WARES
+
+Implement the six-slot recipe with CORE supplies, services, bargains, and four
+Rare Stats. Add one-per-run Rare Stat cap, next-room effect lifecycle, Hunted
+Purse, Zeph's Wager, Reserve Stock, and truthful category badges. Remove combined
+stat packages from generated stock.
+
+SHOP PHASE C - ABILITY TAB
+
+Add owned-ability modifiers, new-ability purchase cap, escalating plain-upgrade
+prices, and replacement flow for full slots. Begin with two CORE modifiers per
+class. Keep ultimates out of shop stock.
+
+SHOP PHASE D - ECONOMY AND REROLLS
+
+Implement category-specific inflation, full-reroll limits, reservation, targeted
+rerolls, Daily Deal eligibility, and anti-repeat rules. Confirm that purchased
+offers and run caps persist across rerolls and room transitions.
+
+SHOP PHASE E - ADVANCED SERVICES AND BARGAINS
+
+Add relic replacement, debt, contract cleansing, cell banking, boss contracts,
+and the remaining class modifiers only after the core inventory is stable.
+
+SHOP PHASE F - TELEMETRY AND TUNING
+
+Record shop visits, generated categories, purchases, skipped items, rerolls,
+gold entering/leaving, Rare Stat count, modifiers chosen, and performance in the
+next room. Tune price and offer weights from real runs rather than intuition.
+
+17. TEST PLAN
+-------------
+FUNCTIONAL TESTS
+
+- WARES generates six legal offers using the slot recipe.
+- ABILITIES never offers an off-class, locked, owned-as-new, or ultimate ability.
+- No duplicate item IDs appear in a visit.
+- Ability modifiers only target owned legal abilities.
+- Mutually exclusive modifiers cannot coexist.
+- Rare Stat purchase cap is one per run and survives future visits/rerolls.
+- New ability and plain-upgrade escalating prices persist for the run.
+- Full ability slots open replacement instead of losing the purchase.
+- Next-room supplies activate only when combat starts and expire on clear.
+- Next-boss supplies survive normal rooms and expire after the boss.
+- Bargain downsides activate at the same moment as their upside.
+- Debt intercepts collected gold correctly and cannot make gold negative.
+- Rerolls preserve purchased/reserved cards and respect the two-reroll cap.
+- Daily Deal never selects forbidden categories.
+- Save/load or leaving/re-entering does not regenerate unpaid stock.
+
+BALANCE TESTS
+
+- A normal visit should create at least three desirable choices but the player
+  should usually afford only one or two.
+- A zero-gold player still has a meaningful bargain/service decision.
+- A rich player cannot buy more than one permanent Rare Stat per run.
+- No shop visit fully restores both health and mana.
+- A modifier changes play behavior and is noticeable in the next room.
+- An ability-focused run remains viable without buying raw attack.
+- Rerolls do not reliably produce a perfect build.
+- Shop spending delays or prevents other purchases instead of being automatic.
+- Players continue to value boss rewards, Power Choices, and relics after Zeph.
+
+REGRESSION TESTS
+
+- Existing shop mouse, keyboard, gamepad, and touch navigation still work.
+- Existing card text remains inside card/button bounds.
+- Village Zeph and dungeon Zeph open the same valid shop behavior where intended.
+- Debug shop entry and UI editor continue to work.
+- Existing ability replacement and purchase messages remain accurate.
+- `Debug|x64` builds after each implementation phase.
+
+18. TELEMETRY TARGETS
+---------------------
+For each visit, log:
+
+- act, room, class, player level, HP, mana, gold
+- generated offer IDs/categories/prices
+- purchased offer IDs and final cost
+- rerolls and targeted rerolls used
+- gold left after visit
+- Rare Stat, modifier, and Zeph-ability counts for the run
+- next room clear time and damage taken
+- whether the purchased tactical effect triggered and how much value it produced
+
+Useful first targets:
+
+- Average purchases per visit: 1.2 to 2.0.
+- Visits with no purchase: below 20%, excluding intentional saving.
+- Rare Stat purchases: no more than one per run by rule.
+- Full rerolls: usually zero or one; two should be an expensive commitment.
+- No single item purchased in more than 45% of eligible appearances.
+- At least 60% of purchased modifiers should measurably change ability usage.
+
+19. RECOMMENDED FIRST PLAYABLE VERSION
+-------------------------------------
+Do not attempt the entire catalogue in one code change. The first playable shop
+should contain:
+
+WARES
+- Iron Token
+- Freecast Seal
+- Field Whetstone
+- Focus Draught
+- Surveyor's Chalk
+- Emergency Stitch
+- Reserve Stock
+- Forget and Learn
+- Clean Contract
+- Blood Price
+- Hunted Purse
+- Zeph's Wager
+- the four capped Rare Stats
+
+ABILITIES
+- legal new non-ultimate abilities
+- plain owned-ability upgrades with escalating prices
+- two CORE modifiers for each class
+- replacement flow when slots are full
+
+This first version is enough to prove the new fantasy. It gives poor players a
+risk option, gives rich players constrained premium choices, makes late ability
+tabs useful, and removes the six-card wall of permanent stat packages. Advanced
+debt, relic, map, and contract systems can follow after playtesting.
+
+20. FINAL DESIGN RULE
+---------------------
+Before adding any Zeph item, ask:
+
+"Does this create a decision or merely make every number larger?"
+
+If it only makes the player generically stronger, it belongs as a rare capped
+reward, a temporary supply, or somewhere outside the shop. Zeph's purpose is to
+reshape the run, prepare the player for danger, and tempt them into interesting
+risks. He should not sell the solution to the dungeon.

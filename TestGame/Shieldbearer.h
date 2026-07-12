@@ -28,6 +28,8 @@ public:
     Rectangle GetCollisionRec() const override;
 
     Shieldbearer* AsShieldbearer() override { return this; }
+    EnemyRole GetEncounterRole() const override { return EnemyRole::Tank; }
+    int       GetSpawnCost()     const override { return 3; }
     const char* GetTuningName() const override { return "Shieldbearer"; }
 
     void PlayAttackSound() override;

@@ -29,6 +29,17 @@ class TitanGuard;
 class ToxicVermin;
 class AncientBear;
 
+// ── Encounter roles ───────────────────────────────────────────────────────────
+// Lightweight tactical role used by the encounter director to compose fights and
+// place spawns (ranged in back, tanks mid, assassins off-angle, etc.). Purely
+// metadata — it does not change an enemy's own AI. HeavyRanged is a Ranged that
+// also counts as an anchor (Cyclops). Boss is set for bosses so the director can
+// exclude them from the add budget.
+enum class EnemyRole
+{
+    Grunt, Charger, Ranged, Tank, Support, Assassin, Zoner, Summoner, HeavyRanged, Boss
+};
+
 class Enemy : public BaseCharacter
 {
 public:
@@ -47,6 +58,10 @@ public:
     // Extra flat multipliers on top of power level — used by the ascension
     // difficulty tiers. Called after ApplyEnemyPowerLevel in ConfigureSpawnedEnemy.
     void ApplyDifficultyScaling(float healthMult, float damageMult);
+
+    // Shorten the gap between attacks (mult < 1 = more aggressive). Used by the
+    // Zeph pressure-debt bargains; a depth-based cadence curve can reuse it.
+    void QuickenAttacks(float mult) { if (mult > 0.f) _attackDelay *= mult; }
 
     // Colour-variant tier (0-3) — later world zones spawn recoloured, visibly
     // tougher versions. Default is a no-op; types with variant art override.
@@ -130,6 +145,10 @@ public:
     void ApplySlow(float speedMult, float duration);                      // speedMult < 1
     void ApplyVulnerability(float damageTakenMult, float duration);       // mult > 1 (armor break)
     void ApplyMark(float duration);                                       // "marked"/execute window
+    // Warlock class identity: cursed enemies take bonus damage from all Warlock
+    // effects (see Engine::ScalePlayerHit). A timed tag like Mark, with its own
+    // purple indicator so the player can track which targets are primed.
+    void ApplyCurse(float duration) { if (duration > _curseTimer) _curseTimer = duration; }
     void UpdateStatuses(float dt);
     void ResetStatuses();                                                 // clear all on (re)spawn
 
@@ -138,6 +157,7 @@ public:
     bool  IsSlowed()        const { return _slowTimer    > 0.f; }
     bool  IsVulnerable()    const { return _vulnTimer    > 0.f; }
     bool  IsMarked()        const { return _markTimer    > 0.f; }
+    bool  IsCursed()        const { return _curseTimer   > 0.f; }
     // Multiplier applied to incoming damage (armor break / vulnerability). 1 = none.
     float GetIncomingDamageMult() const { return (_vulnTimer > 0.f) ? _vulnMult : 1.f; }
     // Combined movement multiplier from slow + chill. 1 = full speed, 0 = stopped.
@@ -220,6 +240,13 @@ public:
     virtual bool IsBoss() const { return false; }
     bool IsEliteMiniboss() const { return _isEliteMiniboss; }
     void SetIsEliteMiniboss(bool b);
+
+    // ── Encounter metadata ────────────────────────────────────────────────────
+    // Tactical role + spawn-budget cost consumed by the encounter director. Base
+    // default is a cheap Grunt; specific enemy types override these. Bosses report
+    // Boss so the director can keep them out of the add budget.
+    virtual EnemyRole GetEncounterRole() const { return IsBoss() ? EnemyRole::Boss : EnemyRole::Grunt; }
+    virtual int       GetSpawnCost()     const { return 1; }
 
     // ── Elite-room mechanics ──────────────────────────────────────────────
     // _isInvulnerable : bodyguard shield — engine clears when all grunts die
@@ -431,6 +458,7 @@ protected:
     float _vulnTimer       = 0.f;
     float _vulnMult        = 1.f;   // incoming-damage multiplier while vulnerable (>1)
     float _markTimer       = 0.f;   // "marked"/execute window
+    float _curseTimer      = 0.f;   // Warlock curse tag (bonus damage window)
 
     // Graveyard revive — set by Engine when entering a Graveyard room
     bool    _graveReviveAvailable  = false;

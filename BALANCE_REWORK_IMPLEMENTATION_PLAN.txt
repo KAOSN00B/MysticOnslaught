@@ -1,0 +1,314 @@
+MYSTIC ONSLAUGHT - BALANCE REWORK IMPLEMENTATION PLAN
+Last updated: 2026-07-11
+
+Implementation status (2026-07-11)
+----------------------------------
+PHASE 1: IMPLEMENTED, THEN DEEPENED. The concrete source audit is in
+`BALANCE_POWER_SOURCE_AUDIT.txt`, including ranked snowball risks and later-phase
+targets. A second sweep (see the IMPROVEMENT PASS ADDENDUM in that file) added
+the previously missed full-heal-on-every-room-entry finding (the largest sustain
+lever, Phase 4 target), the lifesteal compounding list, dead Deep Pockets meta
+unlocks, and the rare/epic card + relic description drift.
+
+PHASE 2: IMPLEMENTED AS THE FIRST PLAYTEST BASELINE, THEN IMPROVED. Automatic
+level stat/heal gains were removed, XP thresholds moved into `GameBalance.h`,
+dungeon XP moved from enemy kills to room clears, normal levels became
+ability-led Power Choices, and class ability level scaling was reduced from
+2x/3x to 1.25x/1.5x. Improvement pass on top: the level step now lives in
+GameBalance.h (kClassLevelStep) instead of a hardcoded literal; the dead
+Balance::Player block was removed; all rare/epic card previews and relic
+descriptions now state the REAL effects (code is canon); and three new
+build-shaping Power Choice cards were added - Mana Flow (common tempo),
+Class Attunement (rare, +25% Rage/Faith/Combo gain, class-gated), and
+Overload (rare tradeoff: +15% ability damage, casts cost +1 mana, wired
+through a new Character::GetAbilityCost so every cost site agrees).
+Debug|x64 builds clean. Exact XP and card values remain tuning points.
+
+PHASE 3: FIRST INCREMENT IMPLEMENTED (2026-07-11 late). The shop was already a
+one-page 2-abilities + 4-tactical-wares layout with no permanent stat packages.
+Added on top, per ZEPH_SHOP_FULL_REWORK_DESIGN.txt: a GUARANTEED Risk Bargain
+slot every visit (Hunted Purse +60g now for a harder next room; Zeph's Wager
+20g for a harder next room that pays +40g and +25% clear XP; Blood Price 40g -
+upgrade weakest owned ability at the cost of 1 max HP, once per run) and the
+capped RARE STAT shelf (Tempered Heart +2 HP / Honed Edge +0.5 atk / Deep
+Reservoir +4 mana; ONE rare-stat purchase per run, 35% shelf appearance,
+excluded from Daily Deals). Pressure debts STACK (capped 3) so rerolling for
+another Hunted Purse means owing another hard room. New visit recipe:
+2 abilities + 3 wares (2 when the shelf appears) + 1 bargain. Still remaining
+from the shop doc: class-specific ability MODIFIERS, Reserve Stock / targeted
+reroll / Forget-and-Learn services, debts, relic appraisal (doc phases C-E).
+
+PHASE 4: IMPLEMENTED (2026-07-11 late). THE BIG ONE: entering a room no longer
+heals AT ALL (Character::RefreshForRoomEntry replaces the per-room Revive();
+death->village still fully heals). Boss-clear "push onward" heal is now
+partial (40% of max, Balance::Sustain::kBossClearHealFraction). Heal drops
+(chance + timed combined) capped at 2 per room; lifesteal capped at 6 HP per
+room (grants untouched - the cap is the governor). Mana regen base raised
+0.2 -> 0.25/s as compensation for the removed +5 mana/level. All knobs in the
+new Balance::Sustain block.
+
+PHASE 5: IMPLEMENTED (2026-07-11 late). Per-room telemetry: a ring of the last
+8 cleared rooms (act/room/type, clear seconds, damage taken, HP healed, heal
+drops, clear XP, gold delta, player level, enemy power level), captured in the
+room-clear block and drawn as an overlay beside the open debug panel (F1/F10).
+Character tracks real HP flow via two counters reset on room entry.
+
+PHASE 6: CONSERVATIVE FIRST PASS IMPLEMENTED (2026-07-11 late). Enemy HP ramp
+softened 0.16 -> 0.12 per power level (player attack no longer auto-grows), and
+the NEW pressure lever: attack cadence scales with depth (-5% attack delay per
+power level, floored at 65% of authored delay) in ApplyEnemyPowerLevel. The
+deeper composition retune and spawn-literal migration to GameBalance.h wait
+for telemetry from real runs, per this plan's own ordering rule.
+
+Purpose
+-------
+This document is the detailed implementation roadmap for the current balance
+and progression rework. The goal is to stop the run from snowballing too fast,
+preserve the identity of each class, keep the village/editor work separate, and
+make the shop and level-up systems feel like meaningful decisions rather than
+automatic stat inflation.
+
+The codebase already has many of the right building blocks:
+- `GameBalance.h` for shared constants
+- `Character.cpp` / `Character.h` for player growth and class identity
+- `Enemy.cpp` / `Enemy.h` for enemy growth and status handling
+- `CombatDirector.cpp` / `CombatDirector.h` for encounter composition
+- `ShopManager.cpp` / `ShopManager.h` for Zeph's inventory and UI
+- `Relic.cpp` / `Relic.h` for build modifiers
+- `MetaProgression.cpp` / `MetaProgression.h` for permanent unlocks
+- `AbilityType.h` and `AttackTuning` for move tuning and class pacing
+
+The current problem is not one isolated number. It is the combination of:
+- level-ups giving too much automatic power
+- shop purchases adding too much clean power
+- relics and meta unlocks stacking on top of that
+- enemy scaling being forced to chase the player upward
+
+That creates the treadmill effect: the player gets stronger, the enemies get
+thicker, and the game risks feeling like a math fight instead of a tactical
+roguelite. This plan keeps the dungeon dangerous by making choices matter more
+than flat stat inflation.
+
+Implementation Philosophy
+-------------------------
+The rework should be implemented in phases, not as a giant rewrite. We want to
+be able to test each phase independently and understand what it changed. The
+first pass should be mostly audit and reduction: identify the sources of
+runaway power and remove the ones that are doing the most damage to pacing.
+Only after the player curve is under control should we tighten enemy aggression
+and encounter pressure.
+
+The second key principle is that the game should reward build identity rather
+than raw numbers. A player should feel more powerful because their abilities
+have changed shape, gained synergies, or gained a class-specific mechanic, not
+because they received another automatic +attack and +HP package. This is the
+heart of the change: more interesting power, less automatic power.
+
+Finally, the shop and level-up systems should create decisions. If the player
+can always buy the obvious best stat, or always take the obvious best level-up,
+then the game loses texture. The rework should make the player choose between
+defense, offense, utility, tempo, and risk, with each choice having a visible
+tradeoff. Zeph should feel like a merchant who shapes runs, not a vending
+machine that prints stronger numbers.
+
+Phase 1 - Audit Power Sources
+-----------------------------
+The first phase is a full audit of every system that adds combat power during a
+run. That means tracing every source of attack, health, mana, armour, regen,
+healing, and damage multipliers through the player code, the shop, relics,
+meta progression, pickups, and room rewards. The key deliverable here is a
+single, readable list of all power sources and their magnitude so that we know
+what is feeding the snowball.
+
+This audit should focus on the actual runtime behavior in code, not just the
+commentary in docs or UI text. For example, if a shop tooltip says one thing but
+the code gives a larger effect, the code is the truth. The same applies to
+level-up thresholds, ability upgrade magnitudes, mana regen multipliers, heal
+drop rules, and any hidden grants from room clear or boss rewards. The result
+should be a table that says where the power comes from, when it triggers, how
+often it can happen, and whether it is permanent for the run or temporary.
+
+The audit should also identify which systems are accidental amplifiers. A common
+example is a system that looks small on its own but becomes too strong when
+stacked with everything else. Level-up heals, repeated stat boosts, and cheap
+shop upgrades are often fine in isolation, but together they can erase danger.
+The goal of Phase 1 is to mark the biggest runaway sources so later phases can
+cut them cleanly rather than shaving every system equally.
+
+Phase 1 should end with a concise balance map for the whole run:
+- what the player gets from combat
+- what the player gets from shops
+- what the player gets from relics
+- what the player gets from meta unlocks
+- what the player gets from level-ups
+- what the player loses on death
+
+That map becomes the baseline for every later tuning pass. Without it, any
+number we change risks being a guess.
+
+Phase 2 - Rework Level-Ups
+--------------------------
+Level-ups should stop being a stream of automatic stat inflation. Right now the
+player can become too strong after only a few levels because level-ups directly
+add health, attack, mana, and some healing. That creates a stable, predictable
+power curve that is easy to exploit and difficult to balance around. The core
+change should be to turn leveling into a decision point instead of a passive
+stat drip.
+
+The preferred direction is a Power Choice model. When the player earns enough
+XP, the game should offer a limited choice of build-shaping options rather than
+simply increasing raw stats. Those choices can include class mechanics, ability
+modifiers, cooldown changes, status interactions, small defensive bonuses, or
+tradeoff-based upgrades. Rare flat stat gains can still exist, but they should
+be small, infrequent, and clearly framed as exceptions rather than the default.
+
+This phase should also fix the XP curve itself. `GameBalance.h` should be the
+single source of truth for XP thresholds, and the current logic in
+`Character.cpp` should be made consistent with it. The intended pacing should
+target roughly 6-8 meaningful power choices over a full run, not constant
+level-ups every couple of rooms. XP should probably come more from room clear or
+structured rewards than from every enemy, so spawn count does not translate
+directly into free levelling.
+
+The other important part of this phase is to remove hidden sustain from leveling.
+Level-up healing, free mana refills, and automatic damage gains all reduce the
+importance of room pressure and enemy patterns. If the player is always topped
+off or always a little stronger just because time passed, then the dungeon stops
+feeling dangerous. Level-ups should add excitement and direction, not erase the
+need to play well.
+
+Phase 3 - Rework Zeph's Shop
+----------------------------
+The shop must remain important. It is one of the main pacing breaks in the game,
+and it gives the player a place to make mid-run decisions. But it should stop
+functioning as a bucket of clean permanent stats. Right now the shop risks
+becoming a second source of automatic snowball, which stacks badly with level-ups
+and relics. The shop should be useful, tempting, and sometimes hard to afford,
+but not the place where the player simply buys their way out of the run's
+danger.
+
+The best direction is to split the shop into categories with different
+intentions. Tactical Supplies should be short-term tools for the next room or
+the next fight. Build Modifiers should change how an ability behaves, usually
+with a tradeoff so the decision has weight. Rare Stat Upgrades can still exist,
+but they should be scarce, capped per run, and expensive enough that the player
+cannot stack them endlessly. Risk Bargains should provide strong upside at the
+cost of an obvious downside. Services should remain useful, but they should be
+about reconfiguring a build or opening new options, not dumping raw power.
+
+This phase also needs shop economy rules. Rerolls should be expensive enough to
+prevent fishing for the perfect set of items. Ability upgrades should scale
+sharply so the player cannot max every move with trivial effort. Healing and
+mana sustain should be limited and should not fully reset mistakes. Every shop
+visit should present a decision: safety, tempo, damage, utility, or risk. Even a
+poor player should feel like there is something useful to do, but not everything
+should be equally strong.
+
+Finally, Zeph should feel like a run-shaping merchant rather than a vending
+machine. The player should be able to buy things that change how the next few
+rooms feel, but the shop should not be the place where the run becomes solved.
+This means clear before/after previews, visible downsides where relevant, and
+careful limits on repeat purchases of the strongest options.
+
+Phase 4 - Tune Sustain
+----------------------
+Once player power growth is under control, the next step is to tighten healing,
+mana, and sustain. This is where the game starts to feel more like a roguelite
+and less like a power fantasy that can be patched only with stronger enemies.
+Healing should matter, mana should matter, and mistakes should leave a mark.
+The player can still recover, but recovery should be earned rather than casually
+available every room.
+
+The main question here is how often the player is allowed to undo damage. If the
+game gives the player level-up heals, frequent heal pickups, generous boss
+timers, shop healing, relic healing, and mana regeneration on top of all that,
+then the combat loses bite. This phase should reduce or cap the strongest forms
+of sustain, especially the ones that are repeatable or automatic. Boss sustain
+should be especially conservative, because boss fights are where the game needs
+to ask for focus and consistency.
+
+Mana needs similar treatment. If mana regen is too strong, then cooldown and
+resource management stop being part of the class identity. The player should be
+able to build toward better mana flow, but it should not erase the need to
+choose when to spend. Some classes may want faster regen, but that should be a
+meaningful build choice with an actual opportunity cost. The same is true for
+armour and defensive loops: they should create breathing room, not immunity.
+
+The output of this phase should be a sustain model that keeps tension alive.
+Early rooms can be forgiving enough to teach the systems, but later rooms should
+make the player feel the pressure of mistakes. This is not about making the game
+cruel. It is about making the player think before healing, before spending mana,
+and before relying on a system to save them.
+
+Phase 5 - Add Telemetry
+-----------------------
+The next phase is debug telemetry, because balance work without numbers turns
+into vibes. The code should expose enough information to answer practical
+questions during playtests: how fast is the player leveling, how much damage are
+they taking per room, how often are they healing, how much gold are they
+spending, and where is the shop or level-up system pushing them too far. The
+telemetry should be visible in debug mode and should be easy to read without
+digging through logs.
+
+At minimum, the telemetry should include room number, act, enemy power level,
+player level, player attack, max HP, max mana, damage taken in the room, heals
+spawned, room clear time, gold spent, and shop purchases taken. If possible, it
+should also show when the player is getting power from non-obvious places like
+relics, meta unlocks, or free room rewards. The idea is to make snowball sources
+visible so we can see which systems are really carrying the player.
+
+Telemetry should also support comparison between runs. If one build path is
+causing every test run to spike in power after room 3, the data should make that
+obvious. Likewise, if a class is starving for mana or a shop category is never
+being bought, the telemetry should reveal it. This phase is about turning
+balance into something measurable, so later tuning is not just guesswork.
+
+This also helps prevent overcorrecting the wrong system. If the player is dying
+too fast because of damage spikes, the answer is different from the player dying
+too slowly because of sustain. If the run feels too easy because of shop items,
+the answer is different from a class mechanic that is inherently too strong.
+Telemetry gives us the confidence to make the right adjustment.
+
+Phase 6 - Tune Enemies and Rooms Last
+-------------------------------------
+Enemy aggression and room composition should be tuned after the player snowball
+has been reduced. That order matters. If the player is still getting too much
+free power, then tuning enemies just becomes a moving target. Once the player
+curve is under control, room difficulty can be made sharper and more expressive
+without feeling cheap.
+
+The main design rule here is to avoid solving everything with enemy HP. HP is
+the weakest form of difficulty because it mostly changes how long the fight
+takes, not how it plays. Instead, later rooms should use better combinations of
+enemy roles, tighter attack windows, more hazards, faster recovery, and smarter
+pressure. Tanks should screen ranged enemies, zoners should control space,
+assassins should threaten flanks, and support enemies should make the player
+choose priorities. HP can rise modestly, but it should not be the main lever.
+
+The target feel should stay readable. Weak enemies should die in a few basic
+hits. Medium enemies should feel present but not spongey. Tanks should force a
+plan. Elites should be a serious room event. Bosses should be long enough to be
+meaningful but not so long that they become endurance tests. If the difficulty
+is working correctly, the player should think, adapt, and execute, not simply
+watch numbers climb.
+
+How To Use This Plan
+--------------------
+The intended order of work is:
+1. Audit all current power sources.
+2. Rework level-ups into meaningful choices.
+3. Rework Zeph's shop into categories and tradeoffs.
+4. Tighten sustain.
+5. Add telemetry.
+6. Tune enemies and room composition.
+
+Do not try to solve the whole game by increasing enemy HP/damage. That creates
+the cheap difficulty treadmill we want to avoid. The purpose of the rework is to
+make the player stronger in more interesting ways, while keeping the dungeon
+dangerous and the village useful.
+
+Keep village/editor systems out of the balance pass unless a build issue forces
+their hand. The village is important, but this document is about combat and
+progression. Once the player curve is cleaner, the village can serve as a
+breather and a long-term reward loop rather than as another source of combat
+power inflation.

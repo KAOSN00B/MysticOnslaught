@@ -5,6 +5,8 @@
 #include "Relic.h"
 #include "PlayerClass.h"
 #include "CharacterTuning.h"
+#include "GameBalance.h"
+#include <algorithm>
 #include <vector>
 #include <string>
 
@@ -14,19 +16,77 @@ enum class UpgradeType
 {
     // ── Common ─────────────────────────────────────────────────────────────────
     AttackPower, AttackRange, MaxHealth, MaxMana, Defense, MoveSpeed,
-    // ── Rare ───────────────────────────────────────────────────────────────────
-    IronConstitution,  // +25% max HP (heals too)
-    SwiftFeet,         // +15% move speed
-    Ferocity,          // +15% attack power
-    ArcaneMind,        // +40 max mana
-    IronSkin,          // +1 armour
-    BladeEdge,         // +15% attack range
-    // ── Epic ───────────────────────────────────────────────────────────────────
-    WarGod,            // +20% attack power, +10% attack range
-    Resilience,        // +30% max HP, heal 3
-    BladeStorm,        // +18% attack power, +18% move speed
-    Juggernaut,        // +20% max HP, +1 armour
-    ArcaneColossus,    // +50 max mana, +15% attack power
+    // ── Rare ──────────────────────────────────────────────────────────────────
+    // Comments below state the REAL ApplyUpgrade effects (balance truth pass —
+    // the old comments advertised bigger numbers than the code ever gave).
+    IronConstitution,  // +15% max HP (heals the gained HP)
+    SwiftFeet,         // +8% move speed
+    Ferocity,          // +10% attack power (min +1)
+    ArcaneMind,        // +8 max mana (+4 now), +10% mana regen
+    IronSkin,          // +2 armour
+    BladeEdge,         // +1 attack power, +0.10x attack range
+    // ── Epic ──────────────────────────────────────────────────────────────────
+    WarGod,            // +15% attack power (min +1.75), +0.12x attack range
+    Resilience,        // +18% max HP (heals the gained HP)
+    BladeStorm,        // +1.5 attack power, +8% move speed
+    Juggernaut,        // +12% max HP (heals gained), +2 armour
+    ArcaneColossus,    // +10 max mana (+5 now), +1.5 attack power, +15% mana regen
+    // ── Power Choice additions (level-up pool; build-shaping, not raw stats) ──
+    ManaFlow,          // common: +1 max mana, +15% mana regen — tempo, not a pool dump
+    ClassAttunement,   // rare: +25% class resource gain (Rage / Faith / Combo Points)
+    Overload,          // rare TRADEOFF: class abilities +15% damage, all casts cost +1 mana
+    // -- Class-specific Power Choice cards (offered only to their class) ------
+    // Mage - elemental mastery
+    MagePyromancy, MageInfernalMastery,       // fire +20% / +35%
+    MageCryomancy, MageGlacialMastery,        // ice +20% / +35%
+    MageStormAttunement, MageTempestMastery,  // electric +20% / +35%
+    MageComboResonance,                       // elemental combo payoff x2
+    MageArcaneHaste,                          // +20% mana regen
+    // Warrior - rage and iron
+    WarriorSmolderingFury,   // Rage decays 50% slower
+    WarriorFuriousMight,     // full-Rage damage bonus +20%
+    WarriorBattleTrance,     // Rage gain +25% AND full-Rage bonus +10%
+    WarriorUnbreakable,      // +1 armour, +1 max HP
+    WarriorColossus,         // +2 max HP, +0.5 attack
+    WarriorWarlordsReach,    // +0.10x attack range
+    WarriorBattleMeditation, // heal 1 HP on room clear
+    WarriorWeaponMaster,     // class abilities +8%
+    // Hunter - marks and arrows
+    HunterPredatorsRhythm,   // mark every 2nd shot instead of 3rd
+    HunterQuarry,            // +15% damage vs marked
+    HunterApexPredator,      // +30% damage vs marked
+    HunterFletcher,          // +0.5 attack
+    HunterTrappersCunning,   // class abilities +10%
+    HunterSwiftQuiver,       // +12 move speed
+    HunterSurvivalist,       // +1 max HP, +1 armour
+    HunterFocusedBreathing,  // +15% mana regen
+    // Rogue - combo and venom
+    RogueDeepReserves,       // +1 max combo point (cap 7)
+    RogueRuthlessFinisher,   // Eviscerate +5% per combo point
+    RogueExsanguinate,       // Eviscerate +10% per combo point
+    RogueToxinExpert,        // poison ticks +50%
+    RogueMasterPoisoner,     // poison ticks +100%
+    RogueFleetFootwork,      // +12 move speed
+    RogueShadowConditioning, // +1 max HP
+    RogueOpportunist,        // combo gain +25% AND Eviscerate +5%/point
+    // Paladin - faith and holy might
+    PaladinHolyMight,        // holy (class ability) damage +10%
+    PaladinDivineWrath,      // holy damage +18%
+    PaladinZealotsFury,      // Retribution +6% per stack (base 12%)
+    PaladinMirroredAegis,    // reflects 50% stronger
+    PaladinDevotion,         // Faith gain +15%
+    PaladinCrusadersVitality,// +2 max HP
+    PaladinSanctuary,        // +2 armour AND heal 1 on room clear
+    PaladinDivineConduit,    // +2 max mana, +15% mana regen
+    // Warlock - curses and hunger
+    WarlockGrimHarvest,      // lifesteal 50% stronger
+    WarlockDarkPact,         // +10% damage vs cursed
+    WarlockSoulBargain,      // +25% damage vs cursed
+    WarlockLingeringMalice,  // curses last +50% longer
+    WarlockVoidAttunement,   // +20% mana regen
+    WarlockCorruptedVitality,// +2 max HP
+    WarlockSoulConduit,      // lifesteal +50% AND curses +25% longer
+    WarlockOccultPower,      // class abilities +8%
     // ── Ability unlocks (5th-wave ability screen only) ─────────────────────────
     LearnFireSpread, LearnIceSpread, LearnElectricSpread,
     LearnFireBolt, LearnIceBolt, LearnElectricBolt,
@@ -109,8 +169,11 @@ public:
     virtual void Death() override;
 
     // Lightweight revive — resets HP, dying/hit state, and push state without reloading assets.
-    // Used by DungeonRun on room entry and on death so the player never freezes.
+    // Used on true respawns (death -> village); fully heals.
     void Revive();
+    // Room-entry state reset WITHOUT healing — HP carries between rooms so
+    // mistakes matter beyond a single fight (sustain rework, Phase 4).
+    void RefreshForRoomEntry();
 
     void DrawPlayer(Vector2 cameraPos);
     void DashParticles(float h, Vector2 playerScreenCenter);
@@ -173,9 +236,136 @@ public:
     void  GrantDamageBuff(float mult, float duration);
     void  GrantLifesteal(float fraction, float duration);
 
+    // ── Warrior Rage (class-identity mechanic) ─────────────────────────────────
+    // The Warrior builds Rage by landing hits and by BEING hit, and slowly loses
+    // it out of combat. Rage passively empowers Warrior abilities (up to +50% at
+    // full) and Ground Slam consumes it all for a larger quake. Warrior-only —
+    // every call is a no-op for other classes so hit-site hooks stay unconditional.
+    static constexpr float kMaxRage = 100.f;
+    void  AddRage(float amount)
+    {
+        if (_class != PlayerClass::Warrior) return;
+        if (amount > 0.f) amount *= _classResourceGainMult;   // Class Attunement
+        _rage = (_rage + amount > kMaxRage) ? kMaxRage : ((_rage + amount < 0.f) ? 0.f : _rage + amount);
+    }
+    float GetRage()        const { return (_class == PlayerClass::Warrior) ? _rage : 0.f; }
+    float GetRagePercent() const { return GetRage() / kMaxRage; }   // 0..1
+    // Spend ALL current Rage; returns the fraction (0..1) that was consumed so the
+    // ability can scale its payoff (Ground Slam's quake radius).
+    float ConsumeAllRage()
+    {
+        if (_class != PlayerClass::Warrior) return 0.f;
+        float fraction = _rage / kMaxRage;
+        _rage = 0.f;
+        return fraction;
+    }
+
+    // ── Rogue Combo Points (class-identity mechanic) ───────────────────────────
+    // The Rogue banks a combo point for each quick hit that lands (Backstab banks
+    // two). Eviscerate spends ALL points for a scaled burst — the class's brain is
+    // "build with fast strikes, cash out with the finisher". Rogue-only; every
+    // call is a no-op for other classes so hit-site hooks stay unconditional.
+    static constexpr int kMaxComboPoints = 5;
+    void AddComboPoints(int n)
+    {
+        if (_class != PlayerClass::Rogue) return;
+        // Class Attunement: bank fractional bonus combo across hits so +25%
+        // gain means an extra point every 4th single-point hit.
+        _comboFraction += (float)n * (_classResourceGainMult - 1.f);
+        while (_comboFraction >= 1.f) { _comboFraction -= 1.f; n += 1; }
+        // Deep Reserves class card can raise the bank depth above the base 5.
+        _comboPoints = (_comboPoints + n > _maxComboPointsRun) ? _maxComboPointsRun : _comboPoints + n;
+    }
+    int GetComboPoints() const { return (_class == PlayerClass::Rogue) ? _comboPoints : 0; }
+    // Spend ALL banked points; returns how many were consumed for the finisher.
+    int ConsumeAllComboPoints()
+    {
+        if (_class != PlayerClass::Rogue) return 0;
+        int spent = _comboPoints;
+        _comboPoints = 0;
+        return spent;
+    }
+
+    // ── Paladin Faith (class-identity mechanic) ────────────────────────────────
+    // The Paladin builds Faith by standing ground: being struck and landing holy
+    // hits both add Faith, which passively empowers Paladin abilities (up to +40%
+    // at full). Divine Storm consumes it all for a wider nova. Unlike Rage, Faith
+    // does not decay — holding ground is the fantasy, not frenzy. Paladin-only;
+    // no-ops for other classes so hit-site hooks stay unconditional.
+    static constexpr float kMaxFaith = 100.f;
+    void  AddFaith(float amount)
+    {
+        if (_class != PlayerClass::Paladin) return;
+        if (amount > 0.f) amount *= _classResourceGainMult;   // Class Attunement
+        _faith = (_faith + amount > kMaxFaith) ? kMaxFaith : ((_faith + amount < 0.f) ? 0.f : _faith + amount);
+    }
+    float GetFaith()        const { return (_class == PlayerClass::Paladin) ? _faith : 0.f; }
+    float GetFaithPercent() const { return GetFaith() / kMaxFaith; }   // 0..1
+    // Spend ALL current Faith; returns the fraction (0..1) consumed so the ability
+    // can scale its payoff (Divine Storm's nova radius).
+    float ConsumeAllFaith()
+    {
+        if (_class != PlayerClass::Paladin) return 0.f;
+        float fraction = _faith / kMaxFaith;
+        _faith = 0.f;
+        return fraction;
+    }
+
+    // ── Power Choice card hooks ───────────────────────────────────────────────
+    // Class Attunement: multiplies every positive Rage/Faith/Combo gain.
+    float GetClassResourceGainMult() const { return _classResourceGainMult; }
+    // Overload: permanent class-ability damage multiplier, paid for with +1 mana
+    // on every cast. Consumed by Engine's dmgVal buff.
+    float GetAbilityPowerMult() const { return _abilityPowerMult; }
+
+    // ── Class-specific Power Choice hooks ─────────────────────────────────────
+    // Small tunable dials the class card catalog adjusts. Each is consumed at
+    // one (or very few) choke points, so adding a new class card is usually
+    // just "enum + ApplyUpgrade case + name/desc" — no new gameplay wiring.
+    // Mage: per-element damage (spread/bolt/burn/ultimate pipelines).
+    float GetElementDamageMult(AbilityType type) const
+    {
+        switch (type)
+        {
+        case AbilityType::FireSpread: case AbilityType::FireBolt: case AbilityType::FireUltimate:
+            return _fireDamageMult;
+        case AbilityType::IceSpread: case AbilityType::IceBolt: case AbilityType::IceUltimate:
+            return _iceDamageMult;
+        case AbilityType::ElectricSpread: case AbilityType::ElectricBolt: case AbilityType::ElectricUltimate:
+            return _electricDamageMult;
+        default: return 1.f;
+        }
+    }
+    float GetComboBonusMult()     const { return _comboBonusMult; }      // Mage: reaction payoff
+    float GetRageDecayMult()      const { return _rageDecayMult; }       // Warrior: slower bleed-off
+    float GetRageFullBonus()      const { return _rageFullBonus; }       // Warrior: dmg at full bar
+    float GetRetributionPerStack() const { return _retributionPerStack; } // Paladin: counter potency
+    float GetReflectPotency()     const { return _reflectPotency; }      // Paladin: Aegis strength
+    int   GetHunterMarkEvery()    const { return _hunterMarkEvery; }     // Hunter: mark cadence
+    float GetMarkedBonus()        const { return _markedBonus; }         // Hunter: dmg vs marked
+    float GetCursedBonus()        const { return _cursedBonus; }         // Warlock: dmg vs cursed
+    float GetCurseDurationMult()  const { return _curseDurationMult; }   // Warlock: curse windows
+    float GetLifestealPotency()   const { return _lifestealPotency; }    // Warlock: drain strength
+    int   GetMaxComboPoints()     const { return _maxComboPointsRun; }   // Rogue: bank depth
+    float GetEvisceratePerCombo() const { return _evisceratePerCombo; }  // Rogue: finisher scaling
+    float GetPoisonPotency()      const { return _poisonPotency; }       // Rogue/Warlock: DoT ticks
+    int   GetHealOnRoomClear()    const { return _healOnRoomClear; }     // sustain-friendly recovery
+    // The REAL cost of a cast = base table cost + Overload surcharge. Ultimates
+    // drain all mana regardless, so the surcharge only gates normal abilities.
+    int   GetAbilityCost(AbilityType type) const
+    {
+        return AbilityDrainsAllMana(type) ? GetAbilityManaCost(type)
+                                          : GetAbilityManaCost(type) + _abilityCostBonus;
+    }
+
     // ── Paladin Retribution (no self-heal): being struck fuels a stacking damage
     // buff, and Aegis reflects a fraction of damage back at the attacker. ──
-    void  GrantReflect(float fraction, float duration) { _reflectFraction = fraction; _reflectTimer = duration; }
+    void  GrantReflect(float fraction, float duration)
+    {
+        // Mirrored Aegis class card strengthens every reflect grant (capped).
+        _reflectFraction = std::min(0.9f, fraction * _reflectPotency);
+        _reflectTimer    = duration;
+    }
     void  AddRetribution(int n) { int s = _retributionStacks + n; _retributionStacks = (s > kRetributionMaxStacks) ? kRetributionMaxStacks : s; _retributionTimer = kRetributionDuration; }
     int   GetRetributionStacks() const { return _retributionTimer > 0.f ? _retributionStacks : 0; }
     bool  IsReflectActive() const { return _reflectTimer > 0.f; }
@@ -282,17 +472,66 @@ public:
     void  ClearBiomeDebuffs()           { _biomeDashLocked = false; _biomeSlowFactor = 1.f; }
     float GetAttackRangeMultiplierValue() const { return _attackRangeMultiplier; }
     float GetManaRegenPerSecond() const { return kManaRegenBase * _manaRegenMultiplier; }
-    static constexpr int   kLevelHpGain    = 1;
-    static constexpr float kLevelAttackGain = 0.4f;
-    static constexpr int   kLevelManaGain   = 5;
 
+    // Zeph wares are limited-use preparation, not permanent stat growth.
+    void  GrantShopWhetstone(int hits = 6) { _shopWhetstoneHits = std::min(12, _shopWhetstoneHits + hits); }
+    float GetShopBasicDamageMultiplier() const { return (_shopWhetstoneHits > 0) ? 1.15f : 1.f; }
+    void  ConsumeShopWhetstoneHit() { if (_shopWhetstoneHits > 0) --_shopWhetstoneHits; }
+    void  GrantShopFreeCast(int casts = 1) { _shopFreeCasts = std::min(2, _shopFreeCasts + casts); }
+    void  GrantShopWard(int hits = 1) { _shopWardHits = std::min(2, _shopWardHits + hits); }
+    void  GrantShopGoldCompass(int pickups = 5) { _shopGoldPickups = std::min(10, _shopGoldPickups + pickups); }
+    void  GrantShopEchoSatchel(int pickups = 5) { _shopCellPickups = std::min(10, _shopCellPickups + pickups); }
+    int   GetShopWhetstoneHits() const { return _shopWhetstoneHits; }
+    int   GetShopFreeCasts() const { return _shopFreeCasts; }
+    int   GetShopWardHits() const { return _shopWardHits; }
+    int   GetShopGoldPickups() const { return _shopGoldPickups; }
+    int   GetShopCellPickups() const { return _shopCellPickups; }
+
+    // ── Balance telemetry counters ────────────────────────────────────────────
+    // Accumulate real HP lost/gained; the Engine reads + resets them per room
+    // for the debug telemetry overlay. Zero gameplay effect.
+    void ResetTelemetryCounters() { _telemDamageTaken = 0.f; _telemHealed = 0.f; _telemAbilityCasts = 0; }
+    float GetTelemDamageTaken() const { return _telemDamageTaken; }
+    float GetTelemHealed()      const { return _telemHealed; }
+    int   GetTelemAbilityCasts() const { return _telemAbilityCasts; }
+
+    // ── Zeph Risk Bargains / Rare Stat shelf (run-scoped state) ──────────────
+    // Pressure debt: the next COMBAT room spawns an extra enemy and everyone
+    // attacks faster. Armed by Hunted Purse and Zeph's Wager; the Engine
+    // consumes it when it actually spawns a fresh combat room, so buying it
+    // before a rest room doesn't waste (or dodge) the debt.
+    // Debts STACK (capped) so re-buying via rerolls means more hard rooms, not
+    // free gold on a single shared downside.
+    void ArmShopPressureDebt() { _shopPressureDebtRooms = std::min(3, _shopPressureDebtRooms + 1); }
+    bool ConsumeShopPressureDebt()
+    {
+        if (_shopPressureDebtRooms <= 0) return false;
+        --_shopPressureDebtRooms;
+        return true;
+    }
+    // Zeph's Wager: same pressure, but the room pays out bonus gold + XP on clear.
+    void ArmShopWager() { _shopWagerArmed = true; ArmShopPressureDebt(); }
+    bool ConsumeShopWager() { bool armed = _shopWagerArmed; _shopWagerArmed = false; return armed; }
+    // Rare Stat shelf: ONE permanent stat purchase from Zeph per run, total.
+    bool HasShopRareStatBought() const { return _shopRareStatBought; }
+    void MarkShopRareStatBought()      { _shopRareStatBought = true; }
+    // Blood Price: once per run; the max-HP cost can never drop the cap below 4.
+    bool HasUsedBloodPrice() const { return _shopBloodPriceUsed; }
+    void MarkBloodPriceUsed()      { _shopBloodPriceUsed = true; }
+    void SacrificeMaxHealth(int amount)
+    {
+        _maxHealth = std::max(4.f, _maxHealth - (float)amount);
+        _health    = std::min(_health, _maxHealth);
+    }
     // Armour absorbs one direct hit before HP is affected (0–3 slots).
     static constexpr int kMaxArmour = 3;
 
     // Passive mana regen — flat rate scaled only by the regen multiplier.
     // Higher regen should always feel faster, regardless of current mana.
     // _manaRegenMultiplier scales via upgrades and (eventually) the store.
-    static constexpr float kManaRegenBase = 0.2f;  // 1 mana per 5 seconds
+    // Base lives in GameBalance (raised 0.2 -> 0.25 as compensation for the
+    // removed +5-mana-per-level auto gain).
+    static constexpr float kManaRegenBase = Balance::Sustain::kManaRegenPerSecond;
 
     // Armour
     int  GetArmour()    const { return _armour; }
@@ -301,9 +540,9 @@ public:
     void ApplyUpgrade(UpgradeType type);
 
     // Combat damage accessors -------------------------------------------------
-    // Melee scales through _attackPower from level-ups, so it already has a
-    // strong progression path. Special abilities are burst / piercing tools,
-    // so they only receive a small multiplier-based increase over the run.
+    // Melee scales through explicit rewards rather than automatic level gains.
+    // Special abilities are burst / piercing tools and improve through their
+    // own ability cards.
     int   GetMeleeDamage()            const { return (int)_attackPower; }
     float GetAbilityDamageMultiplier() const { return _abilityDamageMultiplier; }
     int   GetSpecialDamageBonus()     const;
@@ -397,6 +636,38 @@ private:
     // Temporary self-buffs (ticked down in Update).
     float _damageBuffMult   = 1.f;   // active multiplier while _damageBuffTimer > 0
     float _damageBuffTimer  = 0.f;
+
+    // Warrior Rage resource (0..kMaxRage) — decays slowly in Update.
+    float _rage = 0.f;
+    // Rogue combo points (0..kMaxComboPoints) — spent by Eviscerate.
+    int   _comboPoints = 0;
+    // Paladin Faith resource (0..kMaxFaith) — spent by Divine Storm, no decay.
+    float _faith = 0.f;
+    // Power Choice card state: Class Attunement resource-gain multiplier (with
+    // a fractional combo-point bank so the Rogue benefits too), and Overload's
+    // ability damage multiplier + per-cast mana surcharge.
+    float _classResourceGainMult = 1.f;
+    float _comboFraction         = 0.f;
+    float _abilityPowerMult      = 1.f;
+    int   _abilityCostBonus      = 0;
+    // Class-specific card dials (see the public hook block; reset in Init).
+    float _fireDamageMult     = 1.f;
+    float _iceDamageMult      = 1.f;
+    float _electricDamageMult = 1.f;
+    float _comboBonusMult     = 1.f;
+    float _rageDecayMult      = 1.f;
+    float _rageFullBonus      = 0.5f;   // +50% ability dmg at full Rage (base)
+    float _retributionPerStack = 0.12f; // Paladin counter dmg per stack (base)
+    float _reflectPotency     = 1.f;
+    int   _hunterMarkEvery    = 3;      // every Nth landed shot marks (base 3)
+    float _markedBonus        = 0.30f;  // Hunter dmg bonus vs marked (base)
+    float _cursedBonus        = 0.25f;  // Warlock dmg bonus vs cursed (base)
+    float _curseDurationMult  = 1.f;
+    float _lifestealPotency   = 1.f;
+    int   _maxComboPointsRun  = kMaxComboPoints;   // Rogue bank depth (cap 7)
+    float _evisceratePerCombo = 0.15f;  // finisher dmg per combo point (base)
+    float _poisonPotency      = 1.f;
+    int   _healOnRoomClear    = 0;
     float _lifestealFraction = 0.f;  // fraction of damage dealt returned as HP
     float _lifestealTimer    = 0.f;
 
@@ -432,8 +703,8 @@ private:
     int  _relicCount    = 0;
     int  _killsSinceHeal = 0;   // Vampirism cadence counter
     int _level = 1;
-    int _expToNextLevel = 10;
-    static constexpr int _maxLevel = 20;
+    int _expToNextLevel = Balance::Levelling::kExpToNextBase;
+    static constexpr int _maxLevel = Balance::Levelling::kMaxLevel;
 
     int   _mana    = 0;
     int   _maxMana = 10;
@@ -441,6 +712,21 @@ private:
     int   _armour    = 0;   // current armour slots filled
     int   _maxArmour = kMaxArmour;  // can be raised by upgrades; hard-capped at kMaxArmour
     float _attackRangeMultiplier = 1.f;
+
+    int _shopWhetstoneHits = 0;
+    int _shopFreeCasts     = 0;
+    int _shopWardHits      = 0;
+    int _shopGoldPickups   = 0;
+    int _shopCellPickups   = 0;
+    // Balance telemetry (per-room HP flow, read + reset by Engine).
+    float _telemDamageTaken = 0.f;
+    int   _telemAbilityCasts = 0;
+    float _telemHealed      = 0.f;
+    // Zeph bargain / rare-shelf run state (see the public block above).
+    int  _shopPressureDebtRooms = 0;   // hard rooms owed (stacks, capped at 3)
+    bool _shopWagerArmed     = false;
+    bool _shopRareStatBought = false;
+    bool _shopBloodPriceUsed = false;
 
     // Fractional player burn is kept separate from the normal integer hit path
     // because lavaball damage arrives as two small delayed ticks instead of one

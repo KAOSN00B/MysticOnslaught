@@ -67,6 +67,16 @@ public:
                        float scale = 5.f, float frameTime = 1.f / 22.f,
                        Color tint = WHITE, Vector2 direction = { 1.f, 0.f });
 
+    // Lingering ground HAZARD decal — a looping animated sprite pinned to a world
+    // position for `duration` seconds, then culled (fading over its final second).
+    // This is the path persistent damage zones (poison/acid/lava pools) use so they
+    // read as real art instead of prototype Raylib circles; the gameplay hazard keeps
+    // its own collision/damage and just spawns one of these for the visual. Warning
+    // telegraphs stay simple shapes — only the persistent effect becomes a decal.
+    void SpawnHazardDecal(Texture2D* strip, Vector2 worldPos, int frameCount,
+                          float scale, float duration, Color tint = WHITE,
+                          float frameTime = 1.f / 12.f);
+
     // Cosmetic damage-number multiplier (tuned live via the debug juice panel).
     void SetDamageNumberScale(int s) { _damageNumberScale = (s > 0) ? s : 1; }
 
@@ -88,6 +98,10 @@ private:
         bool       followPlayer      = false;
         bool       followPlayerCenter = false;
         bool       active         = false;
+        // Lingering hazard decals loop their animation and live for a fixed
+        // duration instead of playing once. lifeRemaining drives cull + fade-out.
+        bool       looping        = false;
+        float      lifeRemaining  = 0.f;
     };
 
     struct FloatingText

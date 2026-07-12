@@ -38,6 +38,18 @@ void VFXManager::Update(float dt)
             effect.runningTime = 0.f;
             effect.frame++;
             if (effect.frame >= effect.frameCount)
+            {
+                // Lingering decals loop; one-shot effects finish and are culled.
+                if (effect.looping) effect.frame = 0;
+                else                effect.active = false;
+            }
+        }
+
+        // Lingering hazard decals expire on their own timer regardless of frame.
+        if (effect.looping)
+        {
+            effect.lifeRemaining -= dt;
+            if (effect.lifeRemaining <= 0.f)
                 effect.active = false;
         }
     }
@@ -87,8 +99,15 @@ void VFXManager::Draw(Vector2 worldOffset, Vector2 playerWorldPos, Vector2 playe
             effect.frameWidth  * effect.scale,
             effect.frameHeight * effect.scale
         };
+        // Lingering decals fade out over their final second so they don't pop off.
+        Color tint = effect.tint;
+        if (effect.looping && effect.lifeRemaining < 1.f)
+        {
+            float k = (effect.lifeRemaining > 0.f) ? effect.lifeRemaining : 0.f;
+            tint = Fade(effect.tint, (effect.tint.a / 255.f) * k);
+        }
         DrawTexturePro(*effect.texture, source, dest,
-            Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, effect.tint);
+            Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, tint);
     }
 }
 
@@ -284,6 +303,27 @@ void VFXManager::SpawnSpriteFx(Texture2D* strip, Vector2 worldPos, int frameCoun
     effect.frameHeight = 64;
     effect.frameCount  = frameCount;
     effect.active      = true;
+    _effects.push_back(effect);
+}
+
+void VFXManager::SpawnHazardDecal(Texture2D* strip, Vector2 worldPos, int frameCount,
+                                  float scale, float duration, Color tint, float frameTime)
+{
+    if (strip == nullptr || strip->id == 0 || frameCount <= 0 || duration <= 0.f)
+        return;
+    AnimatedEffect effect{};
+    effect.texture       = strip;
+    effect.worldPos      = worldPos;
+    effect.direction     = { 1.f, 0.f };   // ground decal, no rotation
+    effect.tint          = tint;
+    effect.scale         = scale;
+    effect.frameTime     = frameTime;
+    effect.frameWidth    = 64;             // owned FX strips are 64px cells
+    effect.frameHeight   = 64;
+    effect.frameCount    = frameCount;
+    effect.looping       = true;
+    effect.lifeRemaining = duration;
+    effect.active        = true;
     _effects.push_back(effect);
 }
 
