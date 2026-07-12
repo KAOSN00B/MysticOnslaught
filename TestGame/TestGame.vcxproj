@@ -292,6 +292,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="keybindings.cfg" />
+    <None Include="biomevariants_Ancient Castle.txt" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="leaderboard.txt" />

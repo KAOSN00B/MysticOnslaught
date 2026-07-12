@@ -1,6 +1,7 @@
 #include "RoomLayout.h"
 #include "raylib.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <vector>
@@ -78,13 +79,38 @@ RoomLayout RoomLayout::Generate(bool hasNorth, bool hasSouth,
             layout.tiles[doorStartR + dr][cols - 1] = TileType::DoorOpen;
 
     // ── Floor variant scatter (≈15%) ──────────────────────────────────────────
-    for (int r = 1; r < rows - 1; r++)
-        for (int c = 1; c < cols - 1; c++)
-            if (layout.tiles[r][c] == TileType::Floor && GetRandomValue(0, 99) < 15)
-                layout.tiles[r][c] = TileType::FloorVariant;
-
     if (defs == nullptr)
         return layout;
+
+    // Alternate floor now forms connected irregular patches instead of a
+    // checkerboard-like per-cell scatter. This reads as moss, wear or cracks,
+    // depending on the tiles selected for the active visual variant.
+    if (defs->IsAssigned(TileType::FloorVariant))
+    {
+        const int patchCount = GetRandomValue(2, 4);
+        for (int patch = 0; patch < patchCount; ++patch)
+        {
+            int col = GetRandomValue(2, cols - 3);
+            int row = GetRandomValue(2, rows - 3);
+            const int steps = GetRandomValue(8, 20);
+            for (int step = 0; step < steps; ++step)
+            {
+                if (layout.tiles[row][col] == TileType::Floor)
+                    layout.tiles[row][col] = TileType::FloorVariant;
+
+                if (GetRandomValue(0, 99) < 45)
+                {
+                    int sideCol = std::clamp(col + GetRandomValue(-1, 1), 1, cols - 2);
+                    int sideRow = std::clamp(row + GetRandomValue(-1, 1), 1, rows - 2);
+                    if (layout.tiles[sideRow][sideCol] == TileType::Floor)
+                        layout.tiles[sideRow][sideCol] = TileType::FloorVariant;
+                }
+
+                col = std::clamp(col + GetRandomValue(-1, 1), 1, cols - 2);
+                row = std::clamp(row + GetRandomValue(-1, 1), 1, rows - 2);
+            }
+        }
+    }
 
     // ── Footprint-aware placement ─────────────────────────────────────────────
     // Every solid object is placed by its REAL sprite size (in tiles), with:

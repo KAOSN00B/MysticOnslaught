@@ -1,0 +1,8 @@
+# Editable visual variants for Ancient Castle.
+# Format:
+# variant "Display Name" "Tilesheet Stem" "Tilemapper Stem" weight minWingRooms maxWingRooms
+#
+# These change room art only. Enemies, rewards, hazards and biome mechanics
+# remain Ancient Castle. Delete the Arcane Wing line to disable it.
+variant "Grey Fortress" "Ancient Castle" "Ancient Castle" 3 3 5
+variant "Arcane Wing" "Dream Realm" "Dream Realm" 1 2 3

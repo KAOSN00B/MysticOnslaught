@@ -697,6 +697,10 @@ private:
     void ClearBossSupportAdds();
     const char* GetBiomeName(Biome biome) const;
     void LoadTilesetForBiome(Biome biome);
+    void LoadDungeonVisualVariants(Biome biome);
+    void AssignDungeonVisualVariantWings();
+    int  GetDungeonVisualVariantForRoom(int roomIdx) const;
+    void LoadDungeonVisualVariantAssets(int variantIdx, TileDefSet& defs, TileRenderer& renderer);
     void ApplyBiome(Biome biome);
     void PopulatePropsForBiome(Biome biome);
     void UpdateBiomeTransition(float dt);
@@ -1318,6 +1322,20 @@ private:
     DungeonGen   _dungeonGen;
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;
+    TileDefSet   _dungeonScrollTileDefs;
+    TileRenderer _dungeonScrollTileRenderer;
+    struct DungeonVisualVariant
+    {
+        std::string name;
+        std::string sheetStem;
+        std::string mapperStem;
+        int weight = 1;
+        int minWingRooms = 2;
+        int maxWingRooms = 4;
+    };
+    std::vector<DungeonVisualVariant> _dungeonVisualVariants;
+    std::vector<int> _dungeonRoomVisualVariants;
+    int _currentDungeonVisualVariant = -1;
 
     // Per-room persistent state tracked during a dungeon run session.
     struct DungeonEnemySnapshot

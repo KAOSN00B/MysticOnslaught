@@ -22,6 +22,8 @@ struct RoomLayout
     static constexpr int kCols = 28;
     static constexpr int kRows = 16;
 
+    int visualVariant = 0; // index into the active biome's editable visual palette
+
     TileType tiles[kRows][kCols]{};
     std::vector<SpritePlacement> props;       // solid objects with collision
     std::vector<SpritePlacement> animProps;   // animated solid objects with collision

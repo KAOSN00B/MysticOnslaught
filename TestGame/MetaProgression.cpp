@@ -15,12 +15,12 @@ static const char* kMetaProgressPath = "metaprogress.cfg";
 // ─────────────────────────────────────────────────────────────────────────────
 static const MetaUnlockInfo kUnlockTable[(int)MetaUnlockType::Count] = {
     // name                    description                                    cost  prerequisite
-    { "Fire Bolt",           "Adds Fire Bolt to the\nability pool",            25, MetaUnlockType::Count },
-    { "Ice Bolt",            "Adds Ice Bolt to the\nability pool",             25, MetaUnlockType::Count },
-    { "Electric Bolt",       "Adds Electric Bolt to\nthe ability pool",        25, MetaUnlockType::Count },
-    { "Fire Ultimate",       "Adds Fire Ultimate to\nthe ability pool",        50, MetaUnlockType::Count },
-    { "Ice Ultimate",        "Adds Ice Ultimate to\nthe ability pool",         50, MetaUnlockType::Count },
-    { "Electric Ultimate",   "Adds Electric Ultimate\nto the ability pool",    50, MetaUnlockType::Count },
+    { "Fireball",            "Adds Fireball to the\nability pool",             25, MetaUnlockType::Count },
+    { "Ice Lance",           "Adds Ice Lance to the\nability pool",             25, MetaUnlockType::Count },
+    { "Chain Lightning",     "Adds Chain Lightning to\nthe ability pool",        25, MetaUnlockType::Count },
+    { "Meteor",              "Adds Meteor to the\nability pool",              50, MetaUnlockType::Count },
+    { "Blizzard",            "Adds Blizzard to the\nability pool",              50, MetaUnlockType::Count },
+    { "Thunderstorm",        "Adds Thunderstorm to the\nability pool",             50, MetaUnlockType::Count },
     { "Zeph's Stipend I",    "Start every run with\n+30 gold",                 20, MetaUnlockType::Count },
     { "Zeph's Stipend II",   "Start every run with\n+60 gold",                 40, MetaUnlockType::StartingGold1 },
     { "Zeph's Stipend III",  "Start every run with\n+120 gold",                80, MetaUnlockType::StartingGold2 },

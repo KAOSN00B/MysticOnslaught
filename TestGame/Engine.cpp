@@ -33,6 +33,8 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <queue>
 #include <set>
@@ -272,6 +274,8 @@ Engine::~Engine()
     UnloadTexture(_htpBorderTex);
     UnloadTexture(_magicGemTex);
     UnloadTexture(_bossBarrierTex);
+    _tileRenderer.Unload();
+    _dungeonScrollTileRenderer.Unload();
     _pauseUI.Unload();
     UnloadTexture(_settingsBorderTex);
     UnloadRenderTexture(_virtualCanvas);
@@ -713,6 +717,13 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     const DungeonRoom& room = rooms[roomIdx];
     _dungeonRoomIdx = roomIdx;
     _dungeonEntryDoorSide = entryDoorSide;
+    int visualVariant = GetDungeonVisualVariantForRoom(roomIdx);
+    if (visualVariant != _currentDungeonVisualVariant)
+    {
+        LoadDungeonVisualVariantAssets(visualVariant, _tileDefs, _tileRenderer);
+        _currentDungeonVisualVariant = visualVariant;
+    }
+    _dungeonScrollTileRenderer.Unload();
     // Forest/Jungle stay the densest biomes — smaller bonus now that every
     // biome's base prop counts were raised (footprint placement keeps it clean).
     int propDensityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 2 : 0;
@@ -720,6 +731,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         room.hasNorth, room.hasSouth,
         room.hasEast,  room.hasWest, room.type,
         &_tileDefs, propDensityBonus);
+    _dungeonRoomLayout.visualVariant = visualVariant;
 
     if (resetRoomStates)
     {
@@ -6337,17 +6349,17 @@ void Engine::DrawStartingAbilityChoice()
         switch (type)
         {
         case UpgradeType::LearnFireSpread:
-            name = "Fire Spread"; desc = "8 fireballs\nburn on hit"; icon = &_abilityIconFireTex; elementColor = Color{255, 110, 20, 255}; break;
+            name = "Flame Wall"; desc = "Place a burning wall\nthat controls space"; icon = &_abilityIconFireTex; elementColor = Color{255, 110, 20, 255}; break;
         case UpgradeType::LearnIceSpread:
-            name = "Ice Spread"; desc = "8 ice shards\nfreeze on hit"; icon = &_abilityIconIceTex; elementColor = Color{100, 210, 255, 255}; break;
+            name = "Frost Nova"; desc = "Defensive frost burst\nslows and freezes"; icon = &_abilityIconIceTex; elementColor = Color{100, 210, 255, 255}; break;
         case UpgradeType::LearnElectricSpread:
-            name = "Electric Spread"; desc = "8 bolts\nstun randomly"; icon = &_abilityIconElectricTex; elementColor = Color{255, 220, 30, 255}; break;
+            name = "Lightning Blink"; desc = "Aim a damaging blink\nshock at arrival"; icon = &_abilityIconElectricTex; elementColor = Color{255, 220, 30, 255}; break;
         case UpgradeType::LearnFireBolt:
-            name = "Fire Bolt"; desc = "Aimed fireball\nhigh damage + burn"; icon = &_abilityIconFireTex; elementColor = Color{255, 110, 20, 255}; break;
+            name = "Fireball"; desc = "Aimed projectile\nexplodes and burns"; icon = &_abilityIconFireTex; elementColor = Color{255, 110, 20, 255}; break;
         case UpgradeType::LearnIceBolt:
-            name = "Ice Bolt"; desc = "Aimed shard\nhigh damage + freeze"; icon = &_abilityIconIceTex; elementColor = Color{100, 210, 255, 255}; break;
+            name = "Ice Lance"; desc = "Pierces enemies\nshatters chilled foes"; icon = &_abilityIconIceTex; elementColor = Color{100, 210, 255, 255}; break;
         case UpgradeType::LearnElectricBolt:
-            name = "Electric Bolt"; desc = "Aimed bolt\nhigh damage + stun"; icon = &_abilityIconElectricTex; elementColor = Color{255, 220, 30, 255}; break;
+            name = "Chain Lightning"; desc = "Aimed first strike\nchains through foes"; icon = &_abilityIconElectricTex; elementColor = Color{255, 220, 30, 255}; break;
         default:
         {
             // Class abilities (Warrior kit etc.): pull name/desc from the shared
@@ -6983,48 +6995,48 @@ void Engine::DrawLevelUpChoice()
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::LearnFireSpread:
-            name = "Fire Spread";
-            desc = "8 fireballs\nburn on hit";
+            name = "Flame Wall";
+            desc = "Place a burning wall\nthat controls space";
             icon = &_abilityIconFireTex;
             break;
         case UpgradeType::LearnIceSpread:
-            name = "Ice Spread";
-            desc = "8 ice shards\nfreeze on hit";
+            name = "Frost Nova";
+            desc = "Defensive frost burst\nslows and freezes";
             icon = &_abilityIconIceTex;
             break;
         case UpgradeType::LearnElectricSpread:
-            name = "Electric Spread";
-            desc = "8 bolts\nstun randomly";
+            name = "Lightning Blink";
+            desc = "Aim a damaging blink\nshock at arrival";
             icon = &_abilityIconElectricTex;
             break;
         case UpgradeType::LearnFireBolt:
-            name = "Fire Bolt";
-            desc = "Aimed fireball\nhigh damage + burn";
+            name = "Fireball";
+            desc = "Aimed projectile\nexplodes and burns";
             icon = &_abilityIconFireTex;
             break;
         case UpgradeType::LearnIceBolt:
-            name = "Ice Bolt";
-            desc = "Aimed shard\nhigh damage + freeze";
+            name = "Ice Lance";
+            desc = "Pierces enemies\nshatters chilled foes";
             icon = &_abilityIconIceTex;
             break;
         case UpgradeType::LearnElectricBolt:
-            name = "Electric Bolt";
-            desc = "Aimed bolt\nhigh damage + stun";
+            name = "Chain Lightning";
+            desc = "Aimed first strike\nchains through foes";
             icon = &_abilityIconElectricTex;
             break;
         case UpgradeType::LearnFireUltimate:
-            name = "Fire Ultimate";
-            desc = "Blasts everywhere\n4 dmg + burn, all MP";
+            name = "Meteor";
+            desc = "Targeted impact leaves\nburning ground, all MP";
             icon = &_abilityIconFireTex;
             break;
         case UpgradeType::LearnIceUltimate:
-            name = "Ice Ultimate";
-            desc = "Blasts everywhere\n4 dmg + freeze, all MP";
+            name = "Blizzard";
+            desc = "Targeted storm slows\nand freezes, all MP";
             icon = &_abilityIconIceTex;
             break;
         case UpgradeType::LearnElectricUltimate:
-            name = "Elec. Ultimate";
-            desc = "Blasts everywhere\n4 dmg + stun, all MP";
+            name = "Thunderstorm";
+            desc = "Forward-moving storm\nstrikes enemies, all MP";
             icon = &_abilityIconElectricTex;
             break;
         default:
@@ -8734,6 +8746,18 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         pool.lifetime = 3.5f; pool.radius = aimProfile.radius > 0.f ? aimProfile.radius : 130.f;
         pool.tint = Color{ 120, 210, 90, 255 };
         pool.tickDamage = dmgVal(1.f + atk * 0.2f); pool.tickInterval = 0.4f;
+        // Reuse the owned animated poison-pool decal for the complete hazard
+        // lifetime. An fxStrip bypasses PoisonZone's prototype Raylib circles;
+        // SpawnAbilityFx still supplies the separate vial-impact eruption.
+        const int poolFx = (int)BossFx::PoisonPool;
+        if (poolFx < (int)_bossFx.size() && _bossFx[poolFx].id != 0 && _bossFxFrames[poolFx] > 0)
+        {
+            pool.fxStrip = &_bossFx[poolFx];
+            pool.fxFrames = _bossFxFrames[poolFx];
+            pool.fxScale = (pool.radius * 2.f) / 64.f;
+            pool.fxLoop = true;
+            pool.fxFrameTime = 1.f / 12.f;
+        }
         _warriorVfx.push_back(pool);
         ApplyPoisonInRect(_enemies, targetArea(130.f), poisonVal(1.f), 5.f);
         break;
@@ -12153,17 +12177,149 @@ const char* Engine::GetBiomeName(Biome biome) const
     }
 }
 
-// Loads tile definitions and initialises the renderer for the given biome.
-// File names are derived from GetBiomeName(), e.g. "tilemapper_Ancient Castle.txt" / "Ancient Castle.png".
+void Engine::LoadDungeonVisualVariants(Biome biome)
+{
+    _dungeonVisualVariants.clear();
+    const std::string biomeName = GetBiomeName(biome);
+    const std::string configName = "biomevariants_" + biomeName + ".txt";
+    std::ifstream input(AssetPath(configName.c_str()));
+    std::string tag;
+    while (input >> tag)
+    {
+        if (!tag.empty() && tag[0] == '#')
+        {
+            std::string ignored;
+            std::getline(input, ignored);
+            continue;
+        }
+        if (tag != "variant")
+        {
+            std::string ignored;
+            std::getline(input, ignored);
+            continue;
+        }
+
+        DungeonVisualVariant variant;
+        input >> std::quoted(variant.name)
+              >> std::quoted(variant.sheetStem)
+              >> std::quoted(variant.mapperStem)
+              >> variant.weight >> variant.minWingRooms >> variant.maxWingRooms;
+        if (!input.fail() && !variant.name.empty() && !variant.sheetStem.empty())
+        {
+            variant.weight = std::max(1, variant.weight);
+            variant.minWingRooms = std::max(1, variant.minWingRooms);
+            variant.maxWingRooms = std::max(variant.minWingRooms, variant.maxWingRooms);
+            _dungeonVisualVariants.push_back(std::move(variant));
+        }
+    }
+
+    // Existing biomes need no migration. Without a config, their old mapper and
+    // sheet become the one default variant and render exactly as before.
+    if (_dungeonVisualVariants.empty())
+        _dungeonVisualVariants.push_back({ biomeName, biomeName, biomeName, 1, 12, 12 });
+}
+
+void Engine::AssignDungeonVisualVariantWings()
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    _dungeonRoomVisualVariants.assign(rooms.size(), -1);
+    if (rooms.empty() || _dungeonVisualVariants.empty())
+        return;
+
+    auto chooseVariant = [&](int avoid) {
+        (void)avoid;
+        int total = 0;
+        for (int i = 0; i < (int)_dungeonVisualVariants.size(); ++i)
+            total += _dungeonVisualVariants[i].weight;
+        int roll = GetRandomValue(1, std::max(1, total));
+        for (int i = 0; i < (int)_dungeonVisualVariants.size(); ++i)
+        {
+            roll -= _dungeonVisualVariants[i].weight;
+            if (roll <= 0) return i;
+        }
+        return 0;
+    };
+
+    int assigned = 0;
+    bool firstWing = true;
+    while (assigned < (int)rooms.size())
+    {
+        int seed = -1;
+        if (firstWing)
+            seed = _dungeonGen.GetStartIndex();
+        if (seed < 0 || seed >= (int)rooms.size() || _dungeonRoomVisualVariants[seed] >= 0)
+            for (int i = 0; i < (int)rooms.size(); ++i)
+                if (_dungeonRoomVisualVariants[i] < 0) { seed = i; break; }
+        if (seed < 0) break;
+
+        int neighbourVariant = -1;
+        const int dirs[4][2] = { {-1,0}, {1,0}, {0,-1}, {0,1} };
+        for (const auto& dir : dirs)
+        {
+            int neighbour = _dungeonGen.GetNeighborIndex(seed, dir[0], dir[1]);
+            if (neighbour >= 0 && _dungeonRoomVisualVariants[neighbour] >= 0)
+            {
+                neighbourVariant = _dungeonRoomVisualVariants[neighbour];
+                break;
+            }
+        }
+
+        int variantIdx = firstWing ? 0 : chooseVariant(neighbourVariant);
+        const DungeonVisualVariant& variant = _dungeonVisualVariants[variantIdx];
+        int wingSize = GetRandomValue(variant.minWingRooms, variant.maxWingRooms);
+        std::queue<int> frontier;
+        frontier.push(seed);
+        int wingAssigned = 0;
+        while (!frontier.empty() && wingAssigned < wingSize)
+        {
+            int roomIdx = frontier.front();
+            frontier.pop();
+            if (roomIdx < 0 || roomIdx >= (int)rooms.size() || _dungeonRoomVisualVariants[roomIdx] >= 0)
+                continue;
+            _dungeonRoomVisualVariants[roomIdx] = variantIdx;
+            ++wingAssigned;
+            ++assigned;
+            for (const auto& dir : dirs)
+            {
+                int neighbour = _dungeonGen.GetNeighborIndex(roomIdx, dir[0], dir[1]);
+                if (neighbour >= 0 && _dungeonRoomVisualVariants[neighbour] < 0)
+                    frontier.push(neighbour);
+            }
+        }
+        firstWing = false;
+    }
+}
+
+int Engine::GetDungeonVisualVariantForRoom(int roomIdx) const
+{
+    if (roomIdx >= 0 && roomIdx < (int)_dungeonRoomVisualVariants.size())
+        return std::clamp(_dungeonRoomVisualVariants[roomIdx], 0,
+                          std::max(0, (int)_dungeonVisualVariants.size() - 1));
+    return 0;
+}
+
+void Engine::LoadDungeonVisualVariantAssets(int variantIdx, TileDefSet& defs, TileRenderer& renderer)
+{
+    if (_dungeonVisualVariants.empty()) return;
+    variantIdx = std::clamp(variantIdx, 0, (int)_dungeonVisualVariants.size() - 1);
+    const DungeonVisualVariant& variant = _dungeonVisualVariants[variantIdx];
+    std::string txtFile = "tilemapper_" + variant.mapperStem + ".txt";
+    std::string sheetPath = AssetPath((std::string(kTilesheetFolder) + "/" + variant.sheetStem + ".png").c_str());
+    std::string groundPath = AssetPath((std::string(kTilesheetFolder) + "/Ground TIles.png").c_str());
+    defs = {};
+    defs.LoadFromFile(AssetPath(txtFile.c_str()).c_str());
+    renderer.Init(sheetPath.c_str(), groundPath.c_str(), defs);
+}
+
+// Loads visual-variant data and initializes the first connected room wing.
+// Gameplay still uses the original Biome enum; these variants are art only.
 void Engine::LoadTilesetForBiome(Biome biome)
 {
-    std::string biomeName  = GetBiomeName(biome);
-    std::string txtFile    = "tilemapper_" + biomeName + ".txt";
-    std::string sheetPath  = AssetPath((std::string(kTilesheetFolder) + "/" + biomeName + ".png").c_str());
-    std::string groundPath = AssetPath((std::string(kTilesheetFolder) + "/Ground TIles.png").c_str());
-    _tileDefs = {};
-    _tileDefs.LoadFromFile(AssetPath(txtFile.c_str()).c_str());
-    _tileRenderer.Init(sheetPath.c_str(), groundPath.c_str(), _tileDefs);
+    LoadDungeonVisualVariants(biome);
+    AssignDungeonVisualVariantWings();
+    int roomIdx = _dungeonRoomIdx >= 0 ? _dungeonRoomIdx : _dungeonGen.GetStartIndex();
+    _currentDungeonVisualVariant = GetDungeonVisualVariantForRoom(roomIdx);
+    LoadDungeonVisualVariantAssets(_currentDungeonVisualVariant, _tileDefs, _tileRenderer);
 }
 
 void Engine::PopulatePropsForBiome(Biome biome)
@@ -17768,9 +17924,22 @@ void Engine::UpdateDungeonRun(float dt)
             SaveDungeonRoomEnemyState();
 
             const DungeonRoom& next = rooms[nextIdx];
+            int nextVisualVariant = GetDungeonVisualVariantForRoom(nextIdx);
+            const TileDefSet* nextDefs = &_tileDefs;
+            if (nextVisualVariant != _currentDungeonVisualVariant)
+            {
+                LoadDungeonVisualVariantAssets(nextVisualVariant, _dungeonScrollTileDefs,
+                                               _dungeonScrollTileRenderer);
+                nextDefs = &_dungeonScrollTileDefs;
+            }
+            else
+            {
+                _dungeonScrollTileRenderer.Unload();
+            }
             _dungeonScrollNextLayout  = RoomLayout::Generate(
                 next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
-                &_tileDefs);
+                nextDefs);
+            _dungeonScrollNextLayout.visualVariant = nextVisualVariant;
             _dungeonScrollNextEntryDoorSide = OppositeDungeonDoorSide(dr, dc);
             ApplyDungeonRoomDoorState(_dungeonScrollNextLayout, nextIdx, _dungeonScrollNextEntryDoorSide);
             _dungeonScrollNextIdx     = nextIdx;
@@ -18441,6 +18610,26 @@ void Engine::UpdateDungeonRun(float dt)
                 ApplyDungeonBossExitTiles(TileType::DoorLocked);
         }
 
+        // [V] previews another approved visual palette for this room only. This
+        // makes variant assignments easy to inspect before editing their weights.
+        if (IsKeyPressed(KEY_V) && _dungeonVisualVariants.size() > 1 &&
+            _dungeonRoomIdx >= 0 && _dungeonRoomIdx < (int)_dungeonRoomVisualVariants.size())
+        {
+            int nextVariant = (_dungeonRoomVisualVariants[_dungeonRoomIdx] + 1)
+                            % (int)_dungeonVisualVariants.size();
+            _dungeonRoomVisualVariants[_dungeonRoomIdx] = nextVariant;
+            LoadDungeonVisualVariantAssets(nextVariant, _tileDefs, _tileRenderer);
+            _currentDungeonVisualVariant = nextVariant;
+            const DungeonRoom& room = _dungeonGen.GetRooms()[_dungeonRoomIdx];
+            int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 2 : 0;
+            _dungeonRoomLayout = RoomLayout::Generate(
+                room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
+                &_tileDefs, densityBonus);
+            _dungeonRoomLayout.visualVariant = nextVariant;
+            ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+            _message = "Visual variant: " + _dungeonVisualVariants[nextVariant].name;
+        }
+
         // [B] cycles biome while previewing a room so you can see the tileset change live.
         if (IsKeyPressed(KEY_B))
         {
@@ -18459,6 +18648,7 @@ void Engine::UpdateDungeonRun(float dt)
                 _dungeonRoomLayout = RoomLayout::Generate(
                     room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
                     &_tileDefs, densityBonus);
+                _dungeonRoomLayout.visualVariant = _currentDungeonVisualVariant;
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
             }
         }
@@ -18474,7 +18664,10 @@ void Engine::UpdateDungeonRun(float dt)
         return;
     }
     if (IsKeyPressed(KEY_R))
+    {
         _dungeonGen.Generate();
+        AssignDungeonVisualVariantWings();
+    }
 
     // [B] cycles through all biomes so you can test each one in the map test mode.
     if (IsKeyPressed(KEY_B))
@@ -18496,10 +18689,17 @@ void Engine::UpdateDungeonRun(float dt)
             if (CheckCollisionPointRec(GetVirtualMousePos(), GetDungeonRoomRect(i)))
             {
                 const DungeonRoom& room = rooms[i];
+                int visualVariant = GetDungeonVisualVariantForRoom(i);
+                if (visualVariant != _currentDungeonVisualVariant)
+                {
+                    LoadDungeonVisualVariantAssets(visualVariant, _tileDefs, _tileRenderer);
+                    _currentDungeonVisualVariant = visualVariant;
+                }
                 int densityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 2 : 0;
                 _dungeonRoomLayout    = RoomLayout::Generate(
                     room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
                     &_tileDefs, densityBonus);
+                _dungeonRoomLayout.visualVariant = visualVariant;
                 _dungeonRoomIdx = i;
                 _dungeonEntryDoorSide = DungeonDoorSide::None;
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
@@ -18539,6 +18739,14 @@ void Engine::DrawDungeonRun()
             }();
         int lw = MeasureText(label, 24);
         DrawText(label, (int)(sw * 0.5f - lw * 0.5f), 16, 24, GOLD);
+        if (_debug.IsActive() && _currentDungeonVisualVariant >= 0 &&
+            _currentDungeonVisualVariant < (int)_dungeonVisualVariants.size())
+        {
+            const std::string& visualName = _dungeonVisualVariants[_currentDungeonVisualVariant].name;
+            int visualW = MeasureText(visualName.c_str(), 16);
+            DrawText(visualName.c_str(), (int)(sw * 0.5f - visualW * 0.5f), 44, 16,
+                     Fade(RAYWHITE, 0.65f));
+        }
     };
 
     // -- Play view - tile room with live player --------------------------------
@@ -18557,7 +18765,9 @@ void Engine::DrawDungeonRun()
                 Vector2 nextOff{ curOff.x - _dungeonScrollVec.x * sw,
                                  curOff.y - _dungeonScrollVec.y * sh };
                 _tileRenderer.DrawRoom(_dungeonRoomLayout,       scaleX, scaleY, curOff);
-                _tileRenderer.DrawRoom(_dungeonScrollNextLayout, scaleX, scaleY, nextOff);
+                const TileRenderer& nextRenderer = _dungeonScrollTileRenderer.IsLoaded()
+                    ? _dungeonScrollTileRenderer : _tileRenderer;
+                nextRenderer.DrawRoom(_dungeonScrollNextLayout, scaleX, scaleY, nextOff);
             }
             else
             {

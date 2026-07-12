@@ -126,9 +126,17 @@ void Character::Init()
             t = LoadTexture(AssetPath(TextFormat("Hero/%s_Attack.png", prefix)).c_str());
         return t;
     };
+    auto loadPushSheet = [&]() -> Texture2D {
+        Texture2D t = LoadTexture(AssetPath(TextFormat("Hero/%s_Push.png", prefix)).c_str());
+        if (t.id == 0)
+            t = LoadTexture(AssetPath("Hero/Hero_003_Push.png").c_str());
+        if (t.id == 0)
+            t = LoadTexture(AssetPath(TextFormat("Hero/%s_Attack.png", prefix)).c_str());
+        return t;
+    };
     _attackAnim = loadAttackSheet();
     _staffAnim  = loadStaffSheet();
-    _pushAnim   = LoadTexture(AssetPath("Hero/Hero_003_Push.png").c_str());
+    _pushAnim   = loadPushSheet();
     // Hunter: the bow-draw sheet shown for the basic shot + arrow abilities. Each
     // hero has their OWN bow animation (Hero/<prefix>_Bow.png, extracted from the
     // Rogue Adventure character packs), so the shot matches the selected

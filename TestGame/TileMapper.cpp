@@ -17,6 +17,20 @@ namespace fs = std::filesystem;
 
 constexpr float kListRowH = 52.f;
 
+static int ReadSavedBiomeIndex(FILE* file)
+{
+    char line[160]{};
+    if (!file || !fgets(line, sizeof(line), file)) return 0;
+    constexpr const char* prefix = "BIOME ";
+    if (strncmp(line, prefix, strlen(prefix)) != 0) return 0;
+    char* name = line + strlen(prefix);
+    name[strcspn(name, "\r\n")] = '\0';
+    for (int i = 0; i < TileMapper::kBiomeCount; ++i)
+        if (strcmp(name, TileMapper::kBiomeNames[i]) == 0)
+            return i;
+    return 0;
+}
+
 // ── Static colour table ───────────────────────────────────────────────────────
 
 const Color TileMapper::kTypeColors[TileMapper::kTypeCount] = {
@@ -106,20 +120,7 @@ void TileMapper::ScanFolder(const char* folderPath)
             if (test)
             {
                 f.hasSave = true;
-                // Peek at the biome name stored in the save.
-                char biomeName[64]{};
-                char tag[16]{};
-                if (fscanf(test, "%15s %63s", tag, biomeName) == 2)
-                {
-                    for (int i = 0; i < kBiomeCount; i++)
-                    {
-                        if (strcmp(biomeName, kBiomeNames[i]) == 0)
-                        {
-                            f.biomeIdx = i;
-                            break;
-                        }
-                    }
-                }
+                f.biomeIdx = ReadSavedBiomeIndex(test);
                 fclose(test);
             }
 
@@ -967,19 +968,8 @@ void TileMapper::TryLoadSave()
     f = fopen(path.c_str(), "r");
     if (!f) return;
 
-    // First line: BIOME <name>
-    char biomeTag[16]{}, biomeName[64]{};
-    if (fscanf(f, "%15s %63s", biomeTag, biomeName) == 2)
-    {
-        for (int i = 0; i < kBiomeCount; i++)
-        {
-            if (strcmp(biomeName, kBiomeNames[i]) == 0)
-            {
-                _files[_openFileIdx].biomeIdx = i;
-                break;
-            }
-        }
-    }
+    // First line: BIOME <full name>, including spaces.
+    _files[_openFileIdx].biomeIdx = ReadSavedBiomeIndex(f);
 
     char tag[32]{};
     while (fscanf(f, "%31s", tag) == 1)
