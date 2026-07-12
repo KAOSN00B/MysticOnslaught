@@ -11,6 +11,7 @@
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "AttackTuning.h"
+#include "ElementalCombos.h"
 #include "CellPickup.h"
 #include "VirtualCanvas.h"
 #include "CapsuleCollision.h"
@@ -210,6 +211,7 @@ Engine::~Engine()
     SpreadProjectile::UnloadSharedResources();
     LavaBallProjectile::UnloadSharedResources();
     EnemyProjectile::UnloadSharedResources();
+    RoomHazardDirector::UnloadSharedTextures();
     for (int i = 0; i < (int)PlayerClass::Count; i++)
         if (_classPortraits[i].id != 0) UnloadTexture(_classPortraits[i]);
     if (_appearancePortrait.id != 0) UnloadTexture(_appearancePortrait);
@@ -776,6 +778,13 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _player.ResetTelemetryCounters();
     _cameraPos = { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
     _props.clear();
+    // Pending reinforcement waves and room hazards never follow the player
+    // through a door — each room owns its own pressure.
+    _dungeonReinforcementTypeIds.clear();
+    _dungeonReinforcementTimer = 0.f;
+    _roomHazards.ClearRoom();
+    _roomPressureSpent  = 0;
+    _roomPressureCapDbg = 0;
 
     RebuildDungeonNav();
     ClearDungeonEnemies();
@@ -1651,10 +1660,12 @@ void Engine::Update(float dt)
             _charAnimator.Init();
             _gameState = GameState::CharacterAnimator;
         }
-        if (IsKeyPressed(KEY_K))   // dev: open the Attack Editor (FX + hitbox tuning)
+        if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_K))
         {
-            _attackEditor.Init();
-            _gameState = GameState::AttackEditor;
+            // Both shortcuts now enter the same authoritative animator. Its
+            // start screen contains live character tuning and the FX library.
+            _charAnimator.Init();
+            _gameState = GameState::CharacterAnimator;
         }
         if (IsKeyPressed(KEY_V))   // dev: open the Village Asset Adjuster
         {
@@ -2111,8 +2122,6 @@ void Engine::UpdateGamePlay(float dt)
         _player.SetTouchDirection(_gamepad.moveDir);
         if (_gamepad.attackPressed)  _player.SetTouchAttack();
         if (_gamepad.dashPressed)    _player.SetTouchDash();
-        for (int i = 0; i < 4; i++)
-            if (_gamepad.abilityPressed[i]) _player.TriggerAbilityCast(i);
         if (_gamepad.pausePressed)
         {
             _stateBeforePause = GameState::Play;
@@ -2120,6 +2129,8 @@ void Engine::UpdateGamePlay(float dt)
             return;
         }
     }
+
+    UpdateAbilityAiming();
 
     _player.Update(dt);
 
@@ -2296,10 +2307,13 @@ void Engine::UpdateGamePlay(float dt)
         enemyRuntimeCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         enemyRuntimeCtx.spawnBossFx = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
         enemyRuntimeCtx.spawnBossCallout = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
+        RebuildEnemyHazardZones();
+        enemyRuntimeCtx.hazards = &_enemyHazardZones;
         _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
 
         HandlePlayerMeleeDamage();
         UpdateWarriorEffects(dt);
+        UpdateMageSpells(dt);
         if (_secondWindToastTimer > 0.f) _secondWindToastTimer -= dt;
 
         // Bestiary: count each enemy death once as it dies.
@@ -4829,7 +4843,9 @@ void Engine::DrawAbilityBar()
     {
         AbilityType ability = _player.GetLearnedAbility(i);
         bool isEmpty = (ability == AbilityType::None);
-        bool canCast = !isEmpty && _player.GetMana() >= _player.GetAbilityCost(ability);   // includes Overload surcharge
+        bool onCooldown = !isEmpty && _player.IsSlotOnCooldown(i);
+        bool canCast = !isEmpty && !onCooldown
+                    && _player.GetMana() >= _player.GetAbilityCost(ability);   // includes Overload surcharge
         float x = startX + i * (slotSize + slotGap);
         Rectangle slot{ x, slotY, slotSize, slotSize };
         bool hovered = !isEmpty && CheckCollisionPointRec(mouse, slot);
@@ -4852,7 +4868,9 @@ void Engine::DrawAbilityBar()
             (int)(x + 6.f), (int)(slotY + 6.f), keyFs, Fade(WHITE, 0.6f));
 
         if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-            _player.TriggerAbilityCast(i);
+            BeginAbilityInput(i);
+            if (_pendingAbilityAim.active && _pendingAbilityAim.slot == i)
+                _pendingAbilityAim.commitOnMouseRelease = true;
 
         const Texture2D* iconTex = GetAbilityIcon(ability);
         if (!iconTex || iconTex->id == 0) iconTex = &_abilityIconFireTex;
@@ -4865,6 +4883,21 @@ void Engine::DrawAbilityBar()
         float cx = x + slotSize * 0.5f;
         float cy = slotY + slotSize * 0.42f;
         DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
+
+        // Cooldown sweep: a dark fill that drains downward as the slot recovers,
+        // with the seconds remaining in the middle of the slot.
+        if (onCooldown)
+        {
+            float fraction = _player.GetSlotCooldownFraction(i);
+            float sweepH   = slotSize * fraction;
+            DrawRectangleRec({ x, slotY, slotSize, sweepH }, Fade(BLACK, 0.62f));
+            const char* cdText = TextFormat("%.1f", _player.GetSlotCooldownRemaining(i));
+            int cdFs = 26;
+            DrawText(cdText,
+                (int)(cx - MeasureText(cdText, cdFs) * 0.5f),
+                (int)(slotY + slotSize * 0.42f - cdFs * 0.5f),
+                cdFs, RAYWHITE);
+        }
 
         const char* abilityName = GetAbilityName(ability);
         int nameW = MeasureText(abilityName, nameFs);
@@ -7398,6 +7431,10 @@ void Engine::HandlePlayerMeleeDamage()
     bool hitAny = false;
     Rectangle attackRec = _player.GetAttackCollisionRec();
 
+    // Melee swings chip destructible room hazards (totems / torches) too.
+    if (_roomHazards.DamageHazardsInRect(attackRec, 1) > 0)
+        hitAny = true;
+
     for (auto& enemy : _enemies)
     {
         if (!enemy->IsActive())
@@ -7455,56 +7492,301 @@ void Engine::OpenTreasureChest()
     _gameState          = GameState::LevelUpChoice;
 }
 
+Engine::AbilityAimProfile Engine::GetAbilityAimProfile(AbilityType ability) const
+{
+    AbilityAimProfile profile{};
+    switch (ability)
+    {
+    case AbilityType::FireSpread:      profile = { AbilityAimMode::GroundTarget, 560.f, 0.f, 420.f, 90.f }; break;
+    case AbilityType::IceSpread:       profile = { AbilityAimMode::Instant, 0.f, 210.f, 0.f, 0.f }; break;
+    case AbilityType::ElectricSpread:  profile = { AbilityAimMode::Direction, 430.f, 95.f, 430.f, 100.f }; break;
+    case AbilityType::FireBolt:        profile = { AbilityAimMode::Direction, 900.f, 135.f, 0.f, 0.f }; break;
+    case AbilityType::IceBolt:         profile = { AbilityAimMode::Direction, 1050.f, 65.f, 0.f, 0.f }; break;
+    case AbilityType::ElectricBolt:    profile = { AbilityAimMode::Direction, 800.f, 0.f, 0.f, 0.f }; break;
+    case AbilityType::FireUltimate:    profile = { AbilityAimMode::GroundTarget, 800.f, 250.f, 0.f, 0.f }; break;
+    case AbilityType::IceUltimate:     profile = { AbilityAimMode::GroundTarget, 720.f, 300.f, 0.f, 0.f }; break;
+    case AbilityType::ElectricUltimate:profile = { AbilityAimMode::Direction, 850.f, 230.f, 0.f, 0.f }; break;
+
+    case AbilityType::WarCleave:       profile = { AbilityAimMode::Direction, 210.f, 0.f, 210.f, 200.f, 1.f }; break;
+    case AbilityType::ThrowingAxe:     profile = { AbilityAimMode::Direction, 520.f, 0.f, 520.f, 90.f, 1.f }; break;
+    case AbilityType::Rend:            profile = { AbilityAimMode::Direction, 270.f, 0.f, 150.f, 140.f, 1.f }; break;
+    case AbilityType::ShieldBash:      profile = { AbilityAimMode::Direction, 240.f, 0.f, 150.f, 150.f, 1.f }; break;
+    case AbilityType::Earthshatter:    profile = { AbilityAimMode::Direction, 640.f, 0.f, 640.f, 130.f, 1.f }; break;
+
+    case AbilityType::FanOfKnives:     profile = { AbilityAimMode::Direction, 360.f, 0.f, 360.f, 240.f, 0.85f }; break;
+    case AbilityType::Shadowstep:      profile = { AbilityAimMode::Direction, 300.f, 0.f, 300.f, 110.f, 0.85f }; break;
+    case AbilityType::PoisonVial:      profile = { AbilityAimMode::GroundTarget, 500.f, 130.f, 0.f, 0.f, 0.85f }; break;
+    case AbilityType::Backstab:        profile = { AbilityAimMode::Direction, 150.f, 0.f, 150.f, 120.f, 0.85f }; break;
+    case AbilityType::Eviscerate:      profile = { AbilityAimMode::Direction, 210.f, 0.f, 210.f, 130.f, 0.85f }; break;
+    case AbilityType::RainOfBlades:    profile = { AbilityAimMode::GroundTarget, 680.f, 220.f, 0.f, 0.f, 0.85f }; break;
+
+    case AbilityType::PiercingShot:    profile = { AbilityAimMode::Direction, 600.f, 0.f, 600.f, 70.f, 0.35f }; break;
+    case AbilityType::Multishot:       profile = { AbilityAimMode::Direction, 380.f, 0.f, 380.f, 260.f, 0.35f }; break;
+    case AbilityType::FrostTrap:       profile = { AbilityAimMode::GroundTarget, 500.f, 175.f, 0.f, 0.f, 0.30f }; break;
+    case AbilityType::ExplosiveArrow:  profile = { AbilityAimMode::GroundTarget, 500.f, 195.f, 0.f, 0.f, 0.30f }; break;
+    case AbilityType::Roll:            profile = { AbilityAimMode::Direction, 240.f, 0.f, 240.f, 100.f, 0.40f }; break;
+    case AbilityType::Volley:          profile = { AbilityAimMode::Direction, 660.f, 0.f, 660.f, 84.f, 0.35f }; break;
+    case AbilityType::ArrowStorm:      profile = { AbilityAimMode::GroundTarget, 700.f, 360.f, 0.f, 0.f, 0.30f }; break;
+    case AbilityType::PiercingBarrage: profile = { AbilityAimMode::Direction, 900.f, 0.f, 900.f, 150.f, 0.30f }; break;
+
+    case AbilityType::Smite:           profile = { AbilityAimMode::Direction, 210.f, 0.f, 210.f, 200.f, 0.75f }; break;
+    case AbilityType::Consecrate:      profile = { AbilityAimMode::GroundTarget, 420.f, 170.f, 0.f, 0.f, 0.70f }; break;
+    case AbilityType::HolyBolt:        profile = { AbilityAimMode::Direction, 560.f, 0.f, 560.f, 80.f, 0.70f }; break;
+    case AbilityType::HammerThrow:     profile = { AbilityAimMode::Direction, 480.f, 0.f, 480.f, 110.f, 0.70f }; break;
+    case AbilityType::HammerOfJustice: profile = { AbilityAimMode::Direction, 660.f, 0.f, 660.f, 150.f, 0.70f }; break;
+
+    case AbilityType::ShadowBolt:      profile = { AbilityAimMode::Direction, 560.f, 0.f, 560.f, 80.f, 0.70f }; break;
+    case AbilityType::DrainLife:       profile = { AbilityAimMode::Direction, 220.f, 0.f, 220.f, 130.f, 0.75f }; break;
+    case AbilityType::Curse:           profile = { AbilityAimMode::Direction, 260.f, 0.f, 260.f, 200.f, 0.70f }; break;
+    case AbilityType::CorruptionPool:  profile = { AbilityAimMode::GroundTarget, 500.f, 150.f, 0.f, 0.f, 0.65f }; break;
+    case AbilityType::ShadowNova:      profile = { AbilityAimMode::Direction, 680.f, 0.f, 680.f, 200.f, 0.65f }; break;
+    default: break;
+    }
+    if (const AttackTuning* tuning = AttackTuningStore::Get(AttackTuningKeyForAbility(ability));
+        tuning && tuning->hasAbility)
+    {
+        profile.range = tuning->aimRange;
+        profile.radius = tuning->areaRadius;
+        profile.length = tuning->effectLength;
+        profile.width = tuning->effectWidth;
+    }
+    return profile;
+}
+
+Vector2 Engine::GetCurrentAimWorldPoint() const
+{
+    Vector2 player = _player.GetWorldPos();
+    AbilityAimProfile profile = GetAbilityAimProfile(_pendingAbilityAim.ability);
+
+    if (_gamepad.isActive && _inputPromptMode == InputPromptMode::Gamepad)
+    {
+        Vector2 dir = Vector2Length(_gamepad.aimDir) > GamepadInput::kDeadZone
+            ? Vector2Normalize(_gamepad.aimDir) : _pendingAbilityAim.direction;
+        return Vector2Add(player, Vector2Scale(dir, profile.range));
+    }
+
+    Vector2 mouse = GetVirtualMousePos();
+    return Vector2{ mouse.x + _cameraPos.x - kVirtualWidth * 0.5f,
+                    mouse.y + _cameraPos.y - kVirtualHeight * 0.5f };
+}
+
+void Engine::BeginAbilityInput(int slot)
+{
+    if (!_player.CanBeginAbilityCast(slot))
+        return;
+
+    AbilityType ability = _player.GetLearnedAbility(slot);
+    AbilityAimProfile profile = GetAbilityAimProfile(ability);
+    if (profile.mode == AbilityAimMode::Instant)
+    {
+        _committedAimAbility = ability;
+        _committedAimDirection = _player.GetFacingDirection();
+        _committedAimTarget = _player.GetWorldPos();
+        _player.TriggerAbilityCast(slot);
+        return;
+    }
+
+    if (_pendingAbilityAim.active)
+    {
+        if (_pendingAbilityAim.slot == slot && (_settingsMgr.Get().abilityAimToggle || _touchModeActive))
+        {
+            CommitAbilityAim();
+            return;
+        }
+        CancelAbilityAim();
+    }
+
+    _pendingAbilityAim.active = true;
+    _pendingAbilityAim.slot = slot;
+    _pendingAbilityAim.ability = ability;
+    _pendingAbilityAim.direction = _player.GetFacingDirection();
+    _pendingAbilityAim.target = Vector2Add(_player.GetWorldPos(),
+        Vector2Scale(_pendingAbilityAim.direction, profile.range));
+}
+
+void Engine::CancelAbilityAim()
+{
+    _pendingAbilityAim = PendingAbilityAim{};
+    _player.SetAbilityAimMoveScale(1.f);
+}
+
+void Engine::CommitAbilityAim()
+{
+    if (!_pendingAbilityAim.active)
+        return;
+    if (_player.CanBeginAbilityCast(_pendingAbilityAim.slot))
+    {
+        _committedAimAbility = _pendingAbilityAim.ability;
+        _committedAimDirection = _pendingAbilityAim.direction;
+        _committedAimTarget = _pendingAbilityAim.target;
+        _player.TriggerAbilityCast(_pendingAbilityAim.slot);
+    }
+    CancelAbilityAim();
+}
+
+void Engine::UpdateAbilityAiming()
+{
+    if (_pendingAbilityAim.active)
+    {
+        AbilityAimProfile profile = GetAbilityAimProfile(_pendingAbilityAim.ability);
+        _player.SetAbilityAimMoveScale(profile.moveScale);
+        Vector2 player = _player.GetWorldPos();
+        Vector2 rawTarget = GetCurrentAimWorldPoint();
+        Vector2 delta = Vector2Subtract(rawTarget, player);
+        if (Vector2Length(delta) > 1.f)
+            _pendingAbilityAim.direction = Vector2Normalize(delta);
+        float distance = std::min(profile.range, Vector2Length(delta));
+        _pendingAbilityAim.target = Vector2Add(player, Vector2Scale(_pendingAbilityAim.direction, distance));
+
+        if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
+        {
+            CancelAbilityAim();
+            return;
+        }
+        if (_pendingAbilityAim.commitOnMouseRelease && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+        {
+            CommitAbilityAim();
+            return;
+        }
+    }
+
+    for (int slot = 0; slot < _player.GetLearnedCount(); ++slot)
+    {
+        KeyboardKey key = _player.GetAbilityKey(slot);
+        bool pressed = (key != KEY_NULL && IsKeyPressed(key)) ||
+                       (_gamepad.isActive && _gamepad.abilityPressed[slot]);
+        bool released = (key != KEY_NULL && IsKeyReleased(key)) ||
+                        (_gamepad.isActive && _gamepad.abilityReleased[slot]);
+
+        if (pressed)
+        {
+            BeginAbilityInput(slot);
+            return;
+        }
+        if (_pendingAbilityAim.active && _pendingAbilityAim.slot == slot &&
+            !_settingsMgr.Get().abilityAimToggle && released)
+        {
+            CommitAbilityAim();
+            return;
+        }
+    }
+}
+
+void Engine::DrawAbilityAimPreview() const
+{
+    if (!_pendingAbilityAim.active)
+        return;
+
+    AbilityAimProfile profile = GetAbilityAimProfile(_pendingAbilityAim.ability);
+    auto toScreen = [&](Vector2 world)
+    {
+        return Vector2{ world.x - _cameraPos.x + kVirtualWidth * 0.5f + _shakeOffset.x,
+                        world.y - _cameraPos.y + kVirtualHeight * 0.5f + _shakeOffset.y };
+    };
+
+    Vector2 start = toScreen(_player.GetWorldPos());
+    Vector2 target = toScreen(_pendingAbilityAim.target);
+    Vector2 dir = _pendingAbilityAim.direction;
+    Vector2 side{ -dir.y, dir.x };
+    Color element = (_pendingAbilityAim.ability == AbilityType::FireSpread ||
+                     _pendingAbilityAim.ability == AbilityType::FireBolt ||
+                     _pendingAbilityAim.ability == AbilityType::FireUltimate)
+                  ? Color{ 255, 110, 45, 255 }
+                  : (_pendingAbilityAim.ability == AbilityType::IceSpread ||
+                     _pendingAbilityAim.ability == AbilityType::IceBolt ||
+                     _pendingAbilityAim.ability == AbilityType::IceUltimate)
+                  ? Color{ 100, 220, 255, 255 }
+                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::WarCleave &&
+                     (int)_pendingAbilityAim.ability <= (int)AbilityType::Earthshatter)
+                  ? Color{ 255, 135, 70, 255 }
+                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::FanOfKnives &&
+                     (int)_pendingAbilityAim.ability <= (int)AbilityType::RainOfBlades)
+                  ? Color{ 205, 120, 255, 255 }
+                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::PiercingShot &&
+                     (int)_pendingAbilityAim.ability <= (int)AbilityType::PiercingBarrage)
+                  ? Color{ 100, 240, 175, 255 }
+                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::Smite &&
+                     (int)_pendingAbilityAim.ability <= (int)AbilityType::HammerOfJustice)
+                  ? Color{ 255, 225, 110, 255 }
+                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::ShadowBolt &&
+                     (int)_pendingAbilityAim.ability <= (int)AbilityType::ShadowNova)
+                  ? Color{ 205, 90, 240, 255 }
+                  : Color{ 255, 230, 70, 255 };
+
+    DrawLineEx(start, target, 4.f, Fade(element, 0.72f));
+    Vector2 arrowBase = Vector2Subtract(target, Vector2Scale(dir, 28.f));
+    DrawTriangle(target,
+                 Vector2Add(arrowBase, Vector2Scale(side, 13.f)),
+                 Vector2Subtract(arrowBase, Vector2Scale(side, 13.f)),
+                 Fade(element, 0.88f));
+
+    if (profile.mode == AbilityAimMode::GroundTarget)
+    {
+        if (_pendingAbilityAim.ability == AbilityType::FireSpread)
+        {
+            Vector2 a = Vector2Subtract(target, Vector2Scale(side, profile.length * 0.5f));
+            Vector2 b = Vector2Add(target, Vector2Scale(side, profile.length * 0.5f));
+            DrawLineEx(a, b, profile.width, Fade(element, 0.13f));
+            DrawLineEx(a, b, 3.f, Fade(element, 0.9f));
+        }
+        else
+        {
+            DrawCircleV(target, profile.radius, Fade(element, 0.10f));
+            DrawCircleLinesV(target, profile.radius, Fade(element, 0.9f));
+        }
+    }
+    else if (profile.length > 0.f && profile.width > 0.f)
+    {
+        Vector2 end = Vector2Add(start, Vector2Scale(dir, profile.length));
+        Vector2 halfSide = Vector2Scale(side, profile.width * 0.5f);
+        DrawLineEx(start, end, profile.width, Fade(element, 0.10f));
+        DrawLineEx(Vector2Add(start, halfSide), Vector2Add(end, halfSide), 2.f, Fade(element, 0.8f));
+        DrawLineEx(Vector2Subtract(start, halfSide), Vector2Subtract(end, halfSide), 2.f, Fade(element, 0.8f));
+        if (profile.radius > 0.f)
+            DrawCircleLinesV(end, profile.radius, Fade(element, 0.85f));
+    }
+
+    const char* mode = _settingsMgr.Get().abilityAimToggle ? "PRESS AGAIN TO CAST" : "RELEASE TO CAST";
+    DrawText(mode, (int)target.x - MeasureText(mode, 18) / 2, (int)target.y + 24, 18, element);
+}
+
 void Engine::HandlePlayerCastRequest()
 {
     Character::CastType castType = _player.ConsumeCastRequest();
 
-    if (castType == Character::CastType::FireSpread ||
-        castType == Character::CastType::IceSpread  ||
-        castType == Character::CastType::ElectricSpread)
+    AbilityType mageAbility = AbilityType::None;
+    switch (castType)
     {
-        AbilityType element =
-            (castType == Character::CastType::FireSpread)     ? AbilityType::FireSpread :
-            (castType == Character::CastType::IceSpread)      ? AbilityType::IceSpread  :
-                                                                 AbilityType::ElectricSpread;
-        _vfx.SpawnCastEffect(castType, _player.GetCastOrigin(), _player.GetFacingDirection());
-        StopSound(_fireballCastSound);
-        PlaySound(_fireballCastSound);
-        SpawnSpreadBurst(element);
+    case Character::CastType::FireSpread:      mageAbility = AbilityType::FireSpread; break;
+    case Character::CastType::IceSpread:       mageAbility = AbilityType::IceSpread; break;
+    case Character::CastType::ElectricSpread:  mageAbility = AbilityType::ElectricSpread; break;
+    case Character::CastType::FireBolt:        mageAbility = AbilityType::FireBolt; break;
+    case Character::CastType::IceBolt:         mageAbility = AbilityType::IceBolt; break;
+    case Character::CastType::ElectricBolt:    mageAbility = AbilityType::ElectricBolt; break;
+    case Character::CastType::FireUltimate:    mageAbility = AbilityType::FireUltimate; break;
+    case Character::CastType::IceUltimate:     mageAbility = AbilityType::IceUltimate; break;
+    case Character::CastType::ElectricUltimate:mageAbility = AbilityType::ElectricUltimate; break;
+    default: break;
     }
-    else if (castType == Character::CastType::FireUltimate  ||
-             castType == Character::CastType::IceUltimate   ||
-             castType == Character::CastType::ElectricUltimate)
+    if (mageAbility != AbilityType::None)
     {
-        AbilityType element =
-            (castType == Character::CastType::FireUltimate)     ? AbilityType::FireUltimate  :
-            (castType == Character::CastType::IceUltimate)      ? AbilityType::IceUltimate   :
-                                                                   AbilityType::ElectricUltimate;
-        TriggerUltimateSequence(element);
-    }
-    else if (castType == Character::CastType::FireBolt  ||
-             castType == Character::CastType::IceBolt   ||
-             castType == Character::CastType::ElectricBolt)
-    {
-        AbilityType element =
-            (castType == Character::CastType::FireBolt)     ? AbilityType::FireBolt  :
-            (castType == Character::CastType::IceBolt)      ? AbilityType::IceBolt   :
-                                                               AbilityType::ElectricBolt;
-        Character::CastType effectType =
-            (element == AbilityType::FireBolt)     ? Character::CastType::FireSpread :
-            (element == AbilityType::IceBolt)      ? Character::CastType::IceSpread  :
-                                                     Character::CastType::ElectricSpread;
-        _vfx.SpawnCastEffect(effectType, _player.GetCastOrigin(), _player.GetFacingDirection());
-        StopSound(_fireballCastSound);
-        PlaySound(_fireballCastSound);
-        SpawnBolt(element);
+        Vector2 direction = (_committedAimAbility == mageAbility)
+            ? _committedAimDirection : _player.GetFacingDirection();
+        Vector2 target = (_committedAimAbility == mageAbility)
+            ? _committedAimTarget
+            : Vector2Add(_player.GetWorldPos(), Vector2Scale(direction, GetAbilityAimProfile(mageAbility).range));
+        CastMageSpell(mageAbility, direction, target);
+        _committedAimAbility = AbilityType::None;
     }
 
     // Non-elemental class abilities (Warrior kit, and future classes) dispatch
     // through their own handler rather than the elemental CastType path.
     AbilityType classAbility = _player.ConsumeClassAbility();
     if (classAbility != AbilityType::None)
+    {
         HandleClassAbilityCast(classAbility);
+        _committedAimAbility = AbilityType::None;
+    }
 }
 void Engine::SpawnSpreadBurst(AbilityType element)
 {
@@ -7543,6 +7825,398 @@ void Engine::SpawnBolt(AbilityType element)
     projectile.Init(origin, _player.GetFacingDirection(), element);
     ApplySpreadTuning(projectile, t);
     _spreadProjectiles.push_back(projectile);
+}
+
+bool Engine::DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
+                             bool burn, bool chill, bool shock)
+{
+    const bool overload = (element == AbilityType::FireSpread || element == AbilityType::FireBolt ||
+                           element == AbilityType::FireUltimate) && enemy.IsCharged();
+    int combo = ResolveElementalCombo(enemy, element, &_vfx);
+    combo = (int)roundf(combo * _player.GetComboBonusMult());
+    bool crit = false;
+    int dealt = ScalePlayerHit(enemy, std::max(1, damage), crit);
+    enemy.TakeDamage(dealt, _player.GetWorldPos());
+    Enemy::HitBlockReason blocked = enemy.ConsumeHitBlock();
+    if (blocked != Enemy::HitBlockReason::None)
+    {
+        ShowBlockedHitFeedback(enemy.GetWorldPos(), blocked);
+        return false;
+    }
+    RegisterHitFx(enemy.GetWorldPos(), dealt, crit, !enemy.IsAlive(), enemy.IsBoss(), crit ? GOLD : RED);
+    if (combo > 0 && enemy.IsAlive())
+    {
+        enemy.TakeDamage(combo, _player.GetWorldPos());
+        RegisterHitFx(enemy.GetWorldPos(), combo, false, !enemy.IsAlive(), enemy.IsBoss(), GOLD);
+    }
+    if (burn)
+        enemy.ApplyBurn(0.45f, std::max(1, _player.GetBoltBurnDamage(element)), _player.GetWorldPos());
+    if (chill)
+    {
+        if (enemy.IsBoss()) enemy.ApplySlow(0.94f, 1.25f);
+        else                enemy.ApplySlow(0.72f, 1.5f);
+    }
+    if (shock)
+        enemy.ApplyElectricCharge();
+    if (overload && enemy.IsAlive())
+    {
+        Vector2 away = Vector2Subtract(enemy.GetWorldPos(), _player.GetWorldPos());
+        enemy.StartForcedPush(away, enemy.IsBoss() ? 45.f : 150.f);
+    }
+    return true;
+}
+
+void Engine::DamageMageArea(Vector2 centre, float radius, int damage, AbilityType element,
+                            bool burn, bool chill, bool shock)
+{
+    for (auto& enemy : _enemies)
+    {
+        if (!enemy->IsActive() || !enemy->IsAlive())
+            continue;
+        Rectangle hit = enemy->GetHitCollisionRec();
+        Vector2 closest{ std::clamp(centre.x, hit.x, hit.x + hit.width),
+                         std::clamp(centre.y, hit.y, hit.y + hit.height) };
+        if (Vector2Distance(centre, closest) > radius)
+            continue;
+
+        DamageMageEnemy(*enemy, damage, element, burn, chill, shock);
+    }
+}
+
+void Engine::CastMageSpell(AbilityType ability, Vector2 direction, Vector2 target)
+{
+    if (Vector2Length(direction) < 0.01f)
+        direction = _player.GetFacingDirection();
+    direction = Vector2Normalize(direction);
+    Vector2 playerPos = _player.GetWorldPos();
+    const AttackTuning* tuning = AttackTuningStore::Get(AttackTuningKeyForAbility(ability));
+    AbilityAimProfile profile = GetAbilityAimProfile(ability);
+    auto durationOr = [&](float fallback) { return (tuning && tuning->hasAbility) ? tuning->effectDuration : fallback; };
+    auto tickOr = [&](float fallback) { return (tuning && tuning->hasAbility) ? tuning->tickInterval : fallback; };
+
+    StopSound(_fireballCastSound);
+    PlaySound(_fireballCastSound);
+
+    if (ability == AbilityType::FireBolt || ability == AbilityType::IceBolt || ability == AbilityType::ElectricBolt)
+    {
+        Vector2 origin = (tuning && tuning->hasFirePoint)
+            ? _player.GetCastOrigin(tuning->fireForward, tuning->fireHeight)
+            : _player.GetCastOrigin();
+        SpreadProjectile projectile;
+        projectile.Init(origin, direction, ability);
+        ApplySpreadTuning(projectile, tuning);
+        if (ability == AbilityType::IceBolt)
+            projectile.SetPiercingHits(5);
+        _spreadProjectiles.push_back(projectile);
+
+        Character::CastType castFx = ability == AbilityType::FireBolt ? Character::CastType::FireSpread
+                                   : ability == AbilityType::IceBolt ? Character::CastType::IceSpread
+                                                                     : Character::CastType::ElectricSpread;
+        _vfx.SpawnCastEffect(castFx, origin, direction);
+        return;
+    }
+
+    MageSpellField field;
+    field.ability = ability;
+    field.direction = direction;
+
+    switch (ability)
+    {
+    case AbilityType::FireSpread: // Flame Wall
+        field.pos = target;
+        field.duration = durationOr(5.f);
+        field.tickInterval = tickOr(0.45f);
+        field.length = profile.length;
+        field.width = profile.width;
+        break;
+
+    case AbilityType::IceSpread: // Frost Nova
+        DamageMageArea(playerPos, profile.radius, _player.GetSpreadHitDamage(ability), ability, false, true, false);
+        for (auto& enemy : _enemies)
+            if (enemy->IsActive() && enemy->IsAlive() && !enemy->IsBoss() &&
+                Vector2Distance(enemy->GetWorldPos(), playerPos) <= profile.radius)
+                enemy->ApplyFreeze(0.75f);
+        field.pos = playerPos;
+        field.duration = 0.7f;
+        field.radius = profile.radius;
+        field.impacted = true;
+        break;
+
+    case AbilityType::ElectricSpread: // Lightning Blink
+    {
+        const float maxDistance = (tuning && tuning->hasAbility) ? tuning->moveDistance : profile.range;
+        Vector2 start = playerPos;
+        Vector2 destination = start;
+        Rectangle body = _player.GetCollisionRec();
+        Vector2 bodyOffset{ body.x - start.x, body.y - start.y };
+        for (float d = 24.f; d <= maxDistance; d += 24.f)
+        {
+            Vector2 candidate = Vector2Add(start, Vector2Scale(direction, d));
+            Rectangle candidateBody{ candidate.x + bodyOffset.x, candidate.y + bodyOffset.y, body.width, body.height };
+            bool blocked = false;
+            for (const auto& prop : _props)
+                if (CheckCollisionRecs(candidateBody, prop.GetCollisionRec())) { blocked = true; break; }
+            if (_nav.GetCellSize() > 0.f)
+            {
+                int col = (int)(candidate.x / _nav.GetCellSize());
+                int row = (int)(candidate.y / _nav.GetCellSize());
+                blocked = blocked || _nav.IsCellBlocked(col, row);
+            }
+            if (blocked) break;
+            destination = candidate;
+        }
+
+        auto pointSegmentDistance = [](Vector2 p, Vector2 a, Vector2 b)
+        {
+            Vector2 ab = Vector2Subtract(b, a);
+            float lenSq = Vector2DotProduct(ab, ab);
+            float t = lenSq > 0.001f ? Vector2DotProduct(Vector2Subtract(p, a), ab) / lenSq : 0.f;
+            t = std::clamp(t, 0.f, 1.f);
+            return Vector2Distance(p, Vector2Add(a, Vector2Scale(ab, t)));
+        };
+        for (auto& enemy : _enemies)
+        {
+            if (!enemy->IsActive() || !enemy->IsAlive()) continue;
+            if (pointSegmentDistance(enemy->GetWorldPos(), start, destination) > 85.f) continue;
+            DamageMageEnemy(*enemy, _player.GetSpreadHitDamage(ability), ability, false, false, true);
+        }
+        _player.SetWorldPos(destination);
+        _player.GrantInvulnerability(0.12f);
+        DamageMageArea(destination, 110.f, _player.GetSpreadHitDamage(ability), ability, false, false, true);
+        field.pos = start;
+        field.strikePos = destination;
+        field.duration = 0.38f;
+        field.impacted = true;
+        break;
+    }
+
+    case AbilityType::FireUltimate: // Meteor
+        field.pos = target;
+        field.duration = durationOr(4.8f);
+        field.windup = 0.9f;
+        field.radius = profile.radius;
+        field.tickInterval = tickOr(0.55f);
+        TriggerScreenFlash(Color{ 255, 120, 40, 255 }, 0.12f);
+        break;
+
+    case AbilityType::IceUltimate: // Blizzard
+        field.pos = target;
+        field.duration = durationOr(7.f);
+        field.radius = profile.radius;
+        field.tickInterval = tickOr(0.55f);
+        field.impacted = true;
+        break;
+
+    case AbilityType::ElectricUltimate: // Thunderstorm
+        field.pos = Vector2Add(playerPos, Vector2Scale(direction, 100.f));
+        field.strikePos = field.pos;
+        field.duration = durationOr(7.f);
+        field.radius = profile.radius;
+        field.tickInterval = tickOr(0.42f);
+        field.impacted = true;
+        break;
+
+    default:
+        return;
+    }
+    _mageSpellFields.push_back(field);
+}
+
+void Engine::UpdateMageSpells(float dt)
+{
+    auto distanceToSegment = [](Vector2 p, Vector2 a, Vector2 b)
+    {
+        Vector2 ab = Vector2Subtract(b, a);
+        float lenSq = Vector2DotProduct(ab, ab);
+        float t = lenSq > 0.001f ? Vector2DotProduct(Vector2Subtract(p, a), ab) / lenSq : 0.f;
+        t = std::clamp(t, 0.f, 1.f);
+        return Vector2Distance(p, Vector2Add(a, Vector2Scale(ab, t)));
+    };
+
+    for (MageSpellField& field : _mageSpellFields)
+    {
+        field.timer += dt;
+        field.strikeFlash = std::max(0.f, field.strikeFlash - dt);
+
+        if (field.ability == AbilityType::FireUltimate && !field.impacted)
+        {
+            if (field.timer < field.windup)
+                continue;
+            field.impacted = true;
+            field.tickAccum = 0.f;
+            DamageMageArea(field.pos, field.radius, _player.GetUltimateHitDamage(field.ability),
+                           field.ability, true, false, false);
+            TriggerScreenShake(13.f, 0.32f);
+            StopSound(_explosionSound); PlaySound(_explosionSound);
+        }
+
+        if (!field.impacted)
+            continue;
+
+        if (field.ability == AbilityType::ElectricUltimate)
+        {
+            Vector2 candidate = Vector2Add(field.pos, Vector2Scale(field.direction, 88.f * dt));
+            bool blocked = false;
+            if (_nav.GetCellSize() > 0.f)
+            {
+                int col = (int)(candidate.x / _nav.GetCellSize());
+                int row = (int)(candidate.y / _nav.GetCellSize());
+                blocked = _nav.IsCellBlocked(col, row);
+            }
+            if (!blocked)
+                field.pos = candidate; // the storm only advances; it never reverses
+        }
+
+        field.tickAccum += dt;
+        while (field.tickAccum >= field.tickInterval)
+        {
+            field.tickAccum -= field.tickInterval;
+            ++field.tickCount;
+
+            if (field.ability == AbilityType::FireSpread)
+            {
+                Vector2 across{ -field.direction.y, field.direction.x };
+                Vector2 a = Vector2Subtract(field.pos, Vector2Scale(across, field.length * 0.5f));
+                Vector2 b = Vector2Add(field.pos, Vector2Scale(across, field.length * 0.5f));
+                for (auto& enemy : _enemies)
+                    if (enemy->IsActive() && enemy->IsAlive() &&
+                        distanceToSegment(enemy->GetWorldPos(), a, b) <= field.width * 0.5f)
+                        DamageMageEnemy(*enemy, _player.GetSpreadHitDamage(field.ability),
+                                        field.ability, true, false, false);
+            }
+            else if (field.ability == AbilityType::FireUltimate)
+            {
+                DamageMageArea(field.pos, field.radius * 0.82f,
+                               std::max(1, _player.GetUltimateHitDamage(field.ability) / 3),
+                               field.ability, true, false, false);
+            }
+            else if (field.ability == AbilityType::IceUltimate)
+            {
+                DamageMageArea(field.pos, field.radius,
+                               std::max(1, _player.GetUltimateHitDamage(field.ability) / 3),
+                               field.ability, false, true, false);
+                if ((field.tickCount % 4) == 0)
+                    for (auto& enemy : _enemies)
+                        if (enemy->IsActive() && enemy->IsAlive() && !enemy->IsBoss() &&
+                            Vector2Distance(enemy->GetWorldPos(), field.pos) <= field.radius)
+                            enemy->ApplyFreeze(0.65f);
+            }
+            else if (field.ability == AbilityType::ElectricUltimate)
+            {
+                // Strike positions are random only inside the storm's forward
+                // half, so its weather front never appears to travel backwards.
+                Vector2 side{ -field.direction.y, field.direction.x };
+                float forward = (float)GetRandomValue(20, (int)field.radius);
+                float lateral = (float)GetRandomValue(-(int)field.radius, (int)field.radius);
+                field.strikePos = Vector2Add(field.pos,
+                    Vector2Add(Vector2Scale(field.direction, forward), Vector2Scale(side, lateral * 0.65f)));
+                field.strikeFlash = 0.22f;
+                DamageMageArea(field.strikePos, 95.f,
+                               std::max(1, _player.GetUltimateHitDamage(field.ability) / 2),
+                               field.ability, false, false, true);
+                TriggerScreenShake(2.5f, 0.06f);
+            }
+        }
+    }
+
+    _mageSpellFields.erase(
+        std::remove_if(_mageSpellFields.begin(), _mageSpellFields.end(),
+            [](const MageSpellField& field) { return field.timer >= field.duration; }),
+        _mageSpellFields.end());
+}
+
+void Engine::DrawMageSpells(Vector2 cameraRef) const
+{
+    auto screenPos = [&](Vector2 world)
+    {
+        Vector2 p = Vector2Subtract(world, cameraRef);
+        p.x += kVirtualWidth * 0.5f;
+        p.y += kVirtualHeight * 0.5f;
+        return p;
+    };
+    auto drawSpellFrame = [&](AbilityType element, Vector2 world, float size, float alpha, float rotation = 0.f)
+    {
+        const Texture2D& tex = SpreadProjectile::GetAnimTexture(element);
+        int fw = SpreadProjectile::GetFrameWFor(element);
+        int fh = SpreadProjectile::GetFrameHFor(element);
+        int count = std::max(1, SpreadProjectile::GetFrameCountFor(element));
+        int frame = (int)((float)GetTime() * 16.f) % count;
+        Rectangle src = GetAnimationFrameRect(tex, fw, fh, frame);
+        Vector2 p = screenPos(world);
+        Rectangle dst{ p.x, p.y, size, size };
+        DrawTexturePro(tex, src, dst, Vector2{ size * 0.5f, size * 0.5f }, rotation,
+                       Fade(WHITE, std::clamp(alpha, 0.f, 1.f)));
+    };
+
+    for (const MageSpellField& field : _mageSpellFields)
+    {
+        float remainingFade = std::clamp((field.duration - field.timer) * 3.f, 0.f, 1.f);
+        if (field.ability == AbilityType::FireSpread)
+        {
+            Vector2 side{ -field.direction.y, field.direction.x };
+            for (int i = -3; i <= 3; ++i)
+                drawSpellFrame(AbilityType::FireUltimate,
+                    Vector2Add(field.pos, Vector2Scale(side, field.length * (float)i / 7.f)),
+                    field.width * 1.7f, remainingFade, atan2f(side.y, side.x) * RAD2DEG);
+        }
+        else if (field.ability == AbilityType::IceSpread)
+        {
+            float grow = std::clamp(field.timer / 0.28f, 0.f, 1.f);
+            drawSpellFrame(AbilityType::IceUltimate, field.pos, field.radius * 2.f * grow, remainingFade);
+        }
+        else if (field.ability == AbilityType::ElectricSpread)
+        {
+            Vector2 delta = Vector2Subtract(field.strikePos, field.pos);
+            float dist = Vector2Length(delta);
+            Vector2 dir = dist > 0.f ? Vector2Scale(delta, 1.f / dist) : field.direction;
+            int pieces = std::max(1, (int)(dist / 90.f));
+            for (int i = 0; i <= pieces; ++i)
+                drawSpellFrame(AbilityType::ElectricUltimate,
+                    Vector2Add(field.pos, Vector2Scale(dir, dist * (float)i / pieces)),
+                    115.f, remainingFade, atan2f(dir.y, dir.x) * RAD2DEG);
+        }
+        else if (field.ability == AbilityType::FireBolt)
+        {
+            float grow = 0.75f + 0.25f * std::clamp(field.timer / 0.16f, 0.f, 1.f);
+            drawSpellFrame(AbilityType::FireUltimate, field.pos, field.radius * 2.f * grow, remainingFade);
+        }
+        else if (field.ability == AbilityType::ElectricBolt)
+        {
+            Vector2 delta = Vector2Subtract(field.strikePos, field.pos);
+            float dist = Vector2Length(delta);
+            Vector2 dir = dist > 0.f ? Vector2Scale(delta, 1.f / dist) : Vector2{ 1.f, 0.f };
+            int pieces = std::max(1, (int)(dist / 70.f));
+            for (int i = 0; i <= pieces; ++i)
+                drawSpellFrame(AbilityType::ElectricUltimate,
+                    Vector2Add(field.pos, Vector2Scale(dir, dist * (float)i / pieces)),
+                    90.f, remainingFade, atan2f(dir.y, dir.x) * RAD2DEG);
+        }
+        else if (field.ability == AbilityType::FireUltimate)
+        {
+            if (!field.impacted)
+            {
+                Vector2 p = screenPos(field.pos);
+                float pulse = 0.55f + 0.35f * sinf(field.timer * 15.f);
+                DrawCircleLinesV(p, field.radius, Fade(ORANGE, pulse)); // warning only
+                DrawCircleLinesV(p, field.radius * 0.72f, Fade(GOLD, pulse * 0.7f));
+            }
+            else
+                drawSpellFrame(AbilityType::FireUltimate, field.pos, field.radius * 2.1f, remainingFade);
+        }
+        else if (field.ability == AbilityType::IceUltimate)
+        {
+            static const Vector2 offsets[] = { {0,0}, {-150,-80}, {145,-65}, {-100,130}, {125,120} };
+            for (Vector2 off : offsets)
+                drawSpellFrame(AbilityType::IceUltimate, Vector2Add(field.pos, off), 210.f, remainingFade);
+        }
+        else if (field.ability == AbilityType::ElectricUltimate)
+        {
+            drawSpellFrame(AbilityType::ElectricUltimate, field.pos, field.radius * 1.2f, remainingFade);
+            if (field.strikeFlash > 0.f)
+                drawSpellFrame(AbilityType::ElectricUltimate, field.strikePos, 210.f,
+                               field.strikeFlash / 0.22f);
+        }
+    }
 }
 
 void Engine::SpawnUltimateBurst(AbilityType element)
@@ -7619,6 +8293,10 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
     int hitCount = 0;
     Vector2 playerPos = _player.GetWorldPos();
 
+    // Every damaging ability rect also chips destructible room hazards, so
+    // "disable the totem" works with the player's whole kit, not just melee.
+    _roomHazards.DamageHazardsInRect(worldRect, damage);
+
     for (auto& enemy : _enemies)
     {
         if (!enemy->IsActive() || !enemy->IsAlive())
@@ -7659,6 +8337,95 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
 // Apply a shared status to every enemy overlapping a world rect. Class abilities
 // call these right after their DamageEnemiesInRect so each class delivers its
 // signature effect (Warrior armor-break, Rogue poison, Hunter mark, etc.).
+static bool OverlapsDirectedBox(Rectangle hit, Vector2 origin, Vector2 direction,
+                                float length, float width)
+{
+    if (Vector2Length(direction) < 0.001f)
+        direction = Vector2{ 1.f, 0.f };
+    direction = Vector2Normalize(direction);
+    Vector2 side{ -direction.y, direction.x };
+    Vector2 centre{ hit.x + hit.width * 0.5f, hit.y + hit.height * 0.5f };
+    Vector2 delta = Vector2Subtract(centre, origin);
+
+    const float along = Vector2DotProduct(delta, direction);
+    const float lateral = fabsf(Vector2DotProduct(delta, side));
+    const float alongExtent = fabsf(direction.x) * hit.width * 0.5f +
+                              fabsf(direction.y) * hit.height * 0.5f;
+    const float sideExtent = fabsf(side.x) * hit.width * 0.5f +
+                             fabsf(side.y) * hit.height * 0.5f;
+    return along + alongExtent >= 0.f && along - alongExtent <= length &&
+           lateral <= width * 0.5f + sideExtent;
+}
+
+static Rectangle DirectedBoxBounds(Vector2 origin, Vector2 direction, float length, float width)
+{
+    if (Vector2Length(direction) < 0.001f)
+        direction = Vector2{ 1.f, 0.f };
+    direction = Vector2Normalize(direction);
+    Vector2 side = Vector2Scale(Vector2{ -direction.y, direction.x }, width * 0.5f);
+    Vector2 end = Vector2Add(origin, Vector2Scale(direction, length));
+    Vector2 points[] = { Vector2Add(origin, side), Vector2Subtract(origin, side),
+                         Vector2Add(end, side), Vector2Subtract(end, side) };
+    float minX = points[0].x, maxX = points[0].x;
+    float minY = points[0].y, maxY = points[0].y;
+    for (int i = 1; i < 4; ++i)
+    {
+        minX = std::min(minX, points[i].x); maxX = std::max(maxX, points[i].x);
+        minY = std::min(minY, points[i].y); maxY = std::max(maxY, points[i].y);
+    }
+    return Rectangle{ minX, minY, maxX - minX, maxY - minY };
+}
+
+int Engine::DamageEnemiesInDirectedBox(Vector2 origin, Vector2 direction, float length, float width,
+                                       int damage, float knockback, float stunSeconds,
+                                       float bleedSeconds, int bleedDmgPerTick, bool ignoreShield)
+{
+    (void)knockback;
+    int hitCount = 0;
+    Vector2 playerPos = _player.GetWorldPos();
+    _roomHazards.DamageHazardsInRect(DirectedBoxBounds(origin, direction, length, width), damage);
+
+    for (auto& enemy : _enemies)
+    {
+        if (!enemy->IsActive() || !enemy->IsAlive() ||
+            !OverlapsDirectedBox(enemy->GetHitCollisionRec(), origin, direction, length, width))
+            continue;
+
+        bool crit = false;
+        int dmg = ScalePlayerHit(*enemy, std::max(1, damage), crit);
+        if (ignoreShield) enemy->TakeDamageUnblockable(dmg, playerPos);
+        else              enemy->TakeDamage(dmg, playerPos);
+
+        Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
+        if (blocked != Enemy::HitBlockReason::None)
+        {
+            ShowBlockedHitFeedback(enemy->GetWorldPos(), blocked);
+            continue;
+        }
+
+        ApplyPlayerLifesteal(dmg);
+        _player.AddRage(4.f);
+        _player.AddComboPoints(1);
+        _player.AddFaith(3.f);
+        RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
+        if (stunSeconds > 0.f) enemy->ApplyFreeze(stunSeconds);
+        if (bleedSeconds > 0.f) enemy->ApplyBleed(bleedDmgPerTick, bleedSeconds);
+        ++hitCount;
+    }
+    return hitCount;
+}
+
+template <typename Effect>
+static void ApplyInDirectedBox(std::vector<std::unique_ptr<Enemy>>& enemies,
+                               Vector2 origin, Vector2 direction, float length, float width,
+                               Effect effect)
+{
+    for (auto& enemy : enemies)
+        if (enemy->IsActive() && enemy->IsAlive() &&
+            OverlapsDirectedBox(enemy->GetHitCollisionRec(), origin, direction, length, width))
+            effect(*enemy);
+}
+
 static void ApplyPoisonInRect(std::vector<std::unique_ptr<Enemy>>& es, Rectangle r, int dmgPerTick, float sec)
 {
     for (auto& e : es)
@@ -7724,8 +8491,17 @@ void Engine::ApplyPlayerLifesteal(int damageDealt)
 void Engine::HandleClassAbilityCast(AbilityType ability)
 {
     Vector2 playerPos = _player.GetWorldPos();
-    float   facingSign = (_player.GetFacingDirection().x >= 0.f) ? 1.f : -1.f;
-    Vector2 facing{ facingSign, 0.f };
+    Vector2 facing = (_committedAimAbility == ability)
+        ? _committedAimDirection : _player.GetFacingDirection();
+    if (Vector2Length(facing) < 0.001f)
+        facing = _player.GetFacingDirection();
+    facing = Vector2Normalize(facing);
+    float facingSign = fabsf(facing.x) > 0.05f
+        ? (facing.x >= 0.f ? 1.f : -1.f)
+        : (_player.GetFacingDirection().x >= 0.f ? 1.f : -1.f);
+    Vector2 castTarget = (_committedAimAbility == ability)
+        ? _committedAimTarget : Vector2Add(playerPos, Vector2Scale(facing, 200.f));
+    AbilityAimProfile aimProfile = GetAbilityAimProfile(ability);
     float   atk   = _player.GetAttackPowerValue();
     int     level = std::max(1, _player.GetAbilityLevel(ability));
     float   buff  = _player.GetClassDamageMult();
@@ -7776,6 +8552,46 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     auto radialRect = [&](float radius) -> Rectangle {
         return tunedOr(Rectangle{ playerPos.x - radius, playerPos.y - radius, radius * 2.f, radius * 2.f });
     };
+    auto directedLength = [&](float fallback) {
+        return aimProfile.length > 0.f ? aimProfile.length : fallback;
+    };
+    auto directedWidth = [&](float fallback) {
+        return aimProfile.width > 0.f ? aimProfile.width : fallback;
+    };
+    auto directedGeometry = [&](float fallbackLength, float fallbackWidth,
+                                Vector2& origin, float& length, float& width) {
+        length = directedLength(fallbackLength);
+        width = directedWidth(fallbackWidth);
+        origin = playerPos;
+        // Legacy authored boxes remain authoritative until the newer Ability
+        // Lab geometry is explicitly saved for this move. Rotate their local
+        // forward/side offsets with the aim direction instead of discarding them.
+        if (atkTune && atkTune->hasBox && !atkTune->hasAbility)
+        {
+            Vector2 side{ -facing.y, facing.x };
+            length = atkTune->w;
+            width = atkTune->h;
+            origin = Vector2Add(playerPos,
+                Vector2Add(Vector2Scale(facing, atkTune->x - length * 0.5f),
+                           Vector2Scale(side, atkTune->y)));
+        }
+    };
+    auto damageDirected = [&](float length, float width, int damage, float knockback,
+                              float stun, float bleed, int bleedTick, bool ignoreShield = false) {
+        Vector2 origin{}; float actualLength = 0.f, actualWidth = 0.f;
+        directedGeometry(length, width, origin, actualLength, actualWidth);
+        return DamageEnemiesInDirectedBox(origin, facing, actualLength, actualWidth, damage,
+                                          knockback, stun, bleed, bleedTick, ignoreShield);
+    };
+    auto applyDirected = [&](float length, float width, auto effect) {
+        Vector2 origin{}; float actualLength = 0.f, actualWidth = 0.f;
+        directedGeometry(length, width, origin, actualLength, actualWidth);
+        ApplyInDirectedBox(_enemies, origin, facing, actualLength, actualWidth, effect);
+    };
+    auto targetArea = [&](float fallbackRadius) {
+        float radius = aimProfile.radius > 0.f ? aimProfile.radius : fallbackRadius;
+        return Rectangle{ castTarget.x - radius, castTarget.y - radius, radius * 2.f, radius * 2.f };
+    };
 
     // Whether this ability has a real owned FX sheet (FX_<Ability>.png). If so,
     // SpawnAbilityFx (called at the end) plays it and the prototype shape below is
@@ -7804,8 +8620,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
     case AbilityType::WarCleave:
     {
-        int hits = DamageEnemiesInRect(forwardRect(210.f, 200.f), dmgVal(4.f + atk * 0.8f), 1.f, 0.f, 0.f, 0);
-        ApplyVulnInRect(_enemies, forwardRect(210.f, 200.f), 1.25f, 4.f);   // armor break (staggering shockwave)
+        int hits = damageDirected(210.f, 200.f, dmgVal(4.f + atk * 0.8f), 1.f, 0.f, 0.f, 0);
+        applyDirected(210.f, 200.f, [](Enemy& enemy) { enemy.ApplyVulnerability(1.25f, 4.f); });
         pushVfx(WarriorVfxKind::Wave, 0.28f, 210.f, Color{ 200, 235, 255, 255 });
         if (hits) TriggerScreenShake(6.f, 0.10f);
         break;
@@ -7819,23 +8635,25 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::ThrowingAxe:
     {
-        DamageEnemiesInRect(forwardRect(520.f, 90.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 3.f, dmgVal(0.8f));   // deep axe wound bleeds
+        damageDirected(520.f, 90.f, dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 3.f, dmgVal(0.8f));
         pushShot(0.4f, 520.f, AbilityType::ThrowingAxe, true);
         break;
     }
     case AbilityType::Rend:
     {
-        _player.MoveTowardFacing(120.f);   // lunge forward
+        float moveDistance = (atkTune && atkTune->hasAbility) ? atkTune->moveDistance : 120.f;
+        _player.MoveAlongDirection(facing, moveDistance);
         playerPos = _player.GetWorldPos();
-        DamageEnemiesInRect(forwardRect(150.f, 140.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 3.f, dmgVal(1.f));
+        damageDirected(150.f, 140.f, dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 3.f, dmgVal(1.f));
         pushVfx(WarriorVfxKind::Wave, 0.25f, 150.f, Color{ 220, 60, 60, 255 });
         break;
     }
     case AbilityType::ShieldBash:
     {
-        _player.MoveTowardFacing(90.f);
+        float moveDistance = (atkTune && atkTune->hasAbility) ? atkTune->moveDistance : 90.f;
+        _player.MoveAlongDirection(facing, moveDistance);
         playerPos = _player.GetWorldPos();
-        DamageEnemiesInRect(forwardRect(150.f, 150.f), dmgVal(2.f + atk * 0.4f), 1.f, 1.3f, 0.f, 0);
+        damageDirected(150.f, 150.f, dmgVal(2.f + atk * 0.4f), 1.f, 1.3f, 0.f, 0);
         pushVfx(WarriorVfxKind::Bash, 0.25f, 150.f, Color{ 255, 240, 190, 255 });
         TriggerScreenShake(7.f, 0.10f);
         break;
@@ -7878,8 +8696,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Earthshatter:
     {
-        DamageEnemiesInRect(forwardRect(640.f, 130.f), dmgVal(10.f + atk * 2.0f), 1.f, 0.6f, 0.f, 0);
-        ApplyVulnInRect(_enemies, forwardRect(640.f, 130.f), 1.35f, 5.f);   // sundering spikes
+        damageDirected(640.f, 130.f, dmgVal(10.f + atk * 2.0f), 1.f, 0.6f, 0.f, 0);
+        applyDirected(640.f, 130.f, [](Enemy& enemy) { enemy.ApplyVulnerability(1.35f, 5.f); });
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 640.f, Color{ 180, 130, 70, 255 });
         StopSound(_explosionSound);
         PlaySound(_explosionSound);
@@ -7890,17 +8708,19 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── ROGUE ────────────────────────────────────────────────────────────────
     case AbilityType::FanOfKnives:
     {
-        DamageEnemiesInRect(forwardRect(360.f, 240.f), dmgVal(4.f + atk * 0.7f), 1.f, 0.f, 0.f, 0);
-        ApplyPoisonInRect(_enemies, forwardRect(360.f, 240.f), poisonVal(1.f), 4.f);   // coated blades
+        damageDirected(360.f, 240.f, dmgVal(4.f + atk * 0.7f), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(1.f);
+        applyDirected(360.f, 240.f, [=](Enemy& enemy) { enemy.ApplyPoison(poison, 4.f); });
         pushVfx(WarriorVfxKind::Fan, 0.3f, 360.f, Color{ 220, 225, 235, 255 });
         break;
     }
     case AbilityType::Shadowstep:
     {
         // Cut everything in the corridor ahead, then blink to the far end.
-        DamageEnemiesInRect(forwardRect(300.f, 110.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.7f));   // slicing blink bleeds
+        damageDirected(300.f, 110.f, dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.7f));
         pushVfx(WarriorVfxKind::Teleport, 0.3f, 40.f, Color{ 150, 90, 220, 255 });   // puff at origin
-        _player.MoveTowardFacing(300.f);
+        float moveDistance = (atkTune && atkTune->hasAbility) ? atkTune->moveDistance : 300.f;
+        _player.MoveAlongDirection(facing, moveDistance);
         WarriorVfx dst; dst.kind = WarriorVfxKind::Teleport; dst.pos = _player.GetWorldPos();
         dst.dir = facing; dst.lifetime = 0.3f; dst.radius = 40.f; dst.tint = Color{ 150, 90, 220, 255 };
         _warriorVfx.push_back(dst);
@@ -7909,21 +8729,73 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::PoisonVial:
     {
         // Lobbed to a spot ahead; leaves a pool that ticks enemies over time.
-        Vector2 spot{ playerPos.x + facingSign * 200.f, playerPos.y };
+        Vector2 spot = castTarget;
         WarriorVfx pool; pool.kind = WarriorVfxKind::PoisonZone; pool.pos = spot; pool.dir = facing;
-        pool.lifetime = 3.5f; pool.radius = 130.f; pool.tint = Color{ 120, 210, 90, 255 };
+        pool.lifetime = 3.5f; pool.radius = aimProfile.radius > 0.f ? aimProfile.radius : 130.f;
+        pool.tint = Color{ 120, 210, 90, 255 };
         pool.tickDamage = dmgVal(1.f + atk * 0.2f); pool.tickInterval = 0.4f;
         _warriorVfx.push_back(pool);
-        ApplyPoisonInRect(_enemies, { spot.x - 130.f, spot.y - 130.f, 260.f, 260.f }, poisonVal(1.f), 5.f);   // toxic cloud
+        ApplyPoisonInRect(_enemies, targetArea(130.f), poisonVal(1.f), 5.f);
         break;
     }
     case AbilityType::Backstab:
     {
-        int struck = DamageEnemiesInRect(forwardRect(150.f, 120.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 3.f, dmgVal(1.f));   // deep wound bleeds
-        ApplyVulnInRect(_enemies, forwardRect(150.f, 120.f), 1.3f, 4.f);   // exposes the struck foe (weaken)
-        // Identity: the opener banks TWO extra combo points when it connects
-        // (on top of the per-hit point), setting up Eviscerate's payoff.
-        if (struck > 0) _player.AddComboPoints(2);
+        // A real backstab now: every target in the strike box takes a solid
+        // base hit, but the big multiplier, bleed, and expose land ONLY when
+        // the player is actually inside the target's rear cone. Positioning
+        // (and the new enemy facing commitment) is what unlocks the payoff.
+        int struck = 0;
+        int rearStrikes = 0;
+        for (auto& enemy : _enemies)
+        {
+            if (!enemy->IsActive() || !enemy->IsAlive())
+                continue;
+            Vector2 strikeOrigin{}; float strikeLength = 0.f, strikeWidth = 0.f;
+            directedGeometry(150.f, 120.f, strikeOrigin, strikeLength, strikeWidth);
+            if (!OverlapsDirectedBox(enemy->GetHitCollisionRec(), strikeOrigin, facing,
+                                     strikeLength, strikeWidth))
+                continue;
+
+            bool rearHit = enemy->IsPositionBehind(playerPos, Balance::Facing::kRearConeDot);
+            int baseDamage = dmgVal(4.f + atk * 0.9f);
+            int damage = rearHit
+                ? std::max(1, (int)roundf(baseDamage * Balance::Facing::kBackstabRearMult))
+                : baseDamage;
+
+            bool crit = false;
+            damage = ScalePlayerHit(*enemy, std::max(1, damage), crit);
+            enemy->TakeDamage(damage, playerPos);
+
+            Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
+            if (blocked != Enemy::HitBlockReason::None)
+            {
+                ShowBlockedHitFeedback(enemy->GetWorldPos(), blocked);
+                if (_debug.IsActive())
+                    TraceLog(LOG_INFO, "BACKSTAB blocked (%s side)", rearHit ? "rear?!" : "front");
+                continue;
+            }
+
+            ApplyPlayerLifesteal(damage);
+            _player.AddRage(4.f);
+            _player.AddComboPoints(1);
+            _player.AddFaith(3.f);
+            RegisterHitFx(enemy->GetWorldPos(), damage, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
+
+            if (rearHit)
+            {
+                enemy->ApplyBleed(dmgVal(1.f), 3.f);        // deep wound bleeds
+                enemy->ApplyVulnerability(1.3f, 4.f);       // exposes the victim
+                _vfx.SpawnFloatingLabel(enemy->GetWorldPos(), "BACKSTAB!",
+                                        Color{ 255, 90, 90, 255 }, 1.25f);
+                rearStrikes++;
+            }
+            struck++;
+            if (_debug.IsActive())
+                TraceLog(LOG_INFO, "BACKSTAB %s: dmg %d", rearHit ? "REAR success" : "front/side (base dmg)", damage);
+        }
+        // Identity: a TRUE backstab banks two extra combo points on top of the
+        // per-hit point, setting up Eviscerate's payoff.
+        if (rearStrikes > 0) _player.AddComboPoints(2);
         pushVfx(WarriorVfxKind::Flurry, 0.22f, 150.f, Color{ 255, 90, 90, 255 });
         TriggerScreenShake(6.f, 0.10f);
         break;
@@ -7946,7 +8818,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         if (combo >= 3)
             _vfx.SpawnFloatingLabel(playerPos, TextFormat("FINISHER x%d", combo),
                                     Color{ 235, 235, 245, 255 }, 1.3f);
-        DamageEnemiesInRect(forwardRect(210.f, 130.f),
+        damageDirected(210.f, 130.f,
             std::max(1, (int)roundf(dmgVal(5.f + atk * 1.1f) * finishMult)),
             1.f, 0.f, 3.f, dmgVal(0.9f));   // flurry of cuts bleeds
         pushVfx(WarriorVfxKind::Flurry, 0.3f, 210.f, Color{ 235, 235, 245, 255 });
@@ -7974,8 +8846,11 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::RainOfBlades:
     {
-        DamageEnemiesInRect(forwardRect(680.f, 320.f), dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
-        pushVfx(WarriorVfxKind::Barrage, 0.6f, 680.f, Color{ 220, 225, 240, 255 });
+        Rectangle area = targetArea(220.f);
+        DamageEnemiesInRect(area, dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
+        WarriorVfx barrage; barrage.kind = WarriorVfxKind::Barrage; barrage.pos = castTarget;
+        barrage.dir = facing; barrage.lifetime = 0.6f; barrage.radius = aimProfile.radius;
+        barrage.tint = Color{ 220, 225, 240, 255 }; _warriorVfx.push_back(barrage);
         StopSound(_explosionSound);
         PlaySound(_explosionSound);
         TriggerScreenShake(11.f, 0.35f);
@@ -7985,14 +8860,15 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── HUNTER ───────────────────────────────────────────────────────────────
     case AbilityType::PiercingShot:
     {
-        DamageEnemiesInRect(forwardRect(600.f, 70.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 2.5f, dmgVal(0.8f));   // barbed arrow bleeds
-        ApplyMarkInRect(_enemies, forwardRect(600.f, 70.f), 6.f);   // marks everything the arrow pierces (Hunter identity)
+        damageDirected(600.f, 70.f, dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 2.5f, dmgVal(0.8f));
+        applyDirected(600.f, 70.f, [](Enemy& enemy) { enemy.ApplyMark(6.f); });
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::Multishot:
     {
-        DamageEnemiesInRect(forwardRect(380.f, 260.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 0.f, 0);
-        ApplyPoisonInRect(_enemies, forwardRect(380.f, 260.f), poisonVal(1.f), 4.f);   // poison-tipped volley
+        damageDirected(380.f, 260.f, dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(1.f);
+        applyDirected(380.f, 260.f, [=](Enemy& enemy) { enemy.ApplyPoison(poison, 4.f); });
         pushVfx(WarriorVfxKind::Fan, 0.3f, 380.f, Color{ 140, 235, 210, 255 });
         break;
     }
@@ -8000,9 +8876,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         // Drop an armed trap at your feet. It arms after a beat, then snaps when a
         // foe steps on it: a light burst plus a hard freeze on everything nearby.
-        WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = playerPos; trap.dir = facing;
+        WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = castTarget; trap.dir = facing;
         trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = 15.f;   // sits armed up to 15s
-        trap.radius = 175.f;            // freeze / burst radius on snap
+        trap.radius = aimProfile.radius > 0.f ? aimProfile.radius : 175.f;
         trap.triggerRadius = 72.f;      // enemy contact distance that trips it
         trap.trapDamage = dmgVal(2.f + atk * 0.3f);
         trap.trapFreeze = 2.2f;         // hard freeze duration on snap
@@ -8013,9 +8889,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::ExplosiveArrow:   // Hunter EXPLOSIVE TRAP — armed, snaps for AoE
     {
         // Armed trap at your feet: when a foe trips it, a big blast + knockback.
-        WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = playerPos; trap.dir = facing;
+        WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = castTarget; trap.dir = facing;
         trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = 15.f;
-        trap.radius = 195.f;            // blast radius on snap
+        trap.radius = aimProfile.radius > 0.f ? aimProfile.radius : 195.f;
         trap.triggerRadius = 72.f;
         trap.trapDamage = dmgVal(7.f + atk * 1.3f);
         trap.trapKnockback = 1.5f;
@@ -8025,7 +8901,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Roll:
     {
-        _player.MoveTowardFacing(240.f);
+        float moveDistance = (atkTune && atkTune->hasAbility) ? atkTune->moveDistance : 240.f;
+        _player.MoveAlongDirection(facing, moveDistance);
+        playerPos = _player.GetWorldPos();
         _player.GrantDamageBuff(1.4f, 3.f);   // brief "deadeye" after repositioning
         pushVfx(WarriorVfxKind::Teleport, 0.3f, 40.f, Color{ 200, 235, 220, 255 });
         break;
@@ -8034,17 +8912,22 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         // A heavy armour-piercing arrow: ignores a Shieldbearer's frontal block and
         // hits harder than a normal shot, so shielded foes can't wall you out.
-        DamageEnemiesInRect(forwardRect(660.f, 84.f), dmgVal(6.f + atk * 1.4f), 1.f, 0.f, 0.f, 0, true);
-        ApplyVulnInRect(_enemies, forwardRect(660.f, 84.f), 1.4f, 5.f);   // punctures armor
-        ApplyMarkInRect(_enemies, forwardRect(660.f, 84.f), 5.f);         // marks the target
+        damageDirected(660.f, 84.f, dmgVal(6.f + atk * 1.4f), 1.f, 0.f, 0.f, 0, true);
+        applyDirected(660.f, 84.f, [](Enemy& enemy) {
+            enemy.ApplyVulnerability(1.4f, 5.f);
+            enemy.ApplyMark(5.f);
+        });
         pushVfx(WarriorVfxKind::Spikes, 0.4f, 660.f, Color{ 235, 245, 205, 255 });
         break;
     }
     case AbilityType::ArrowStorm:
     {
-        DamageEnemiesInRect(radialRect(1000.f), dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 0.f, 0);
-        ApplyPoisonInRect(_enemies, radialRect(1000.f), poisonVal(1.f), 4.f);   // a rain of poisoned shafts
-        pushVfx(WarriorVfxKind::Barrage, 0.6f, 1000.f, Color{ 140, 235, 210, 255 });
+        Rectangle area = targetArea(360.f);
+        DamageEnemiesInRect(area, dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 0.f, 0);
+        ApplyPoisonInRect(_enemies, area, poisonVal(1.f), 4.f);
+        WarriorVfx barrage; barrage.kind = WarriorVfxKind::Barrage; barrage.pos = castTarget;
+        barrage.dir = facing; barrage.lifetime = 0.6f; barrage.radius = aimProfile.radius;
+        barrage.tint = Color{ 140, 235, 210, 255 }; _warriorVfx.push_back(barrage);
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(11.f, 0.35f);
         break;
@@ -8058,8 +8941,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::PiercingBarrage:
     {
-        DamageEnemiesInRect(forwardRect(900.f, 150.f), dmgVal(10.f + atk * 1.9f), 1.f, 0.f, 3.f, dmgVal(1.f));   // impaling barrage bleeds
-        ApplyMarkInRect(_enemies, forwardRect(900.f, 150.f), 5.f);
+        damageDirected(900.f, 150.f, dmgVal(10.f + atk * 1.9f), 1.f, 0.f, 3.f, dmgVal(1.f));
+        applyDirected(900.f, 150.f, [](Enemy& enemy) { enemy.ApplyMark(5.f); });
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 900.f, Color{ 140, 235, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
@@ -8069,16 +8952,28 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── PALADIN (holy) ─────────────────────────────────────────────────────────
     case AbilityType::Smite:
     {
-        DamageEnemiesInRect(forwardRect(210.f, 200.f), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
-        ApplyMarkInRect(_enemies, forwardRect(210.f, 200.f), 5.f);   // Judgment mark
+        damageDirected(210.f, 200.f, dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        applyDirected(210.f, 200.f, [](Enemy& enemy) { enemy.ApplyMark(5.f); });
         pushVfx(WarriorVfxKind::Wave, 0.28f, 210.f, Color{ 255, 235, 150, 255 });
         break;
     }
     case AbilityType::Consecrate:
     {
-        WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = playerPos; z.dir = facing;
-        z.lifetime = 4.f; z.radius = 170.f; z.tint = Color{ 255, 225, 130, 255 };
+        WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = castTarget; z.dir = facing;
+        z.lifetime = 4.f; z.radius = aimProfile.radius > 0.f ? aimProfile.radius : 170.f;
+        z.tint = Color{ 255, 225, 130, 255 };
         z.tickDamage = dmgVal(1.f + atk * 0.2f); z.tickInterval = 0.45f;
+        // The holy ring is the zone itself: loop it for the complete damage
+        // duration instead of drawing a separate prototype circle beneath it.
+        const int fxIdx = (int)AbilityType::Consecrate;
+        if (_abilityFx[fxIdx].id != 0 && _abilityFxFrames[fxIdx] > 0)
+        {
+            z.fxStrip = &_abilityFx[fxIdx];
+            z.fxFrames = _abilityFxFrames[fxIdx];
+            z.fxScale = 5.3f;
+            z.fxLoop = true;
+            z.fxFrameTime = 1.f / 20.f;
+        }
         _warriorVfx.push_back(z);
         break;
     }
@@ -8096,13 +8991,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::HolyBolt:
     {
-        DamageEnemiesInRect(forwardRect(560.f, 80.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
-        ApplyMarkInRect(_enemies, forwardRect(560.f, 80.f), 5.f);   // holy light marks for Judgment
+        damageDirected(560.f, 80.f, dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
+        applyDirected(560.f, 80.f, [](Enemy& enemy) { enemy.ApplyMark(5.f); });
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::HammerThrow:
     {
-        DamageEnemiesInRect(forwardRect(480.f, 110.f), dmgVal(5.f + atk * 1.0f), 1.f, 1.2f, 0.f, 0);
+        damageDirected(480.f, 110.f, dmgVal(5.f + atk * 1.0f), 1.f, 1.2f, 0.f, 0);
         pushShot(0.42f, 480.f, AbilityType::HammerThrow, true);
         break;
     }
@@ -8139,8 +9034,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::HammerOfJustice:
     {
-        DamageEnemiesInRect(forwardRect(660.f, 150.f), dmgVal(10.f + atk * 1.9f), 1.f, 1.3f, 0.f, 0);
-        ApplyMarkInRect(_enemies, forwardRect(660.f, 150.f), 6.f);   // judgment of the guilty
+        damageDirected(660.f, 150.f, dmgVal(10.f + atk * 1.9f), 1.f, 1.3f, 0.f, 0);
+        applyDirected(660.f, 150.f, [](Enemy& enemy) { enemy.ApplyMark(6.f); });
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 660.f, Color{ 255, 235, 150, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(13.f, 0.4f);
@@ -8150,37 +9045,44 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── WARLOCK (dark) ──────────────────────────────────────────────────────────
     case AbilityType::ShadowBolt:
     {
-        DamageEnemiesInRect(forwardRect(560.f, 80.f), dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
-        ApplyVulnInRect(_enemies, forwardRect(560.f, 80.f), 1.25f, 4.f);    // dark curse weakens
-        ApplyCurseInRect(_enemies, forwardRect(560.f, 80.f), 5.f * curseDur);          // primes the +25% cursed bonus
+        damageDirected(560.f, 80.f, dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
+        applyDirected(560.f, 80.f, [=](Enemy& enemy) {
+            enemy.ApplyVulnerability(1.25f, 4.f);
+            enemy.ApplyCurse(5.f * curseDur);
+        });
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::DrainLife:
     {
         _player.GrantLifesteal(0.6f, 0.3f);   // this strike heals you
-        DamageEnemiesInRect(forwardRect(220.f, 130.f), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
-        ApplyVulnInRect(_enemies, forwardRect(220.f, 130.f), 1.2f, 3.f);   // life-drain leaves them frail
+        damageDirected(220.f, 130.f, dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        applyDirected(220.f, 130.f, [](Enemy& enemy) { enemy.ApplyVulnerability(1.2f, 3.f); });
         pushVfx(WarriorVfxKind::Wave, 0.3f, 220.f, Color{ 170, 90, 210, 255 });
         break;
     }
     case AbilityType::Curse:
     {
-        DamageEnemiesInRect(forwardRect(260.f, 200.f), dmgVal(2.f + atk * 0.4f), 1.f, 0.f, 0.f, 0);
-        ApplyVulnInRect(_enemies, forwardRect(260.f, 200.f), 1.4f, 5.f);              // curse: takes far more damage
-        ApplyPoisonInRect(_enemies, forwardRect(260.f, 200.f), poisonVal(1.f), 5.f);     // rots over time
-        ApplyCurseInRect(_enemies, forwardRect(260.f, 200.f), 7.f * curseDur);                   // the signature: a long curse window
+        damageDirected(260.f, 200.f, dmgVal(2.f + atk * 0.4f), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(1.f);
+        applyDirected(260.f, 200.f, [=](Enemy& enemy) {
+            enemy.ApplyVulnerability(1.4f, 5.f);
+            enemy.ApplyPoison(poison, 5.f);
+            enemy.ApplyCurse(7.f * curseDur);
+        });
         pushVfx(WarriorVfxKind::Wave, 0.35f, 260.f, Color{ 150, 70, 190, 255 });
         break;
     }
     case AbilityType::CorruptionPool:
     {
-        Vector2 spot{ playerPos.x + facingSign * 200.f, playerPos.y };
+        Vector2 spot = castTarget;
         WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = spot; z.dir = facing;
-        z.lifetime = 4.f; z.radius = 150.f; z.tint = Color{ 150, 70, 190, 255 };
+        z.lifetime = 4.f; z.radius = aimProfile.radius > 0.f ? aimProfile.radius : 150.f;
+        z.tint = Color{ 150, 70, 190, 255 };
         z.tickDamage = dmgVal(1.f + atk * 0.25f); z.tickInterval = 0.4f;
         _warriorVfx.push_back(z);
-        ApplyPoisonInRect(_enemies, { spot.x - 150.f, spot.y - 150.f, 300.f, 300.f }, poisonVal(1.f), 5.f);   // corruption
-        ApplyCurseInRect(_enemies, { spot.x - 150.f, spot.y - 150.f, 300.f, 300.f }, 5.f * curseDur);                 // pool curses everything it touches
+        Rectangle area = targetArea(150.f);
+        ApplyPoisonInRect(_enemies, area, poisonVal(1.f), 5.f);
+        ApplyCurseInRect(_enemies, area, 5.f * curseDur);
         break;
     }
     case AbilityType::Hellfire:
@@ -8222,10 +9124,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::ShadowNova:
     {
-        DamageEnemiesInRect(forwardRect(680.f, 200.f), dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
-        ApplyVulnInRect(_enemies, forwardRect(680.f, 200.f), 1.4f, 6.f);              // shadow curse
-        ApplyCurseInRect(_enemies, forwardRect(680.f, 200.f), 6.f * curseDur);                   // primes the cursed bonus
-        ApplyPoisonInRect(_enemies, forwardRect(680.f, 200.f), poisonVal(1.f), 5.f);     // + corruption
+        damageDirected(680.f, 200.f, dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(1.f);
+        applyDirected(680.f, 200.f, [=](Enemy& enemy) {
+            enemy.ApplyVulnerability(1.4f, 6.f);
+            enemy.ApplyCurse(6.f * curseDur);
+            enemy.ApplyPoison(poison, 5.f);
+        });
         pushVfx(WarriorVfxKind::Barrage, 0.6f, 680.f, Color{ 170, 90, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
@@ -8255,23 +9160,31 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
     if (idx < 0 || idx >= (int)AbilityType::Count) return;
     if (_abilityFx[idx].id == 0 || _abilityFxFrames[idx] <= 0) return;
 
+    const AttackTuning* fxTuning = AttackTuningStore::Get(AttackTuningKeyForAbility(a));
+    auto authoredFxPos = [&](Vector2 anchor) -> Vector2
+    {
+        if (fxTuning && fxTuning->hasFxOffset)
+            return Vector2Add(Vector2Add(anchor, Vector2Scale(facing, fxTuning->fxForward)),
+                              Vector2{ 0.f, fxTuning->fxHeight });
+        return anchor;
+    };
+
     // Multi-projectile abilities fan out several small flying FX so the visual
     // matches the name (a cone of knives, a volley of arrows, a storm of blades).
     switch (a)
     {
     case AbilityType::FanOfKnives: case AbilityType::Multishot:
-    case AbilityType::RainOfBlades: case AbilityType::ArrowStorm:
     {
         const int   n     = 5;
-        const float dist  = (a == AbilityType::ArrowStorm || a == AbilityType::RainOfBlades) ? 620.f : 460.f;
+        const float dist  = 460.f;
         const float spread = 190.f;   // total vertical fan (px over the flight)
         for (int i = 0; i < n; i++)
         {
             float frac = (n > 1) ? ((float)i / (n - 1) - 0.5f) : 0.f;   // -0.5..0.5
             WarriorVfx v;
-            v.pos = playerPos; v.dir = facing; v.timer = 0.f; v.lifetime = 0.45f;
+            v.pos = authoredFxPos(playerPos); v.dir = facing; v.timer = 0.f; v.lifetime = 0.45f;
             v.radius = dist; v.fxStrip = &_abilityFx[idx]; v.fxFrames = _abilityFxFrames[idx];
-            v.fxScale = 2.4f; v.vy = frac * spread;
+            v.fxScale = 2.4f; v.vy = frac * spread; v.spin = true;
             _warriorVfx.push_back(v);
         }
         return;
@@ -8294,6 +9207,7 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
     case AbilityType::HammerThrow:
     case AbilityType::ExplosiveArrow:   // Hunter traps draw their own armed marker
     case AbilityType::FrostTrap:
+    case AbilityType::Consecrate:       // persistent zone owns and loops this FX
         return;
 
     // Flying bolts — travel their comet/arrow FX forward.
@@ -8302,7 +9216,7 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
 
     // Big radial ultimates / self buffs — large burst centred on the player.
     case AbilityType::GroundSlam:   case AbilityType::Rampage:     case AbilityType::Cataclysm:
-    case AbilityType::DivineStorm:  case AbilityType::ArrowStorm:  case AbilityType::Hellfire:
+    case AbilityType::DivineStorm:  case AbilityType::Hellfire:
     case AbilityType::DeathMark:    case AbilityType::DemonForm:   case AbilityType::AvengingWrath:
     case AbilityType::BladeDance:   case AbilityType::SoulSiphon:  case AbilityType::Whirlwind:
     case AbilityType::Deadeye:      case AbilityType::WarCry:      case AbilityType::ShieldOfFaith:
@@ -8313,7 +9227,7 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
     // (FrostTrap / ExplosiveArrow are Hunter traps now — handled by the early
     //  return above; they draw their own armed marker, no forward FX overlay.)
     case AbilityType::PoisonVial:   case AbilityType::CorruptionPool:
-    case AbilityType::Consecrate:
+    case AbilityType::RainOfBlades: case AbilityType::ArrowStorm:
         mode = 3; scale = 5.5f; life = 0.7f; break;
 
     default:  // forward melee / cone abilities
@@ -8321,8 +9235,11 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
     }
 
     Vector2 pos = playerPos;
-    if (mode == 2) pos = { playerPos.x + facingSign * 130.f, playerPos.y };
-    else if (mode == 3) pos = { playerPos.x + facingSign * 200.f, playerPos.y };
+    if (mode == 2) pos = Vector2Add(playerPos, Vector2Scale(facing, 130.f));
+    else if (mode == 3 && _committedAimAbility == a) pos = _committedAimTarget;
+    else if (mode == 3) pos = Vector2Add(playerPos, Vector2Scale(facing, 200.f));
+    if (fxTuning && fxTuning->hasFxOffset && mode != 3)
+        pos = authoredFxPos(playerPos);
 
     WarriorVfx v;
     v.kind = WarriorVfxKind::Wave;   // unused when fxStrip is set
@@ -8331,6 +9248,7 @@ void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, fl
     v.fxStrip = &_abilityFx[idx];
     v.fxFrames = _abilityFxFrames[idx];
     v.fxScale = scale;
+    v.spin = (mode == 2 || mode == 4);
     _warriorVfx.push_back(v);
 }
 
@@ -8388,6 +9306,17 @@ void Engine::UpdateWarriorEffects(float dt)
         _warriorVfx.end());
 }
 
+// Collect the currently-ticking player damage zones (Consecrate, Poison Vial,
+// Corruption Pool...) into the shared list enemies steer around. Traps are
+// excluded on purpose: their whole design is being stepped on.
+void Engine::RebuildEnemyHazardZones()
+{
+    _enemyHazardZones.clear();
+    for (const WarriorVfx& v : _warriorVfx)
+        if (v.tickDamage > 0 && !v.isTrap)
+            _enemyHazardZones.push_back({ v.pos, v.radius });
+}
+
 void Engine::DrawWarriorEffects(Vector2 camRef)
 {
     const float sw = (float)kVirtualWidth;
@@ -8400,20 +9329,34 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         Vector2 c   = Vector2Subtract(v.pos, camRef);
         c.x += sw * 0.5f;
         c.y += sh * 0.5f;
-        float sign  = (v.dir.x >= 0.f) ? 1.f : -1.f;
+        Vector2 moveDir = Vector2Length(v.dir) > 0.001f ? Vector2Normalize(v.dir) : Vector2{ 1.f, 0.f };
+        Vector2 moveSide{ -moveDir.y, moveDir.x };
 
         // Animated FX strip (slashes, novas, comets...) — plays over the lifetime.
         if (v.fxStrip && v.fxStrip->id != 0 && v.fxFrames > 0)
         {
-            float travel = v.radius * t;                 // radius = travel dist (0 = stationary)
-            Vector2 pc{ c.x + sign * travel, c.y + v.vy * t };
-            int frame = (int)(t * v.fxFrames);
-            if (frame >= v.fxFrames) frame = v.fxFrames - 1;
+            // Looping strips are persistent zones: their radius is gameplay
+            // coverage, not travel distance, so they remain on their world anchor.
+            float travel = v.fxLoop ? 0.f : v.radius * t;
+            Vector2 pc = Vector2Add(c, Vector2Add(Vector2Scale(moveDir, travel),
+                                                  Vector2Scale(moveSide, v.vy * t)));
+            int frame = 0;
+            if (v.fxLoop)
+            {
+                const float frameTime = std::max(0.01f, v.fxFrameTime);
+                frame = ((int)(v.timer / frameTime)) % v.fxFrames;
+            }
+            else
+            {
+                frame = (int)(t * v.fxFrames);
+                if (frame >= v.fxFrames) frame = v.fxFrames - 1;
+            }
             float cell = 64.f;
-            Rectangle src{ frame * cell, 0.f, sign < 0.f ? -cell : cell, cell };
+            Rectangle src{ frame * cell, 0.f, cell, cell };
             Rectangle dst{ pc.x, pc.y, cell * v.fxScale, cell * v.fxScale };
-            DrawTexturePro(*v.fxStrip, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, 0.f,
-                           Fade(WHITE, 0.85f + 0.15f * fade));
+            float rotation = v.spin ? atan2f(moveDir.y, moveDir.x) * RAD2DEG : 0.f;
+            DrawTexturePro(*v.fxStrip, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, rotation,
+                           Fade(v.tint, 0.85f + 0.15f * fade));
             continue;
         }
 
@@ -8421,9 +9364,10 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         if (v.sprite && v.sprite->id != 0)
         {
             float travel = v.radius * t;
-            Vector2 pc{ c.x + sign * travel, c.y + v.vy * t };
+            Vector2 pc = Vector2Add(c, Vector2Add(Vector2Scale(moveDir, travel),
+                                                  Vector2Scale(moveSide, v.vy * t)));
             float scale = 3.6f;
-            float rot   = v.spin ? (v.timer * 900.f) : (sign > 0.f ? 0.f : 180.f);
+            float rot = v.spin ? (v.timer * 900.f) : atan2f(moveDir.y, moveDir.x) * RAD2DEG;
             Rectangle src{ 0.f, 0.f, (float)v.sprite->width, (float)v.sprite->height };
             Rectangle dst{ pc.x, pc.y, v.sprite->width * scale, v.sprite->height * scale };
             DrawTexturePro(*v.sprite, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, rot, Fade(WHITE, 0.5f + 0.5f * fade));
@@ -8488,15 +9432,16 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         {
             // Crescent arc travelling forward.
             float travel = v.radius * t;
-            Vector2 wc{ c.x + sign * travel, c.y };
+            Vector2 wc = Vector2Add(c, Vector2Scale(moveDir, travel));
             DrawCircleLines((int)wc.x, (int)wc.y, 60.f, Fade(v.tint, fade));
-            DrawLineEx({ wc.x, wc.y - 55.f }, { wc.x, wc.y + 55.f }, 5.f, Fade(v.tint, fade));
+            DrawLineEx(Vector2Subtract(wc, Vector2Scale(moveSide, 55.f)),
+                       Vector2Add(wc, Vector2Scale(moveSide, 55.f)), 5.f, Fade(v.tint, fade));
             break;
         }
         case WarriorVfxKind::Axe:
         {
             float travel = v.radius * t;
-            Vector2 ac{ c.x + sign * travel, c.y };
+            Vector2 ac = Vector2Add(c, Vector2Scale(moveDir, travel));
             float spin = t * 40.f;
             for (int i = 0; i < 2; i++)
             {
@@ -8510,7 +9455,7 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         case WarriorVfxKind::Bash:
         {
             float travel = v.radius * t;
-            Vector2 bc{ c.x + sign * travel, c.y };
+            Vector2 bc = Vector2Add(c, Vector2Scale(moveDir, travel));
             DrawCircle((int)bc.x, (int)bc.y, 30.f * (1.f - t * 0.5f), Fade(v.tint, fade));
             break;
         }
@@ -8529,12 +9474,12 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
                 float frac = (float)i / (count - 1);
                 if (frac > t * 1.2f) break;   // spikes rise in sequence
                 float dist = frac * v.radius;
-                float sx = c.x + sign * dist;
+                Vector2 base = Vector2Add(c, Vector2Scale(moveDir, dist));
                 float h  = 50.f * fade;
                 DrawTriangle(
-                    { sx,        c.y - h },
-                    { sx - 14.f, c.y + 18.f },
-                    { sx + 14.f, c.y + 18.f },
+                    Vector2Add(base, Vector2Scale(moveDir, h)),
+                    Vector2Add(Vector2Subtract(base, Vector2Scale(moveSide, 14.f)), Vector2Scale(moveDir, -18.f)),
+                    Vector2Add(Vector2Add(base, Vector2Scale(moveSide, 14.f)), Vector2Scale(moveDir, -18.f)),
                     Fade(v.tint, fade));
             }
             break;
@@ -8546,8 +9491,9 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
             for (int i = -3; i <= 3; i++)
             {
                 float spread = i * 0.16f;                 // fan angle
-                float dx = sign * cosf(spread);
-                float dy = sinf(spread);
+                float baseAngle = atan2f(moveDir.y, moveDir.x);
+                float dx = cosf(baseAngle + spread);
+                float dy = sinf(baseAngle + spread);
                 Vector2 tip{ c.x + dx * travel, c.y + dy * travel };
                 Vector2 tail{ c.x + dx * (travel - 26.f), c.y + dy * (travel - 26.f) };
                 DrawLineEx(tail, tip, 3.f, Fade(v.tint, fade));
@@ -8606,14 +9552,14 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         }
         case WarriorVfxKind::Barrage:
         {
-            // Daggers raining down across the forward strip.
-            float len = v.radius;
+            // Daggers rain around the chosen target area.
+            float radius = std::max(80.f, v.radius);
             for (int i = 0; i < 14; i++)
             {
                 float frac = (float)i / 13.f;
-                float bx = c.x + sign * frac * len;
+                float bx = c.x + (frac * 2.f - 1.f) * radius;
                 float phase = fmodf(t * 2.f + frac * 1.3f, 1.f);
-                float by = c.y - 150.f + phase * 300.f;
+                float by = c.y - radius + phase * radius * 2.f;
                 DrawLineEx({ bx, by - 16.f }, { bx, by + 16.f }, 3.f, Fade(v.tint, fade));
             }
             break;
@@ -8622,12 +9568,14 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         {
             // Quick criss-cross slashes in the strike direction.
             float travel = v.radius * (0.3f + 0.7f * t);
-            Vector2 fc{ c.x + sign * travel * 0.5f, c.y };
+            Vector2 fc = Vector2Add(c, Vector2Scale(moveDir, travel * 0.5f));
             for (int i = 0; i < 3; i++)
             {
                 float off = (i - 1) * 18.f;
-                DrawLineEx({ fc.x - 30.f, fc.y + off - 20.f },
-                           { fc.x + 30.f, fc.y + off + 20.f }, 3.f, Fade(v.tint, fade));
+                Vector2 centre = Vector2Add(fc, Vector2Scale(moveSide, off));
+                DrawLineEx(Vector2Add(Vector2Scale(moveDir, -30.f), Vector2Add(centre, Vector2Scale(moveSide, -20.f))),
+                           Vector2Add(Vector2Scale(moveDir, 30.f), Vector2Add(centre, Vector2Scale(moveSide, 20.f))),
+                           3.f, Fade(v.tint, fade));
             }
             break;
         }
@@ -9168,12 +10116,24 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 continue;
         }
 
+        // Player projectiles chip destructible room hazards and burst on them,
+        // so ranged classes can disable totems/torches like melee classes can.
+        if (_roomHazards.DamageHazardsInRect(projectile.GetCollisionRec(), 1) > 0)
+        {
+            _vfx.SpawnHitEffect(elementToCastType(projectile.GetElement()),
+                                projectile.GetWorldPos(), projectile.GetDirection());
+            projectile.Destroy();
+            continue;
+        }
+
         for (auto& enemy : _enemies)
         {
             if (!enemy->IsActive() || !enemy->IsAlive())
                 continue;
 
             if (!CheckCollisionRecs(projectile.GetCollisionRec(), enemy->GetHitCollisionRec()))
+                continue;
+            if (projectile.HasHit(enemy.get()))
                 continue;
 
             AbilityType element = projectile.GetElement();
@@ -9208,51 +10168,81 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 break;
             }
 
-            bool isBolt = (element == AbilityType::FireBolt  ||
-                           element == AbilityType::IceBolt   ||
-                           element == AbilityType::ElectricBolt);
+            int baseDamage = enemy->AsMolarbeast() != nullptr
+                ? 2 : _player.GetBoltHitDamage(element);
+            bool wasSlowed = enemy->IsSlowed();
+            bool landed = DamageMageEnemy(*enemy, baseDamage, element,
+                                          element == AbilityType::FireBolt,
+                                          element == AbilityType::IceBolt,
+                                          element == AbilityType::ElectricBolt);
 
-            // Bolts deal more damage per shot; boss caps at 2 from bolts vs 1 from spread
-            int baseDamage;
-            if (enemy->AsMolarbeast() != nullptr)
-                baseDamage = isBolt ? 2 : 1;
-            else
-                baseDamage = isBolt ? _player.GetBoltHitDamage(element) : _player.GetSpreadHitDamage(element);
-            bool spreadCrit = false;
-            int hitDamage = ScalePlayerHit(*enemy, baseDamage, spreadCrit);
-            enemy->TakeDamage(hitDamage, _player.GetWorldPos());
+            Character::CastType hitEffectType = element == AbilityType::FireBolt ? Character::CastType::FireSpread
+                                                    : element == AbilityType::IceBolt ? Character::CastType::IceSpread
+                                                                                      : Character::CastType::ElectricSpread;
+            if (landed && element == AbilityType::FireBolt)
             {
-                Color dmgColor = spreadCrit ? GOLD :
-                                 (element == AbilityType::IceSpread   || element == AbilityType::IceBolt)      ? SKYBLUE  :
-                                 (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt) ? YELLOW   : ORANGE;
-                RegisterHitFx(enemy->GetWorldPos(), hitDamage, spreadCrit, !enemy->IsAlive(), enemy->IsBoss(), dmgColor);
+                // Fireball's identity is the impact burst, not merely a red bolt.
+                for (auto& nearby : _enemies)
+                {
+                    if (nearby.get() == enemy.get() || !nearby->IsActive() || !nearby->IsAlive()) continue;
+                    if (Vector2Distance(nearby->GetWorldPos(), projectile.GetWorldPos()) <= 135.f)
+                        DamageMageEnemy(*nearby, std::max(1, baseDamage / 2), element, true, false, false);
+                }
+                MageSpellField burst;
+                burst.ability = AbilityType::FireBolt;
+                burst.pos = projectile.GetWorldPos();
+                burst.duration = 0.42f;
+                burst.radius = 135.f;
+                burst.impacted = true;
+                _mageSpellFields.push_back(burst);
             }
-
-            // Per-element on-hit effect - same for both spread and bolt of the same element
-            Character::CastType hitEffectType = Character::CastType::FireSpread;
-            if (element == AbilityType::FireSpread || element == AbilityType::FireBolt)
+            else if (landed && element == AbilityType::IceBolt && wasSlowed && !enemy->IsBoss())
             {
-                int burnDmg = isBolt ? _player.GetBoltBurnDamage(element) : _player.GetSpreadBurnDamage(element);
-                enemy->ApplyBurn(1.f, burnDmg, _player.GetWorldPos());
-                hitEffectType = Character::CastType::FireSpread;
+                enemy->ApplyFreeze(1.15f); // a second frost setup completes the freeze
+                _vfx.SpawnFloatingLabel(enemy->GetWorldPos(), "FROZEN", SKYBLUE, 1.15f);
             }
-            else if (element == AbilityType::IceSpread || element == AbilityType::IceBolt)
+            else if (landed && element == AbilityType::ElectricBolt)
             {
-                enemy->ApplyFreeze(3.f);
-                hitEffectType = Character::CastType::IceSpread;
-            }
-            else if (element == AbilityType::ElectricSpread || element == AbilityType::ElectricBolt)
-            {
-                enemy->ApplyElectricCharge();
-                hitEffectType = Character::CastType::ElectricSpread;
+                const AttackTuning* chainTune = AttackTuningStore::Get(AttackTuningKeyForAbility(element));
+                int maxJumps = (chainTune && chainTune->hasAbility)
+                    ? std::max(1, (int)roundf(chainTune->maxTargets) - 1) : 4;
+                float chainRange = (chainTune && chainTune->hasAbility) ? chainTune->chainRange : 280.f;
+                std::vector<Enemy*> chained{ enemy.get() };
+                Enemy* current = enemy.get();
+                for (int jump = 0; jump < maxJumps; ++jump)
+                {
+                    Enemy* next = nullptr;
+                    float best = chainRange;
+                    for (auto& candidate : _enemies)
+                    {
+                        if (!candidate->IsActive() || !candidate->IsAlive()) continue;
+                        if (std::find(chained.begin(), chained.end(), candidate.get()) != chained.end()) continue;
+                        float distance = Vector2Distance(current->GetWorldPos(), candidate->GetWorldPos());
+                        if (distance < best) { best = distance; next = candidate.get(); }
+                    }
+                    if (!next) break;
+                    int chainDamage = std::max(1, baseDamage - 1 - jump / 2);
+                    DamageMageEnemy(*next, chainDamage, element, false, false, true);
+                    MageSpellField arc;
+                    arc.ability = AbilityType::ElectricBolt;
+                    arc.pos = current->GetWorldPos();
+                    arc.strikePos = next->GetWorldPos();
+                    arc.duration = 0.24f;
+                    arc.impacted = true;
+                    _mageSpellFields.push_back(arc);
+                    chained.push_back(next);
+                    current = next;
+                }
             }
 
             _vfx.SpawnHitEffect(hitEffectType, projectile.GetWorldPos(), projectile.GetDirection());
-            projectile.Destroy();
+            bool keepFlying = landed && (element == AbilityType::IceBolt) && projectile.RegisterHit(enemy.get());
+            if (!keepFlying)
+                projectile.Destroy();
             TriggerScreenShake(4.f, 0.05f);
             StopSound(_explosionSound);
             PlaySound(_explosionSound);
-            break;
+            if (!keepFlying) break;
         }
     }
 
@@ -11444,6 +12434,8 @@ void Engine::ResetRunState()
     _ultimatePhaseTimer  = 0.f;
     _ultimateCircleAngle = 0.f;
     _warriorVfx.clear();
+    _mageSpellFields.clear();
+    CancelAbilityAim();
     _lifestealAccum      = 0.f;
     _showUltimateRow     = false;
     _ultimateRowPicked   = false;
@@ -12287,6 +13279,12 @@ void Engine::DrawClassSelect()
     DrawText(TextFormat("ATK %.0f    SPD %.0f", info.baseAttackPower, info.baseMoveSpeed),
              (int)tx, (int)(centerY + 390.f), 21, Color{ 214, 192, 150, 255 });
     DrawText(info.description, (int)tx, (int)(centerY + 428.f), 18, Color{ 168, 162, 182, 255 });
+
+    // Class-mechanic explainer: what the class's resource is and that Rage /
+    // Faith / Combo are bonuses ON TOP of MP, not replacements for it.
+    DrawText(TextFormat("RESOURCE: %s", info.resourceName),
+             (int)tx, (int)(centerY + 456.f), 18, GOLD);
+    DrawText(info.resourceDesc, (int)tx, (int)(centerY + 478.f), 15, Color{ 190, 184, 202, 255 });
 
     // ---- Position pips + name -------------------------------------------------
     float pipY   = centerY + centerH + 34.f;
@@ -13733,6 +14731,40 @@ void Engine::DrawDungeonMiniMap(float originX, float originY, float cellPx, bool
     }
 }
 
+// Spawn one grunt from the mixed-type table by typeId. Shared by the room
+// opening and by reinforcement waves so both paths place roles identically.
+// typeIds: 0 shadow, 1 archer, 2 slime, 3 wisp, 4 sporeling, 5 shieldbearer,
+//          6 phantom, 7 bomber, 8 warchief, 9 blade
+Enemy* Engine::SpawnDungeonGruntByTypeId(int typeId, Vector2 pos, float cellW, float cellH)
+{
+    Enemy* spawned = nullptr;
+    switch (typeId)
+    {
+    case 1: spawned = SpawnSkeletonArcher(pos);        break;
+    case 2: spawned = SpawnSlime(pos, SlimeSize::Big); break;
+    case 3: spawned = SpawnFlameWisp(pos);             break;
+    case 4: spawned = SpawnSporeling(pos);             break;
+    case 5: spawned = SpawnShieldbearer(pos);          break;
+    case 6: spawned = SpawnPhantom(pos);               break;
+    case 7: spawned = SpawnBomberImp(pos);             break;
+    case 8: spawned = SpawnWarchief(pos);              break;
+    case 9: spawned = SpawnLivingBlade(pos);           break;
+    default: spawned = SpawnBasicEnemy(pos);           break;
+    }
+
+    // Role-based placement: nudge specialised roles to sensible spots
+    // (ranged/support to the back, tanks mid, assassins off-angle). The
+    // target is always a valid GetDungeonSpawnPos candidate, so this can't
+    // put an enemy in a wall. Grunts keep their original spread.
+    if (spawned != nullptr)
+    {
+        EnemyRole role = spawned->GetEncounterRole();
+        if (role != EnemyRole::Grunt && role != EnemyRole::Charger)
+            spawned->Teleport(GetDungeonSpawnPosForRole(role, cellW, cellH));
+    }
+    return spawned;
+}
+
 void Engine::SpawnDungeonRoomEnemies()
 {
     if (_dungeonRoomIdx < 0) return;
@@ -13843,10 +14875,11 @@ void Engine::SpawnDungeonRoomEnemies()
     else  // Standard
     {
         // Roguelite pacing: rooms get genuinely crowded as the run deepens.
-        // early 2-3, mid 3-5, late 4-6, plus a per-zone bump so zone 4-5 rooms
-        // are packed.
-        int minBasics = tier == 0 ? 2 : (tier == 1 ? 3 : 4);
-        int maxBasics = tier == 0 ? 3 : (tier == 1 ? 5 : 6);
+        // Body counts + the pressure budget live in Balance::Pressure; anything
+        // beyond the opening cap arrives later as reinforcement waves.
+        int tierIdx   = std::clamp(tier, 0, 2);
+        int minBasics = Balance::Pressure::kMinBasics[tierIdx];
+        int maxBasics = Balance::Pressure::kMaxBasics[tierIdx];
 
         // Later world zones add one extra body on top of the room-tier count.
         int zoneBonus = _worldZone / 2;   // zones 0-1 = 0, 2-3 = +1, 4-5 = +2
@@ -13866,7 +14899,7 @@ void Engine::SpawnDungeonRoomEnemies()
         // rooms lean on the familiar shadow grunt; later rooms mix in every
         // specialised type. The Warchief is rare and capped at one per room.
         bool warchiefSpawnedThisRoom = false;
-        auto spawnMixedGrunt = [&](Vector2 p)
+        auto rollGruntTypeId = [&]() -> int
         {
             struct TypeWeight { int weight; int typeId; };
             // typeIds: 0 shadow, 1 archer, 2 slime, 3 wisp, 4 sporeling,
@@ -13894,40 +14927,101 @@ void Engine::SpawnDungeonRoomEnemies()
                 roll -= entry.weight;
                 if (roll <= 0) { typeId = entry.typeId; break; }
             }
-
-            Enemy* spawned = nullptr;
-            switch (typeId)
-            {
-            case 1: spawned = SpawnSkeletonArcher(p);        break;
-            case 2: spawned = SpawnSlime(p, SlimeSize::Big); break;
-            case 3: spawned = SpawnFlameWisp(p);             break;
-            case 4: spawned = SpawnSporeling(p);             break;
-            case 5: spawned = SpawnShieldbearer(p);          break;
-            case 6: spawned = SpawnPhantom(p);               break;
-            case 7: spawned = SpawnBomberImp(p);             break;
-            case 8: spawned = SpawnWarchief(p); warchiefSpawnedThisRoom = true; break;
-            case 9: spawned = SpawnLivingBlade(p);           break;
-            default: spawned = SpawnBasicEnemy(p);           break;
-            }
-
-            // Role-based placement: nudge specialised roles to sensible spots
-            // (ranged/support to the back, tanks mid, assassins off-angle). The
-            // target is always a valid GetDungeonSpawnPos candidate, so this can't
-            // put an enemy in a wall. Grunts keep their original spread.
-            if (spawned != nullptr)
-            {
-                EnemyRole role = spawned->GetEncounterRole();
-                if (role != EnemyRole::Grunt && role != EnemyRole::Charger)
-                    spawned->Teleport(GetDungeonSpawnPosForRole(role, cellW, cellH));
-            }
+            if (typeId == 8) warchiefSpawnedThisRoom = true;
+            return typeId;
         };
 
+        // ── Environmental hazard roll (first slice of Phase 6 integration) ───
+        // Standard combat rooms only, frequency by tier. The hazard's pressure
+        // cost comes straight out of the enemy budget below, so hazard rooms
+        // field fewer bodies. Lava fits the hot/underground biomes; totems go
+        // anywhere; torches mount on the east/west walls outside the door band.
+        {
+            int frequencyRoll = GetRandomValue(0, 999);
+            if (frequencyRoll < (int)(Balance::Hazards::kRoomFrequencyByTier[tierIdx] * 1000.f))
+            {
+                std::vector<Vector2> forbiddenSpots = {
+                    { sw * 0.5f, cellH },        // north door
+                    { sw * 0.5f, sh - cellH },   // south door
+                    { cellW, sh * 0.5f },        // west door
+                    { sw - cellW, sh * 0.5f },   // east door
+                    _player.GetWorldPos()        // entry position
+                };
+                bool lavaBiome = _currentBiome == Biome::Caverns ||
+                                 _currentBiome == Biome::DemonsInsides ||
+                                 _currentBiome == Biome::Wastelands;
+                int typeRoll = GetRandomValue(0, 2);
+                RoomHazardType hazardType = (typeRoll == 1 && lavaBiome) ? RoomHazardType::LavaPool
+                                          : (typeRoll == 2)             ? RoomHazardType::FireballTorch
+                                                                        : RoomHazardType::FireTotem;
+                if (hazardType == RoomHazardType::FireballTorch)
+                {
+                    bool onWestWall = GetRandomValue(0, 1) == 0;
+                    float laneOffset = Balance::Hazards::kTorchDoorBandHalf + (float)GetRandomValue(0, 160);
+                    float laneY = sh * 0.5f + ((GetRandomValue(0, 1) == 0) ? -laneOffset : laneOffset);
+                    Vector2 torchPos{ onWestWall ? cellW * 2.f : sw - cellW * 2.f, laneY };
+                    _roomHazards.TryPlaceWallTorch(torchPos, { onWestWall ? 1.f : -1.f, 0.f },
+                                                   forbiddenSpots, Balance::Hazards::kMinDistFromDoorway);
+                }
+                else
+                {
+                    Rectangle roomBounds{ 0.f, 0.f, sw, sh };
+                    for (int attempt = 0; attempt < 8; attempt++)
+                        if (_roomHazards.TryPlaceHazard(hazardType, GetDungeonSpawnPos(cellW, cellH),
+                                                        forbiddenSpots, Balance::Hazards::kMinDistFromEntry,
+                                                        roomBounds))
+                            break;
+                }
+            }
+        }
+
+        // ── Pressure budget (Balance::Pressure) ──────────────────────────────
+        // Roll the whole composition first, costing each body by how much
+        // simultaneous danger it adds. When a roll would bust the cap it
+        // downgrades to a plain grunt (cost 1) or stops. Cost per typeId:
+        // grunts/sporelings 1, specialists (ranged/tank/assassin/zoner) 2,
+        // Warchief (support elite) 3 — mirrors the EnemyRole cost model.
+        // Hazards spend from the same budget (fewer bodies in hazard rooms).
+        static constexpr int kTypePressureCost[10] = { 1, 2, 2, 2, 1, 2, 2, 2, 3, 2 };
+        const int pressureCap = std::max(4, Balance::Pressure::kRoomPressureCap[tierIdx]
+                                            - _roomHazards.TotalPressureCost());
+        std::vector<int> plannedTypeIds;
+        plannedTypeIds.reserve(basicCount);
+        int pressureSpent = 0;
+        for (int n = 0; n < basicCount; n++)
+        {
+            int typeId = rollGruntTypeId();
+            int cost   = kTypePressureCost[typeId];
+            if (pressureSpent + cost > pressureCap)
+            {
+                if (pressureSpent + 1 > pressureCap)
+                    break;                    // budget exhausted
+                typeId = 0; cost = 1;         // downgrade to a plain grunt
+            }
+            plannedTypeIds.push_back(typeId);
+            pressureSpent += cost;
+        }
+        _roomPressureSpent  = pressureSpent;
+        _roomPressureCapDbg = pressureCap;
+
+        // Opening slice vs reinforcement waves: never open the fight with more
+        // bodies than the tier's readable cap — the surplus streams in later.
+        _dungeonOpeningCap = Balance::Pressure::kOpeningActiveCap[tierIdx];
+        int openingCount = std::min((int)plannedTypeIds.size(), _dungeonOpeningCap);
+        _dungeonReinforcementTypeIds.assign(plannedTypeIds.begin() + openingCount,
+                                            plannedTypeIds.end());
+        _dungeonReinforcementTimer = Balance::Pressure::kReinforceInterval;
+        if (_debug.IsActive())
+            TraceLog(LOG_INFO, "ROOM PRESSURE tier %d: %d/%d (bodies %d, opening %d, reinforcements %d)",
+                     tierIdx, pressureSpent, pressureCap, (int)plannedTypeIds.size(),
+                     openingCount, (int)_dungeonReinforcementTypeIds.size());
+
         // Ancient Castle: spawn in a tight cluster so enemies charge together.
-        if (_currentBiome == Biome::AncientCastle && basicCount > 1)
+        if (_currentBiome == Biome::AncientCastle && openingCount > 1)
         {
             Vector2 clusterCenter = GetDungeonSpawnPos(cellW, cellH);
             SpawnBasicEnemy(clusterCenter);
-            for (int n = 1; n < basicCount; n++)
+            for (int n = 1; n < openingCount; n++)
             {
                 float   angle = (float)GetRandomValue(0, 628) / 100.f;
                 float   dist  = (float)GetRandomValue(30, 100);
@@ -13940,7 +15034,9 @@ void Engine::SpawnDungeonRoomEnemies()
         }
         else
         {
-            spawnAt([&](Vector2 p){ spawnMixedGrunt(p); }, basicCount);
+            for (int n = 0; n < openingCount; n++)
+                SpawnDungeonGruntByTypeId(plannedTypeIds[n],
+                                          GetDungeonSpawnPos(cellW, cellH), cellW, cellH);
         }
 
         // Cyclops: rare early, moderate mid, common late.
@@ -15113,6 +16209,20 @@ void Engine::UpdateSettings(float dt)
     {
         // -- Keybindings ------------------------------------------------------
 
+        Rectangle aimModeToggle{ panelX + 620.f, contentY + 8.f, 420.f, 40.f };
+        if (mousePressed && CheckCollisionPointRec(mouse, aimModeToggle))
+        {
+            s.abilityAimToggle = !s.abilityAimToggle;
+            _settingsMgr.Save();
+        }
+        if (_settingsRebindSlot < 0 && _settingsGpRebindSlot < 0 &&
+            IsGamepadAvailable(GamepadInput::kGamepad) &&
+            IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_UP))
+        {
+            s.abilityAimToggle = !s.abilityAimToggle;
+            _settingsMgr.Save();
+        }
+
         // Sub-tab click (M&K vs Gamepad) - same geometry as DrawSettingsKeybindings
         const float subTabH   = 40.f;
         const float subTabW   = 160.f;
@@ -15437,6 +16547,16 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
                  stFs, active ? BLACK : RAYWHITE);
         stX += subTabW + subTabGap;
     }
+
+    const GameSettings& settings = _settingsMgr.Get();
+    Rectangle aimModeToggle{ panelX + 620.f, subTabY, 420.f, subTabH };
+    bool aimHovered = CheckCollisionPointRec(mouse, aimModeToggle);
+    DrawRectangleRounded(aimModeToggle, 0.2f, 6,
+        aimHovered ? Color{ 65, 105, 125, 230 } : Color{ 30, 55, 70, 200 });
+    DrawRectangleRoundedLines(aimModeToggle, 0.2f, 6, Color{ 130, 235, 255, 180 });
+    const char* aimMode = settings.abilityAimToggle ? "AIM: PRESS / PRESS" : "AIM: HOLD / RELEASE";
+    DrawText(aimMode, (int)aimModeToggle.x + 14, (int)aimModeToggle.y + 8, 22, RAYWHITE);
+    DrawText("Y", (int)(aimModeToggle.x + aimModeToggle.width - 34.f), (int)aimModeToggle.y + 8, 22, GOLD);
 
     // Divider below sub-tabs
     float subDivY = subTabY + subTabH + 8.f;
@@ -16572,8 +17692,6 @@ void Engine::UpdateDungeonRun(float dt)
             _player.SetTouchDirection(_gamepad.moveDir);
             if (_gamepad.attackPressed)  _player.SetTouchAttack();
             if (_gamepad.dashPressed)    _player.SetTouchDash();
-            for (int i = 0; i < 4; i++)
-                if (_gamepad.abilityPressed[i]) _player.TriggerAbilityCast(i);
             if (!_dungeonScrolling && _gamepad.pausePressed)
             {
                 _stateBeforePause = GameState::DungeonRun;
@@ -16582,6 +17700,7 @@ void Engine::UpdateDungeonRun(float dt)
             }
         }
 
+        UpdateAbilityAiming();
         _player.Update(dt);
         HandlePlayerCastRequest();
         UpdateDungeonMagicGemAndBarrier(dt);
@@ -16908,12 +18027,39 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         eCtx.spawnBossFx        = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
         eCtx.spawnBossCallout   = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
+        RebuildEnemyHazardZones();
+        eCtx.hazards            = &_enemyHazardZones;
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
         if (_currentBiome == Biome::DreamRealm)
             UpdateDreamFlicker(dt);
 
         UpdateBiomeModifiers(dt);
+
+        // Room hazards: bolts go through the shared _enemyProjectiles list so
+        // collision/draw stay centralized; the in-flight count enforces the
+        // environmental projectile cap across hazards AND flame wisps.
+        {
+            RoomHazardContext hazardCtx;
+            hazardCtx.playerPos = _player.GetFeetWorldPos();
+            hazardCtx.deltaTime = dt;
+            int envBoltsInFlight = 0;
+            for (const auto& projectile : _enemyProjectiles)
+                if (projectile.IsActive() && projectile.GetKind() == EnemyProjectileKind::FireBolt)
+                    envBoltsInFlight++;
+            hazardCtx.envProjectilesInFlight = envBoltsInFlight;
+            hazardCtx.spawnFireBolt = [&](Vector2 pos, Vector2 dir, int damage)
+            {
+                EnemyProjectile bolt;
+                bolt.Init(pos, dir, EnemyProjectileKind::FireBolt, damage);
+                _enemyProjectiles.push_back(bolt);
+            };
+            hazardCtx.damagePlayer = [&](int damage, Vector2 fromPos)
+            {
+                _player.TakeDamage(damage, fromPos);
+            };
+            _roomHazards.Update(hazardCtx);
+        }
 
         HandlePlayerMeleeDamage();
         ResolveDungeonEnemyCollisions();
@@ -16971,6 +18117,7 @@ void Engine::UpdateDungeonRun(float dt)
         ApplyPendingReflect();
         UpdateWarlockMinions(dt);
         UpdateWarriorEffects(dt);
+        UpdateMageSpells(dt);
         UpdatePoisonClouds(dt);
         _vfx.Update(dt);
         UpdateDungeonClearEffects(dt);
@@ -17063,11 +18210,42 @@ void Engine::UpdateDungeonRun(float dt)
             _gameState          = GameState::LevelUpChoice;
         }
 
+        // -- Reinforcement waves (see Balance::Pressure) --------------------------
+        // Queued surplus bodies stream in when the field thins out or the wave
+        // timer fires, so late-run populations pressure the player continuously
+        // without opening the fight as an unreadable wall.
+        if (_dungeonEnemiesSpawned && !_dungeonReinforcementTypeIds.empty() && !_dungeonScrolling)
+        {
+            _dungeonReinforcementTimer -= dt;
+            int activeEnemies = GetActiveEnemyCount();
+            bool release = (_dungeonReinforcementTimer <= 0.f) ||
+                           (activeEnemies <= Balance::Pressure::kReinforceRefillActive);
+            if (release)
+            {
+                int spawnable = std::max(1, _dungeonOpeningCap - activeEnemies);
+                int waveSize  = std::min(spawnable, (int)_dungeonReinforcementTypeIds.size());
+                float waveCellW = (float)kVirtualWidth  / (float)RoomLayout::kCols;
+                float waveCellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
+                for (int n = 0; n < waveSize; n++)
+                {
+                    SpawnDungeonGruntByTypeId(_dungeonReinforcementTypeIds.back(),
+                        GetDungeonSpawnPos(waveCellW, waveCellH), waveCellW, waveCellH);
+                    _dungeonReinforcementTypeIds.pop_back();
+                }
+                _dungeonReinforcementTimer = Balance::Pressure::kReinforceInterval;
+                _vfx.SpawnFloatingLabel({ (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.30f },
+                                        "REINFORCEMENTS!", Color{ 255, 170, 70, 255 }, 1.4f);
+                if (_debug.IsActive())
+                    TraceLog(LOG_INFO, "REINFORCEMENT wave: +%d (queued left %d)",
+                             waveSize, (int)_dungeonReinforcementTypeIds.size());
+            }
+        }
+
         // -- Room clear detection -----------------------------------------------
         if (_dungeonEnemiesSpawned)
         {
             SaveDungeonRoomEnemyState();
-            bool allDead = true;
+            bool allDead = _dungeonReinforcementTypeIds.empty();   // waves still pending = not cleared
             for (const auto& e : _enemies)
                 if (e->IsActive()) { allDead = false; break; }
             if (allDead)
@@ -17396,6 +18574,7 @@ void Engine::DrawDungeonRun()
                 DrawDungeonClearEffects();
                 DrawDungeonMagicGemAndBarrier();
                 DrawBiomeModifiers();
+                _roomHazards.Draw(_shakeOffset);   // environmental room hazards
 
                 // Enemies, projectiles, VFX - world == screen in dungeon run mode.
                 // _shakeOffset shifts everything together so the screen-shake effect is visible.
@@ -17515,6 +18694,7 @@ void Engine::DrawDungeonRun()
 
                 // Warrior melee VFX (spins, waves, spikes) drawn over the enemies.
                 DrawWarriorEffects(shakenCamRef);
+                DrawMageSpells(shakenCamRef);
 
                 // Dream Realm flicker - pulsing ring at windup position + destination marker.
                 if (_currentBiome == Biome::DreamRealm)
@@ -17678,6 +18858,7 @@ void Engine::DrawDungeonRun()
                 }
 
                 _player.DrawPlayer(shakenCamRef);
+                DrawAbilityAimPreview();
 
                 // Front half of the Y-sort: props the player is standing
                 // behind draw over them (see split above).
@@ -17766,6 +18947,8 @@ void Engine::DrawDungeonRun()
                 {
                     _debug.Draw(_currentAct, _currentRoom, GetDebugRoomTypeName(_currentRoomType));
                     DrawRoomTelemetry();   // per-room balance readout (Phase 5)
+                    if (_gameState == GameState::DungeonRun)
+                        DrawEnemyFacingDebug();   // facing arrows + front/rear cones
                 }
             }
             if (_isHitboxEditorActive)
@@ -18194,6 +19377,58 @@ void Engine::DrawDebugToggleTab()
         tabSz, RAYWHITE);
 }
 
+// Debug-panel-only overlay: facing arrow, front defence cone, rear vulnerability
+// cone, and the facing-lock countdown for every live enemy. Dungeon rooms fill
+// the screen, so world position == screen position here.
+void Engine::DrawEnemyFacingDebug() const
+{
+    // Cone edges match the gameplay checks in Balance::Facing (cos-space).
+    const float frontHalfAngle = acosf(Balance::Facing::kFrontConeDot);
+    const float rearHalfAngle  = acosf(Balance::Facing::kRearConeDot);
+    const float coneLen  = 90.f;
+    const float arrowLen = 60.f;
+
+    auto drawCone = [](Vector2 center, float baseAngle, float halfAngle, float len, Color color)
+    {
+        Vector2 edgeA{ center.x + cosf(baseAngle - halfAngle) * len,
+                       center.y + sinf(baseAngle - halfAngle) * len };
+        Vector2 edgeB{ center.x + cosf(baseAngle + halfAngle) * len,
+                       center.y + sinf(baseAngle + halfAngle) * len };
+        DrawLineEx(center, edgeA, 2.f, color);
+        DrawLineEx(center, edgeB, 2.f, color);
+    };
+
+    for (const auto& enemy : _enemies)
+    {
+        if (!enemy->IsActive() || !enemy->IsAlive())
+            continue;
+
+        Vector2 center = enemy->GetWorldPos();
+        float sign = enemy->GetFacingSign();
+        float facingAngle = (sign >= 0.f) ? 0.f : PI;
+
+        // Facing arrow (yellow), front defence cone (orange), rear cone (green).
+        Vector2 tip{ center.x + sign * arrowLen, center.y };
+        DrawLineEx(center, tip, 3.f, YELLOW);
+        DrawLineEx(tip, { tip.x - sign * 12.f, tip.y - 8.f }, 3.f, YELLOW);
+        DrawLineEx(tip, { tip.x - sign * 12.f, tip.y + 8.f }, 3.f, YELLOW);
+        drawCone(center, facingAngle, frontHalfAngle, coneLen, Fade(ORANGE, 0.8f));
+        drawCone(center, facingAngle + PI, rearHalfAngle, coneLen, Fade(GREEN, 0.8f));
+
+        float lockRemaining = enemy->GetFacingLockRemaining();
+        if (lockRemaining > 0.f)
+            DrawText(TextFormat("lock %.2f", lockRemaining),
+                     (int)(center.x - 30.f), (int)(center.y - 70.f), 16, ORANGE);
+    }
+
+    // Room pressure readout (Balance::Pressure): spent/cap, pending waves,
+    // live hazards. Zeroed in non-combat rooms.
+    DrawText(TextFormat("PRESSURE %d / %d   waves queued %d   hazards %d",
+                        _roomPressureSpent, _roomPressureCapDbg,
+                        (int)_dungeonReinforcementTypeIds.size(), _roomHazards.ActiveCount()),
+             20, 150, 20, ORANGE);
+}
+
 void Engine::DrawRoomTelemetry() const
 {
     // Balance telemetry readout — one line per cleared room, newest first.
@@ -18403,7 +19638,7 @@ void Engine::ScanAbilityArcTaps()
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
             int slot = hitSlot(GetVirtualMousePos());
-            if (slot >= 0) _player.TriggerAbilityCast(slot);
+            if (slot >= 0) BeginAbilityInput(slot);
         }
         return;
     }
@@ -18437,7 +19672,7 @@ void Engine::ScanAbilityArcTaps()
         if (slot >= 0)
         {
             _abilityTapSeenIds.push_back(id);
-            _player.TriggerAbilityCast(slot);
+            BeginAbilityInput(slot);
         }
     }
 }
@@ -18515,7 +19750,8 @@ void Engine::DrawTouchAbilityArc()
                                   _hudCfg.touchSlotRightPad, _hudCfg.touchSlotYOff,
                                   _touchSlotOffset[slot]);
         bool isEmpty = (ability == AbilityType::None);
-        bool canCast = !isEmpty && _player.CanCastAbility(ability);
+        bool onCooldown = !isEmpty && _player.IsSlotOnCooldown(slot);
+        bool canCast = !isEmpty && !onCooldown && _player.CanCastAbility(ability);
         bool isDragged = (_hudEditorActive && slot == _touchSlotDragIdx);
 
         Color bgColor     = isDragged ? Fade(DARKBLUE, 0.70f)
@@ -18552,6 +19788,19 @@ void Engine::DrawTouchAbilityArc()
         float cx = rec.x + rec.width  * 0.5f;
         float cy = rec.y + rec.height * 0.42f;
         DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
+
+        // Cooldown sweep + seconds remaining, matching the desktop bar.
+        if (onCooldown)
+        {
+            float fraction = _player.GetSlotCooldownFraction(slot);
+            DrawRectangleRec({ rec.x, rec.y, rec.width, rec.height * fraction }, Fade(BLACK, 0.62f));
+            const char* cdText = TextFormat("%.1f", _player.GetSlotCooldownRemaining(slot));
+            int cdFs = 26;
+            DrawText(cdText,
+                (int)(cx - MeasureText(cdText, cdFs) * 0.5f),
+                (int)(rec.y + rec.height * 0.42f - cdFs * 0.5f),
+                cdFs, RAYWHITE);
+        }
 
         // Ability name at the bottom, matching desktop bar
         const char* abilityName = GetAbilityName(ability);

@@ -190,6 +190,7 @@
     <ClCompile Include="ToxicVermin.cpp" />
     <ClCompile Include="AncientBear.cpp" />
     <ClCompile Include="PlayerPreview.cpp" />
+    <ClCompile Include="RoomHazardDirector.cpp" />
     <ClCompile Include="Molarbeast.cpp" />
     <ClCompile Include="Ogre.cpp" />
     <ClCompile Include="OverlayRenderer.cpp" />
@@ -272,6 +273,7 @@
     <ClInclude Include="ToxicVermin.h" />
     <ClInclude Include="AncientBear.h" />
     <ClInclude Include="PlayerPreview.h" />
+    <ClInclude Include="RoomHazardDirector.h" />
     <ClInclude Include="Molarbeast.h" />
     <ClInclude Include="NineSlice.h" />
     <ClInclude Include="Ogre.h" />

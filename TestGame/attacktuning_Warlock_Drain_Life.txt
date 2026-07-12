@@ -1,0 +1,7 @@
+box_x=110.000
+box_y=0.000
+box_w=220.000
+box_h=130.000
+fx=DrainLife
+fx_forward=102.000
+fx_height=-4.000

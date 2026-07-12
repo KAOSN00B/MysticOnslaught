@@ -88,6 +88,9 @@ private:
     float     _frameTimer = 0.f;
     bool      _paused    = false;
     HitBox    _box       = { 0.f, 0.f, 140.f, 140.f };
+    Vector2   _fxOffset  = { 0.f, 0.f }; // visual FX centre relative to attacker
+    bool      _fxOffsetSet = false;
+    bool      _editFxPosition = false;
     int       _dragHandle = -1;         // -1 none, 0..3 corners, 4 body
     Vector2   _dragMouseStart{};
     HitBox    _boxAtDragStart{};

@@ -1,8 +1,10 @@
-box_x=-1.000
-box_y=26.000
+box_x=84.000
+box_y=8.000
 box_w=150.000
 box_h=140.000
 fx=Backstab
+fx_forward=52.000
+fx_height=-4.000
 fire_forward=73.000
 fire_height=45.000
 proj_scale=1.000

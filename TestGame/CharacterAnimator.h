@@ -4,6 +4,7 @@
 #include "Enemy.h"
 #include "CharacterTuning.h"
 #include "AttackTuning.h"
+#include "AttackEditor.h"
 
 #include <functional>
 #include <memory>
@@ -18,10 +19,11 @@ public:
     void Draw();
     void Unload();
     bool WantsToExit() const { return _wantsToExit; }
+    void OpenAttackLibrary();
 
 private:
-    enum class Screen { Select, Edit };
-    enum class EditTarget { Body, Melee, Attack };
+    enum class Screen { Select, Edit, AttackLibrary };
+    enum class EditTarget { Sprite, Body, Melee, Attack };
 
     struct CharacterEntry
     {
@@ -61,6 +63,7 @@ private:
     bool _wantsToExit = false;
 
     std::unique_ptr<Enemy> _enemy;
+    AttackEditor _attackEditor;
     int _animIndex = 0;
     bool _animPaused = false;
     EditTarget _target = EditTarget::Body;
@@ -70,6 +73,7 @@ private:
         std::string label;
         std::string key;
         bool basic = false;
+        AbilityType ability = AbilityType::None;
     };
     std::vector<AttackOption> _attackOptions;
     int _attackIndex = 0;

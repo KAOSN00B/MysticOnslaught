@@ -1,8 +1,10 @@
-box_x=0.000
-box_y=0.000
+box_x=181.000
+box_y=-19.000
 box_w=346.000
 box_h=452.000
 fx=DivineStorm
+fx_forward=175.000
+fx_height=-9.000
 fire_forward=2.000
 fire_height=42.000
 proj_scale=1.000

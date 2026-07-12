@@ -1,3 +1,10 @@
+box_x=132.000
+box_y=2.000
+box_w=210.000
+box_h=200.000
+fx=Smite
+fx_forward=123.000
+fx_height=-1.000
 fire_forward=2.000
 fire_height=42.000
 proj_scale=1.000

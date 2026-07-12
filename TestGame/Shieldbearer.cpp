@@ -80,6 +80,9 @@ void Shieldbearer::ResetForSpawn(Vector2 pos)
     _attackBoxOffsetX  = 50.f;
 
     _blockFlashTimer = 0.f;
+    // Heavy shield unit: pivots slowly (see Balance::Facing), so circling behind
+    // the shield is a real tactic instead of a frame-perfect race.
+    _turnCommitInterval = Balance::Facing::kHeavyTurnCommitInterval;
 
     _texture   = _idleAnim;
     _height    = _texture.height;
@@ -91,13 +94,12 @@ void Shieldbearer::ResetForSpawn(Vector2 pos)
 
 void Shieldbearer::TakeDamage(int damage, Vector2 attackerPos)
 {
-    // The raised shield blocks anything arriving from the facing side.
-    // Attacks from behind (or exactly above/below) get through in full.
+    // The raised shield blocks attacks arriving inside the frontal cone
+    // (dot-product check — see Balance::Facing). Hits from behind or from the
+    // exposed sides get through in full.
     if (!_dying && IsAlive())
     {
-        float attackSide = attackerPos.x - _worldPos.x;
-        bool fromTheFront = (attackSide * _rightLeft) > 0.f;
-        if (fromTheFront)
+        if (IsPositionInFront(attackerPos, Balance::Facing::kFrontConeDot))
         {
             _blockFlashTimer = 0.22f;
             float pitch = GetRandomValue(90, 120) / 100.f;

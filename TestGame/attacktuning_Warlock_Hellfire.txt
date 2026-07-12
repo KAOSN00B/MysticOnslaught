@@ -1,5 +1,7 @@
+box_x=115.000
+box_y=5.000
+box_w=296.000
+box_h=330.000
 fx=Hellfire
-box_x=4.00
-box_y=9.00
-box_w=296.00
-box_h=330.00
+fx_forward=94.000
+fx_height=4.000

@@ -36,6 +36,7 @@ void SettingsManager::Load()
         else if (strcmp(key, "master_volume")   == 0) _settings.masterVolume   = (float)atof(val);
         else if (strcmp(key, "music_volume")    == 0) _settings.musicVolume    = (float)atof(val);
         else if (strcmp(key, "sfx_volume")      == 0) _settings.sfxVolume      = (float)atof(val);
+        else if (strcmp(key, "ability_aim_toggle") == 0) _settings.abilityAimToggle = (atoi(val) != 0);
     }
     fclose(f);
 
@@ -67,6 +68,7 @@ void SettingsManager::Save() const
     fprintf(f, "master_volume=%.3f\n", _settings.masterVolume);
     fprintf(f, "music_volume=%.3f\n",  _settings.musicVolume);
     fprintf(f, "sfx_volume=%.3f\n",    _settings.sfxVolume);
+    fprintf(f, "ability_aim_toggle=%d\n", _settings.abilityAimToggle ? 1 : 0);
     fclose(f);
 #endif
 }

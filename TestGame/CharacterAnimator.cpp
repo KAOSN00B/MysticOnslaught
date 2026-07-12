@@ -35,6 +35,7 @@ namespace
     constexpr int kHandleBottomRight = 3;
     constexpr int kHandleCentre      = 4;
     constexpr int kHandleRadius      = 5;
+    constexpr int kHandleFxOrigin    = 6;
 
     constexpr float kHandleSize = 14.f;
     constexpr float kPanelWidth = 380.f;
@@ -45,6 +46,12 @@ namespace
     const Color kBodyColor  = { 90, 220, 255, 255 };   // cyan
     const Color kMeleeColor = { 255, 110, 110, 255 };  // red
     const Color kAttackColor = { 255, 180, 70, 255 };  // orange
+    const Color kSpriteColor = { 220, 120, 255, 255 };  // magenta
+
+    Rectangle AttackLibraryButtonRect()
+    {
+        return Rectangle{ 56.f, 108.f, 430.f, 66.f };
+    }
 
     void DrawCheckerboard()
     {
@@ -94,7 +101,15 @@ void CharacterAnimator::Init()
 
 void CharacterAnimator::Unload()
 {
+    _attackEditor.Unload();
     _enemy.reset();
+}
+
+void CharacterAnimator::OpenAttackLibrary()
+{
+    _enemy.reset();
+    _attackEditor.Init();
+    _screen = Screen::AttackLibrary;
 }
 
 // =============================================================================
@@ -115,7 +130,7 @@ void CharacterAnimator::OpenCharacter(int index)
 
     _animIndex  = 0;
     _animPaused = false;
-    _target     = EditTarget::Body;
+    _target     = EditTarget::Sprite;
     _dragHandle = -1;
     _rowDrag    = -1;
     _spriteDragActive = false;
@@ -224,11 +239,11 @@ void CharacterAnimator::BuildAttackList()
     _attackOptions.clear();
     const char* classNames[] = { "Mage", "Warrior", "Hunter", "Rogue", "Paladin", "Warlock" };
     for (int i = 0; i < (int)PlayerClass::Count; ++i)
-        _attackOptions.push_back(AttackOption{ std::string(classNames[i]) + " Basic", AttackTuningKeyForBasic(i), true });
+        _attackOptions.push_back(AttackOption{ std::string(classNames[i]) + " Basic", AttackTuningKeyForBasic(i), true, AbilityType::None });
     for (AbilityType ability : kAllAbilities)
     {
         std::string label = std::string(AttackOwnerForAbility((int)ability)) + " " + GetAbilityName(ability);
-        _attackOptions.push_back(AttackOption{ label, AttackTuningKeyForAbility(ability), false });
+        _attackOptions.push_back(AttackOption{ label, AttackTuningKeyForAbility(ability), false, ability });
     }
     SelectAttack(0);
 }
@@ -256,6 +271,68 @@ const char* CharacterAnimator::CurrentAttackLabel() const
     return _attackOptions[_attackIndex].label.c_str();
 }
 
+static void ApplyAbilityLabDefaults(AbilityType ability, AttackTuning& tuning)
+{
+    auto setDirection = [&](float range, float length, float width, float moveDistance = 0.f) {
+        tuning.aimRange = range;
+        tuning.effectLength = length;
+        tuning.effectWidth = width;
+        if (moveDistance > 0.f) tuning.moveDistance = moveDistance;
+    };
+    auto setGround = [&](float range, float radius) {
+        tuning.aimRange = range;
+        tuning.areaRadius = radius;
+    };
+
+    switch (ability)
+    {
+    case AbilityType::FireSpread:       setGround(560.f, 45.f); tuning.effectLength = 420.f; tuning.effectWidth = 90.f; break;
+    case AbilityType::IceSpread:        tuning.areaRadius = 210.f; break;
+    case AbilityType::ElectricSpread:   setDirection(430.f, 430.f, 100.f, 430.f); tuning.areaRadius = 95.f; break;
+    case AbilityType::FireBolt:         setDirection(900.f, 900.f, 90.f); tuning.areaRadius = 135.f; break;
+    case AbilityType::IceBolt:          setDirection(1050.f, 1050.f, 65.f); break;
+    case AbilityType::ElectricBolt:     setDirection(800.f, 800.f, 80.f); break;
+    case AbilityType::FireUltimate:     setGround(800.f, 250.f); break;
+    case AbilityType::IceUltimate:      setGround(720.f, 300.f); break;
+    case AbilityType::ElectricUltimate: setDirection(850.f, 850.f, 230.f); break;
+
+    case AbilityType::WarCleave:       setDirection(210.f, 210.f, 200.f); break;
+    case AbilityType::ThrowingAxe:     setDirection(520.f, 520.f, 90.f); break;
+    case AbilityType::Rend:            setDirection(270.f, 150.f, 140.f, 120.f); break;
+    case AbilityType::ShieldBash:      setDirection(240.f, 150.f, 150.f, 90.f); break;
+    case AbilityType::Earthshatter:    setDirection(640.f, 640.f, 130.f); break;
+
+    case AbilityType::FanOfKnives:     setDirection(360.f, 360.f, 240.f); break;
+    case AbilityType::Shadowstep:      setDirection(300.f, 300.f, 110.f, 300.f); break;
+    case AbilityType::PoisonVial:      setGround(500.f, 130.f); break;
+    case AbilityType::Backstab:        setDirection(150.f, 150.f, 120.f); break;
+    case AbilityType::Eviscerate:      setDirection(210.f, 210.f, 130.f); break;
+    case AbilityType::RainOfBlades:    setGround(680.f, 220.f); break;
+
+    case AbilityType::PiercingShot:    setDirection(600.f, 600.f, 70.f); break;
+    case AbilityType::Multishot:       setDirection(380.f, 380.f, 260.f); break;
+    case AbilityType::FrostTrap:       setGround(500.f, 175.f); break;
+    case AbilityType::ExplosiveArrow:  setGround(500.f, 195.f); break;
+    case AbilityType::Roll:            setDirection(240.f, 240.f, 100.f, 240.f); break;
+    case AbilityType::Volley:          setDirection(660.f, 660.f, 84.f); break;
+    case AbilityType::ArrowStorm:      setGround(700.f, 360.f); break;
+    case AbilityType::PiercingBarrage: setDirection(900.f, 900.f, 150.f); break;
+
+    case AbilityType::Smite:           setDirection(210.f, 210.f, 200.f); break;
+    case AbilityType::Consecrate:      setGround(420.f, 170.f); break;
+    case AbilityType::HolyBolt:        setDirection(560.f, 560.f, 80.f); break;
+    case AbilityType::HammerThrow:     setDirection(480.f, 480.f, 110.f); break;
+    case AbilityType::HammerOfJustice: setDirection(660.f, 660.f, 150.f); break;
+
+    case AbilityType::ShadowBolt:     setDirection(560.f, 560.f, 80.f); break;
+    case AbilityType::DrainLife:      setDirection(220.f, 220.f, 130.f); break;
+    case AbilityType::Curse:          setDirection(260.f, 260.f, 200.f); break;
+    case AbilityType::CorruptionPool: setGround(500.f, 150.f); break;
+    case AbilityType::ShadowNova:     setDirection(680.f, 680.f, 200.f); break;
+    default: break;
+    }
+}
+
 void CharacterAnimator::LoadCurrentAttackTuning()
 {
     _attackTuning = AttackTuning{};
@@ -269,6 +346,20 @@ void CharacterAnimator::LoadCurrentAttackTuning()
     _attackTuning.projLifetime = (_attackIndex >= 0 && _attackIndex < (int)_attackOptions.size() && _attackOptions[_attackIndex].basic) ? 1.4f : 5.f;
     _attackTuning.hasCooldown = true;
     _attackTuning.cooldown = 0.f;
+    _attackTuning.hasAbility = true;
+    _attackTuning.aimRange = 600.f;
+    _attackTuning.areaRadius = 150.f;
+    _attackTuning.effectLength = 400.f;
+    _attackTuning.effectWidth = 90.f;
+    _attackTuning.effectDuration = 4.f;
+    _attackTuning.tickInterval = 0.5f;
+    _attackTuning.chainRange = 280.f;
+    _attackTuning.maxTargets = 4.f;
+    _attackTuning.moveDistance = 400.f;
+    _attackTuning.previewAngle = 0.f;
+
+    if (_attackIndex >= 0 && _attackIndex < (int)_attackOptions.size())
+        ApplyAbilityLabDefaults(_attackOptions[_attackIndex].ability, _attackTuning);
 
     if (const AttackTuning* saved = AttackTuningStore::Get(CurrentAttackKey()))
         _attackTuning = *saved;
@@ -276,6 +367,7 @@ void CharacterAnimator::LoadCurrentAttackTuning()
     _attackTuning.hasFirePoint = true;
     _attackTuning.hasProjectile = true;
     _attackTuning.hasCooldown = true;
+    _attackTuning.hasAbility = true;
     if (_attackTuning.projScale <= 0.f) _attackTuning.projScale = 1.f;
     if (_attackTuning.projRadius <= 0.f) _attackTuning.projRadius = 26.f;
     if (_attackTuning.projSpeed <= 0.f) _attackTuning.projSpeed = 650.f;
@@ -307,6 +399,17 @@ void CharacterAnimator::DeleteCurrentTuning()
 // =============================================================================
 void CharacterAnimator::Update()
 {
+    if (_screen == Screen::AttackLibrary)
+    {
+        _attackEditor.Update();
+        if (_attackEditor.WantsToExit())
+        {
+            _attackEditor.Unload();
+            _screen = Screen::Select;
+        }
+        return;
+    }
+
     if (_screen == Screen::Select)
     {
         if (IsKeyPressed(KEY_ESCAPE))
@@ -316,6 +419,12 @@ void CharacterAnimator::Update()
         }
 
         Vector2 mouse = GetVirtualMousePos();
+        if (CheckCollisionPointRec(mouse, AttackLibraryButtonRect()) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            OpenAttackLibrary();
+            return;
+        }
         for (int i = 0; i < (int)_entries.size(); i++)
         {
             // Two-column layout: 10 rows on the left, the rest on the right.
@@ -410,23 +519,29 @@ void CharacterAnimator::UpdateEditInput()
             SelectAttack(_attackIndex + 1);
     }
 
-    // TAB cycles Body / Melee / Attack. Melee is only available on its authored anim.
+    // TAB cycles Sprite / Body / Melee / Attack. Sprite mode exposes visual
+    // alignment directly instead of requiring the hidden right-drag shortcut.
     if (IsKeyPressed(KEY_TAB))
     {
         if (PlayerAttackEditorAvailable())
         {
-            if (_target == EditTarget::Body)
+            if (_target == EditTarget::Sprite)
+                _target = EditTarget::Body;
+            else if (_target == EditTarget::Body)
                 _target = MeleeEditableNow() ? EditTarget::Melee : EditTarget::Attack;
             else if (_target == EditTarget::Melee)
                 _target = EditTarget::Attack;
             else
-                _target = EditTarget::Body;
+                _target = EditTarget::Sprite;
         }
         else
         {
-            _target = (_target == EditTarget::Body && MeleeEditableNow())
-                ? EditTarget::Melee
-                : EditTarget::Body;
+            if (_target == EditTarget::Sprite)
+                _target = EditTarget::Body;
+            else if (_target == EditTarget::Body && MeleeEditableNow())
+                _target = EditTarget::Melee;
+            else
+                _target = EditTarget::Sprite;
         }
         _dragHandle = -1;
     }
@@ -489,6 +604,9 @@ void CharacterAnimator::UpdateEditInput()
     Rectangle fpsRow{   20.f, kValueRowsY + kRowHeight + 8.f, kPanelWidth - 40.f, kRowHeight };
     Rectangle attackRows[5];
     for (int i = 0; i < 5; ++i) attackRows[i] = Rectangle{ 20.f, kAttackRowsY + i * (kRowHeight + 6.f), kPanelWidth - 40.f, kRowHeight };
+    Rectangle labRows[10];
+    for (int i = 0; i < 10; ++i)
+        labRows[i] = Rectangle{ (float)kVirtualWidth - 420.f, 110.f + i * 46.f, 400.f, 40.f };
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
         if (CheckCollisionPointRec(mouse, scaleRow))
@@ -514,6 +632,21 @@ void CharacterAnimator::UpdateEditInput()
                 _rowDrag = 2 + i;
                 _rowDragStartX = mouse.x;
                 const float values[5] = { _attackTuning.projScale, _attackTuning.projRadius, _attackTuning.projSpeed, _attackTuning.projLifetime, _attackTuning.cooldown };
+                _rowDragStartValue = values[i];
+                break;
+            }
+            for (int i = 0; i < 10; ++i)
+            {
+                if (!CheckCollisionPointRec(mouse, labRows[i])) continue;
+                _target = EditTarget::Attack;
+                _rowDrag = 7 + i;
+                _rowDragStartX = mouse.x;
+                const float values[10] = {
+                    _attackTuning.aimRange, _attackTuning.areaRadius,
+                    _attackTuning.effectLength, _attackTuning.effectWidth,
+                    _attackTuning.effectDuration, _attackTuning.tickInterval,
+                    _attackTuning.chainRange, _attackTuning.maxTargets,
+                    _attackTuning.moveDistance, _attackTuning.previewAngle };
                 _rowDragStartValue = values[i];
                 break;
             }
@@ -546,8 +679,19 @@ void CharacterAnimator::UpdateEditInput()
                 if (attackRow == 2) _attackTuning.projSpeed = std::clamp(_rowDragStartValue + deltaX * 5.f, 0.f, 4000.f);
                 if (attackRow == 3) _attackTuning.projLifetime = std::clamp(_rowDragStartValue + deltaX * 0.02f, 0.05f, 20.f);
                 if (attackRow == 4) _attackTuning.cooldown = std::clamp(_rowDragStartValue + deltaX * 0.01f, 0.f, 20.f);
+                if (attackRow == 5) _attackTuning.aimRange = std::clamp(_rowDragStartValue + deltaX * 2.f, 40.f, 2400.f);
+                if (attackRow == 6) _attackTuning.areaRadius = std::clamp(_rowDragStartValue + deltaX * 0.5f, 10.f, 800.f);
+                if (attackRow == 7) _attackTuning.effectLength = std::clamp(_rowDragStartValue + deltaX * 1.f, 20.f, 1800.f);
+                if (attackRow == 8) _attackTuning.effectWidth = std::clamp(_rowDragStartValue + deltaX * 0.4f, 10.f, 600.f);
+                if (attackRow == 9) _attackTuning.effectDuration = std::clamp(_rowDragStartValue + deltaX * 0.02f, 0.1f, 30.f);
+                if (attackRow == 10) _attackTuning.tickInterval = std::clamp(_rowDragStartValue + deltaX * 0.005f, 0.05f, 5.f);
+                if (attackRow == 11) _attackTuning.chainRange = std::clamp(_rowDragStartValue + deltaX * 1.f, 20.f, 1200.f);
+                if (attackRow == 12) _attackTuning.maxTargets = std::clamp(roundf(_rowDragStartValue + deltaX * 0.03f), 1.f, 20.f);
+                if (attackRow == 13) _attackTuning.moveDistance = std::clamp(_rowDragStartValue + deltaX * 1.f, 0.f, 1600.f);
+                if (attackRow == 14) _attackTuning.previewAngle = std::clamp(_rowDragStartValue + deltaX * 0.5f, -180.f, 180.f);
                 _attackTuning.hasProjectile = true;
                 _attackTuning.hasCooldown = true;
+                _attackTuning.hasAbility = true;
                 _attackTuningDirty = true;
             }
             return;   // a row drag owns the mouse, so no handle interaction
@@ -574,6 +718,10 @@ void CharacterAnimator::UpdateHandleDrag(Vector2 mouse)
     Rectangle meleeRel = MeleeEditableNow() ? GetEffectiveMeleeRel() : Rectangle{};
     Vector2 attackFire{ screenCenter.x + _attackTuning.fireForward, screenCenter.y + _attackTuning.fireHeight };
     Vector2 attackRadiusHandle{ attackFire.x + std::max(1.f, _attackTuning.projRadius), attackFire.y };
+    Vector2 attackFxOrigin{ screenCenter.x + _attackTuning.fxForward, screenCenter.y + _attackTuning.fxHeight };
+    Vector2 spriteOffset = _enemy->GetAnimDrawOffsetValue(_animIndex);
+    float facing = (_enemy->GetEditorFacing() >= 0.f) ? 1.f : -1.f;
+    Vector2 spriteHandle{ screenCenter.x + spriteOffset.x * facing, screenCenter.y + spriteOffset.y };
 
     auto rectHandles = [&](Rectangle rel, Vector2* outPositions)
     {
@@ -588,6 +736,13 @@ void CharacterAnimator::UpdateHandleDrag(Vector2 mouse)
     // Clicking ANY overlay's handle selects that target automatically.
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _dragHandle == -1)
     {
+        auto tryBeginSpriteDrag = [&]() -> bool
+        {
+            if (!HandleHit(mouse, spriteHandle)) return false;
+            _dragHandle = kHandleCentre;
+            return true;
+        };
+
         auto tryBeginBodyDrag = [&]() -> bool
         {
             Vector2 centreHandle{ screenCenter.x + bodyOffset.x, screenCenter.y + bodyOffset.y };
@@ -625,7 +780,9 @@ void CharacterAnimator::UpdateHandleDrag(Vector2 mouse)
         {
             if (!PlayerAttackEditorAvailable())
                 return false;
-            if (HandleHit(mouse, attackRadiusHandle))
+            if (HandleHit(mouse, attackFxOrigin))
+                _dragHandle = kHandleFxOrigin;
+            else if (HandleHit(mouse, attackRadiusHandle))
                 _dragHandle = kHandleRadius;
             else if (HandleHit(mouse, attackFire))
                 _dragHandle = kHandleCentre;
@@ -634,21 +791,31 @@ void CharacterAnimator::UpdateHandleDrag(Vector2 mouse)
 
         // Active target gets priority when handles overlap.
         bool hit = false;
-        if (_target == EditTarget::Body)
+        if (_target == EditTarget::Sprite)
+        {
+            hit = tryBeginSpriteDrag();
+            if (!hit && tryBeginBodyDrag()) { _target = EditTarget::Body; hit = true; }
+            if (!hit && tryBeginMeleeDrag()) { _target = EditTarget::Melee; hit = true; }
+            if (!hit && tryBeginAttackDrag()) { _target = EditTarget::Attack; hit = true; }
+        }
+        else if (_target == EditTarget::Body)
         {
             hit = tryBeginBodyDrag();
+            if (!hit && tryBeginSpriteDrag()) { _target = EditTarget::Sprite; hit = true; }
             if (!hit && tryBeginMeleeDrag()) { _target = EditTarget::Melee; hit = true; }
             if (!hit && tryBeginAttackDrag()) { _target = EditTarget::Attack; hit = true; }
         }
         else if (_target == EditTarget::Melee)
         {
             hit = tryBeginMeleeDrag();
+            if (!hit && tryBeginSpriteDrag()) { _target = EditTarget::Sprite; hit = true; }
             if (!hit && tryBeginBodyDrag()) { _target = EditTarget::Body; hit = true; }
             if (!hit && tryBeginAttackDrag()) { _target = EditTarget::Attack; hit = true; }
         }
         else
         {
             hit = tryBeginAttackDrag();
+            if (!hit && tryBeginSpriteDrag()) { _target = EditTarget::Sprite; hit = true; }
             if (!hit && tryBeginBodyDrag()) { _target = EditTarget::Body; hit = true; }
             if (!hit && tryBeginMeleeDrag()) { _target = EditTarget::Melee; hit = true; }
         }
@@ -664,9 +831,21 @@ void CharacterAnimator::UpdateHandleDrag(Vector2 mouse)
     }
 
     // ── Apply drag ────────────────────────────────────────────────────────────
+    if (_target == EditTarget::Sprite)
+    {
+        _enemy->SetAnimDrawOffset(_animIndex, Vector2{ mouseRel.x * facing, mouseRel.y });
+        return;
+    }
+
     if (_target == EditTarget::Attack && PlayerAttackEditorAvailable())
     {
-        if (_dragHandle == kHandleCentre)
+        if (_dragHandle == kHandleFxOrigin)
+        {
+            _attackTuning.fxForward = mouseRel.x;
+            _attackTuning.fxHeight = mouseRel.y;
+            _attackTuning.hasFxOffset = true;
+        }
+        else if (_dragHandle == kHandleCentre)
         {
             _attackTuning.fireForward = mouseRel.x;
             _attackTuning.fireHeight = mouseRel.y;
@@ -717,6 +896,12 @@ bool CharacterAnimator::HandleHit(Vector2 mouse, Vector2 screenPos) const
 // =============================================================================
 void CharacterAnimator::Draw()
 {
+    if (_screen == Screen::AttackLibrary)
+    {
+        _attackEditor.Draw();
+        return;
+    }
+
     DrawCheckerboard();
 
     if (_screen == Screen::Select)
@@ -727,12 +912,22 @@ void CharacterAnimator::Draw()
 
 void CharacterAnimator::DrawSelectScreen()
 {
-    const char* title = "CHARACTER ANIMATOR";
+    const char* title = "CHARACTER + ATTACK ANIMATOR";
     DrawText(title, (int)(kVirtualWidth * 0.5f - MeasureText(title, 60) * 0.5f), 110, 60, RAYWHITE);
-    const char* subtitle = "Pick a character to adjust its hitboxes and animations";
+    const char* subtitle = "Sprite alignment, animations, fire points, attack FX and damage hitboxes";
     DrawText(subtitle, (int)(kVirtualWidth * 0.5f - MeasureText(subtitle, 26) * 0.5f), 190, 26, LIGHTGRAY);
 
     Vector2 mouse = GetVirtualMousePos();
+    Rectangle attackLibrary = AttackLibraryButtonRect();
+    bool attackHovered = CheckCollisionPointRec(mouse, attackLibrary);
+    DrawRectangleRounded(attackLibrary, 0.18f, 6,
+        attackHovered ? Color{ 92, 66, 38, 255 } : Color{ 62, 50, 38, 255 });
+    DrawRectangleRoundedLines(attackLibrary, 0.18f, 6,
+        attackHovered ? GOLD : Fade(kAttackColor, 0.65f));
+    DrawText("ATTACK FX + HITBOXES", (int)attackLibrary.x + 18,
+        (int)attackLibrary.y + 10, 25, RAYWHITE);
+    DrawText("all player abilities and bosses", (int)attackLibrary.x + 18,
+        (int)attackLibrary.y + 39, 17, LIGHTGRAY);
     for (int i = 0; i < (int)_entries.size(); i++)
     {
         const CharacterEntry& entry = _entries[i];
@@ -781,6 +976,19 @@ void CharacterAnimator::DrawEditScreen()
 
 void CharacterAnimator::DrawOverlays(Vector2 screenCenter)
 {
+    // Sprite-pixel anchor. This moves only the rendered animation; collision
+    // stays fixed so visual offsets can be corrected without moving gameplay.
+    {
+        Vector2 offset = _enemy->GetAnimDrawOffsetValue(_animIndex);
+        float facing = (_enemy->GetEditorFacing() >= 0.f) ? 1.f : -1.f;
+        Vector2 anchor{ screenCenter.x + offset.x * facing, screenCenter.y + offset.y };
+        bool active = _target == EditTarget::Sprite;
+        Color color = active ? kSpriteColor : Fade(kSpriteColor, 0.38f);
+        DrawLineEx(screenCenter, anchor, 2.f, Fade(color, 0.55f));
+        DrawHandle(anchor, active && _dragHandle == kHandleCentre, active ? GOLD : color);
+        DrawText("SPRITE PIXELS", (int)anchor.x + 14, (int)anchor.y + 12, 16, color);
+    }
+
     // ── Body circle (cyan) — per animation ────────────────────────────────────
     {
         Vector2 bodyOffset;
@@ -853,17 +1061,63 @@ void CharacterAnimator::DrawAttackOverlay(Vector2 screenCenter)
     if (!PlayerAttackEditorAvailable()) return;
 
     Vector2 fire{ screenCenter.x + _attackTuning.fireForward, screenCenter.y + _attackTuning.fireHeight };
+    Vector2 fxOrigin{ screenCenter.x + _attackTuning.fxForward, screenCenter.y + _attackTuning.fxHeight };
     float radius = std::max(1.f, _attackTuning.projRadius);
-    float range = std::max(40.f, _attackTuning.projSpeed * _attackTuning.projLifetime);
+    float range = std::max(40.f, _attackTuning.aimRange);
+    float angle = _attackTuning.previewAngle * DEG2RAD;
+    Vector2 aimDir{ cosf(angle), sinf(angle) };
+    Vector2 aimEnd = Vector2Add(fire, Vector2Scale(aimDir, range));
     bool active = _target == EditTarget::Attack;
     Color color = active ? kAttackColor : Fade(kAttackColor, 0.42f);
 
+    // Damage boxes are authored in the Attack FX + Hitboxes library but shown
+    // here against the live character, exposing fire-point/hitbox mismatches.
+    if (_attackTuning.hasBox && _attackTuning.w > 0.f && _attackTuning.h > 0.f)
+    {
+        Rectangle damageArea{
+            screenCenter.x + _attackTuning.x - _attackTuning.w * 0.5f,
+            screenCenter.y + _attackTuning.y - _attackTuning.h * 0.5f,
+            _attackTuning.w, _attackTuning.h
+        };
+        DrawRectangleRec(damageArea, Fade(kMeleeColor, active ? 0.14f : 0.07f));
+        DrawRectangleLinesEx(damageArea, active ? 2.5f : 1.5f,
+            active ? kMeleeColor : Fade(kMeleeColor, 0.4f));
+        DrawText("SAVED DAMAGE AREA", (int)damageArea.x + 8, (int)damageArea.y + 8,
+            15, active ? kMeleeColor : Fade(kMeleeColor, 0.5f));
+    }
+
     DrawLineEx(screenCenter, fire, 2.f, Fade(color, 0.55f));
-    DrawLineEx(fire, Vector2{ fire.x + range, fire.y }, 3.f, Fade(color, 0.35f));
+    DrawLineEx(fire, aimEnd, 3.f, Fade(color, 0.35f));
     DrawCircleLines((int)fire.x, (int)fire.y, radius, color);
     DrawCircleV(fire, 7.f, color);
     DrawHandle(fire, active && _dragHandle == kHandleCentre, active ? GOLD : Fade(kAttackColor, 0.75f));
     DrawHandle(Vector2{ fire.x + radius, fire.y }, active && _dragHandle == kHandleRadius, active ? GOLD : Fade(kAttackColor, 0.75f));
+
+    Color fxColor = active ? Color{ 90, 235, 210, 255 } : Color{ 90, 235, 210, 110 };
+    DrawLineEx(screenCenter, fxOrigin, 2.f, Fade(fxColor, 0.55f));
+    DrawCircleLines((int)fxOrigin.x, (int)fxOrigin.y, 18.f, fxColor);
+    DrawHandle(fxOrigin, active && _dragHandle == kHandleFxOrigin,
+        active && _dragHandle == kHandleFxOrigin ? GOLD : fxColor);
+    DrawText("FX ORIGIN", (int)fxOrigin.x + 18, (int)fxOrigin.y - 26, 16, fxColor);
+
+    // Target geometry and three test dummies make range/area/chain tuning
+    // readable without leaving the animator.
+    DrawCircleV(aimEnd, _attackTuning.areaRadius, Fade(color, 0.07f));
+    DrawCircleLinesV(aimEnd, _attackTuning.areaRadius, Fade(color, 0.55f));
+    Vector2 side{ -aimDir.y, aimDir.x };
+    DrawLineEx(Vector2Subtract(aimEnd, Vector2Scale(side, _attackTuning.effectLength * 0.5f)),
+               Vector2Add(aimEnd, Vector2Scale(side, _attackTuning.effectLength * 0.5f)),
+               std::max(2.f, _attackTuning.effectWidth), Fade(color, 0.08f));
+    const Vector2 dummies[3] = {
+        Vector2Add(aimEnd, Vector2Scale(side, -_attackTuning.areaRadius * 0.55f)),
+        aimEnd,
+        Vector2Add(aimEnd, Vector2Scale(side, _attackTuning.areaRadius * 0.55f)) };
+    for (int i = 0; i < 3; ++i)
+    {
+        DrawCircleV(dummies[i], 22.f, Fade(Color{ 210, 75, 75, 255 }, 0.35f));
+        DrawCircleLinesV(dummies[i], 22.f, Color{ 235, 105, 105, 230 });
+        DrawText("DUMMY", (int)dummies[i].x - 27, (int)dummies[i].y - 9, 14, RAYWHITE);
+    }
 
     if (_attackPreviewActive)
     {
@@ -871,7 +1125,7 @@ void CharacterAnimator::DrawAttackOverlay(Vector2 screenCenter)
         for (float age : _attackPreviewShots)
         {
             float t = std::min(age, _attackTuning.projLifetime);
-            Vector2 p{ fire.x + _attackTuning.projSpeed * t, fire.y };
+            Vector2 p = Vector2Add(fire, Vector2Scale(aimDir, _attackTuning.projSpeed * t));
             float fadeT = 1.f - std::clamp(t / std::max(0.05f, _attackTuning.projLifetime), 0.f, 1.f);
             DrawCircleV(p, visualR, Fade(color, 0.12f + 0.2f * fadeT));
             DrawCircleLines((int)p.x, (int)p.y, visualR, Fade(color, 0.35f + 0.55f * fadeT));
@@ -887,8 +1141,9 @@ void CharacterAnimator::DrawSidePanel()
     const CharacterEntry& entry = _entries[_selectedIdx];
     DrawText(entry.displayName.c_str(), 20, 20, 34, RAYWHITE);
 
-    const char* mode = "BODY";
-    Color modeColor = kBodyColor;
+    const char* mode = "SPRITE";
+    Color modeColor = kSpriteColor;
+    if (_target == EditTarget::Body) { mode = "BODY"; modeColor = kBodyColor; }
     if (_target == EditTarget::Melee) { mode = "MELEE"; modeColor = kMeleeColor; }
     if (_target == EditTarget::Attack) { mode = "ATTACK"; modeColor = kAttackColor; }
     DrawText(TextFormat("Mode: %s", mode), 20, 62, 24, modeColor);
@@ -925,9 +1180,31 @@ void CharacterAnimator::DrawSidePanel()
             DrawRectangleRoundedLines(attackRows[i], 0.3f, 6, _target == EditTarget::Attack ? Fade(kAttackColor, 0.75f) : Fade(RAYWHITE, 0.22f));
             DrawText(TextFormat("%s: %.2f", labels[i], values[i]), (int)(attackRows[i].x + 14.f), (int)(attackRows[i].y + 11.f), 22, RAYWHITE);
         }
+
+        // Generic ability lab: these values are shared by every class and save
+        // into the same attacktuning file as the visual/fire-point controls.
+        Rectangle labPanel{ (float)kVirtualWidth - 440.f, 72.f, 430.f, 510.f };
+        DrawRectangleRounded(labPanel, 0.04f, 6, Fade(BLACK, 0.78f));
+        DrawRectangleRoundedLines(labPanel, 0.04f, 6, Fade(kAttackColor, 0.55f));
+        DrawText("ABILITY LAB (drag values)", (int)labPanel.x + 14, (int)labPanel.y + 10, 20, kAttackColor);
+        const char* labLabels[10] = { "Aim range", "Area radius", "Effect length", "Effect width",
+                                      "Duration", "Tick time", "Chain range", "Max targets",
+                                      "Move distance", "Preview angle" };
+        const float labValues[10] = { _attackTuning.aimRange, _attackTuning.areaRadius,
+                                      _attackTuning.effectLength, _attackTuning.effectWidth,
+                                      _attackTuning.effectDuration, _attackTuning.tickInterval,
+                                      _attackTuning.chainRange, _attackTuning.maxTargets,
+                                      _attackTuning.moveDistance, _attackTuning.previewAngle };
+        for (int i = 0; i < 10; ++i)
+        {
+            Rectangle row{ (float)kVirtualWidth - 420.f, 110.f + i * 46.f, 400.f, 40.f };
+            DrawRectangleRounded(row, 0.2f, 5, (_rowDrag == 7 + i) ? Color{ 92, 72, 44, 255 } : Color{ 50, 48, 62, 245 });
+            DrawRectangleRoundedLines(row, 0.2f, 5, Fade(kAttackColor, 0.45f));
+            DrawText(TextFormat("%s: %.2f", labLabels[i], labValues[i]), (int)row.x + 12, (int)row.y + 9, 20, RAYWHITE);
+        }
     }
 
-    Rectangle info{ kVirtualWidth - 440.f, kVirtualHeight - 238.f, 420.f, 218.f };
+    Rectangle info{ kVirtualWidth - 440.f, kVirtualHeight - 278.f, 420.f, 258.f };
     DrawRectangleRounded(info, 0.08f, 6, Fade(BLACK, 0.72f));
     DrawRectangleRoundedLines(info, 0.08f, 6, Fade(RAYWHITE, 0.22f));
 
@@ -947,16 +1224,18 @@ void CharacterAnimator::DrawSidePanel()
         DrawText(TextFormat("Attack: %s", CurrentAttackLabel()), (int)x, (int)y, 18, kAttackColor); y += 21.f;
         DrawText(TextFormat("File: attacktuning_%s.txt", CurrentAttackKey().c_str()), (int)x, (int)y, 15, Fade(RAYWHITE, 0.62f)); y += 19.f;
         DrawText(TextFormat("Fire point: %.0f, %.0f", _attackTuning.fireForward, _attackTuning.fireHeight), (int)x, (int)y, 16, Fade(kAttackColor, 0.85f)); y += 19.f;
+        DrawText(TextFormat("FX origin: %.0f, %.0f", _attackTuning.fxForward, _attackTuning.fxHeight), (int)x, (int)y, 16, Color{ 90, 235, 210, 210 }); y += 19.f;
         DrawText(TextFormat("Preview: %s  %.2fs cd", _attackPreviewActive ? "ON" : "OFF", _attackTuning.cooldown), (int)x, (int)y, 16, _attackPreviewActive ? Color{ 140, 235, 160, 255 } : LIGHTGRAY); y += 21.f;
+        DrawText(_attackTuning.hasBox ? "Damage area: loaded from FX library" : "Damage area: not tuned yet", (int)x, (int)y, 15, Fade(kMeleeColor, 0.78f)); y += 19.f;
     }
     else if (entry.meleeSlot < 0)
     {
         DrawText("Ranged: no melee box", (int)x, (int)y, 18, Color{ 150, 150, 165, 255 }); y += 24.f;
     }
 
-    DrawText(PlayerAttackEditorAvailable() ? "TAB mode   A attack   [ ] attack" : "TAB body/melee", (int)x, (int)y, 16, LIGHTGRAY); y += 19.f;
+    DrawText(PlayerAttackEditorAvailable() ? "TAB mode   A attack   [ ] attack" : "TAB sprite/body/melee", (int)x, (int)y, 16, LIGHTGRAY); y += 19.f;
     DrawText(_target == EditTarget::Attack ? "SPACE cooldown preview" : "SPACE pause   , . step", (int)x, (int)y, 16, LIGHTGRAY); y += 19.f;
-    DrawText("Q/E anim   F flip   R-drag sprite", (int)x, (int)y, 16, LIGHTGRAY); y += 19.f;
+    DrawText("Q/E anim   F flip   drag magenta = sprite", (int)x, (int)y, 16, LIGHTGRAY); y += 19.f;
     DrawText("S save   DEL delete   ESC back", (int)x, (int)y, 16, Color{ 140, 235, 160, 255 });
 }
 void CharacterAnimator::DrawHandle(Vector2 screenPos, bool hot, Color color) const

@@ -187,6 +187,98 @@ namespace Balance::Feel
     inline constexpr int kDamageNumberScale = 25;
 }
 
+// ── Enemy facing & directional combat ────────────────────────────────────────
+// Facing commitment stops enemies flipping toward the player every frame, which
+// made shield fronts unbeatable and backstabs impossible. Front/rear checks use
+// a dot-product cone against the enemy's horizontal facing vector (sprites face
+// left/right), not a raw x-comparison.
+namespace Balance::Facing
+{
+    // cos-space cone edges: dot(facing, toAttacker) >= kFrontConeDot counts as
+    // "in front" (0.25 ≈ a 150° shielded arc); dot <= -kRearConeDot counts as
+    // "behind" (a matching 150° rear arc). The sides belong to neither.
+    inline constexpr float kFrontConeDot = 0.25f;
+    inline constexpr float kRearConeDot  = 0.25f;
+    // Minimum seconds between voluntary facing flips while walking.
+    inline constexpr float kTurnCommitInterval      = 0.22f;
+    // Heavy shield units pivot much slower — circling them is a real tactic.
+    inline constexpr float kHeavyTurnCommitInterval = 0.55f;
+    // Extra facing lock after an attack animation ends (recovery window the
+    // player can exploit by repositioning).
+    inline constexpr float kAttackRecoveryFacingLock = 0.35f;
+    // Rogue Backstab: damage multiplier applied ONLY when the rear check passes.
+    inline constexpr float kBackstabRearMult = 2.2f;
+}
+
+// ── Room pressure budget ─────────────────────────────────────────────────────
+// How much simultaneous danger a combat room may field. Every threat costs
+// pressure (grunts 1, specialists 2, Warchief 3, hazards per type); the room's
+// composition is clamped to the cap for its tier, and bodies beyond the opening
+// cap arrive as reinforcement waves instead of an unreadable wall of enemies.
+// Tier index everywhere: 0 = early rooms, 1 = mid, 2 = late (cleared-room count).
+namespace Balance::Pressure
+{
+    inline constexpr int   kRoomPressureCap[3]  = { 10, 16, 22 };
+    // Max enemies alive when the fight OPENS; the surplus becomes waves.
+    inline constexpr int   kOpeningActiveCap[3] = { 7, 10, 12 };
+    // Standard-room body counts rolled before the pressure clamp.
+    inline constexpr int   kMinBasics[3] = { 4, 6, 8 };
+    inline constexpr int   kMaxBasics[3] = { 6, 9, 12 };
+    // A reinforcement wave releases when live enemies drop to this count,
+    // or on the interval timer — whichever comes first.
+    inline constexpr int   kReinforceRefillActive = 4;
+    inline constexpr float kReinforceInterval     = 6.f;
+}
+
+// ── Room hazards (RoomHazardDirector) ────────────────────────────────────────
+// Shared tuning for environmental hazards (Fire Totem / Lava Pool / Fireball
+// Torch...). Damage stays modest on purpose — hazards are movement pressure,
+// not damage races. Frequencies/placement are consumed in generation (Phase 6).
+namespace Balance::Hazards
+{
+    inline constexpr float kTelegraphSeconds   = 1.1f;   // warning before a hazard arms
+    inline constexpr float kDisabledSeconds    = 4.f;    // downtime after the player disables one
+    inline constexpr float kFirstActionGrace   = 1.5f;   // no firing right as the player enters
+    inline constexpr int   kEnvProjectileCap   = 10;     // hard cap on environmental shots in flight
+    inline constexpr int   kHazardTickDamage   = 1;
+    inline constexpr float kHazardTickInterval = 0.5f;
+    // Fraction of COMBAT rooms that roll a hazard, by tier.
+    inline constexpr float kRoomFrequencyByTier[3] = { 0.38f, 0.58f, 0.72f };
+    // Safe-placement rules (world px).
+    inline constexpr float kMinDistFromDoorway = 240.f;
+    inline constexpr float kMinDistFromEntry   = 320.f;
+    inline constexpr float kMinDistBetween     = 260.f;
+    inline constexpr float kRoomEdgeMargin     = 120.f;
+
+    // Hazard fireballs are deliberately SMALL — a wisp's bolt at 55% size for
+    // both the sprite and the hitbox. This is the knob if they still feel big.
+    // Damage scales with the run: base below × the enemy damage growth curve
+    // (Balance::Curve::kDamagePerLevel per power level), computed per room.
+    inline constexpr float kHazardBoltScale   = 0.55f;
+
+    // Fire Totem: aims with a visible telegraph line, then fires one bolt.
+    inline constexpr float kTotemFireInterval = 3.2f;   // seconds between shots
+    inline constexpr float kTotemAimSeconds   = 0.9f;   // telegraph line duration
+    inline constexpr float kTotemAimLock      = 0.35f;  // aim freezes this long before firing (dodge window)
+    inline constexpr int   kTotemBoltDamage   = 1;      // BASE damage (scaled by power level)
+    inline constexpr float kTotemHealth       = 3.f;    // player hits to destroy
+    inline constexpr float kTotemScale        = 5.5f;   // 16x32 sprite -> world size
+
+    // Lava Pool: persistent floor zone, modest tick damage, entry grace.
+    inline constexpr float kLavaGraceSeconds  = 0.45f;  // free window when first touched
+    inline constexpr float kLavaRadius        = 100.f;  // damage circle inside the sprite
+    inline constexpr float kLavaScale         = 3.4f;   // 84x96 sprite -> world size
+
+    // Fireball Torch: wall-anchored lane launcher on a learnable rhythm.
+    inline constexpr float kTorchFireInterval = 2.6f;   // lane shot cadence
+    inline constexpr float kTorchPrefireFlash = 0.5f;   // bright flash before each shot
+    inline constexpr int   kTorchBoltDamage   = 1;
+    inline constexpr float kTorchHealth       = 3.f;
+    inline constexpr float kTorchScale        = 5.f;    // 16x16 emitter sprite
+    // Keep the lane clear of the east/west door band (door sits at mid-height).
+    inline constexpr float kTorchDoorBandHalf = 170.f;
+}
+
 // ── Timings / miscellaneous ──────────────────────────────────────────────────
 namespace Balance::Misc
 {

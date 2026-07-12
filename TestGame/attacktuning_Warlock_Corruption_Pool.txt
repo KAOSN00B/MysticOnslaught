@@ -1,0 +1,7 @@
+box_x=200.000
+box_y=0.000
+box_w=300.000
+box_h=300.000
+fx=CorruptionPool
+fx_forward=174.000
+fx_height=-1.000

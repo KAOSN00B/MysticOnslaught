@@ -24,6 +24,9 @@ public:
 
     void Init(Vector2 spawnPos, Vector2 direction, EnemyProjectileKind kind, int damage,
               const char* tuningKey = nullptr);
+    // Visual + hitbox size multiplier on top of the kind's base scale.
+    // Hazard bolts use this to stay small and readable (Balance::Hazards).
+    void SetScale(float mult) { if (mult > 0.f) _scaleMult = mult; }
     void Update(float dt);
     void Draw(Vector2 worldOffset) const;
     void Destroy() { _isActive = false; }
@@ -44,6 +47,7 @@ private:
     std::string _tuningKey;
     EnemyProjectileKind _kind = EnemyProjectileKind::Arrow;
     int   _damage      = 1;
+    float _scaleMult   = 1.f;
     float _speed       = 700.f;
     float _lifeTimer   = 0.f;
     float _runningTime = 0.f;

@@ -1,0 +1,7 @@
+box_x=43.000
+box_y=2.000
+box_w=460.000
+box_h=460.000
+fx=SoulSiphon
+fx_forward=96.000
+fx_height=-1.000

@@ -46,6 +46,7 @@
 #include "AudioManager.h"
 #include "RunStateController.h"
 #include "CombatDirector.h"
+#include "RoomHazardDirector.h"
 #include "OverlayRenderer.h"
 #include "CutsceneManager.h"
 #include "WorldMapManager.h"
@@ -516,6 +517,37 @@ private:
     Rectangle GetTreasureChestRect() const;
     void OpenTreasureChest();
     void HandlePlayerCastRequest();
+    enum class AbilityAimMode { Instant, Direction, GroundTarget };
+    struct AbilityAimProfile
+    {
+        AbilityAimMode mode = AbilityAimMode::Instant;
+        float range = 0.f;
+        float radius = 0.f;
+        float length = 0.f;
+        float width = 0.f;
+        float moveScale = 1.f;
+    };
+    struct PendingAbilityAim
+    {
+        bool active = false;
+        int slot = -1;
+        AbilityType ability = AbilityType::None;
+        Vector2 direction{ 1.f, 0.f };
+        Vector2 target{};
+        bool commitOnMouseRelease = false;
+    };
+    AbilityAimProfile GetAbilityAimProfile(AbilityType ability) const;
+    void BeginAbilityInput(int slot);
+    void UpdateAbilityAiming();
+    void CommitAbilityAim();
+    void CancelAbilityAim();
+    void DrawAbilityAimPreview() const;
+    Vector2 GetCurrentAimWorldPoint() const;
+    PendingAbilityAim _pendingAbilityAim{};
+    Vector2 _committedAimDirection{ 1.f, 0.f };
+    Vector2 _committedAimTarget{};
+    AbilityType _committedAimAbility = AbilityType::None;
+
     void SpawnSpreadBurst(AbilityType element);
     void SpawnBolt(AbilityType element);
     void SpawnUltimateBurst(AbilityType element);
@@ -528,6 +560,35 @@ private:
     void DrawUltimateSequence();
     void ApplyUltimateImpact();
 
+    // Mage spells retain the legacy enum IDs for save compatibility, but use
+    // distinct runtime behaviours (walls, blink, weather and aimed projectiles).
+    struct MageSpellField
+    {
+        AbilityType ability = AbilityType::None;
+        Vector2 pos{};
+        Vector2 direction{ 1.f, 0.f };
+        Vector2 strikePos{};
+        float timer = 0.f;
+        float duration = 0.f;
+        float tickAccum = 0.f;
+        float tickInterval = 0.45f;
+        float radius = 0.f;
+        float length = 0.f;
+        float width = 0.f;
+        float windup = 0.f;
+        float strikeFlash = 0.f;
+        int tickCount = 0;
+        bool impacted = false;
+    };
+    std::vector<MageSpellField> _mageSpellFields;
+    void CastMageSpell(AbilityType ability, Vector2 direction, Vector2 target);
+    void UpdateMageSpells(float dt);
+    void DrawMageSpells(Vector2 cameraRef) const;
+    bool DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
+                         bool burn, bool chill, bool shock);
+    void DamageMageArea(Vector2 centre, float radius, int damage, AbilityType element,
+                        bool burn, bool chill, bool shock);
+
     // ── Class abilities (Warrior kit, and future non-elemental classes) ─────────
     void HandleClassAbilityCast(AbilityType ability);
     // Deals damage to every live enemy overlapping a world-space rectangle.
@@ -535,6 +596,10 @@ private:
     int  DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback,
                              float stunSeconds, float bleedSeconds, int bleedDmgPerTick,
                              bool ignoreShield = false);
+    int  DamageEnemiesInDirectedBox(Vector2 origin, Vector2 direction, float length, float width,
+                                    int damage, float knockback, float stunSeconds,
+                                    float bleedSeconds, int bleedDmgPerTick,
+                                    bool ignoreShield = false);
     void ApplyPlayerLifesteal(int damageDealt);
     void UpdateWarriorEffects(float dt);
     void DrawWarriorEffects(Vector2 camRef);
@@ -572,10 +637,13 @@ private:
         // Optional flying sprite (e.g. the ability's icon as a thrown projectile).
         Texture2D* sprite    = nullptr;
         bool    spin         = false;   // rotate the sprite as it travels (axes)
-        // Optional animated FX strip (64px cells) that plays over the lifetime.
+        // Optional animated FX strip (64px cells). Persistent zones can loop the
+        // strip for their full lifetime instead of stretching one pass over it.
         Texture2D* fxStrip   = nullptr;
         int     fxFrames     = 0;
         float   fxScale      = 1.f;
+        bool    fxLoop       = false;
+        float   fxFrameTime  = 1.f / 20.f;
         float   vy           = 0.f;   // vertical drift over lifetime (fan spreads)
     };
     std::vector<WarriorVfx> _warriorVfx;
@@ -1307,6 +1375,27 @@ private:
     };
     std::vector<DungeonClearEffect> _dungeonClearEffects;
     std::vector<Vector2> _dungeonPropCentersScratch;
+    // Player-made damage zones (ticking _warriorVfx entries) rebuilt each frame
+    // and shared with enemies so they steer around Consecrate / poison pools.
+    std::vector<HazardZone> _enemyHazardZones;
+    void RebuildEnemyHazardZones();
+    // Debug overlay: enemy facing arrows + front/rear cones + facing-lock
+    // timers. Only drawn while the debug panel is open (never in normal play).
+    void DrawEnemyFacingDebug() const;
+
+    // ── Room pressure budget + reinforcement waves (see Balance::Pressure) ────
+    // Standard rooms roll their full composition up front, clamp it to the
+    // tier's pressure cap, spawn only the opening slice, and queue the surplus
+    // as reinforcement waves so big populations stay readable.
+    RoomHazardDirector _roomHazards;                 // environmental hazards, current room
+    std::vector<int> _dungeonReinforcementTypeIds;   // queued grunt typeIds
+    float _dungeonReinforcementTimer = 0.f;
+    int   _dungeonOpeningCap  = 7;                   // opening active cap for this room
+    int   _roomPressureSpent  = 0;                   // debug readout
+    int   _roomPressureCapDbg = 0;                   // debug readout
+    // Spawns one mixed-table grunt by typeId (shared by the room opening and
+    // reinforcement waves), including the role-based placement nudge.
+    Enemy* SpawnDungeonGruntByTypeId(int typeId, Vector2 pos, float cellW, float cellH);
 
     std::unordered_map<int, DungeonRoomState> _dungeonRoomStates;
     bool  _dungeonEnemiesSpawned  = false;

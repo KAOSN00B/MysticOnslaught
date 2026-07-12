@@ -1,8 +1,10 @@
-box_x=-1.000
-box_y=1.000
+box_x=91.000
+box_y=-3.000
 box_w=210.000
 box_h=130.000
 fx=Eviscerate
+fx_forward=61.000
+fx_height=-5.000
 fire_forward=70.000
 fire_height=45.000
 proj_scale=1.000

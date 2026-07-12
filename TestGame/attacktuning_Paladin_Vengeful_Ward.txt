@@ -1,3 +1,10 @@
+box_x=130.000
+box_y=-1.000
+box_w=224.000
+box_h=162.000
+fx=LayOnHands
+fx_forward=87.000
+fx_height=-2.000
 fire_forward=75.000
 fire_height=43.000
 proj_scale=1.000

@@ -141,6 +141,7 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         _hitTimer -= dt;
 
     if (_freezeTimer > 0.f)     _freezeTimer -= dt;
+    if (_turnCommitCooldown > 0.f) _turnCommitCooldown -= dt;   // heavy pivot pacing
     if (_meleeCooldown > 0.f)   _meleeCooldown -= dt;
     if (_contactCooldown > 0.f) _contactCooldown -= dt;
     if (_shieldDownTimer > 0.f) _shieldDownTimer -= dt;
@@ -169,9 +170,17 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         {
             if (controlled) break;
 
-            // The shield tracks the player at all times.
-            if (toPlayer.x < -14.f) _rightLeft = -1.f;
-            if (toPlayer.x >  14.f) _rightLeft =  1.f;
+            // The shield tracks the player while advancing, but pivots at a
+            // heavy unit's pace (rate-limited) — circling him actually works.
+            if (_turnCommitCooldown <= 0.f)
+            {
+                float desired = (toPlayer.x < -14.f) ? -1.f : (toPlayer.x > 14.f) ? 1.f : _rightLeft;
+                if (desired != _rightLeft)
+                {
+                    _rightLeft = desired;
+                    _turnCommitCooldown = Balance::Facing::kHeavyTurnCommitInterval;
+                }
+            }
 
             if (dist < _meleeRange && _meleeCooldown <= 0.f)
             {
@@ -538,9 +547,9 @@ void TitanGuard::TakeDamage(int damage, Vector2 attackerPos)
     bool shieldRaised = (_state != State::Staggered) && !IsShieldDown();
     if (shieldRaised)
     {
-        float attackSide = attackerPos.x - _worldPos.x;
-        bool fromTheFront = (attackSide * _rightLeft) > 0.f;
-        if (fromTheFront)
+        // Cone-based front check (see Balance::Facing) — side and rear hits
+        // land in full; only the shielded frontal arc chips damage.
+        if (IsPositionInFront(attackerPos, Balance::Facing::kFrontConeDot))
         {
             appliedDamage = std::max(1, (damage * 2) / 5);   // ~40% through a raised shield
             float pitch = GetRandomValue(85, 110) / 100.f;

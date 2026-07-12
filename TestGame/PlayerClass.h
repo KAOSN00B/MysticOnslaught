@@ -30,6 +30,10 @@ struct PlayerClassInfo
     const char* spritePrefix;    // Hero/<prefix>_Idle.png etc.
     const char* description;     // one-liner for the select screen
     const char* playstyle;       // short flavour of base stats
+    // Class-mechanic explainer shown on the select screen. Answers "what is
+    // Rage / Faith / Combo and does it replace MP?" before the run starts.
+    const char* resourceName;    // e.g. "RAGE"; "MANA" for MP-only classes
+    const char* resourceDesc;    // 2-3 short lines, \n-separated
 
     // Base stats (applied in Character::Init on top of / instead of defaults).
     int   baseHealth;

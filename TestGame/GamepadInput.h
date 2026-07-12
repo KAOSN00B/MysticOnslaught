@@ -55,6 +55,9 @@ struct GamepadInput
     bool    attackPressed    = false;
     bool    dashPressed      = false;
     bool    abilityPressed[4]{};
+    bool    abilityDown[4]{};
+    bool    abilityReleased[4]{};
+    Vector2 aimDir{};              // right stick after dead-zone
     bool    pausePressed        = false;
     bool    backPressed         = false;
     bool    menuConfirmPressed  = false;  // always A / Cross — not remappable

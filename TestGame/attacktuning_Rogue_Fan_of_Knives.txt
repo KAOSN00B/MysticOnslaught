@@ -1,8 +1,10 @@
-box_x=24.000
-box_y=12.000
-box_w=190.000
-box_h=192.000
+box_x=118.000
+box_y=3.000
+box_w=138.000
+box_h=154.000
 fx=FanOfKnives
+fx_forward=74.000
+fx_height=-5.000
 fire_forward=65.000
 fire_height=41.000
 proj_scale=1.000

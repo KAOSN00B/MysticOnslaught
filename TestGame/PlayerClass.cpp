@@ -5,14 +5,20 @@
 
 // Order must match the PlayerClass enum.
 static const PlayerClassInfo kClassTable[(int)PlayerClass::Count] = {
-    // name        prefix      description                                   playstyle                    HP  MP  atk  spd   arm  regen
-    { "Mage",     "Mage",    "Master of the elements. Spells for every foe.", "Ranged caster - fragile",     7, 12, 2.f, 380.f, 0, 1.4f },
-    { "Warrior",  "Warrior", "A wall of steel. Wades in and cleaves.",        "Tanky bruiser - high HP",    11,  8, 5.f, 360.f, 1, 1.0f },
-    { "Hunter",   "Hunter",  "Swift hunter who never lets you close.",        "Mobile skirmisher - fast",    8,  9, 3.f, 415.f, 0, 1.0f },
-    { "Rogue",    "Rogue",   "Fragile blur of daggers and crits.",            "Glass assassin - burst",      6,  8, 3.f, 435.f, 0, 1.0f },
+    // name        prefix      description                                   playstyle                    resource explainer (shown on the select screen)                                                                     HP  MP  atk  spd   arm  regen
+    { "Mage",     "Mage",    "Master of the elements. Spells for every foe.", "Ranged caster - fragile",
+      "MANA", "Runs on MP alone - every spell costs MP.\nBig pool and the fastest regen in the game.",                          7, 12, 2.f, 380.f, 0, 1.4f },
+    { "Warrior",  "Warrior", "A wall of steel. Wades in and cleaves.",        "Tanky bruiser - high HP",
+      "RAGE", "Builds when you land hits AND when you get hit;\nfades out of combat. Full bar = up to +50% ability\ndamage. Rage is a bonus - abilities still cost MP.", 11,  8, 5.f, 360.f, 1, 1.0f },
+    { "Hunter",   "Hunter",  "Swift hunter who never lets you close.",        "Mobile skirmisher - fast",
+      "MANA", "Runs on MP alone. Every 3rd basic shot MARKS the\ntarget - marked foes take bonus damage.",                       8,  9, 3.f, 415.f, 0, 1.0f },
+    { "Rogue",    "Rogue",   "Fragile blur of daggers and crits.",            "Glass assassin - burst",
+      "COMBO", "Quick hits bank Combo Points (the red pips).\nEviscerate spends them ALL for bonus damage.\nCombo is a bonus - abilities still cost MP.",                6,  8, 3.f, 435.f, 0, 1.0f },
     // Paladin/Warlock reuse existing art (Warrior/Mage) but have their own stats.
-    { "Paladin",  "Warrior", "Holy bulwark. Punishes those who strike it.",   "Armoured holy tank",         12,  9, 4.f, 350.f, 2, 1.1f },
-    { "Warlock",  "Mage",    "Dark caster who drains life to survive.",       "Dark caster - life drain",    8, 11, 2.f, 375.f, 0, 1.2f },
+    { "Paladin",  "Warrior", "Holy bulwark. Punishes those who strike it.",   "Armoured holy tank",
+      "FAITH", "Builds when you are struck and when holy hits land;\nnever decays. Up to +40% ability damage at full;\nDivine Storm consumes it. Abilities still cost MP.", 12,  9, 4.f, 350.f, 2, 1.1f },
+    { "Warlock",  "Mage",    "Dark caster who drains life to survive.",       "Dark caster - life drain",
+      "MANA", "Runs on MP alone. The kit steals life -\ndrain, curse, and lifesteal keep you standing.",                         8, 11, 2.f, 375.f, 0, 1.2f },
 };
 
 const PlayerClassInfo& GetPlayerClassInfo(PlayerClass cls)

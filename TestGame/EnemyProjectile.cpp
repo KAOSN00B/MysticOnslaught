@@ -27,6 +27,7 @@ void EnemyProjectile::Init(Vector2 spawnPos, Vector2 direction, EnemyProjectileK
     _lifeTimer   = 0.f;
     _runningTime = 0.f;
     _frame       = 0;
+    _scaleMult   = 1.f;
     _isActive    = true;
 }
 
@@ -102,8 +103,8 @@ void EnemyProjectile::Draw(Vector2 worldOffset) const
         Rectangle dest{
             screenPos.x,
             screenPos.y,
-            _fireBoltFrameW * _fireBoltScale,
-            _fireBoltFrameH * _fireBoltScale
+            _fireBoltFrameW * _fireBoltScale * _scaleMult,
+            _fireBoltFrameH * _fireBoltScale * _scaleMult
         };
         DrawTexturePro(_sharedFireBoltTex, source, dest,
             Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, WHITE);
@@ -112,7 +113,7 @@ void EnemyProjectile::Draw(Vector2 worldOffset) const
 
 Rectangle EnemyProjectile::GetCollisionRec() const
 {
-    float size = (_kind == EnemyProjectileKind::Arrow) ? 32.f : 52.f;
+    float size = ((_kind == EnemyProjectileKind::Arrow) ? 32.f : 52.f) * _scaleMult;
     float offsetX = 0.f;
     float offsetY = 0.f;
 

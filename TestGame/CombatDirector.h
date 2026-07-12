@@ -108,6 +108,8 @@ struct EnemyRuntimeContext
     NavigationGrid* nav = nullptr;
     const std::vector<Prop>* props = nullptr;
     const std::vector<Vector2>* propCenters = nullptr;
+    // Player-made damage zones enemies steer around (see Enemy::SetHazardZones).
+    const std::vector<HazardZone>* hazards = nullptr;
     std::vector<std::unique_ptr<Enemy>>* enemies = nullptr;
     std::vector<CyclopsLaserProjectile>* cyclopsLasers = nullptr;
     std::vector<LavaBallProjectile>* lavaBalls = nullptr;

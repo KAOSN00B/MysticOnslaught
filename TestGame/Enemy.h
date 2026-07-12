@@ -40,6 +40,17 @@ enum class EnemyRole
     Grunt, Charger, Ranged, Tank, Support, Assassin, Zoner, Summoner, HeavyRanged, Boss
 };
 
+// ── Player-made ground hazard (Consecrate, poison pool, corruption pool...) ──
+// Engine rebuilds the active list each frame from its ticking damage zones and
+// shares it with every enemy, so enemies can steer around danger instead of
+// standing in it. Hunter traps are deliberately NOT in the list — a trap that
+// enemies avoid would never spring.
+struct HazardZone
+{
+    Vector2 pos;      // world center of the zone
+    float   radius;   // damage radius (enemies keep an extra margin beyond it)
+};
+
 class Enemy : public BaseCharacter
 {
 public:
@@ -62,6 +73,24 @@ public:
     // Shorten the gap between attacks (mult < 1 = more aggressive). Used by the
     // Zeph pressure-debt bargains; a depth-based cadence curve can reuse it.
     void QuickenAttacks(float mult) { if (mult > 0.f) _attackDelay *= mult; }
+
+    // Active player-made damage zones this enemy should steer around. Set every
+    // frame by CombatDirector before Update; the pointed-to vector is owned by
+    // Engine and stays valid for the whole frame. May be null (no hazards).
+    void SetHazardZones(const std::vector<HazardZone>* zones) { _hazardZones = zones; }
+
+    // ── Facing & directional checks (see Balance::Facing) ─────────────────────
+    // Sprites face horizontally, so the forward vector is {facingSign, 0}. These
+    // helpers express front/rear INTENT — use them instead of comparing x coords.
+    float GetFacingSign() const { return (_rightLeft < 0.f) ? -1.f : 1.f; }
+    bool  IsPositionInFront(Vector2 position, float coneDot) const;
+    bool  IsPositionBehind(Vector2 position, float rearDot) const;
+    // False while an attack animation or the post-attack recovery lock is active.
+    bool  CanTurnDuringCurrentState() const { return !_attacking && _facingLockTimer <= 0.f; }
+    // Commitment-aware voluntary turn: flips toward dx only when allowed and at
+    // most once per _turnCommitInterval. Attack windups snapshot facing directly.
+    void  FaceToward(float dx);
+    float GetFacingLockRemaining() const { return _facingLockTimer; }   // debug HUD
 
     // Colour-variant tier (0-3) — later world zones spawn recoloured, visibly
     // tougher versions. Default is a no-op; types with variant art override.
@@ -133,6 +162,14 @@ public:
     virtual void ApplyBurn(float delay, int damage, Vector2 sourcePos);
     virtual void ApplyFreeze(float duration);
     virtual void ApplyElectricCharge();
+    void ClearFreeze() { _freezeTimer = 0.f; }
+    void ClearBurn() { _pendingBurns.clear(); }
+    void ClearElectricCharge()
+    {
+        _isCharged = false;
+        _electricChargeTotalTimer = 0.f;
+        _chargeNextStunTime = 0.f;
+    }
     virtual void ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation);
 
     // ── Shared status effects (ARPG combat-identity pass) ───────────────────────
@@ -384,6 +421,13 @@ protected:
 
     Character*      _target = nullptr;
     NavigationGrid* _nav    = nullptr;   // non-owning; set once by Engine on spawn
+    // Non-owning; refreshed each frame by CombatDirector (see SetHazardZones).
+    const std::vector<HazardZone>* _hazardZones = nullptr;
+
+    // ── Facing commitment (ticked in Update) ──────────────────────────────────
+    float _facingLockTimer    = 0.f;   // > 0: facing frozen (attack + recovery)
+    float _turnCommitCooldown = 0.f;   // > 0: voluntary flips refused
+    float _turnCommitInterval = Balance::Facing::kTurnCommitInterval; // heavies override
 
     // ── Waypoint path cache ───────────────────────────────────────────────────
     // Extracted from the shared flow field. Each enemy refreshes its own path

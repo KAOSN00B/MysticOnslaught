@@ -1,3 +1,10 @@
+box_x=65.000
+box_y=70.000
+box_w=300.000
+box_h=300.000
+fx=FrostTrap
+fx_forward=66.000
+fx_height=56.000
 fire_forward=30.000
 fire_height=63.000
 proj_scale=1.000

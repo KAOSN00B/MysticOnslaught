@@ -496,6 +496,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             hasNavigationTarget = !Vector2Equals(navigationTarget, playerFeet);
         }
 
+        enemy->SetHazardZones(ctx.hazards);   // player damage zones to steer around
         enemy->Update(dt, playerFeet, navigationTarget, hasNavigationTarget, *ctx.enemies, propCenters);
 
         if (Cyclops* cyclops = enemy->AsCyclops())

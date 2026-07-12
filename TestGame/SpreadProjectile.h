@@ -1,6 +1,9 @@
 #pragma once
 #include "raylib.h"
 #include "AbilityType.h"
+#include <vector>
+
+class Enemy;
 
 // Generic 8-way spread projectile.
 // The element determines visuals and on-hit status effect.
@@ -40,6 +43,10 @@ public:
     void        SetVisualScale(float s) { if (s > 0.f) _visualScale = s; } // draw-size multiplier
     void        SetSpeed(float s)       { if (s > 0.f) _speed = s; }
     void        SetLifetime(float t)    { if (t > 0.f) _lifeTimer = t; }
+    void        SetPiercingHits(int hits) { _piercingHitsLeft = hits; }
+    bool        HasHit(const Enemy* enemy) const;
+    // Returns true while the projectile should continue through more targets.
+    bool        RegisterHit(const Enemy* enemy);
     Rectangle   GetCollisionRec() const;
     Vector2     GetWorldPos()     const;
     Vector2     GetDirection()    const;
@@ -63,6 +70,8 @@ private:
     bool  _arrow       = false;   // draw a rotating arrow sprite (Hunter basic shot)
     float _visualScale = 1.f;     // draw-size multiplier from attack tuning
     Color _tint        { 255, 255, 255, 255 };
+    int _piercingHitsLeft = 0;
+    std::vector<const Enemy*> _hitTargets;
 
     static constexpr int _frameWidth  = 32;
     static constexpr int _frameHeight = 32;

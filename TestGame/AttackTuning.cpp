@@ -32,6 +32,16 @@ std::string AttackTuningKey(const std::string& owner, const std::string& name)
 std::string AttackTuningKeyForAbility(AbilityType ability)
 {
     int i = (int)ability;
+    // Mage spells were redesigned without changing their enum/save identities.
+    // Keep their original tuning filenames so existing authored fire points and
+    // projectile values remain live under the new player-facing names.
+    static const char* kMageLegacyNames[9] = {
+        "Fire Spread", "Ice Spread", "Electric Spread",
+        "Fire Bolt", "Ice Bolt", "Electric Bolt",
+        "Fire Ultimate", "Ice Ultimate", "Electric Ultimate"
+    };
+    if (i >= 0 && i < 9)
+        return AttackTuningKey("Mage", kMageLegacyNames[i]);
     // Preserve existing authored tuning after the player-facing rename from
     // Shield Bash to Shoulder Charge.
     if (ability == AbilityType::ShieldBash)
@@ -74,6 +84,8 @@ namespace
                 else if (std::strcmp(k, "box_y") == 0) { out.y = val; out.hasBox = true; }
                 else if (std::strcmp(k, "box_w") == 0) { out.w = val; out.hasBox = true; }
                 else if (std::strcmp(k, "box_h") == 0) { out.h = val; out.hasBox = true; }
+                else if (std::strcmp(k, "fx_forward") == 0) { out.fxForward = val; out.hasFxOffset = true; }
+                else if (std::strcmp(k, "fx_height")  == 0) { out.fxHeight  = val; out.hasFxOffset = true; }
                 else if (std::strcmp(k, "fire_forward") == 0) { out.fireForward = val; out.hasFirePoint = true; }
                 else if (std::strcmp(k, "fire_height")  == 0) { out.fireHeight  = val; out.hasFirePoint = true; }
                 else if (std::strcmp(k, "proj_scale")   == 0) { out.projScale   = val; out.hasProjectile = true; }
@@ -81,6 +93,16 @@ namespace
                 else if (std::strcmp(k, "proj_speed")   == 0) { out.projSpeed   = val; out.hasProjectile = true; }
                 else if (std::strcmp(k, "proj_life")    == 0) { out.projLifetime= val; out.hasProjectile = true; }
                 else if (std::strcmp(k, "cooldown")     == 0) { out.cooldown    = val; out.hasCooldown = true; }
+                else if (std::strcmp(k, "aim_range") == 0) { out.aimRange = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "area_radius") == 0) { out.areaRadius = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "effect_length") == 0) { out.effectLength = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "effect_width") == 0) { out.effectWidth = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "effect_duration") == 0) { out.effectDuration = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "tick_interval") == 0) { out.tickInterval = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "chain_range") == 0) { out.chainRange = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "max_targets") == 0) { out.maxTargets = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "move_distance") == 0) { out.moveDistance = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "preview_angle") == 0) { out.previewAngle = val; out.hasAbility = true; }
             }
         }
         fclose(f);
@@ -124,6 +146,11 @@ namespace AttackTuningStore
         }
         if (t.hasFx)
             fprintf(f, "fx=%s\n", t.fxStem.empty() ? "none" : t.fxStem.c_str());
+        if (t.hasFxOffset)
+        {
+            fprintf(f, "fx_forward=%.3f\n", t.fxForward);
+            fprintf(f, "fx_height=%.3f\n",  t.fxHeight);
+        }
         if (t.hasFirePoint)
         {
             fprintf(f, "fire_forward=%.3f\n", t.fireForward);
@@ -138,6 +165,19 @@ namespace AttackTuningStore
         }
         if (t.hasCooldown)
             fprintf(f, "cooldown=%.3f\n", t.cooldown);
+        if (t.hasAbility)
+        {
+            fprintf(f, "aim_range=%.3f\n", t.aimRange);
+            fprintf(f, "area_radius=%.3f\n", t.areaRadius);
+            fprintf(f, "effect_length=%.3f\n", t.effectLength);
+            fprintf(f, "effect_width=%.3f\n", t.effectWidth);
+            fprintf(f, "effect_duration=%.3f\n", t.effectDuration);
+            fprintf(f, "tick_interval=%.3f\n", t.tickInterval);
+            fprintf(f, "chain_range=%.3f\n", t.chainRange);
+            fprintf(f, "max_targets=%.3f\n", t.maxTargets);
+            fprintf(f, "move_distance=%.3f\n", t.moveDistance);
+            fprintf(f, "preview_angle=%.3f\n", t.previewAngle);
+        }
 
         fclose(f);
         Reload(key);   // drop cache so the next Get() re-reads the new values

@@ -1,8 +1,10 @@
-box_x=265.000
-box_y=41.000
+box_x=138.000
+box_y=14.000
 box_w=660.000
 box_h=150.000
 fx=HammerOfJustice
+fx_forward=124.000
+fx_height=-58.000
 fire_forward=73.000
 fire_height=42.000
 proj_scale=1.000

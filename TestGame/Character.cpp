@@ -211,8 +211,15 @@ void Character::Init()
     _killsSinceHeal = 0;
     _pendingBurnTicks.clear();
 
-    _mana                = 0;
     _maxMana             = classInfo.baseMana;
+    // Runs start with a full mana pool — cooldowns (not an empty bar) are what
+    // pace ability use now, so the opening rooms aren't ability-less.
+    _mana                = _maxMana;
+    for (int i = 0; i < _hardAbilityCap; i++)
+    {
+        _slotCooldownRemaining[i] = 0.f;
+        _slotCooldownDuration[i]  = 0.f;
+    }
     _manaRegenMultiplier = classInfo.manaRegenMult;
     _abilityDamageMultiplier = 1.0f;
     _armour    = classInfo.startArmour;
@@ -480,6 +487,12 @@ void Character::Update(float dt)
     if (_lifestealTimer  > 0.f) _lifestealTimer  -= dt;
     if (_basicAttackCdTimer > 0.f) _basicAttackCdTimer -= dt;
 
+    // Ability slot cooldowns keep ticking through everything except death —
+    // they are wall-clock pacing, not a combat state.
+    for (int i = 0; i < _hardAbilityCap; i++)
+        if (_slotCooldownRemaining[i] > 0.f)
+            _slotCooldownRemaining[i] = std::max(0.f, _slotCooldownRemaining[i] - dt);
+
     // Warrior Rage bleeds off slowly, so it rewards STAYING in the fight rather
     // than banking a full bar between rooms.
     if (_class == PlayerClass::Warrior && _rage > 0.f)
@@ -572,12 +585,8 @@ void Character::HandleInput()
     // Combat lock blocks attacks/abilities. Village mode can opt into keeping dash.
     bool canDash = !_combatLocked || _dashAllowedWhileCombatLocked;
 
-    if (!_combatLocked && !_touchModeEnabled)
-    {
-        for (int i = 0; i < _learnedCount; i++)
-            if (_bindings.ability[i] != KEY_NULL && IsKeyPressed(_bindings.ability[i]))
-                TriggerAbilityCast(i);
-    }
+    // Engine owns ability-button edges so aimable casts can wait for release
+    // (or a second press) before committing mana and cooldown.
 
     bool dashTrigger = canDash && ((!_touchModeEnabled && IsKeyPressed(_bindings.dash)) || _touchDashJustPressed);
     _touchDashJustPressed = false; // always consume
@@ -615,7 +624,8 @@ void Character::HandleMovement(float dt)
 
     if (Vector2Length(_direction) > 0.f)
     {
-        _worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(_direction), _speed * _biomeSlowFactor * dt));
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(_direction),
+            _speed * _biomeSlowFactor * _abilityAimMoveScale * dt));
 
         if (_direction.x < 0) _rightLeft = -1;
         if (_direction.x > 0) _rightLeft = 1;
@@ -708,6 +718,16 @@ void Character::HandleAttackInput()
     }
 }
 
+bool Character::CanBeginAbilityCast(int slot) const
+{
+    if (_attacking || _castingAbility || _takingDamage || _dying || _isDashing || IsForceLocked() || _combatLocked)
+        return false;
+    if (slot < 0 || slot >= _learnedCount)
+        return false;
+    AbilityType ability = _learnedAbilities[slot];
+    return ability != AbilityType::None && _slotCooldownRemaining[slot] <= 0.f && CanCastAbility(ability);
+}
+
 void Character::TriggerAbilityCast(int slot)
 {
     if (_attacking || _castingAbility || _takingDamage || _dying || _isDashing || IsForceLocked() || _combatLocked)
@@ -720,6 +740,9 @@ void Character::TriggerAbilityCast(int slot)
     if (ability == AbilityType::None)
         return;
 
+    if (_slotCooldownRemaining[slot] > 0.f)
+        return;   // still recovering — the HUD sweep shows how long
+
     if (!CanCastAbility(ability))
     {
         if (AbilityDrainsAllMana(ability))
@@ -728,6 +751,10 @@ void Character::TriggerAbilityCast(int slot)
     }
 
     ++_telemAbilityCasts;
+
+    // Cast accepted — start this slot's recovery clock.
+    _slotCooldownDuration[slot]  = GetAbilityCooldownSeconds(ability);
+    _slotCooldownRemaining[slot] = _slotCooldownDuration[slot];
 
     int cost = GetAbilityCost(ability);   // includes the Overload surcharge
 
@@ -958,6 +985,12 @@ void Character::Revive()
     _forcedPushSpeed     = 0.f;
     _forcedPushStunTimer = 0.f;
     _pendingBurnTicks.clear();
+    // True respawns wipe ability cooldowns — a fresh attempt starts unlocked.
+    for (int i = 0; i < _hardAbilityCap; i++)
+    {
+        _slotCooldownRemaining[i] = 0.f;
+        _slotCooldownDuration[i]  = 0.f;
+    }
     GrantInvulnerability(1.5f);  // brief i-frames so respawn isn't immediately punished
 }
 
@@ -1362,6 +1395,16 @@ void Character::MoveTowardFacing(float distance)
 {
     // Nudge the player forward in the facing direction, used by lunge abilities.
     _worldPos.x += (_rightLeft > 0 ? 1.f : -1.f) * distance;
+}
+
+void Character::MoveAlongDirection(Vector2 direction, float distance)
+{
+    if (Vector2Length(direction) < 0.001f)
+        direction = GetFacingDirection();
+    direction = Vector2Normalize(direction);
+    _worldPos = Vector2Add(_worldPos, Vector2Scale(direction, distance));
+    if (fabsf(direction.x) > 0.05f)
+        _rightLeft = direction.x >= 0.f ? 1.f : -1.f;
 }
 
 bool Character::CanApplyMeleeDamage() const
@@ -2130,6 +2173,8 @@ void Character::RemoveAbilityAtSlot(int slot)
     {
         _learnedAbilities[3] = AbilityType::None;
         _abilityLevels[3]    = 1;
+        _slotCooldownRemaining[3] = 0.f;
+        _slotCooldownDuration[3]  = 0.f;
         if (_learnedCount == 4) _learnedCount = 3;
         return;
     }
@@ -2146,9 +2191,13 @@ void Character::RemoveAbilityAtSlot(int slot)
     {
         _learnedAbilities[i] = _learnedAbilities[i + 1];
         _abilityLevels[i]    = _abilityLevels[i + 1];
+        _slotCooldownRemaining[i] = _slotCooldownRemaining[i + 1];
+        _slotCooldownDuration[i]  = _slotCooldownDuration[i + 1];
     }
     _learnedAbilities[nonUltCount - 1] = AbilityType::None;
     _abilityLevels[nonUltCount - 1]    = 1;
+    _slotCooldownRemaining[nonUltCount - 1] = 0.f;
+    _slotCooldownDuration[nonUltCount - 1]  = 0.f;
 
     // Rebuild _learnedCount from actual state so ultimate presence is preserved.
     _learnedCount = (_learnedAbilities[3] != AbilityType::None) ? 4 : nonUltCount - 1;

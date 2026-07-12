@@ -1,0 +1,7 @@
+box_x=130.000
+box_y=0.000
+box_w=260.000
+box_h=200.000
+fx=Curse
+fx_forward=120.000
+fx_height=-11.000

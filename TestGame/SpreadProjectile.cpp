@@ -3,6 +3,7 @@
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
 #include "AnimationUtils.h"
+#include "Enemy.h"
 #include "VirtualCanvas.h"
 #include "raymath.h"
 #include "VirtualCanvas.h"
@@ -30,6 +31,8 @@ void SpreadProjectile::Init(Vector2 spawnPos, Vector2 direction, AbilityType ele
     _arrow      = false;
     _tint       = Color{ 255, 255, 255, 255 };
     _radius     = 56.f;
+    _piercingHitsLeft = 0;
+    _hitTargets.clear();
 }
 
 void SpreadProjectile::InitBasic(Vector2 spawnPos, Vector2 direction, AbilityType element, Color tint, bool arrow)
@@ -156,6 +159,22 @@ Rectangle SpreadProjectile::GetCollisionRec() const
 Vector2 SpreadProjectile::GetWorldPos() const   { return _worldPos; }
 Vector2 SpreadProjectile::GetDirection() const  { return _direction; }
 AbilityType SpreadProjectile::GetElement() const { return _element; }
+
+bool SpreadProjectile::HasHit(const Enemy* enemy) const
+{
+    return std::find(_hitTargets.begin(), _hitTargets.end(), enemy) != _hitTargets.end();
+}
+
+bool SpreadProjectile::RegisterHit(const Enemy* enemy)
+{
+    if (enemy == nullptr || HasHit(enemy))
+        return _piercingHitsLeft > 0;
+    _hitTargets.push_back(enemy);
+    if (_piercingHitsLeft <= 0)
+        return false;
+    --_piercingHitsLeft;
+    return _piercingHitsLeft > 0;
+}
 
 const Texture2D& SpreadProjectile::GetAnimTexture(AbilityType element)
 {

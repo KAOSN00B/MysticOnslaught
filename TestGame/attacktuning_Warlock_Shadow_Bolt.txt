@@ -1,0 +1,7 @@
+box_x=280.000
+box_y=0.000
+box_w=560.000
+box_h=80.000
+fx=ShadowBolt
+fx_forward=92.000
+fx_height=2.000

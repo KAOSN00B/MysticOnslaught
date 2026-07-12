@@ -1,6 +1,5 @@
 BIOME Wastelands
 GTILE 14 5 1 1 0
-GTILE 18 5 1 1 1
 TILE 4 8 1 1 4
 TILE 6 8 1 1 5
 TILE 5 8 1 1 3

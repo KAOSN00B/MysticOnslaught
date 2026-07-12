@@ -1,5 +1,7 @@
+box_x=135.000
+box_y=-9.000
+box_w=258.000
+box_h=256.000
 fx=Whirlwind
-box_x=180.00
-box_y=1.00
-box_w=258.00
-box_h=256.00
+fx_forward=105.000
+fx_height=1.000

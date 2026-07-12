@@ -1,8 +1,10 @@
-box_x=12.000
-box_y=25.000
+box_x=128.000
+box_y=29.000
 box_w=260.000
 box_h=260.000
 fx=PoisonVial
+fx_forward=102.000
+fx_height=0.000
 fire_forward=75.000
 fire_height=44.000
 proj_scale=1.000

@@ -183,7 +183,11 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
         DrawRectangleRounded({ barX, rageBarY, kNewBarW * ragePct, rageBarH }, 0.3f, 6, rageFill);
         DrawRectangleRoundedLines({ barX, rageBarY, kNewBarW, rageBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
 
-        const char* rageLabel = "RAGE";
+        // Show the live payoff so the bar teaches itself: Rage is bonus ability
+        // damage on top of MP, not a second mana pool.
+        int rageBonusPct = (int)(ctx.player->GetRageFullBonus() * ragePct * 100.f + 0.5f);
+        const char* rageLabel = (rageBonusPct > 0)
+            ? TextFormat("RAGE  +%d%% DMG", rageBonusPct) : "RAGE";
         DrawText(rageLabel,
             (int)(barX + kNewBarW / 2.f - MeasureText(rageLabel, 14) / 2.f),
             (int)(rageBarY + rageBarH / 2.f - 7.f),
@@ -208,7 +212,10 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
         DrawRectangleRounded({ barX, faithBarY, kNewBarW * faithPct, faithBarH }, 0.3f, 6, faithFill);
         DrawRectangleRoundedLines({ barX, faithBarY, kNewBarW, faithBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
 
-        const char* faithLabel = "FAITH";
+        // Live payoff readout — mirrors the Engine's +40%-at-full Faith buff.
+        int faithBonusPct = (int)(0.4f * faithPct * 100.f + 0.5f);
+        const char* faithLabel = (faithBonusPct > 0)
+            ? TextFormat("FAITH  +%d%% DMG", faithBonusPct) : "FAITH";
         DrawText(faithLabel,
             (int)(barX + kNewBarW / 2.f - MeasureText(faithLabel, 14) / 2.f),
             (int)(faithBarY + faithBarH / 2.f - 7.f),
@@ -225,6 +232,13 @@ void HUDRenderer::DrawHUD(const HUDRenderContext& ctx) const
         const int   comboPips = ctx.player->GetComboPoints();
         const float pipStep   = kNewBarW / (float)maxPips;
         const float pipHalf   = pipRowH * 0.5f;
+
+        // Faint label behind the pips so a new Rogue knows what they're banking.
+        const char* comboLabel = "COMBO";
+        DrawText(comboLabel,
+            (int)(barX + kNewBarW / 2.f - MeasureText(comboLabel, 14) / 2.f),
+            (int)(pipRowY + pipHalf - 7.f),
+            14, Fade(WHITE, 0.30f));
 
         for (int pip = 0; pip < maxPips; pip++)
         {

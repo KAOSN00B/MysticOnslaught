@@ -1,0 +1,252 @@
+================================================================================
+MYSTIC ONSLAUGHT — COMBAT PRESSURE REWORK (Phantom Tower pacing reference)
+Phase 1 audit + full plan.  Written 2026-07-12.
+Status:  PHASE 1 DONE (this doc)   PHASE 2 DONE (facing/backstab, built+smoke)
+         PHASE 3 DONE 2026-07-12   PHASES 4+5 DONE 2026-07-12 (all three
+         hazards live, owned tileset art)   PHASE 6 partial (frequency roll
+         wired for standard rooms)   PHASE 7 = Robert playtest
+
+--------------------------------------------------------------------------------
+PHASES 4+5 — IMPLEMENTED 2026-07-12 (built Debug|x64 clean, smoke-tested)
+--------------------------------------------------------------------------------
+ART (cropped from Robert's OWNED tilesets into PowerUps/, which the web build
+already preloads — no build_web.bat asset change):
+- PowerUps/Hazard_LavaPool.png    8fr 84x96  <- MapTilesets/RA_Hell_Animations.png top strip
+- PowerUps/Hazard_FireTotem.png   12fr 16x32 <- MapTilesets/Caverns.png standing torch (x224, y512+n*32)
+- PowerUps/Hazard_TorchEmitter.png 12fr 16x16 <- MapTilesets/Caverns.png glow orb (x16, y528+n*32)
+
+BEHAVIOUR (all tuning in Balance::Hazards):
+- FIRE TOTEM: every 3.2s raises a red aim line for 0.9s that tracks the player,
+  FREEZES for the last 0.35s (dodge window), then fires one EnemyProjectile
+  FireBolt (1 dmg). 3 player hits destroy it; each hit also disables it 4s and
+  cancels a mid-aim.
+- LAVA POOL: animated pool sprite, damage circle r=100 inside it, 0.45s grace
+  on first touch, then 1 dmg per 0.5s tick. Not destructible. Hot/underground
+  biomes only (Caverns / DemonsInsides / Wastelands).
+- FIREBALL TORCH: glow-orb emitter mounted on the east/west wall OUTSIDE the
+  door band (kTorchDoorBandHalf 170px), fires a horizontal FireBolt lane every
+  2.6s with a 0.5s pre-fire flash. 3 hits destroy / hit disables like the totem.
+- All hazards: 1.1s telegraph ring on spawn (semi-transparent sprite + pulsing
+  circle), plus a 1.5s room-entry grace before the first action. Environmental
+  FireBolt cap (10) shared with Flame Wisps — counted per frame in Engine.
+
+PLAYER COUNTERPLAY WIRING:
+- Melee swings (HandlePlayerMeleeDamage), every ability rect
+  (DamageEnemiesInRect), and player projectiles (UpdateSpreadProjectiles —
+  bolts burst on hazards) all call _roomHazards.DamageHazardsInRect.
+  Hazards count HITS (0.25s per-hazard hit cooldown), not scaled damage.
+
+GENERATION (Phase-6 first slice): standard combat rooms roll a hazard at
+kRoomFrequencyByTier {38/58/72%}; placement validated (doors/entry/spacing/
+edge margin, 8 attempts); hazard pressure cost (2) is deducted from the room's
+enemy pressure budget. Boss/Elite/Treasure/Store/Rest rooms never roll.
+
+KNOWN LIMITS (deliberate, revisit later): hazards don't respawn when
+re-entering a half-cleared room (they only exist on first visit); no
+destruction VFX/sound yet; deterministic per-room seeding still Phase 6.
+================================================================================
+
+--------------------------------------------------------------------------------
+PHASE 1 — AUDIT OF EXISTING SYSTEMS (what already exists, where)
+--------------------------------------------------------------------------------
+
+ENEMY UPDATE FLOW
+- CombatDirector::UpdateEnemyRuntime(EnemyRuntimeContext, dt) is the single
+  enemy tick loop (called from two Engine sites: old wave mode ~Engine.cpp:2300
+  and DungeonRun ~Engine.cpp:16940). Context carries player, nav, propCenters,
+  projectile lists, spawn callbacks, and (new, 2026-07-12) hazards = the
+  player-made damage-zone list enemies steer around.
+- Enemy::HandleMovement already does steering: waypoint pull + approach-slot
+  fan-out + enemy separation (130px) + prop repulsion w/ tangential slide
+  (110px) + NEW hazard repulsion. Any new "avoid X" behaviour belongs here.
+
+ENEMY / BOSS PROJECTILES (reuse these, do NOT duplicate)
+- EnemyProjectile (EnemyProjectile.h): generic straight shot, kinds
+  Arrow / FireBolt (animated 32px sheet) / Spit. Engine owns the list
+  (_enemyProjectiles); collision centralized with lava balls + cyclops lasers.
+  ==> Fire Totem and Fireball Torch shots should be EnemyProjectile::FireBolt
+      (or a new kind TotemBolt if different speed/scale is needed).
+- LavaBallProjectile: elite "Hazards" mechanic volley (mechanic 4 in elite
+  rooms, kHazardVolley* constants) — arcing AoE with warning shadow.
+- CyclopsLaserProjectile: aimed/scatter boss laser.
+
+EXISTING ENVIRONMENTAL HAZARDS (biome modifiers, Engine.cpp ~15954)
+- Wastelands: WastelandHazard — random warning circle (DrawCircleLines pulse)
+  -> Flame_Explosion.png sprite burst, 0.3s damage tick, kWasteland* consts.
+- LostCity: _lostCityBeams — rotating beams, segment-distance damage test,
+  cooldown per beam, drawn with DrawLineEx (NO owned VFX yet).
+- TheSanctuary: _sanctuaryZones — dash-lock + slow discs (player debuff only).
+- DemonsInsides: _demonPulseTimer pulse attack.
+- Boss poison clouds: SpawnPoisonCloud(pos, radius) + VFXManager hazard decals
+  (VFXManager::SpawnHazardDecal) — the FX-sprite ground-zone pipeline exists.
+==> These are per-biome one-offs switch-cased in UpdateBiomeModifiers /
+    DrawBiomeModifiers. The RoomHazardDirector should NOT rip them out
+    immediately; wrap/migrate only where it clearly removes duplication
+    (candidate: Wasteland explosion == "eruption crack" hazard template).
+
+ENCOUNTER COMPOSITION (SpawnDungeonRoomEnemies, Engine.cpp ~13785)
+- Tier = cleared-room count (0/1/2) drives min/max basics (2-3 / 3-5 / 4-6)
+  + zone bonus (_worldZone/2) + DemonsInsides +5 + Swarm affix multiplier.
+- Weighted type table (10 enemy types), Warchief capped 1/room.
+- EnemyRole enum already exists (Grunt/Charger/Ranged/Tank/Support/Assassin/
+  Zoner/Summoner/HeavyRanged/Boss) with GetEncounterRole() per enemy and
+  role-based placement (GetDungeonSpawnPosForRole).
+==> The pressure budget slots in here: role -> pressure cost table, room cap
+    by tier, and reinforcement waves when desired population > readable cap.
+- Room state: _dungeonRoomStates (cleared / enemiesInitialized / survivors)
+  — hazards must serialize alongside if they persist across re-entry
+  (simplest: regenerate deterministically from room index seed).
+
+DIRECTIONAL DEFENCE (pre-Phase-2 state, now FIXED)
+- Shieldbearer::TakeDamage and TitanGuard::TakeDamage used a raw x-sign
+  half-plane test (attackSide * _rightLeft > 0), and base Enemy code flipped
+  _rightLeft toward the player every frame -> rear positioning near-impossible.
+- Rogue Backstab was DamageEnemiesInRect with big damage — no rear check.
+
+DEBUG / TELEMETRY INFRA
+- _debug (DebugPanel, F1/F10 toggle) — IsActive()/IsOpen(); RoomTelemetry ring
+  drawn beside it. Debug visuals hang off the _debug.IsOpen() block
+  (~Engine.cpp:17816). TraceLog available for logging.
+
+TUNING HOME
+- GameBalance.h namespaces (Balance::Grunt/Elite/Boss/Sustain/Rooms/...).
+  New namespaces added: Balance::Facing (Phase 2). Planned: Balance::Pressure,
+  Balance::Hazards (Phase 3+).
+
+--------------------------------------------------------------------------------
+PHASE 2 — IMPLEMENTED 2026-07-12 (built Debug|x64 clean, smoke-tested)
+--------------------------------------------------------------------------------
+Files changed: GameBalance.h, Enemy.h, Enemy.cpp, Shieldbearer.cpp,
+               TitanGuard.cpp, Engine.h, Engine.cpp, AbilityType.h.
+
+1. Balance::Facing (GameBalance.h): kFrontConeDot .25, kRearConeDot .25,
+   kTurnCommitInterval .22s, kHeavyTurnCommitInterval .55s,
+   kAttackRecoveryFacingLock .35s, kBackstabRearMult 2.2.
+2. Shared facing helpers (Enemy): GetFacingSign(), IsPositionInFront(pos,dot),
+   IsPositionBehind(pos,dot) — dot-product cones on the horizontal forward
+   vector; CanTurnDuringCurrentState(); FaceToward(dx) rate-limited flip.
+   Fields _facingLockTimer / _turnCommitCooldown / _turnCommitInterval ticked
+   in Enemy::Update (lock ticks only after _attacking clears = recovery window).
+3. Facing commitment wired: walk flip goes through FaceToward; attack start
+   snapshots facing once then locks through the swing + 0.35s recovery.
+   Elite lunge windup tracking kept (explicitly telegraphed), lunge dir still
+   locks at launch. Burn panic keeps instant flailing (intentional).
+4. Shieldbearer: block only inside the frontal cone (was half-plane); pivots at
+   kHeavyTurnCommitInterval. Sides + rear now land full damage.
+5. TitanGuard (boss): frontal chip only inside the cone; advancing shield-track
+   is rate-limited to the heavy pivot interval. Shield-down windows unchanged.
+6. Rogue Backstab: per-enemy rear check. All targets in the box take base
+   damage; ONLY rear-cone hits get x2.2, bleed, expose (vulnerability), the
+   BACKSTAB! label, and the +2 bonus combo. TraceLog spam only when the debug
+   panel is active. Card text updated ("Strike ahead; huge bonus from behind").
+7. Debug viz (debug panel open only): DrawEnemyFacingDebug — facing arrow,
+   orange front cone, green rear cone, facing-lock countdown per enemy.
+
+TEST NOTES (manual, for Robert):
+- F1 debug panel in a dungeon room -> arrows/cones visible, never in normal play.
+- Shieldbearer: hit front = BLOCKED spark; walk a half-circle (it pivots
+  slowly now) and hit again = full damage.
+- Rogue: Backstab from front = plain numbers; from behind = BACKSTAB! label.
+- TitanGuard boss: side hits no longer chip-blocked.
+
+--------------------------------------------------------------------------------
+PHASES 3-7 — CONCRETE PLAN (not started)
+--------------------------------------------------------------------------------
+
+PHASE 3 — IMPLEMENTED 2026-07-12 (built Debug|x64 clean, smoke-tested)
+Files: RoomHazardDirector.h/.cpp (NEW — registered in vcxproj, filters,
+build_web.bat), GameBalance.h, Engine.h, Engine.cpp.
+
+1. Balance::Pressure: kRoomPressureCap {10,16,22}, kOpeningActiveCap {7,10,12},
+   kMin/MaxBasics {4-6, 6-9, 8-12}, kReinforceRefillActive 4, kReinforceInterval 6s.
+   Balance::Hazards: telegraph 1.1s, disabled 4s, entry grace 1.5s, env
+   projectile cap 10, tick dmg 1 @ 0.5s, room frequencies {.38,.58,.72},
+   placement distances (doorway 240 / entry 320 / between 260 / edge margin 120).
+2. RoomHazardDirector: RoomHazardType {FireTotem, LavaPool, FireballTorch},
+   state machine Telegraph->Active + Disabled->Active, TryPlaceHazard with
+   validated placement (safe bounds + forbidden spots + hazard spacing,
+   TraceLog on rejection), pressure cost accounting. Per-type behaviour and
+   visuals are Phase 4/5. Engine owns `_roomHazards`: ClearRoom in
+   EnterDungeonRoom, Update beside UpdateBiomeModifiers, Draw after
+   DrawBiomeModifiers in DrawDungeonRun.
+3. Pressure budget live in SpawnDungeonRoomEnemies (standard rooms): the whole
+   composition is rolled first via rollGruntTypeId, each body costed by
+   kTypePressureCost {1,2,2,2,1,2,2,2,3,2} (typeId-indexed), clamped to the
+   tier cap (busting rolls downgrade to a plain grunt or stop). Body counts
+   now come from Balance::Pressure (bigger rooms: 4-6/6-9/8-12 + zone bonus).
+4. Reinforcement waves: only kOpeningActiveCap bodies spawn at fight start;
+   the surplus queues in Engine::_dungeonReinforcementTypeIds and releases
+   (up to opening cap - actives) when actives <= 4 or every 6s, with a
+   "REINFORCEMENTS!" floating label. Room clear requires the queue empty.
+   Queue + hazards wiped on every room transition (EnterDungeonRoom).
+   Shared spawn path Engine::SpawnDungeonGruntByTypeId (opening + waves use
+   identical role placement).
+5. Debug (panel open only): PRESSURE spent/cap + queued waves + hazard count
+   line in the facing overlay; TraceLog for composition + wave decisions.
+
+PLAYTEST NOTES: standard rooms are noticeably busier now (per the brief's
+population targets) — if early rooms feel too hot, tune kMin/MaxBasics and
+kRoomPressureCap in GameBalance.h, not the spawn code.
+
+ORIGINAL PHASE 3 PLAN (kept for reference):
+PHASE 3 — RoomHazardDirector foundation + pressure budget data
+- NEW FILES RoomHazardDirector.h/.cpp (add to vcxproj + filters + build_web.bat!)
+  owning: struct RoomHazard { type, pos, timers (activation/cooldown/telegraph),
+  state (Telegraph/Active/Disabled/Destroyed), pressureCost, biome mask,
+  health (destructible), vfx id }. Update/Draw/Clear + safe-placement helper
+  (min dist from doors kCols/2±1 door cells, player entry, Zeph, chest, other
+  hazards; validate against RoomLayout collision).
+- Balance::Pressure: role costs (Grunt 1, Charger/Ranged/Tank 2, Assassin 2,
+  Summoner/Zoner 2, Elite 4, HeavyRanged 3), room caps by tier (early 7,
+  mid 10, late 13, swarm-peak 16 fragile-only), hazard costs, reinforcement
+  wave rules. Balance::Hazards: telegraph durations, tick rates, projectile
+  caps (global env-projectile cap ~10), speeds, damage (modest: 1).
+- SpawnDungeonRoomEnemies: compute room pressure from chosen composition,
+  clamp to cap; when desired population exceeds the readable opening cap,
+  hold the remainder as a reinforcement wave (timer or on-deaths trigger —
+  reuse the existing survivors/room-state machinery).
+- Debug: pressure total + per-source cost in the debug panel; rejected
+  placement logging via TraceLog.
+
+PHASE 4 — Fire Totem (first complete hazard)
+- Destructible world object (prop-like, drawn from an owned sheet; candidates
+  in owned packs — NO new art generation, crop only). Aims at player with a
+  windup telegraph line (Raylib line = warning geometry is allowed), then
+  fires EnemyProjectile::FireBolt (owned animated sheet). Never fires in the
+  first ~1.5s after room entry; placement validation per Phase 3; disabled
+  state on player damage (short) or destroyed (health 0).
+
+PHASE 5 — Lava Pool + Fireball Torch
+- Lava Pool: persistent floor decal via VFXManager::SpawnHazardDecal pipeline,
+  tick damage w/ first-touch grace (~0.4s), never on doors/entry/chest/reward;
+  fixed size (no expansion). Also feeds the NEW enemy-hazard avoidance list?
+  NO — that list is player-made zones; enemies may walk lava freely or avoid
+  it via the same repulsion with weaker strength (decide in playtest).
+- Fireball Torch: wall-anchored lane launcher, pre-fire flash, rhythmic
+  patterns (alternate/pause/sequence), projectiles collide with walls
+  (RoomLayout tile check), combination rule: never two lane hazards covering
+  both remaining routes.
+- Env projectile cap enforced across totems+torches; safe-lane validation.
+
+PHASE 6 — Generation integration
+- Hazard-room frequency by tier: early ~35-40%, mid ~55-60%, late ~70-75%
+  of COMBAT rooms only (never Store/Rest/Treasure/start; never beside doors).
+  Deterministic per room: seed rolls from _dungeonRoomIdx + dungeon seed so
+  re-entry/debug is reproducible. Hazard pressure counts against the room's
+  enemy budget (hazard-heavy room = fewer bodies).
+- Biome eligibility masks (Forest/Wasteland/LostCity/Sanctuary/ice/fire/abyss
+  sets per the brief); implement only fire-set now, leave masks data-driven.
+
+PHASE 7 — Playtest + tune
+- Use RoomTelemetry (clear time, dmg taken) + new pressure readout to verify
+  TTK targets (weak 2-4 hits, elites 25-45s, bosses 90-150s from the balance
+  rework doc). Raise timing/aggression/composition knobs before HP/damage.
+
+RISKS / GOTCHAS
+- New .cpp files MUST be added to TestGame.vcxproj, .filters, AND build_web.bat.
+- Web build preloads asset folders — new cropped sprites should live in
+  existing preloaded folders (PowerUps/ or Enemy/).
+- Do not reorder meta-unlock tables or UpgradeType serialization.
+- _warriorVfx hazard list rebuild runs each frame — totem/torch projectiles
+  belong to _enemyProjectiles, NOT _warriorVfx (that list is player zones).
+================================================================================

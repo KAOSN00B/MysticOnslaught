@@ -1,3 +1,10 @@
+box_x=52.000
+box_y=-3.000
+box_w=80.000
+box_h=80.000
+fx=Roll
+fx_forward=45.000
+fx_height=-6.000
 fire_forward=64.000
 fire_height=43.000
 proj_scale=1.000

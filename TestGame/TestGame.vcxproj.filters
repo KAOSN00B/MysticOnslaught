@@ -150,6 +150,9 @@
     <ClCompile Include="PlayerPreview.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="RoomHazardDirector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Cyclops.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -345,6 +348,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="PlayerPreview.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RoomHazardDirector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AnimationUtils.h">

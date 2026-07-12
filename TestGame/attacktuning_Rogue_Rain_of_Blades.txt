@@ -1,8 +1,10 @@
-box_x=-3.000
-box_y=11.000
+box_x=90.000
+box_y=3.000
 box_w=206.000
 box_h=196.000
 fx=RainOfBlades
+fx_forward=71.000
+fx_height=-1.000
 fire_forward=78.000
 fire_height=43.000
 proj_scale=1.000

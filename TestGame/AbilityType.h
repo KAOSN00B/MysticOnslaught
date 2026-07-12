@@ -142,15 +142,15 @@ inline const char* GetAbilityName(AbilityType type)
 {
     switch (type)
     {
-    case AbilityType::FireSpread:      return "Fire Spread";
-    case AbilityType::IceSpread:       return "Ice Spread";
-    case AbilityType::ElectricSpread:  return "Electric Spread";
-    case AbilityType::FireBolt:        return "Fire Bolt";
-    case AbilityType::IceBolt:         return "Ice Bolt";
-    case AbilityType::ElectricBolt:    return "Electric Bolt";
-    case AbilityType::FireUltimate:    return "Fire Ultimate";
-    case AbilityType::IceUltimate:     return "Ice Ultimate";
-    case AbilityType::ElectricUltimate:return "Elec. Ultimate";
+    case AbilityType::FireSpread:      return "Flame Wall";
+    case AbilityType::IceSpread:       return "Frost Nova";
+    case AbilityType::ElectricSpread:  return "Lightning Blink";
+    case AbilityType::FireBolt:        return "Fireball";
+    case AbilityType::IceBolt:         return "Ice Lance";
+    case AbilityType::ElectricBolt:    return "Chain Lightning";
+    case AbilityType::FireUltimate:    return "Meteor";
+    case AbilityType::IceUltimate:     return "Blizzard";
+    case AbilityType::ElectricUltimate:return "Thunderstorm";
     case AbilityType::WarCleave:       return "Cleave Wave";
     case AbilityType::Whirlwind:       return "Whirlwind";
     case AbilityType::ThrowingAxe:     return "Throwing Axe";
@@ -204,15 +204,15 @@ inline const char* GetAbilityDesc(AbilityType type)
 {
     switch (type)
     {
-    case AbilityType::FireSpread:      return "8 fireballs\nburn on hit";
-    case AbilityType::IceSpread:       return "8 ice shards\nfreeze on hit";
-    case AbilityType::ElectricSpread:  return "8 bolts\nstun randomly";
-    case AbilityType::FireBolt:        return "Aimed fireball\nhigh damage + burn";
-    case AbilityType::IceBolt:         return "Aimed shard\nhigh damage + freeze";
-    case AbilityType::ElectricBolt:    return "Aimed bolt\nhigh damage + stun";
-    case AbilityType::FireUltimate:    return "Blasts everywhere\n4 dmg + burn, all MP";
-    case AbilityType::IceUltimate:     return "Blasts everywhere\n4 dmg + freeze, all MP";
-    case AbilityType::ElectricUltimate:return "Blasts everywhere\n4 dmg + stun, all MP";
+    case AbilityType::FireSpread:      return "Place a burning wall\nthat controls space";
+    case AbilityType::IceSpread:       return "Defensive frost burst\nslows and freezes";
+    case AbilityType::ElectricSpread:  return "Aim a damaging blink\nshock at arrival";
+    case AbilityType::FireBolt:        return "Aimed fireball\nexplodes and burns";
+    case AbilityType::IceBolt:         return "Piercing ice lance\nshatters chilled foes";
+    case AbilityType::ElectricBolt:    return "First hit chains\nthrough nearby foes";
+    case AbilityType::FireUltimate:    return "Call down a meteor\nleaves burning ground";
+    case AbilityType::IceUltimate:     return "Place a blizzard\nslow then freeze foes";
+    case AbilityType::ElectricUltimate:return "Forward-moving storm\nrandom lightning strikes";
     case AbilityType::WarCleave:       return "Frontal shockwave\nknocks foes back";
     case AbilityType::Whirlwind:       return "Spin attack\nhits all around you";
     case AbilityType::ThrowingAxe:     return "Piercing axe\nflies straight ahead";
@@ -225,7 +225,7 @@ inline const char* GetAbilityDesc(AbilityType type)
     case AbilityType::FanOfKnives:     return "Cone of daggers\nsprays ahead";
     case AbilityType::Shadowstep:      return "Blink forward\ncutting all crossed";
     case AbilityType::PoisonVial:      return "Lobbed vial\nlingering poison pool";
-    case AbilityType::Backstab:        return "One brutal strike\nguaranteed heavy hit";
+    case AbilityType::Backstab:        return "Strike ahead; huge\nbonus from behind";
     case AbilityType::SmokeBomb:       return "Slows nearby foes\n+ ambush damage";
     case AbilityType::Eviscerate:      return "Rapid flurry\nshreds what's ahead";
     case AbilityType::DeathMark:       return "Mark & execute all\non screen, all MP";
@@ -321,6 +321,78 @@ inline int GetAbilityManaCost(AbilityType type)
         return 3;
     default:
         return 2;   // spread is the bread-and-butter crowd-clear cast
+    }
+}
+
+// Cooldown (seconds) started when the ability is successfully cast. Cooldowns
+// are the pacing layer on top of mana: mana asks "can you afford it", the
+// cooldown asks "how often can you lean on it". Basic attacks stay free, so a
+// build can't just hold one ability button to clear rooms.
+inline float GetAbilityCooldownSeconds(AbilityType type)
+{
+    switch (type)
+    {
+    // ── Ultimates — run-defining bursts, long lockout on top of the mana drain
+    case AbilityType::FireUltimate:
+    case AbilityType::IceUltimate:
+    case AbilityType::ElectricUltimate:
+    case AbilityType::GroundSlam:
+    case AbilityType::Rampage:
+    case AbilityType::Earthshatter:
+    case AbilityType::DeathMark:
+    case AbilityType::BladeDance:
+    case AbilityType::RainOfBlades:
+    case AbilityType::ArrowStorm:
+    case AbilityType::Deadeye:
+    case AbilityType::PiercingBarrage:
+    case AbilityType::DivineStorm:
+    case AbilityType::AvengingWrath:
+    case AbilityType::HammerOfJustice:
+    case AbilityType::Cataclysm:
+    case AbilityType::DemonForm:
+    case AbilityType::ShadowNova:
+        return 20.f;
+    // ── Big self-heals / defensive vows — strongest sustain, longest waits ────
+    case AbilityType::LayOnHands:
+        return 15.f;
+    case AbilityType::WarCry:
+    case AbilityType::ShieldOfFaith:
+    case AbilityType::SmokeBomb:
+    case AbilityType::SoulSiphon:
+        return 12.f;
+    // ── Lingering ground zones — area denial shouldn't be permanent carpet ────
+    case AbilityType::Consecrate:
+    case AbilityType::CorruptionPool:
+    case AbilityType::PoisonVial:
+    case AbilityType::FrostTrap:
+    case AbilityType::ExplosiveArrow:
+        return 10.f;
+    // ── Committed single-target strikes / control hits ────────────────────────
+    case AbilityType::Rend:
+    case AbilityType::ShieldBash:
+    case AbilityType::HammerThrow:
+    case AbilityType::Backstab:
+    case AbilityType::Shadowstep:
+    case AbilityType::ThrowingAxe:
+    case AbilityType::Curse:
+    case AbilityType::DrainLife:
+    case AbilityType::Hellfire:
+        return 7.5f;
+    // ── Aimed bolts — stronger than a spread, slower than one ─────────────────
+    case AbilityType::FireBolt:
+    case AbilityType::IceBolt:
+    case AbilityType::ElectricBolt:
+    case AbilityType::Whirlwind:
+    case AbilityType::Multishot:
+    case AbilityType::Volley:
+    case AbilityType::Eviscerate:
+        return 6.f;
+    // ── Mobility stays snappy — dodging shouldn't feel rationed ───────────────
+    case AbilityType::Roll:
+        return 4.f;
+    // ── Bread-and-butter casts (spreads, cleaves, basic lines) ────────────────
+    default:
+        return 5.f;
     }
 }
 

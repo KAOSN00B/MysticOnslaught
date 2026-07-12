@@ -554,6 +554,12 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
         _freezeTimer -= dt;
     if (_graveReviveInvulTimer > 0.f)
         _graveReviveInvulTimer -= dt;
+    // Facing commitment timers — the lock only counts down once the attack
+    // animation itself is over, so it acts as a post-attack recovery window.
+    if (_facingLockTimer > 0.f && !_attacking)
+        _facingLockTimer -= dt;
+    if (_turnCommitCooldown > 0.f)
+        _turnCommitCooldown -= dt;
 
     // Periodically repick approach direction so enemies shift positions
     // and don't permanently crowd one side of the player.
@@ -614,6 +620,44 @@ Vector2 Enemy::ResolveNavTarget(float dt, Vector2 playerFeet,
     if (hasNavigationTarget)
         return navigationTarget;
     return playerFeet;
+}
+
+// ── Facing & directional checks ──────────────────────────────────────────────
+// Front/rear use a dot-product cone against the horizontal facing vector, so
+// "behind" is a real 150° arc rather than an infinitely thin x-comparison edge.
+bool Enemy::IsPositionInFront(Vector2 position, float coneDot) const
+{
+    Vector2 toPosition = Vector2Subtract(position, _worldPos);
+    float length = Vector2Length(toPosition);
+    if (length < 0.01f)
+        return true;   // point-blank overlaps count as front (shield contact)
+    float dot = (toPosition.x / length) * GetFacingSign();
+    return dot >= coneDot;
+}
+
+bool Enemy::IsPositionBehind(Vector2 position, float rearDot) const
+{
+    Vector2 toPosition = Vector2Subtract(position, _worldPos);
+    float length = Vector2Length(toPosition);
+    if (length < 0.01f)
+        return false;
+    float dot = (toPosition.x / length) * GetFacingSign();
+    return dot <= -rearDot;
+}
+
+void Enemy::FaceToward(float dx)
+{
+    if (fabsf(dx) < 0.01f)
+        return;
+    float desired = (dx < 0.f) ? -1.f : 1.f;
+    if (desired == GetFacingSign())
+        return;
+    // Attacks and the recovery window freeze facing; walking flips are rate-
+    // limited so an enemy can be circled instead of pivoting frame-perfectly.
+    if (!CanTurnDuringCurrentState() || _turnCommitCooldown > 0.f)
+        return;
+    _rightLeft = desired;
+    _turnCommitCooldown = _turnCommitInterval;
 }
 
 void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
@@ -734,6 +778,37 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         }
     }
 
+    // Hazard repulsion — enemies respect player-made damage zones (Consecrate,
+    // poison pools...) the way they respect pillars, but much more strongly:
+    // a hard shove away from the zone plus a tangential slide so they skirt the
+    // edge toward the player instead of freezing at the rim. The pull toward the
+    // player can still win when the player stands inside the zone — they hesitate
+    // at the border rather than becoming permanently untouchable.
+    if (_hazardZones != nullptr)
+    {
+        for (const HazardZone& hazard : *_hazardZones)
+        {
+            float avoidRange = hazard.radius + 70.f;   // margin outside the burn edge
+            float dist = Vector2Distance(_worldPos, hazard.pos);
+            if (dist >= avoidRange || dist <= 0.f)
+                continue;
+
+            Vector2 away = Vector2Subtract(_worldPos, hazard.pos);
+            if (Vector2Length(away) <= 0.01f)
+                continue;
+            away = Vector2Normalize(away);
+            float strength = (avoidRange - dist) / avoidRange;
+            separation = Vector2Add(separation, Vector2Scale(away, strength * 3.2f));
+
+            // Slide along whichever tangent keeps progress toward the target.
+            Vector2 tangentA = { -away.y, away.x };
+            Vector2 tangentB = { away.y, -away.x };
+            Vector2 bestTangent = (Vector2DotProduct(tangentA, moveDir) >=
+                                   Vector2DotProduct(tangentB, moveDir)) ? tangentA : tangentB;
+            propSlide = Vector2Add(propSlide, Vector2Scale(bestTangent, strength * 1.2f));
+        }
+    }
+
     separation = Vector2Scale(separation, 0.80f);
     propSlide = Vector2Scale(propSlide, _propSlideStrength);
     moveDir = Vector2Add(moveDir, separation);
@@ -837,9 +912,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
         if (intentionalMove && Vector2Length(Vector2Subtract(_worldPos, oldPos)) > 0.01f)
         {
             _texture = _walkAnim;
-
-            if (moveDir.x < 0) _rightLeft = -1;
-            if (moveDir.x > 0) _rightLeft = 1;
+            FaceToward(moveDir.x);   // rate-limited flip (facing commitment)
         }
         else
         {
@@ -1006,9 +1079,14 @@ void Enemy::HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies)
         _damageApplied = false;
         _velocity = Vector2Zero();
 
+        // Windup snapshot: one free flip toward the player as the swing starts,
+        // then facing stays locked through the attack AND a recovery beat after
+        // (the lock timer only ticks down once _attacking clears). Stepping
+        // around a committed attacker is now a real dodge.
         Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
         if (toPlayer.x < 0.f) _rightLeft = -1;
         else if (toPlayer.x > 0.f) _rightLeft = 1;
+        _facingLockTimer = Balance::Facing::kAttackRecoveryFacingLock;
 
         _attackCooldown = _attackDelay;
 

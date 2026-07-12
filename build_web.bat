@@ -54,6 +54,7 @@ call emcc ^
   %SRC%\ToxicVermin.cpp ^
   %SRC%\AncientBear.cpp ^
   %SRC%\PlayerPreview.cpp ^
+  %SRC%\RoomHazardDirector.cpp ^
   %SRC%\EnemyProjectile.cpp ^
   %SRC%\Prop.cpp ^
   %SRC%\Game.cpp ^

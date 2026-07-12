@@ -290,6 +290,9 @@ void AttackEditor::OpenAttack(int index)
     _paused = false;
     _dragHandle = -1;
     _fxPickerOpen = false;
+    _fxOffset = Vector2{ 0.f, 0.f };
+    _fxOffsetSet = false;
+    _editFxPosition = false;
 
     // Per-attack default shape + size (projectile/AoE = circle, melee = rect).
     const AttackItem& it = _items[index];
@@ -330,6 +333,8 @@ void AttackEditor::LoadCurrent()
             else if (k == "box_y") _box.y = val;
             else if (k == "box_w") _box.w = val;
             else if (k == "box_h") _box.h = val;
+            else if (k == "fx_forward") { _fxOffset.x = val; _fxOffsetSet = true; }
+            else if (k == "fx_height")  { _fxOffset.y = val; _fxOffsetSet = true; }
         }
     }
     fclose(f);
@@ -338,16 +343,33 @@ void AttackEditor::LoadCurrent()
 void AttackEditor::SaveCurrent()
 {
     if (_selectedIdx < 0) return;
-    FILE* f = fopen(TuningPath(_items[_selectedIdx].key).c_str(), "w");
-    if (!f) { _status = "SAVE FAILED"; return; }
+
+    // Character Animator owns fire point/projectile/cooldown fields in this
+    // same file. Merge our FX + damage-box edits into the existing record so
+    // moving between the two views never erases the other view's work.
+    AttackTuning merged{};
+    if (const AttackTuning* existing = AttackTuningStore::Get(_items[_selectedIdx].key))
+        merged = *existing;
+
     const std::string& stem = _items[_selectedIdx].fxStem;
-    fprintf(f, "fx=%s\n", stem.empty() ? "none" : stem.c_str());
-    fprintf(f, "box_x=%.2f\n", _box.x);
-    fprintf(f, "box_y=%.2f\n", _box.y);
-    fprintf(f, "box_w=%.2f\n", _box.w);
-    fprintf(f, "box_h=%.2f\n", _box.h);
-    fclose(f);
-    AttackTuningStore::Reload(_items[_selectedIdx].key);   // so gameplay picks it up live
+    merged.hasFx = true;
+    merged.fxStem = stem;
+    if (_fxOffsetSet)
+    {
+        merged.hasFxOffset = true;
+        merged.fxForward = _fxOffset.x;
+        merged.fxHeight = _fxOffset.y;
+    }
+    merged.hasBox = true;
+    merged.x = _box.x;
+    merged.y = _box.y;
+    merged.w = _box.w;
+    merged.h = _box.h;
+    if (!AttackTuningStore::Save(_items[_selectedIdx].key, merged))
+    {
+        _status = "SAVE FAILED";
+        return;
+    }
     _status = "Saved " + _items[_selectedIdx].key + ".txt";
 }
 
@@ -396,8 +418,13 @@ void AttackEditor::UpdateEdit()
     if (IsKeyPressed(KEY_H))       { _helpOpen = true; return; }
     if (IsKeyPressed(KEY_ESCAPE)) { CloseAttack(); return; }
     if (IsKeyPressed(KEY_F))      { _fxPickerOpen = true; _fxPickerScroll = 0.f; return; }
+    if (IsKeyPressed(KEY_X))      { _editFxPosition = !_editFxPosition; _dragHandle = -1; }
     if (IsKeyPressed(KEY_SPACE))  _paused = !_paused;
-    if (IsKeyPressed(KEY_R))      { _box = CurrentDefaultBox(); _status = "Reset to default"; }
+    if (IsKeyPressed(KEY_R))
+    {
+        if (_editFxPosition) { _fxOffset = Vector2{ 0.f, 0.f }; _fxOffsetSet = true; _status = "FX origin reset to player"; }
+        else { _box = CurrentDefaultBox(); _status = "Hitbox reset to default"; }
+    }
     if (IsKeyPressed(KEY_S))      SaveCurrent();
 
     // FX playback
@@ -421,6 +448,21 @@ void AttackEditor::UpdateEdit()
         { cx - _box.w * 0.5f, cy + _box.h * 0.5f }, { cx + _box.w * 0.5f, cy + _box.h * 0.5f },
     };
     Vector2 m = GetVirtualMousePos();
+
+    if (_editFxPosition && !_items[_selectedIdx].isBoss)
+    {
+        Vector2 fxHandle{ originX + _fxOffset.x, originY + _fxOffset.y };
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+            CheckCollisionPointCircle(m, fxHandle, 24.f))
+            _dragHandle = 5;
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && _dragHandle == 5)
+        {
+            _fxOffset = Vector2{ m.x - originX, m.y - originY };
+            _fxOffsetSet = true;
+        }
+        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) _dragHandle = -1;
+        return;
+    }
 
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
@@ -516,6 +558,7 @@ void AttackEditor::DrawHelp()
         { ", and .",       "step one frame back / forward" },
         { "Drag a corner handle", "resize the hitbox (round for projectiles)" },
         { "Drag the box body",    "move the hitbox" },
+        { "X, then drag FX ORIGIN", "move the animation relative to the player" },
         { "F",             "change / assign an FX sprite" },
         { "R",             "reset the box to its default" },
         { "S",             "save  ->  attacktuning_<attack>.txt" },
@@ -573,9 +616,9 @@ void AttackEditor::DrawSelect()
     const float sw = (float)kVirtualWidth;
     ClearBackground(Color{ 20, 18, 28, 255 });
 
-    const char* title = "ATTACK EDITOR";
+    const char* title = "ATTACK FX + HITBOXES";
     DrawText(title, (int)(sw * 0.5f - MeasureText(title, 52) * 0.5f), 40, 52, Color{ 235, 210, 140, 255 });
-    const char* sub = "Every player ability + boss attack. Click one to view its FX and resize its hitbox.";
+    const char* sub = "Character Animator library: every player ability and boss attack.";
     DrawText(sub, (int)(sw * 0.5f - MeasureText(sub, 22) * 0.5f), 96, 22, Color{ 180, 175, 195, 255 });
 
     float rowH = 34.f, listX = 80.f, listY = 120.f, listW = sw - 160.f;
@@ -608,6 +651,7 @@ void AttackEditor::DrawEdit()
 
     // Reference grid + origin (the attack source, facing right).
     const float originX = sw * 0.5f, originY = sh * 0.55f;
+    Vector2 fxPos{ originX + _fxOffset.x, originY + _fxOffset.y };
     for (float gx = 0.f; gx < sw; gx += 64.f) DrawLine((int)gx, 0, (int)gx, (int)sh, Color{ 30, 32, 40, 255 });
     for (float gy = 0.f; gy < sh; gy += 64.f) DrawLine(0, (int)gy, (int)sw, (int)gy, Color{ 30, 32, 40, 255 });
     DrawLine((int)originX, (int)(originY - 16.f), (int)originX, (int)(originY + 16.f), Color{ 90, 100, 120, 255 });
@@ -627,12 +671,21 @@ void AttackEditor::DrawEdit()
     DrawCircleV({ originX + 36.f, originY - 2.f }, 6.f, GOLD);
     DrawText(it.owner.c_str(), (int)(originX - 70.f), (int)(originY + 54.f), 18, Fade(RAYWHITE, 0.85f));
 
+    if (!it.isBoss)
+    {
+        Color fxOriginColor = _editFxPosition ? GOLD : Color{ 90, 235, 210, 255 };
+        DrawLineEx({ originX, originY }, fxPos, 2.f, Fade(fxOriginColor, 0.55f));
+        DrawCircleV(fxPos, _editFxPosition ? 11.f : 8.f, fxOriginColor);
+        DrawCircleLines((int)fxPos.x, (int)fxPos.y, 18.f, fxOriginColor);
+        DrawText("FX ORIGIN", (int)fxPos.x + 20, (int)fxPos.y - 28, 18, fxOriginColor);
+    }
+
     bool travelPreview = it.previewKind == PreviewLava || it.previewKind == PreviewFireBolt ||
                          it.previewKind == PreviewSpit || it.previewKind == PreviewLaser ||
                          fabsf(_box.x) > 96.f || (!_circleHit && _box.w > 260.f);
     if (travelPreview)
     {
-        Vector2 start{ originX + 36.f, originY - 2.f };
+        Vector2 start = fxPos;
         Vector2 end{ originX + _box.x, originY + _box.y };
         DrawLineEx(start, end, 3.f, Fade(Color{ 120, 210, 255, 255 }, 0.5f));
         for (int i = 1; i <= 6; ++i)
@@ -651,7 +704,7 @@ void AttackEditor::DrawEdit()
         float fh = (_frameH > 0.f) ? _frameH : (float)_fx.height;
         float scale = it.previewScale;
         Rectangle src{ _frame * fw, 0.f, fw, fh };
-        Rectangle dst{ originX, originY, fw * scale, fh * scale };
+        Rectangle dst{ fxPos.x, fxPos.y, fw * scale, fh * scale };
         DrawTexturePro(_fx, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, 0.f, Fade(WHITE, 0.9f));
     }
 
@@ -705,11 +758,13 @@ void AttackEditor::DrawEdit()
         DrawText("(boss visual - Phase 3; tune the box for now)", (int)(sw - 500.f), 12, 20, Color{ 200, 160, 120, 255 });
 
     DrawRectangle(0, (int)(sh - 64.f), (int)sw, 64, Fade(BLACK, 0.78f));
-    const char* dims = _circleHit
+    const char* dims = _editFxPosition
+        ? TextFormat("FX origin   x %.0f   y %.0f   (relative to player)", _fxOffset.x, _fxOffset.y)
+        : _circleHit
         ? TextFormat("circle   x %.0f   y %.0f   radius %.0f", _box.x, _box.y, _box.w * 0.5f)
         : TextFormat("rect   x %.0f   y %.0f   w %.0f   h %.0f", _box.x, _box.y, _box.w, _box.h);
     DrawText(dims, 12, (int)(sh - 56.f), 24, RAYWHITE);
-    DrawText("Drag: resize/move   SPACE: pause   , . step   F: FX   R: reset   S: save   [H] Controls   ESC: back",
+    DrawText("X: FX position   Drag: move/resize   SPACE: pause   F: choose FX   R: reset   S: save   [H] Help   ESC: back",
              12, (int)(sh - 28.f), 20, Color{ 175, 170, 190, 255 });
     if (!_status.empty())
         DrawText(_status.c_str(), (int)(sw - MeasureText(_status.c_str(), 22) - 16.f), (int)(sh - 54.f), 22, Color{ 150, 230, 150, 255 });

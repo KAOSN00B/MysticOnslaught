@@ -189,6 +189,7 @@ public:
     void SetCombatLocked(bool locked)    { _combatLocked = locked; }
     void SetDashAllowedWhileCombatLocked(bool allowed) { _dashAllowedWhileCombatLocked = allowed; }
     void SetManaRegenPaused(bool paused) { _manaRegenPaused = paused; }
+    void SetAbilityAimMoveScale(float scale) { _abilityAimMoveScale = std::clamp(scale, 0.f, 1.f); }
 
     // ── Touch input (set by Engine each frame before Update) ─────────────────
     // joystickDir is a [-1,1] normalised vector from the virtual joystick.
@@ -220,7 +221,21 @@ public:
 
     // Called by Engine when an ability icon is clicked or a hotkey fires
     void TriggerAbilityCast(int slot);
+    bool CanBeginAbilityCast(int slot) const;
     bool CanCastAbility(AbilityType type) const;
+    // ── Ability cooldowns (per slot, ticked down in Update) ────────────────────
+    // A successful cast starts GetAbilityCooldownSeconds(ability) on its slot;
+    // TriggerAbilityCast refuses while the slot is still counting down.
+    float GetSlotCooldownRemaining(int slot) const
+        { return (slot >= 0 && slot < _hardAbilityCap) ? _slotCooldownRemaining[slot] : 0.f; }
+    // 0..1 fraction of the cooldown still left — drives the HUD sweep overlay.
+    float GetSlotCooldownFraction(int slot) const
+    {
+        if (slot < 0 || slot >= _hardAbilityCap || _slotCooldownDuration[slot] <= 0.f)
+            return 0.f;
+        return _slotCooldownRemaining[slot] / _slotCooldownDuration[slot];
+    }
+    bool IsSlotOnCooldown(int slot) const { return GetSlotCooldownRemaining(slot) > 0.f; }
     int  GetUltimateManaRequired() const;
     float GetUltimateManaWarningTimer() const { return _ultimateManaWarningTimer; }
 
@@ -378,6 +393,7 @@ public:
         return true;
     }
     void  MoveTowardFacing(float distance);   // short lunge/dash for melee abilities
+    void  MoveAlongDirection(Vector2 direction, float distance);
 
     bool CanApplyMeleeDamage() const;
     void ConsumeMeleeDamageFrame();
@@ -590,6 +606,7 @@ private:
     bool _combatLocked      = false;
     bool _dashAllowedWhileCombatLocked = false;
     bool _manaRegenPaused   = false;
+    float _abilityAimMoveScale = 1.f;
     bool _castingAbility = false;
     bool _isDashing = false;
     bool _dashAnimPlaying = false;
@@ -608,6 +625,9 @@ private:
     int _abilityLevels[_hardAbilityCap] = { 1, 1, 1, 1, 1, 1 };
     int _learnedCount     = 0;
     int _maxAbilitySlots  = 4;
+    // Per-slot cast cooldowns (seconds remaining / full duration for HUD sweep).
+    float _slotCooldownRemaining[_hardAbilityCap] = { 0.f, 0.f, 0.f, 0.f, 0.f, 0.f };
+    float _slotCooldownDuration[_hardAbilityCap]  = { 0.f, 0.f, 0.f, 0.f, 0.f, 0.f };
 
     float _attackWidthAdjust  = 0.f;   // pixel addition to melee box width (hitbox editor)
     float _attackHeightAdjust = 0.f;   // pixel addition to melee box height (hitbox editor)

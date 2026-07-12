@@ -1,8 +1,10 @@
-box_x=-2.000
-box_y=41.000
+box_x=64.000
+box_y=12.000
 box_w=96.000
 box_h=190.000
 fx=SmokeBomb
+fx_forward=56.000
+fx_height=-39.000
 fire_forward=2.000
 fire_height=40.000
 proj_scale=1.000

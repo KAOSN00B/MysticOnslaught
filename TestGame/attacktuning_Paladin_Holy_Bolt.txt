@@ -1,3 +1,10 @@
+box_x=280.000
+box_y=0.000
+box_w=560.000
+box_h=80.000
+fx=HolyBolt
+fx_forward=204.000
+fx_height=11.000
 fire_forward=74.000
 fire_height=42.000
 proj_scale=1.000

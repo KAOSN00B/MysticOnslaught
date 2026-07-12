@@ -1,3 +1,10 @@
+box_x=116.000
+box_y=-14.000
+box_w=138.000
+box_h=296.000
+fx=Volley
+fx_forward=112.000
+fx_height=-8.000
 fire_forward=74.000
 fire_height=44.000
 proj_scale=1.000
