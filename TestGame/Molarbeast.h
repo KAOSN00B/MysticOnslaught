@@ -13,6 +13,7 @@ class Molarbeast : public Enemy
 {
 public:
     Molarbeast(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~Molarbeast() override;
 
     void Init();

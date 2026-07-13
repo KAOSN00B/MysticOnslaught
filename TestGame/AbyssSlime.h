@@ -23,6 +23,7 @@ class AbyssSlime : public Enemy
 {
 public:
     AbyssSlime(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Slime; }
     ~AbyssSlime() override;
 
     void Init();

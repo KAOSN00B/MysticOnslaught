@@ -10,6 +10,7 @@
 #include "AnimationUtils.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "SfxBank.h"
 #include "AttackTuning.h"
 #include "ElementalCombos.h"
 #include "CellPickup.h"
@@ -41,6 +42,35 @@
 
 namespace
 {
+    const char* kPoeRevivalLine =
+        "How unfortunate. The dungeon claims another soul... but I am not finished "
+        "with you yet, little mystic. Rise -- and tell me what you will become.";
+    const char* kFirstPoeLines[] = {
+        "Hm. You're stronger than you look. Could've been stronger, with proper guidance.",
+        "Guess you'll do.",
+        "I can bring you back. In exchange, you're going to work for me."
+    };
+    const char* kFirstZephLines[] = {
+        "Oh. You must be new here.",
+        "You'll find sanctuary here, at least for now. The monsters tend to keep their distance.",
+        "If you've got coin, I can sell you supplies. Might even teach you a few abilities...",
+        "For the right price, of course."
+    };
+
+    AbilityType StarterAbilityForClass(PlayerClass playerClass)
+    {
+        switch (playerClass)
+        {
+        case PlayerClass::Warrior: return AbilityType::WarCleave;
+        case PlayerClass::Hunter:  return AbilityType::PiercingShot;
+        case PlayerClass::Mage:    return AbilityType::FireBolt;
+        case PlayerClass::Rogue:   return AbilityType::FanOfKnives;
+        case PlayerClass::Paladin: return AbilityType::Smite;
+        case PlayerClass::Warlock: return AbilityType::ShadowBolt;
+        default:                   return AbilityType::FireBolt;
+        }
+    }
+
     void DrawScrollingCheckerboard(float sw, float sh, Color dark, Color light, float speedX, float speedY, int cell = 80)
     {
         const int period = cell * 2;
@@ -237,6 +267,7 @@ Engine::~Engine()
         UnloadSound(_roomClearExplosionSound);
         UnloadSound(_lavaBallImpactSound);
         UnloadSound(_buttonPressSound);
+        SfxBank::Get().Unload();
         _audio.Shutdown();
     }
     UnloadTexture(_map);
@@ -551,6 +582,10 @@ void Engine::EnsureAudioInitialized()
     }
     _buttonPressSound = LoadSound(AssetPath("Sounds/ButtonPress.ogg").c_str());
     _audio.Init();
+    // Categorized SFX library (per-class basics, element casts, creature/boss
+    // families, pickups). Keep its master volume in sync with the SFX slider.
+    SfxBank::Get().Load();
+    SfxBank::Get().SetVolumeScale(_audio.GetSfxVolumeScale());
 
     SetSoundPitch(_buttonPressSound, 1.25f);
     SetSoundVolume(_buttonPressSound, 0.35f);
@@ -595,6 +630,10 @@ void Engine::UpdateMusicSystem()
     ctx.currentRoomType = _currentRoomType;
     ctx.roomClearPending = _roomClearPending;
     ctx.bossFightActive = IsBossFightActive();
+    // Combat = live enemies in the current gameplay room. Drives the biome
+    // music swell (calmer when the room is clear / being explored).
+    ctx.inCombat = (_gameState == GameState::DungeonRun || _gameState == GameState::Play)
+                   && GetActiveEnemyCount() > 0;
     ctx.actBiome = GetBiomeForAct(_currentAct);
     ctx.currentBiome = _currentBiome;
     _audio.Update(ctx);
@@ -759,7 +798,8 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _magicGemCollected = false;
         _bossBarrierUnlocked = false;
         _bossBarrierMessageTimer = 0.f;
-        RollDungeonRoomSpecials();   // tag decision rooms for this fresh dungeon
+        if (!_prologueActive)
+            RollDungeonRoomSpecials();   // tag decision rooms for this fresh dungeon
     }
 
     _currentRoomType = room.type;
@@ -768,7 +808,8 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _currentRoom = 1;
 
     // Roll this room's affix (Standard combat rooms only) before enemies spawn.
-    RollRoomAffix(_dungeonRoomIdx, room.type);
+    if (_prologueActive) _currentRoomAffix = RoomAffix::None;
+    else RollRoomAffix(_dungeonRoomIdx, room.type);
 
     _dungeonEnemiesSpawned = false;
     _bossNoEnemyTimer      = 0.f;
@@ -784,12 +825,14 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     // doors open. SpawnDungeonRoomEnemies() then skips them (it early-outs on cleared).
     RoomSpecialType roomSpecial = _dungeonRoomStates[_dungeonRoomIdx].special;
     if (room.type == RoomType::Rest || room.type == RoomType::Store ||
+        (_dungeonGen.IsEntranceRoom(roomIdx) && !_prologueActive) ||
         roomSpecial != RoomSpecialType::None)
         _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
 
     // Entering a fresh combat room arms any pending Risk Shrine contract onto the
     // enemies about to spawn; peaceful/cleared rooms clear the room levers instead.
     bool freshCombatRoom = roomSpecial == RoomSpecialType::None
+                        && !(_dungeonGen.IsEntranceRoom(roomIdx) && !_prologueActive)
                         && !_dungeonRoomStates[_dungeonRoomIdx].cleared
                         && (room.type == RoomType::Standard || room.type == RoomType::Elite
                          || room.type == RoomType::Treasure || room.type == RoomType::Boss);
@@ -797,6 +840,9 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     else { _roomModHpMult = 1.f; _roomModDmgMult = 1.f; }
 
     _player.SetWorldPos(playerSpawnPos);
+    _player.SetCombatLocked(false);
+    _player.SetDashAllowedWhileCombatLocked(false);
+    _player.SetManaRegenPaused(false);
     // Sustain rework: entering a room no longer heals — HP carries between
     // rooms. Death still fully heals via Revive() on the village respawn path.
     _player.RefreshForRoomEntry();
@@ -820,7 +866,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     ClearDungeonEnemies();
     EnterDungeonShopIfNeeded(room);
     SpawnDungeonRoomEnemies();
-    InitBiomeModifierRoom();
+    if (!_prologueActive) InitBiomeModifierRoom();
 
     // First visit: the map remembers this room's type, and special rooms
     // announce themselves with a temporary intro banner (standard rooms stay
@@ -1590,6 +1636,20 @@ void Engine::Update(float dt)
         ClearDungeonEnemies();
         _dungeonEnemiesSpawned = false;
     }
+
+    // Debug [F7]: HAZARD PREVIEW — force-spawn one of each environmental hazard
+    // right next to the player so their animation/behaviour can be inspected on
+    // demand instead of waiting for a lucky random roll. RestoreHazard bypasses
+    // placement validation, so they appear exactly where we put them.
+    if (_debug.IsActive() && _gameState == GameState::DungeonRun && IsKeyPressed(KEY_F7))
+    {
+        Vector2 p = _player.GetWorldPos();
+        _roomHazards.ClearRoom();
+        _roomHazards.RestoreHazard(RoomHazardType::LavaPool,      { p.x - 260.f, p.y },        { 1.f, 0.f }, 1.f);
+        _roomHazards.RestoreHazard(RoomHazardType::FireTotem,     { p.x + 260.f, p.y - 60.f }, { 1.f, 0.f }, Balance::Hazards::kTotemHealth);
+        _roomHazards.RestoreHazard(RoomHazardType::FireballTorch, { p.x,          p.y - 250.f },{ 1.f, 0.f }, Balance::Hazards::kTorchHealth);
+        _vfx.SpawnFloatingLabel({ p.x, p.y - 120.f }, "HAZARD PREVIEW [F7]", Color{ 255, 180, 70, 255 }, 2.0f);
+    }
     float hpNow = _player.GetHealthValue();
     if (hpNow < _lastPlayerHp - 0.01f) _playerHurtTimer = 0.4f;   // hurt SFX already handled by the damage source
     _lastPlayerHp = hpNow;
@@ -1886,6 +1946,7 @@ void Engine::Update(float dt)
         {
             _ascensionRecorded = true;
             _meta.RecordAscensionCleared(_ascensionTier);
+            _meta.RecordGameCompleted();
         }
 
         bool anyKey   = (GetKeyPressed() != 0);
@@ -2388,8 +2449,12 @@ void Engine::UpdateGamePlay(float dt)
 
         if (CheckCollisionRecs(_player.GetCollisionRec(), pickup->GetCollisionRec()))
         {
-            StopSound(_pickupSound);
-            PlaySound(_pickupSound);   // (SFX hook: collect ping)
+            switch (pickup->GetType())
+            {
+            case PickupType::Gold: SfxBank::Get().Play(SfxId::PickupGold,  0.5f); break;
+            case PickupType::Cell: SfxBank::Get().Play(SfxId::PickupCell,  0.6f); break;
+            default:               SfxBank::Get().Play(SfxId::PickupMagic, 0.5f); break;   // Heal / Mana
+            }
             _vfx.SpawnImpactBurst(pickup->GetWorldPos(), Color{ 255, 220, 120, 255 }, 5, 170.f);
             pickup->OnCollect(_player);
         }
@@ -2437,8 +2502,8 @@ void Engine::UpdateGamePlay(float dt)
 namespace
 {
     constexpr float kVillagePlaygroundTilePx = 48.f;
-    constexpr int kVillagePlaygroundCols = 120;  // village field, matching dungeon 3x tile scale
-    constexpr int kVillagePlaygroundRows = 68;   // village field, matching dungeon 3x tile scale
+    constexpr int kVillagePlaygroundCols = 40;   // one standard-room width at 48 px
+    constexpr int kVillagePlaygroundRows = 23;   // one standard-room height at 48 px
 
     Rectangle VillagePlaygroundFieldRect()
     {
@@ -2465,20 +2530,18 @@ namespace
 
     // Poe's Graveyard is authored as VillageAssets/VillageGraveyard.png with
     // VillageGraveyard.vasset markers for Poe and the player respawn point.
-    constexpr float kVillageGraveyardAssetScale = 3.f;
-    constexpr float kVillageZephShopAssetScale = 3.f;
+    constexpr float kVillageGraveyardAssetScale = 2.f;
+    constexpr float kVillageZephShopAssetScale = 2.f;
     constexpr float kVillageGraveyardAssetW = 196.f;
     constexpr float kVillageGraveyardAssetH = 132.f;
-    constexpr int kVillageGraveyardRow0 = 1;   // right under the top wall
+    constexpr float kVillageGraveyardX = 310.f;
+    constexpr float kVillageGraveyardY = 190.f;
 
     Rectangle VillageGraveyardWorldRect()
     {
         float w = kVillageGraveyardAssetW * kVillageGraveyardAssetScale;
         float h = kVillageGraveyardAssetH * kVillageGraveyardAssetScale;
-        return Rectangle{ (kVillagePlaygroundCols * kVillagePlaygroundTilePx - w) * 0.5f,
-                          kVillageGraveyardRow0 * kVillagePlaygroundTilePx,
-                          w,
-                          h };
+        return Rectangle{ kVillageGraveyardX, kVillageGraveyardY, w, h };
     }
 
     Vector2 VillageGraveyardLocalToWorld(Vector2 local)
@@ -2511,15 +2574,14 @@ namespace
                           local.height * kVillageZephShopAssetScale };
     }
 
-    // The village gate - bottom-middle. Walking up to it and pressing E sets out
-    // on the next run (class select first). Main-game village only.
+    // The fixed village exits north. Crossing it starts or resumes the run.
     constexpr int kVillageGateCols = 4;
 
     Rectangle VillageGateWorldRect()
     {
         int col0 = (kVillagePlaygroundCols - kVillageGateCols) / 2;
         return Rectangle{ col0 * kVillagePlaygroundTilePx,
-                          (kVillagePlaygroundRows - 1) * kVillagePlaygroundTilePx,
+                          0.f,
                           kVillageGateCols * kVillagePlaygroundTilePx,
                           kVillagePlaygroundTilePx };
     }
@@ -2528,7 +2590,7 @@ namespace
     Rectangle VillageGateApproachRect()
     {
         Rectangle gate = VillageGateWorldRect();
-        gate.y -= kVillagePlaygroundTilePx * 1.5f;
+        gate.y += kVillagePlaygroundTilePx;
         gate.height += kVillagePlaygroundTilePx * 1.5f;
         return gate;
     }
@@ -2585,14 +2647,11 @@ void Engine::EnterVillageShared(bool sandboxMode)
     _villageCatalogScroll = 0.f;
     _villageActiveObjectIndex = _villageObjectCatalog.empty() ? -1 : 0;
     _villagePlaygroundMessage = _villageObjectCatalog.empty() ? "No villageobject_*.txt assets saved yet" : (sandboxMode ? "Village tester: walk around, press B to build" : "Welcome back to the village");
-    if (!sandboxMode && !VillageHasPlacedObject("ZephsShop"))
-    {
-        int zephIndex = FindVillageObjectDefIndex("ZephsShop");
-        if (zephIndex >= 0) _villageActiveObjectIndex = zephIndex;
-        _villagePlaygroundMessage = "Poe: Press B to build Zeph's shop. It is free.";
-    }
+    if (!sandboxMode)
+        _villagePlaygroundMessage = _firstVillageVisit ? "Find Zeph at the shop." : "Welcome back to the village";
     _villagePlaygroundMessageTimer = 4.f;
     _player.Revive();
+    _player.RestoreMana(_player.GetMaxMana());
     _player.SetCombatLocked(true);
     _player.SetDashAllowedWhileCombatLocked(true);
     _player.SetManaRegenPaused(false);
@@ -2961,24 +3020,19 @@ void Engine::LoadVillageLayout()
 {
     _villagePlacedObjects.clear();
     if (_villageSandboxMode) return;
-    FILE* f = fopen(AssetPath("TestGame/village_layout.txt").c_str(), "r");
-    if (!f) f = fopen("TestGame/village_layout.txt", "r");
-    if (!f) return;
-    char line[256];
-    while (fgets(line, sizeof(line), f))
+
+    VillageLayout layout = VillageLayoutLoader::Load(AssetPath("VillageAssets/VillageLayout.vlayout"));
+    for (const VillageLayoutObject& object : layout.objects)
     {
-        char name[128] = {}; int col = 0, row = 0;
-        if (sscanf(line, "place %127s %d %d", name, &col, &row) == 3)
-        {
-            VillagePlacedObject placed{};
-            placed.defName = name;
-            placed.defIndex = FindVillageObjectDefIndex(placed.defName);
-            placed.cellCol = col;
-            placed.cellRow = row;
-            if (placed.defIndex >= 0) _villagePlacedObjects.push_back(placed);
-        }
+        if (object.assetName == "VillageGraveyard") continue; // drawn by its dedicated runtime path
+        VillagePlacedObject placed{};
+        placed.defName = object.assetName;
+        placed.defIndex = FindVillageObjectDefIndex(placed.defName);
+        placed.cellCol = (int)std::round(object.worldOrigin.x / kVillagePlaygroundTilePx);
+        placed.cellRow = (int)std::round(object.worldOrigin.y / kVillagePlaygroundTilePx);
+        if (placed.defIndex >= 0) _villagePlacedObjects.push_back(placed);
     }
-    fclose(f);
+    RefreshVillageShopNpc();
 }
 
 bool Engine::VillageObjectHasSolidAt(const VillageRuntimeObjectDef& def, int localCol, int localRow) const
@@ -3376,6 +3430,16 @@ void Engine::DrawVillageInterior()
 
 void Engine::UpdateVillagePlayground(float dt)
 {
+    if (!_villageSandboxMode && _firstVillageVisit && _demoCompleted && IsKeyPressed(KEY_F8))
+    {
+        _villageIntroDialogueActive = false;
+        _villageIntroDialogueLine = 0;
+        _firstVillageVisit = false;
+        _meta.SetOnboardingComplete();
+        _villagePlaygroundMessage = "Head north when you are ready.";
+        _villagePlaygroundMessageTimer = 5.f;
+    }
+
     if (_villageInsideInterior)
     {
         UpdateVillageInterior(dt);
@@ -3383,7 +3447,8 @@ void Engine::UpdateVillagePlayground(float dt)
     }
 
     if (_villagePlaygroundMessageTimer > 0.f) _villagePlaygroundMessageTimer -= dt;
-    if (IsKeyPressed(KEY_B)) _villageBuildMode = !_villageBuildMode;
+    if (_villageSandboxMode && IsKeyPressed(KEY_B)) _villageBuildMode = !_villageBuildMode;
+    if (!_villageSandboxMode) _villageBuildMode = false;
     if (_villageSandboxMode && IsKeyPressed(KEY_R))
     {
         _villagePlacedObjects.clear();
@@ -3393,7 +3458,7 @@ void Engine::UpdateVillagePlayground(float dt)
         _villagePlaygroundMessageTimer = 2.f;
     }
 
-    bool tutorialLockActive = !_villageSandboxMode && !VillageHasPlacedObject("ZephsShop");
+    bool tutorialLockActive = false;
     int zephShopDefIndex = FindVillageObjectDefIndex("ZephsShop");
     if (_villageBuildMode)
     {
@@ -3497,19 +3562,48 @@ void Engine::UpdateVillagePlayground(float dt)
     }
     else
     {
-        Vector2 before = _player.GetWorldPos();
-        _player.Update(dt);
-        ResolveVillagePlaygroundCollision(before);
+        if (!_villageIntroDialogueActive)
+        {
+            Vector2 before = _player.GetWorldPos();
+            _player.Update(dt);
+            ResolveVillagePlaygroundCollision(before);
+        }
         UpdateVillageCitizens(dt);
 
         bool gamepadInteract = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
         if (_villageShopNpcActive)
         {
             Vector2 shopWorldOffset{ -_cameraPos.x, -_cameraPos.y };
-            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive, gamepadInteract))
+            if (_villageIntroDialogueActive)
             {
-                _levelUpReturnState = _gameState;
-                _gameState = GameState::Shop;
+                bool advance = IsKeyPressed(KEY_E) || IsKeyPressed(KEY_ENTER) ||
+                               IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || gamepadInteract;
+                if (advance)
+                {
+                    if (_villageIntroDialogueLine < 3)
+                        ++_villageIntroDialogueLine;
+                    else
+                    {
+                        _villageIntroDialogueActive = false;
+                        _firstVillageVisit = false;
+                        _meta.SetOnboardingComplete();
+                        _villagePlaygroundMessage = "Head north when you are ready.";
+                        _villagePlaygroundMessageTimer = 5.f;
+                    }
+                }
+            }
+            else if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive, gamepadInteract))
+            {
+                if (_firstVillageVisit)
+                {
+                    _villageIntroDialogueActive = true;
+                    _villageIntroDialogueLine = 0;
+                }
+                else
+                {
+                    _levelUpReturnState = _gameState;
+                    _gameState = GameState::Shop;
+                }
                 return;
             }
         }
@@ -3539,11 +3633,26 @@ void Engine::UpdateVillagePlayground(float dt)
             }
         }
 
-        if (!_villageSandboxMode && CheckCollisionPointRec(_player.GetWorldPos(), VillageGateApproachRect()) && IsKeyPressed(KEY_E))
+        if (!_villageSandboxMode && CheckCollisionPointRec(_player.GetWorldPos(), VillageGateApproachRect()))
         {
-            _classSelectReturnState = GameState::Village;
-            _gameState = GameState::ClassSelect;
+            if (_firstVillageVisit)
+            {
+                _villagePlaygroundMessage = "Speak with Zeph before leaving.";
+                _villagePlaygroundMessageTimer = 2.f;
+                return;
+            }
             _villagePlaygroundMessage = "";
+            if (_runSessionData.IsPausedInVillage())
+            {
+                _runSessionData.Resume();
+                OpenWorldMap();
+            }
+            else
+            {
+                _pendingNewRunFromVillage = false;
+                StartMainRun();
+            }
+            return;
         }
 
         for (const VillagePlacedObject& placed : _villagePlacedObjects)
@@ -3804,6 +3913,50 @@ void Engine::DrawVillagePlayground()
     DrawVillageCitizens(worldOffset);
     if (_villageShopNpcActive) _shop.DrawNpc(Vector2{ -_cameraPos.x, -_cameraPos.y });
 
+    if (_villageIntroDialogueActive)
+    {
+        const char* line = kFirstZephLines[std::clamp(_villageIntroDialogueLine, 0, 3)];
+        Rectangle panel{ kVirtualWidth * 0.14f, kVirtualHeight * 0.70f,
+                         kVirtualWidth * 0.72f, kVirtualHeight * 0.20f };
+        DrawRectangleRounded(panel, 0.08f, 8, Color{ 24, 20, 28, 242 });
+        DrawRectangleRoundedLinesEx(panel, 0.08f, 8, 3.f, Color{ 220, 174, 82, 255 });
+        DrawText("Zeph", (int)panel.x + 28, (int)panel.y + 18, 30, GOLD);
+        const int fontSize = 25;
+        const float maxWidth = panel.width - 56.f;
+        float drawX = panel.x + 28.f;
+        float drawY = panel.y + 64.f;
+        std::string word;
+        std::string wrappedLine;
+        std::string dialogue(line);
+        for (size_t i = 0; i <= dialogue.size(); ++i)
+        {
+            char ch = i < dialogue.size() ? dialogue[i] : ' ';
+            if (ch == ' ')
+            {
+                std::string trial = wrappedLine.empty() ? word : wrappedLine + " " + word;
+                if (!wrappedLine.empty() && MeasureText(trial.c_str(), fontSize) > (int)maxWidth)
+                {
+                    DrawText(wrappedLine.c_str(), (int)drawX, (int)drawY, fontSize, RAYWHITE);
+                    drawY += fontSize + 7.f;
+                    wrappedLine = word;
+                }
+                else
+                {
+                    wrappedLine = trial;
+                }
+                word.clear();
+            }
+            else
+            {
+                word += ch;
+            }
+        }
+        if (!wrappedLine.empty())
+            DrawText(wrappedLine.c_str(), (int)drawX, (int)drawY, fontSize, RAYWHITE);
+        DrawText("E / Enter", (int)(panel.x + panel.width - 130.f),
+                 (int)(panel.y + panel.height - 34.f), 20, Fade(RAYWHITE, 0.7f));
+    }
+
     Vector2 mouse = GetVirtualMousePos();
     Vector2 mouseWorld{ mouse.x - worldOffset.x, mouse.y - worldOffset.y };
     bool mouseOverUi = _villageBuildMode && CheckCollisionPointRec(mouse, Rectangle{ kVirtualWidth - 448.f, 88.f, 430.f, 430.f });
@@ -3813,11 +3966,14 @@ void Engine::DrawVillagePlayground()
     drawPlacedLayer(VillageMap::Layer::Overhead);
 
     if (!_villageSandboxMode && !_villageBuildMode && CheckCollisionPointRec(_player.GetWorldPos(), VillageGateApproachRect()))
-        DrawText("Press E to choose a class and leave for the dungeon", 24, 92, 24, GOLD);
+        DrawText("Head north when you are ready", 24, 92, 24, GOLD);
 
     DrawHUD(true);
 
-    bool tutorialLockActive = !_villageSandboxMode && !VillageHasPlacedObject("ZephsShop");
+    if (!_villageSandboxMode && _firstVillageVisit && _demoCompleted)
+        DrawText("[F8] Skip Onboarding", (int)kVirtualWidth - 260, 22, 20, Fade(RAYWHITE, 0.75f));
+
+    bool tutorialLockActive = false;
     int zephShopDefIndex = FindVillageObjectDefIndex("ZephsShop");
     if (_villageBuildMode)
     {
@@ -3864,7 +4020,7 @@ void Engine::DrawVillagePlayground()
         if (_villageObjectCatalog.empty()) DrawText("No saved village objects yet", (int)rows.x + 10, (int)rows.y + 18, 20, Fade(RAYWHITE, 0.75f));
         EndScissorMode();
     }
-    else
+    else if (_villageSandboxMode)
     {
         DrawText("[B] Build mode", 24, (int)(kVirtualHeight - 42), 22, Color{ 150, 170, 200, 220 });
     }
@@ -4323,10 +4479,13 @@ void Engine::UpdateEnemyCount(float dt)
     ctx.demoCompleted = &_demoCompleted;
     ctx.pendingExp = &_pendingExp;
     ctx.awardKillExp = (_gameState != GameState::DungeonRun);
-    ctx.spawnEnemyDrop = [&](Vector2 worldPos, bool isOgre, bool isBoss) { SpawnEnemyDrop(worldPos, isOgre, isBoss); };
+    ctx.spawnEnemyDrop = [&](Vector2 worldPos, bool isOgre, bool isBoss) {
+        if (!_prologueActive) SpawnEnemyDrop(worldPos, isOgre, isBoss);
+    };
     ctx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
     ctx.spawnPoisonCloud = [&](Vector2 pos) { SpawnPoisonCloud(pos, Sporeling::kPoisonCloudRadius); };
     ctx.onEnemyKilled = [&](Vector2 pos, bool burning, bool frozen, bool charged, bool eliteOrBoss) {
+        if (_prologueActive) return;
         _player.OnEnemyKilled(eliteOrBoss);
         ApplyRelicOnKill(pos, burning, frozen, charged, eliteOrBoss);
         // Volatile room affix — the corpse erupts into a lingering toxic cloud.
@@ -7899,6 +8058,7 @@ void Engine::HandlePlayerCastRequest()
             ? _committedAimTarget
             : Vector2Add(_player.GetWorldPos(), Vector2Scale(direction, GetAbilityAimProfile(mageAbility).range));
         CastMageSpell(mageAbility, direction, target);
+        SfxBank::Get().PlayAbilityCast(mageAbility);   // element-specific cast
         _committedAimAbility = AbilityType::None;
     }
 
@@ -7907,6 +8067,7 @@ void Engine::HandlePlayerCastRequest()
     AbilityType classAbility = _player.ConsumeClassAbility();
     if (classAbility != AbilityType::None)
     {
+        SfxBank::Get().PlayAbilityCast(classAbility);   // per-ability signature
         HandleClassAbilityCast(classAbility);
         _committedAimAbility = AbilityType::None;
     }
@@ -9293,6 +9454,10 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
 
 void Engine::SpawnBossFx(Vector2 worldPos, int fxId)
 {
+    // Boss impact moments get a weighty impact sound (plays even if the sprite
+    // for this fxId is missing). SpawnBossFx is the shared call site for every
+    // boss slam/strike/eruption, so this covers them all in one place.
+    SfxBank::Get().Play(SfxId::BossImpact, 0.7f);
     if (fxId < 0 || fxId >= (int)_bossFx.size()) return;
     if (_bossFx[fxId].id == 0 || _bossFxFrames[fxId] <= 0) return;
     // Bosses are big — scale the impact sprite up so it reads at boss scale.
@@ -10427,6 +10592,8 @@ void Engine::UpdateSpreadProjectiles(float dt)
             Character::CastType hitEffectType = element == AbilityType::FireBolt ? Character::CastType::FireSpread
                                                     : element == AbilityType::IceBolt ? Character::CastType::IceSpread
                                                                                       : Character::CastType::ElectricSpread;
+            if (landed)
+                SfxBank::Get().PlayProjectileImpact(element, 0.5f);   // element-specific hit (self-throttled)
             if (landed && element == AbilityType::FireBolt)
             {
                 // Fireball's identity is the impact burst, not merely a red bolt.
@@ -10720,10 +10887,6 @@ void Engine::HandlePlayerDeathMetaPenalty()
 // into ClassSelect (class + look), which starts the next run.
 static constexpr float kDeathReviveLossDur = 1.8f;   // loss/fade beat length
 static constexpr float kDeathReviveTypeDur = 2.4f;   // typewriter reveal length
-static const char* kPoeRevivalLine =
-    "How unfortunate. The dungeon claims another soul... but I am not finished "
-    "with you yet, little mystic. Rise -- and tell me what you will become.";
-
 void Engine::BeginDeathRevive()
 {
     _deathRevivePhase    = 0;
@@ -10760,6 +10923,21 @@ void Engine::UpdateDeathRevive()
     const float dt = GetFrameTime();
     _gamepad.Update(_gamepadBindingsEdit);
     _deathReviveTimer += dt;
+
+    if (_firstDeathRevive && _demoCompleted && IsKeyPressed(KEY_F8))
+    {
+        _firstDeathRevive = false;
+        _prologue.Complete();
+        _prologueActive = false;
+        _firstVillageVisit = false;
+        _villageIntroDialogueActive = false;
+        _villageIntroDialogueLine = 0;
+        _meta.SetOnboardingComplete();
+        EnterVillage();
+        _fadeInTimer = 1.f;
+        _fadeInDuration = 1.f;
+        return;
+    }
 
     if (_deathRevivePhase == 0)
     {
@@ -10799,10 +10977,26 @@ void Engine::UpdateDeathRevive()
     if (advance)
     {
         if (!fullyShown) { _deathReviveTypeT = kDeathReviveTypeDur; return; }
-        // Into class + look select; confirming there calls StartMainRun.
-        _classSelectCursor      = (int)_player.GetClass();
-        _classSelectReturnState = GameState::Menu;
-        _gameState              = GameState::ClassSelect;
+        if (_firstDeathRevive && _deathReviveDialogueLine < 2)
+        {
+            ++_deathReviveDialogueLine;
+            _deathReviveTypeT = 0.f;
+            _deathReviveTimer = 0.f;
+            return;
+        }
+
+        if (_firstDeathRevive)
+        {
+            _firstDeathRevive = false;
+            _prologue.Complete();
+            _prologueActive = false;
+            _firstVillageVisit = true;
+            _villageIntroDialogueActive = false;
+            _villageIntroDialogueLine = 0;
+        }
+        EnterVillage();
+        _fadeInTimer = 1.f;
+        _fadeInDuration = 1.f;
     }
 }
 
@@ -10810,6 +11004,9 @@ void Engine::DrawDeathRevive()
 {
     const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
     DrawRectangle(0, 0, (int)sw, (int)sh, BLACK);
+
+    if (_firstDeathRevive && _demoCompleted)
+        DrawText("[F8] Skip Onboarding", (int)sw - 260, 22, 20, Fade(RAYWHITE, 0.75f));
 
     if (_deathRevivePhase == 0)
     {
@@ -10860,9 +11057,12 @@ void Engine::DrawDeathRevive()
     DrawText("Poe", (int)(panel.x + 30.f), (int)(panel.y + 20.f), 30, Color{ 206, 176, 255, 255 });
 
     // Typed body text with simple word-wrap.
-    int shown = (int)((float)strlen(kPoeRevivalLine) *
+    const char* revivalLine = _firstDeathRevive
+        ? kFirstPoeLines[std::clamp(_deathReviveDialogueLine, 0, 2)]
+        : kPoeRevivalLine;
+    int shown = (int)((float)strlen(revivalLine) *
                       std::min(_deathReviveTypeT / kDeathReviveTypeDur, 1.f));
-    std::string vis(kPoeRevivalLine, kPoeRevivalLine + shown);
+    std::string vis(revivalLine, revivalLine + shown);
     {
         const int   fs   = 26;
         const float maxW = panel.width - 60.f;
@@ -11339,7 +11539,7 @@ void Engine::UpdateCurseShrine()
         _wagerTier = _wagerScreen.result + 1;        // curses this biome's enemies
         _player.SetWagerRewardMult(w.reward);        // richer gold / XP / Echoes
         _curseShrineUsed = true;                     // one wager per biome
-        if (_audioInitialised) PlaySound(_pickupSound);
+        if (_audioInitialised) SfxBank::Get().Play(SfxId::UIConfirm, 0.7f);
         _gameState = GameState::DungeonRun;
     }
 }
@@ -11485,7 +11685,7 @@ void Engine::UpdateDecisionRoom()
         }
         st.specialClaimed = true;
         st.specialChoice  = _decisionScreen.result;
-        if (_audioInitialised) PlaySound(_pickupSound);
+        if (_audioInitialised) SfxBank::Get().Play(SfxId::UIConfirm, 0.7f);
         _gameState = GameState::DungeonRun;
     }
 }
@@ -12530,9 +12730,10 @@ void Engine::LoadDungeonVisualVariantAssets(int variantIdx, TileDefSet& defs, Ti
     std::string txtFile = "tilemapper_" + variant.mapperStem + ".txt";
     std::string sheetPath = AssetPath((std::string(kTilesheetFolder) + "/" + variant.sheetStem + ".png").c_str());
     std::string groundPath = AssetPath((std::string(kTilesheetFolder) + "/Ground TIles.png").c_str());
+    std::string sharedRewardPath = AssetPath((std::string(kTilesheetFolder) + "/Caverns.png").c_str());
     defs = {};
     defs.LoadFromFile(AssetPath(txtFile.c_str()).c_str());
-    renderer.Init(sheetPath.c_str(), groundPath.c_str(), defs);
+    renderer.Init(sheetPath.c_str(), groundPath.c_str(), sharedRewardPath.c_str(), defs);
 }
 
 // Loads visual-variant data and initializes the first connected room wing.
@@ -12852,6 +13053,8 @@ void Engine::ResetRunState()
     _worldCompletedBiomes.clear();
     _worldChosenNodeIndices.clear();
     _worldMap.Reset();
+    _runSessionData.Reset();
+    _worldMapPreparedZone = -1;
 
     // Generate a random sequence of kTotalActs biomes, no two consecutive duplicates.
     {
@@ -13415,6 +13618,8 @@ void Engine::StartMainRun()
     ResetRunState();   // calls _player.Init() which loads the chosen class sprites
     _player.SetGold(walletGold);
     _isMainGameRun = true;
+    _runSessionData.Begin();
+    _player.LearnAbility(StarterAbilityForClass(_player.GetClass()));
 
     // Daily runs use a fixed seed so everyone shares the same dungeon that day;
     // normal runs reseed from the clock so each one is different.
@@ -13424,7 +13629,7 @@ void Engine::StartMainRun()
         SetRandomSeed((unsigned int)time(nullptr));
 
     _dungeonGen.Generate();
-    _currentBiome = Biome::Caverns;
+    _currentBiome = Biome::Forest;
     _pendingBiome = _currentBiome;
     LoadTilesetForBiome(_currentBiome);
 
@@ -13433,6 +13638,46 @@ void Engine::StartMainRun()
 
     _fadeInTimer = 1.0f;
     _fadeInDuration = 1.0f;
+}
+
+void Engine::StartOnboardingOrVillage()
+{
+    if (!_meta.HasCompletedOnboarding())
+    {
+        StartPrologue();
+        return;
+    }
+
+    _pendingNewRunFromVillage = true;
+    _firstVillageVisit = false;
+    EnterVillage();
+}
+
+void Engine::StartPrologue()
+{
+    int walletGold = _player.GetGold();
+    ResetRunState();
+    _player.SetGold(walletGold);
+    _isMainGameRun = false;
+    _prologueActive = true;
+    _firstDeathRevive = false;
+    _firstVillageVisit = true;
+    _pendingNewRunFromVillage = true;
+    _prologue.Begin();
+    _prologueLastHealth = _player.GetHealthValue();
+
+    _player.LearnAbility(StarterAbilityForClass(_player.GetClass()));
+
+    _currentBiome = Biome::Forest;
+    _pendingBiome = _currentBiome;
+    LoadTilesetForBiome(_currentBiome);
+    _dungeonGen.GeneratePrologue();
+    const float cellW = (float)kVirtualWidth / (float)RoomLayout::kCols;
+    EnterDungeonRoom(0, DungeonDoorSide::None,
+                     Vector2{ cellW * 2.f, (float)kVirtualHeight * 0.5f }, true);
+    _message = "Learn the basics";
+    _fadeInTimer = 0.8f;
+    _fadeInDuration = 0.8f;
 }
 
 const Texture2D* Engine::GetRelicIcon(RelicType type) const
@@ -13544,9 +13789,22 @@ void Engine::UpdateClassSelect()
 
     if (confirm)
     {
+        ClassUnlockProfile profile{
+            _meta.IsRogueUnlocked(),
+            _meta.IsWarlockUnlocked(),
+            _meta.HasCompletedGame()
+        };
+        PlayerClass selectedClass = (PlayerClass)_classSelectCursor;
+        ClassUnlockStatus status = GetClassUnlockStatus(selectedClass, profile);
+        if (!status.unlocked)
+        {
+            StopSound(_buttonPressSound);
+            PlaySound(_buttonPressSound);
+            return;
+        }
         _player.SetAppearance(GetAppearancePrefix(_appearanceCursor));
-        _player.SetClass((PlayerClass)_classSelectCursor);
-        StartMainRun();
+        _player.SetClass(selectedClass);
+        StartOnboardingOrVillage();
     }
 }
 
@@ -13619,6 +13877,10 @@ void Engine::DrawClassSelect()
 
     // ---- Center focused class card --------------------------------------------
     const PlayerClassInfo& info = GetPlayerClassInfo((PlayerClass)_classSelectCursor);
+    ClassUnlockProfile unlockProfile{
+        _meta.IsRogueUnlocked(), _meta.IsWarlockUnlocked(), _meta.HasCompletedGame()
+    };
+    ClassUnlockStatus unlockStatus = GetClassUnlockStatus((PlayerClass)_classSelectCursor, unlockProfile);
     Rectangle centerCard{ centerX, centerY, centerW, centerH };
     DrawRectangleRounded(centerCard, 0.06f, 10, Color{ 54, 48, 70, 255 });
     DrawRectangleRoundedLines({ centerCard.x - 4.f, centerCard.y - 4.f, centerCard.width + 8.f, centerCard.height + 8.f }, 0.06f, 10, GOLD);
@@ -13667,6 +13929,19 @@ void Engine::DrawClassSelect()
     DrawText(TextFormat("RESOURCE: %s", info.resourceName),
              (int)tx, (int)(centerY + 456.f), 18, GOLD);
     DrawText(info.resourceDesc, (int)tx, (int)(centerY + 478.f), 15, Color{ 190, 184, 202, 255 });
+
+    if (!unlockStatus.unlocked)
+    {
+        DrawRectangleRounded(centerCard, 0.06f, 10, Fade(BLACK, 0.58f));
+        const char* locked = "LOCKED";
+        int lockedFs = 48;
+        DrawText(locked, (int)(portraitCX - MeasureText(locked, lockedFs) * 0.5f),
+                 (int)(centerY + 210.f), lockedFs, Color{ 255, 120, 120, 255 });
+        int reasonFs = 24;
+        DrawText(unlockStatus.reason,
+                 (int)(portraitCX - MeasureText(unlockStatus.reason, reasonFs) * 0.5f),
+                 (int)(centerY + 276.f), reasonFs, RAYWHITE);
+    }
 
     // ---- Position pips + name -------------------------------------------------
     float pipY   = centerY + centerH + 34.f;
@@ -14299,7 +14574,7 @@ void Engine::GrantRelic(RelicType type)
     TriggerScreenFlash(Color{ 200, 160, 255, 255 }, 0.30f);
     RequestHitStop(0.06f);
     if (_audioInitialised)
-        PlaySound(_pickupSound);   // (SFX hook: relic-gain fanfare)
+        SfxBank::Get().Play(SfxId::AbilityLearn, 0.7f);   // relic-gain fanfare
 }
 
 void Engine::DrawOwnedRelics() const
@@ -15217,8 +15492,41 @@ void Engine::SpawnDungeonRoomEnemies()
     int bossIdx  = _dungeonGen.GetBossIndex();
     RoomType type = rooms[i].type;
 
+    if (_prologueActive)
+    {
+        _roomHazards.ClearRoom();
+        _dungeonReinforcements.clear();
+        if (i < 2)
+        {
+            const int count = (i == 0) ? 2 : 4;
+            for (int n = 0; n < count; ++n)
+            {
+                float y = sh * (0.34f + 0.14f * (float)(n % 3));
+                SpawnBasicEnemy({ sw * (0.62f + 0.08f * (float)(n / 3)), y });
+            }
+        }
+        else
+        {
+            constexpr int kLastStandArchers = 14;
+            Vector2 center{ sw * 0.5f, sh * 0.5f };
+            for (int n = 0; n < kLastStandArchers; ++n)
+            {
+                float angle = (2.f * PI * n) / (float)kLastStandArchers;
+                Vector2 position{
+                    center.x + cosf(angle) * sw * 0.40f,
+                    center.y + sinf(angle) * sh * 0.34f
+                };
+                SpawnSkeletonArcher(position);
+            }
+        }
+        roomState.enemiesInitialized = true;
+        _dungeonEnemiesSpawned = true;
+        roomState.hazardsInitialized = true;
+        return;
+    }
+
     // Non-combat start room - pre-clear so we never try to spawn here again.
-    if (i == startIdx || type == RoomType::Rest)
+    if ((i == startIdx && !_prologueActive) || type == RoomType::Rest)
     {
         roomState.cleared = true;
         roomState.enemiesInitialized = true;
@@ -15570,7 +15878,7 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
                        stateIt->second.special != RoomSpecialType::None);
     bool alwaysOpen = cleared
         || hasSpecial
-        || roomIdx == _dungeonGen.GetStartIndex()
+        || (roomIdx == _dungeonGen.GetStartIndex() && !_prologueActive)
         || room.type == RoomType::Rest
         || room.type == RoomType::Treasure
         || room.type == RoomType::Store;
@@ -16194,6 +16502,7 @@ void Engine::ApplySfxVolume()
     SetSoundVolume(_roomClearExplosionSound, 0.60f * sfx);
     SetSoundVolume(_explosionSound,          1.0f  * sfx);
     SetSoundVolume(_fireballCastSound,       1.0f  * sfx);
+    SfxBank::Get().SetVolumeScale(sfx);   // categorized SFX library master volume
 }
 
 // -- Helpers used by the settings screen --------------------------------------
@@ -17153,6 +17462,13 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
 //                         all gone.
 void Engine::OpenBossChoice()
 {
+    if (_worldZone < 4 && _worldMapPreparedZone != _worldZone + 1)
+    {
+        _worldMap.Generate(_worldCompletedBiomes, _worldChosenNodeIndices,
+                           _worldZone + 1, kVirtualWidth, kVirtualHeight);
+        _worldMapPreparedZone = _worldZone + 1;
+        _runSessionData.MarkWorldMapGenerated();
+    }
     _bossChoiceCursor    = 0;      // default-highlight the safe option
     _bossChoiceOpenTimer = 0.30f;  // swallow the exit-tile input for a beat
     _gameState           = GameState::BossChoice;
@@ -17197,24 +17513,18 @@ void Engine::UpdateBossChoice()
 
     if (clickL || (confirm && _bossChoiceCursor == 0))
     {
-        // Return to village — the run ends here; hauled gold rides along (only a
-        // death wipes it) to spend on buildings, then a fresh run via the gate.
         StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+        _runSessionData.PauseInVillage();
         EnterVillage();
         _fadeInTimer = 1.0f; _fadeInDuration = 1.0f;
         return;
     }
     if (clickR || (confirm && _bossChoiceCursor == 1))
     {
-        // Push onward (double-or-nothing): a breath + a bounty, the wager opens,
-        // and this same character continues to the next domain.
+        // Push onward keeps the boss-fight damage and mana expenditure.
         StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
-        // Sustain rework: the boss-clear breath is PARTIAL (40% of max), not a
-        // full reset — pushing onward should still carry some scars.
-        _player.Heal(std::max(2, (int)std::ceil(
-            _player.GetMaxHealthValue() * Balance::Sustain::kBossClearHealFraction)));
         _player.AddGold(50 + _worldZone * 50);     // bravery bounty (tunable)
-        _wagerAccessGranted = true;                // cursed wager appears next shop
+        _wagerAccessGranted = false;
         OpenWorldMap();
         return;
     }
@@ -17235,10 +17545,10 @@ void Engine::DrawBossChoice()
     struct CardInfo { Rectangle rec; const char* head; const char* sub; std::vector<const char*> lines; Color accent; };
     CardInfo cards[2] = {
         { left,  "Return to Village", "Safe",
-          { "Bank this journey.", "Keep the gold you hauled", "and spend it on the village.", "", "This run ends here;", "begin anew at the gate." },
+          { "Pause this journey.", "Restore health and mana,", "visit Zeph, then resume", "the same world-map path.", "", "Your run remains active." },
           Color{ 110, 190, 130, 255 } },
         { right, "Push Onward", "Double or Nothing",
-          { "Press deeper, same soul.", "A breath, a gold bounty,", "and a CURSED WAGER opens", "for the road ahead.", "", "But fall now and lose it all." },
+          { "Press deeper, same soul.", "Take a gold bounty,", "but restore no health", "and restore no mana.", "", "Fall now and lose it all." },
           Color{ 220, 90, 110, 255 } },
     };
 
@@ -17279,6 +17589,7 @@ void Engine::OpenWorldMap()
     if (_worldZone >= 5)
     {
         _demoCompleted = true;
+        _meta.RecordGameCompleted();
         _gameState     = GameState::DemoEnd;
         return;
     }
@@ -17299,12 +17610,17 @@ void Engine::OpenWorldMap()
         return;
     }
 
-    // Generate the map for the next zone choice and switch state.
-    _worldMap.Generate(
-        _worldCompletedBiomes,
-        _worldChosenNodeIndices,
-        _worldZone + 1,
-        kVirtualWidth, kVirtualHeight);
+    if (_worldMapPreparedZone == _worldZone + 1)
+    {
+        _worldMap.Reopen();
+    }
+    else
+    {
+        _worldMap.Generate(_worldCompletedBiomes, _worldChosenNodeIndices,
+                           _worldZone + 1, kVirtualWidth, kVirtualHeight);
+        _worldMapPreparedZone = _worldZone + 1;
+        _runSessionData.MarkWorldMapGenerated();
+    }
 
     _gameState = GameState::WorldMap;
 }
@@ -17346,6 +17662,8 @@ void Engine::UpdateWorldMap(float dt)
     _worldZone++;
     _worldCompletedBiomes.push_back(selectedBiome);
     _worldChosenNodeIndices.push_back(selectedTierIdx);
+    _runSessionData.RecordMapChoice(selectedBiome, selectedTierIdx);
+    _worldMapPreparedZone = -1;
 
     _currentBiome = selectedBiome;
     LoadTilesetForBiome(_currentBiome);
@@ -17355,7 +17673,7 @@ void Engine::UpdateWorldMap(float dt)
     Vector2 spawnPos = GetDungeonBottomSpawnPos();
     EnterDungeonRoom(startIdx, DungeonDoorSide::None, spawnPos, true);
 
-    // Fade in to Zeph's store.
+    // Fade in to the quiet biome entrance.
     _dungeonFadeState = DungeonFadeState::FadingIn;
     _dungeonFadeTimer = kDungeonFadeDuration;
     _dungeonFadeAlpha = 255.f;
@@ -17774,6 +18092,71 @@ void Engine::UpdateDreamFlicker(float dt)
 
 void Engine::UpdateDungeonRun(float dt)
 {
+    if (_prologueActive)
+    {
+        // F8 is intentionally unused elsewhere. F12 unlocks developer tools;
+        // together they provide a visible, test-only onboarding skip.
+        if (_demoCompleted && IsKeyPressed(KEY_F8))
+        {
+            ClearDungeonEnemies();
+            _prologue.Complete();
+            _prologueActive = false;
+            _firstVillageVisit = false;
+            _meta.SetOnboardingComplete();
+            EnterVillage();
+            return;
+        }
+
+        const KeyBindings& bindings = _player.GetBindings();
+        const bool basicPressed = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+            (bindings.attack != KEY_NULL && IsKeyPressed(bindings.attack)) ||
+            (IsGamepadAvailable(0) && IsGamepadButtonPressed(0, _gamepadBindingsEdit.attack));
+        const bool abilityPressed =
+            (bindings.ability[0] != KEY_NULL && IsKeyPressed(bindings.ability[0])) ||
+            (IsGamepadAvailable(0) && IsGamepadButtonPressed(0, _gamepadBindingsEdit.ability[0]));
+        const bool dashPressed = IsKeyPressed(bindings.dash) ||
+            (IsGamepadAvailable(0) && IsGamepadButtonPressed(0, _gamepadBindingsEdit.dash));
+        ProloguePhase phaseBeforeInput = _prologue.GetPhase();
+        _prologue.Update({ basicPressed, abilityPressed, dashPressed, false, false });
+        if (phaseBeforeInput == ProloguePhase::Dash &&
+            _prologue.GetPhase() == ProloguePhase::LastStand && _dungeonRoomIdx >= 0)
+        {
+            DungeonRoomState& state = _dungeonRoomStates[_dungeonRoomIdx];
+            state.cleared = true;
+            state.enemiesInitialized = true;
+            state.survivors.clear();
+            ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+            SpawnDungeonDoorOpenEffects();
+            RebuildDungeonNav();
+        }
+
+        float healthNow = _player.GetHealthValue();
+        if (_prologue.GetPhase() == ProloguePhase::LastStand &&
+            healthNow < _prologueLastHealth - 0.01f)
+        {
+            _prologue.Update({ false, false, false, false, true });
+            if (_prologue.IsScriptedDeathReady())
+            {
+                _firstDeathRevive = true;
+                _deathReviveDialogueLine = 0;
+                _deathReviveLostGold = 0;
+                _deathReviveLostCells = 0;
+                ClearDungeonEnemies();
+                BeginDeathRevive();
+                return;
+            }
+            _player.Revive();
+            healthNow = _player.GetHealthValue();
+        }
+        else if (healthNow <= 0.f && _prologue.ShouldAutoRestoreOnLethalHit())
+        {
+            _player.Revive();
+            healthNow = _player.GetHealthValue();
+            _vfx.SpawnFloatingLabel(_player.GetWorldPos(), "TRY AGAIN", RAYWHITE, 1.2f);
+        }
+        _prologueLastHealth = healthNow;
+    }
+
     // Hit-stop: freeze the simulation for a few frames so impacts land hard.
     if (_hitStopTimer > 0.f) { _hitStopTimer -= GetFrameTime(); return; }
     // Slow-mo (crit / boss death): scale the gameplay sim (timer ticks in Update).
@@ -18506,6 +18889,7 @@ void Engine::UpdateDungeonRun(float dt)
                 // size (Balance::Hazards::kHazardBoltScale is the knob).
                 bolt.SetScale(Balance::Hazards::kHazardBoltScale);
                 _enemyProjectiles.push_back(bolt);
+                SfxBank::Get().Play(SfxId::CastFire, 0.3f);   // totem/torch fire whoosh
             };
             hazardCtx.damagePlayer = [&](int damage, Vector2 fromPos)
             {
@@ -18592,8 +18976,12 @@ void Engine::UpdateDungeonRun(float dt)
                 pickup->Magnetize(lootCentre, std::min(1.f, GetFrameTime() * 9.f));
             if (CheckCollisionRecs(_player.GetCollisionRec(), pickup->GetCollisionRec()))
             {
-                StopSound(_pickupSound);
-                PlaySound(_pickupSound);   // (SFX hook: collect ping)
+                switch (pickup->GetType())
+                {
+                case PickupType::Gold: SfxBank::Get().Play(SfxId::PickupGold,  0.5f); break;
+                case PickupType::Cell: SfxBank::Get().Play(SfxId::PickupCell,  0.6f); break;
+                default:               SfxBank::Get().Play(SfxId::PickupMagic, 0.5f); break;   // Heal / Mana
+                }
                 _vfx.SpawnImpactBurst(pickup->GetWorldPos(), Color{ 255, 220, 120, 255 }, 5, 170.f);
                 pickup->OnCollect(_player);
             }
@@ -18661,6 +19049,7 @@ void Engine::UpdateDungeonRun(float dt)
         if (!_dungeonScrolling && _pendingExp <= 0.f && _tallyLevelUpsRemaining > 0)
         {
             _tallyLevelUpsRemaining--;
+            SfxBank::Get().Play(SfxId::LevelUp, 0.75f);   // you leveled — card screen opens
             GenerateLevelUpOptions(LevelUpOfferContext::NormalLevel);
             _levelUpReturnState = GameState::DungeonRun;
             _levelUpOpenTimer   = 0.25f;
@@ -18729,6 +19118,57 @@ void Engine::UpdateDungeonRun(float dt)
                 if (e->IsActive()) { allDead = false; break; }
             if (allDead)
             {
+                if (_prologueActive)
+                {
+                    ProloguePhase before = _prologue.GetPhase();
+                    _prologue.Update({ false, false, false, true, false });
+                    ProloguePhase after = _prologue.GetPhase();
+                    _pendingExp = 0.f;
+                    _pickups.clear();
+
+                    if (after == ProloguePhase::LastStand || before == ProloguePhase::LastStand)
+                    {
+                        // The last stand cannot be won. A full clear immediately
+                        // rebuilds the firing ring without granting rewards.
+                        DungeonRoomState& state = _dungeonRoomStates[_dungeonRoomIdx];
+                        state.cleared = false;
+                        state.enemiesInitialized = false;
+                        state.survivors.clear();
+                        _dungeonEnemiesSpawned = false;
+                        SpawnDungeonRoomEnemies();
+                        return;
+                    }
+
+                    if (after != before && after != ProloguePhase::Dash)
+                    {
+                        DungeonRoomState& state = _dungeonRoomStates[_dungeonRoomIdx];
+                        state.cleared = true;
+                        state.enemiesInitialized = true;
+                        state.survivors.clear();
+                        _dungeonEnemiesSpawned = false;
+                        ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+                        SpawnDungeonDoorOpenEffects();
+                        RebuildDungeonNav();
+                    }
+                    else if (after == before)
+                    {
+                        // Clearing without demonstrating the requested action
+                        // repeats the tiny teaching encounter.
+                        DungeonRoomState& state = _dungeonRoomStates[_dungeonRoomIdx];
+                        state.enemiesInitialized = false;
+                        state.survivors.clear();
+                        _dungeonEnemiesSpawned = false;
+                        SpawnDungeonRoomEnemies();
+                    }
+                    else
+                    {
+                        // Ability lesson is complete; wait for one dash before
+                        // opening the east door into the last stand.
+                        _dungeonEnemiesSpawned = false;
+                    }
+                    return;
+                }
+
                 int roomClearExp = Balance::Levelling::kStandardRoomClearExp;
                 if (_currentRoomType == RoomType::Elite)
                     roomClearExp = Balance::Levelling::kEliteRoomClearExp;
@@ -18772,6 +19212,9 @@ void Engine::UpdateDungeonRun(float dt)
                 _dungeonRoomStates[_dungeonRoomIdx].enemiesInitialized = true;
                 _dungeonRoomStates[_dungeonRoomIdx].survivors.clear();
                 _dungeonEnemiesSpawned = false;
+                MusicCue victoryCue = ResolveRoomClearVictoryCue(_currentRoomType);
+                if (victoryCue != MusicCue::None)
+                    StartVictoryMusic(victoryCue);
                 ResolveActiveModifiersOnRoomClear();   // Risk Shrine contract pays out
                 ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
                 if (_dungeonRoomIdx == _dungeonGen.GetKeyIndex() && !_magicGemCollected)
@@ -19411,6 +19854,56 @@ void Engine::DrawDungeonRun()
             DrawUltimateSequence();
             DrawMagicGemHudIcon();
             if (_debug.IsActive()) drawRoomLabel();   // room label is debug info now
+
+            if (_prologueActive)
+            {
+                const KeyBindings& bindings = _player.GetBindings();
+                const char* prompt = "";
+                switch (_prologue.GetPhase())
+                {
+                case ProloguePhase::BasicAttack:
+                    prompt = bindings.attack == KEY_NULL
+                        ? "Press LMB to attack - defeat the grunts"
+                        : TextFormat("Press %s to attack - defeat the grunts", GetKeyName(bindings.attack));
+                    break;
+                case ProloguePhase::Ability:
+                    prompt = TextFormat("You are a skilled %s - press %s to use %s",
+                        GetPlayerClassInfo(_player.GetClass()).name,
+                        GetKeyName(bindings.ability[0]),
+                        GetAbilityName(_player.GetLearnedAbility(0)));
+                    break;
+                case ProloguePhase::Dash:
+                    prompt = TextFormat("Press %s to dash", GetKeyName(bindings.dash));
+                    break;
+                case ProloguePhase::LastStand:
+                    prompt = TextFormat("SURROUNDED  -  STORY HP %d / 3",
+                                        3 - _prologue.GetLastStandHits());
+                    break;
+                default: break;
+                }
+                int fs = 30;
+                int width = MeasureText(prompt, fs);
+                Rectangle box{ sw * 0.5f - width * 0.5f - 20.f, 72.f, (float)width + 40.f, 52.f };
+                DrawRectangleRounded(box, 0.18f, 6, Fade(BLACK, 0.78f));
+                DrawRectangleRoundedLines(box, 0.18f, 6, Fade(GOLD, 0.85f));
+                DrawText(prompt, (int)(sw * 0.5f - width * 0.5f), 83, fs, RAYWHITE);
+                if (_prologue.GetPhase() == ProloguePhase::LastStand)
+                {
+                    const int storyHealth = 3 - _prologue.GetLastStandHits();
+                    const float segmentW = 46.f;
+                    const float totalW = segmentW * 3.f + 12.f;
+                    for (int segment = 0; segment < 3; ++segment)
+                    {
+                        Rectangle hpSegment{ sw * 0.5f - totalW * 0.5f + segment * (segmentW + 6.f),
+                                             box.y + box.height + 8.f, segmentW, 12.f };
+                        DrawRectangleRounded(hpSegment, 0.35f, 4,
+                            segment < storyHealth ? Color{ 220, 50, 58, 255 } : Color{ 64, 38, 42, 220 });
+                        DrawRectangleRoundedLines(hpSegment, 0.35f, 4, Fade(BLACK, 0.75f));
+                    }
+                }
+                if (_demoCompleted)
+                    DrawText("[F8] Skip Onboarding", (int)sw - 260, 22, 20, Fade(RAYWHITE, 0.75f));
+            }
 
             // Small biome name reminder in the bottom-right corner - useful when
             // cycling biomes in the pregen map test without losing track of which one is active.

@@ -13,6 +13,7 @@ class Shieldbearer : public Enemy
 {
 public:
     Shieldbearer(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Metal; }
     ~Shieldbearer() override;
 
     void Init();

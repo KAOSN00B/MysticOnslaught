@@ -9,13 +9,13 @@
 class Character;
 
 // Slay-the-Spire-style world map shown after every boss clear.
-// 6 tiers total: tier 0 = Caverns (always), tiers 1-4 = player picks,
+// 6 tiers total: tier 0 = Forest (always), tiers 1-4 = player picks,
 // tier 5 = DemonsInsides (always last). Circles only — no icons.
 class WorldMapManager
 {
 public:
     // Regenerate the map. Call each time a boss is cleared.
-    //   completedBiomes  — biomes actually played, in order (index 0 = first pick after Caverns)
+    //   completedBiomes  — biomes actually played, in order (index 0 = first pick after Forest)
     //   chosenIndices    — tier-index (0/1/2) of the node the player picked at each completed tier
     //   nextZone         — which zone the player is about to choose (1-4)
     void Generate(
@@ -37,6 +37,7 @@ public:
     int   GetSelectedTierIdx() const { return _selectedTierIdx; }
 
     void Reset();
+    void Reopen();
     void SetPromptMode(InputPromptMode mode) { _promptMode = mode; }
 
     // Debug layout editor — toggle with KEY_NINE while WorldMap is active in debug mode.
@@ -54,7 +55,7 @@ private:
     struct Node
     {
         Biome   biome      = Biome::Caverns;
-        int     tier       = 0;      // 0 = Caverns row, 5 = DemonsInsides row
+        int     tier       = 0;      // 0 = Forest row, 5 = DemonsInsides row
         int     tierIdx    = 0;      // position within the tier: 0/1/2
         Vector2 drawPos    = {};
         bool    isCompleted  = false; // player cleared this biome

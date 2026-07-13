@@ -20,6 +20,7 @@ public:
     };
 
     Cyclops(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~Cyclops() override;
 
     void Init();

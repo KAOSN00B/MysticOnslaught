@@ -23,6 +23,28 @@ Rectangle TileDefSet::Get(TileType t) const
     return { 0.f, 0.f, (float)kTileSize, (float)kTileSize };
 }
 
+TileRenderSource ResolveTileRenderSource(const TileDefSet& defs, TileType type)
+{
+    const int idx = (int)type;
+    const bool assigned = idx >= 0 && idx < (int)TileType::Count && defs.assigned[idx];
+
+    // Caverns is the canonical chest-art source. This fallback is deliberately
+    // limited to rewards so no biome floor, wall, border, prop, or door art can
+    // leak in from Caverns.
+    if (!assigned && (type == TileType::ChestClosed || type == TileType::ChestOpen))
+    {
+        const float row = type == TileType::ChestClosed ? 18.f : 19.f;
+        return { { 23.f * kTileSize, row * kTileSize,
+                   (float)kTileSize, (float)kTileSize },
+                 TileRenderSheet::SharedReward };
+    }
+
+    TileRenderSheet sheet = TileRenderSheet::Biome;
+    if (assigned && defs.fromGround[idx])
+        sheet = TileRenderSheet::Ground;
+    return { defs.Get(type), sheet };
+}
+
 bool TileDefSet::LoadFromFile(const char* path)
 {
     FILE* f = fopen(path, "r");

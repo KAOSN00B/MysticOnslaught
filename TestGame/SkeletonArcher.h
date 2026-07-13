@@ -15,6 +15,7 @@ class SkeletonArcher : public Enemy
 {
 public:
     SkeletonArcher(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Small; }
     ~SkeletonArcher() override;
 
     void Init();

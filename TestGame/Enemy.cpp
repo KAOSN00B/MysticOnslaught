@@ -1815,10 +1815,10 @@ void Enemy::PlayAttackSound()
 
 void Enemy::PlayDeathSound()
 {
-    float pitch = GetRandomValue(140, 180) / 100.f;
-    SetSoundPitch(_deathSound, pitch);
-    SetSoundVolume(_deathSound, 0.5f);
-    PlaySound(_deathSound);
+    // Family-based death (slime pop, spectral fade, metal clang, beast roar...)
+    // via the shared SfxBank — replaces the old shared PlayerDeath.ogg so a dead
+    // grunt no longer sounds like the hero dying.
+    SfxBank::Get().PlayCreatureDeath(GetCreatureFamily());
 }
 
 void Enemy::PlayHurtSound()

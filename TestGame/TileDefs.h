@@ -81,3 +81,21 @@ struct TileDefSet
         return i >= 0 && i < (int)TileType::Count && assigned[i];
     }
 };
+
+// Identifies which texture owns a resolved tile source rectangle. Most tiles
+// come from the active biome (or Ground Tiles); treasure chests may fall back
+// to the shared Caverns reward art when a biome has no authored chest tile.
+enum class TileRenderSheet
+{
+    Biome,
+    Ground,
+    SharedReward,
+};
+
+struct TileRenderSource
+{
+    Rectangle src{};
+    TileRenderSheet sheet = TileRenderSheet::Biome;
+};
+
+TileRenderSource ResolveTileRenderSource(const TileDefSet& defs, TileType type);

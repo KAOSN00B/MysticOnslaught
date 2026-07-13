@@ -55,6 +55,7 @@ call emcc ^
   %SRC%\AncientBear.cpp ^
   %SRC%\PlayerPreview.cpp ^
   %SRC%\RoomHazardDirector.cpp ^
+  %SRC%\SfxBank.cpp ^
   %SRC%\EnemyProjectile.cpp ^
   %SRC%\Prop.cpp ^
   %SRC%\Game.cpp ^
@@ -84,6 +85,10 @@ call emcc ^
   %SRC%\ProjectileSystem.cpp ^
   %SRC%\RoomDirector.cpp ^
   %SRC%\RunStateController.cpp ^
+  %SRC%\RunSession.cpp ^
+  %SRC%\ClassUnlockRules.cpp ^
+  %SRC%\VillageLayoutData.cpp ^
+  %SRC%\PrologueController.cpp ^
   %SRC%\ShopManager.cpp ^
   %SRC%\TouchControls.cpp ^
   %SRC%\VFXManager.cpp ^
@@ -119,6 +124,7 @@ call emcc ^
   --preload-file Sounds ^
   --preload-file Music ^
   --preload-file PowerUps ^
+  --preload-file VillageAssets ^
   --preload-file Map.png ^
   "--preload-file" "TestGame/tilemapper_Ancient Castle.txt@tilemapper_Ancient Castle.txt" ^
   "--preload-file" "TestGame/tilemapper_Caverns.txt@tilemapper_Caverns.txt" ^

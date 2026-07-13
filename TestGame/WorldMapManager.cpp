@@ -13,7 +13,7 @@
 
 // ── Biome pool for the 4 selectable middle zones ───────────────────────────────
 static constexpr Biome kBiomePool[] = {
-    Biome::AncientCastle, Biome::DreamRealm, Biome::Forest,   Biome::Graveyard,
+    Biome::AncientCastle, Biome::DreamRealm, Biome::Caverns,  Biome::Graveyard,
     Biome::Jungle,        Biome::LostCity,   Biome::TheSanctuary, Biome::Wastelands
 };
 static constexpr int kBiomePoolCount = (int)(sizeof(kBiomePool) / sizeof(kBiomePool[0]));
@@ -169,12 +169,12 @@ void WorldMapManager::Generate(
 
     // ── Build all nodes ────────────────────────────────────────────────────────
 
-    // Tier 0: Caverns (single node, always completed)
+    // Tier 0: Forest (single node, always completed)
     {
         Node n;
         n.tier        = 0;
         n.tierIdx     = 0;
-        n.biome       = Biome::Caverns;
+        n.biome       = Biome::Forest;
         n.hasBiome    = true;
         n.isCompleted = true;
         n.isLocked    = false;
@@ -198,7 +198,7 @@ void WorldMapManager::Generate(
         {
             if (nextZone == 1)
             {
-                // Caverns (tier 0) connects to all tier-1 nodes
+                // Forest (tier 0) connects to all tier-1 nodes
                 reachable[0] = reachable[1] = reachable[2] = true;
             }
             else
@@ -274,6 +274,18 @@ void WorldMapManager::Reset()
     _fadeAlpha      = 255.f;
     _fadingOut      = false;
     _done           = false;
+    _lastTouchCount = 0;
+}
+
+void WorldMapManager::Reopen()
+{
+    _hoveredIdx = -1;
+    _confirmIdx = -1;
+    _confirmActive = false;
+    _openTimer = 0.35f;
+    _fadeAlpha = 255.f;
+    _fadingOut = false;
+    _done = false;
     _lastTouchCount = 0;
 }
 

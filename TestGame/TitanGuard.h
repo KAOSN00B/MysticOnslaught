@@ -18,6 +18,7 @@ class TitanGuard : public Enemy
 {
 public:
     TitanGuard(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Metal; }
     ~TitanGuard() override;
 
     void Init();

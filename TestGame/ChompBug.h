@@ -19,6 +19,7 @@ class ChompBug : public Enemy
 {
 public:
     ChompBug(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Small; }
     ~ChompBug() override;
 
     void Init();

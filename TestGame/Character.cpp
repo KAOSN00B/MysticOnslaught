@@ -1,4 +1,5 @@
 #include "Character.h"
+#include "SfxBank.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
@@ -1285,6 +1286,13 @@ void Character::PlayHurtSound()
     PlaySound(_hurtSound);
 }
 
+// Each class's basic attack sounds like its weapon — staff puff, bow release,
+// dagger flick, holy shimmer, dark bolt — instead of one shared sword swing.
+void Character::PlayAttackSound()
+{
+    SfxBank::Get().PlayBasicAttack(_class);
+}
+
 // IsUltimateAbility(AbilityType) is defined inline in AbilityType.h and now
 // covers every class's ultimates (including the Warrior kit).
 
@@ -1631,6 +1639,10 @@ void Character::AddArmour(int amount)
 
 void Character::ApplyUpgrade(UpgradeType type)
 {
+    // A "you gained something" chime — covers level-up card picks, the starting
+    // ability, and shop purchases (all route through ApplyUpgrade).
+    SfxBank::Get().Play(SfxId::AbilityLearn, 0.45f);
+
     switch (type)
     {
     // ── Common ────────────────────────────────────────────────────────────────

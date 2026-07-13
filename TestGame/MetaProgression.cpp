@@ -62,6 +62,10 @@ void MetaProgressionManager::Load()
         else if (strcmp(key, "gold_carryover") == 0) _goldCarryover = atoi(val);
         else if (strcmp(key, "ascension_sel") == 0)  _selectedAscension = atoi(val);
         else if (strcmp(key, "ascension_max") == 0)  _maxAscensionUnlocked = atoi(val);
+        else if (strcmp(key, "onboarding_complete") == 0) _onboardingComplete = (atoi(val) != 0);
+        else if (strcmp(key, "rogue_unlocked") == 0)      _rogueUnlocked = (atoi(val) != 0);
+        else if (strcmp(key, "warlock_unlocked") == 0)    _warlockUnlocked = (atoi(val) != 0);
+        else if (strcmp(key, "game_completed") == 0)      _gameCompleted = (atoi(val) != 0);
         else if (strncmp(key, "unlock_", 7) == 0)
         {
             int index = atoi(key + 7);
@@ -99,6 +103,10 @@ void MetaProgressionManager::Save() const
     fprintf(f, "gold_carryover=%d\n", _goldCarryover);
     fprintf(f, "ascension_sel=%d\n",  _selectedAscension);
     fprintf(f, "ascension_max=%d\n",  _maxAscensionUnlocked);
+    fprintf(f, "onboarding_complete=%d\n", _onboardingComplete ? 1 : 0);
+    fprintf(f, "rogue_unlocked=%d\n", _rogueUnlocked ? 1 : 0);
+    fprintf(f, "warlock_unlocked=%d\n", _warlockUnlocked ? 1 : 0);
+    fprintf(f, "game_completed=%d\n", _gameCompleted ? 1 : 0);
     for (int i = 0; i < (int)MetaUnlockType::Count; i++)
         if (_unlocked[i])
             fprintf(f, "unlock_%d=1\n", i);
@@ -127,6 +135,34 @@ void MetaProgressionManager::RecordAscensionCleared(int tier)
         _maxAscensionUnlocked = newMax;
         Save();
     }
+}
+
+void MetaProgressionManager::SetOnboardingComplete(bool complete)
+{
+    if (_onboardingComplete == complete) return;
+    _onboardingComplete = complete;
+    Save();
+}
+
+void MetaProgressionManager::SetRogueUnlocked(bool unlocked)
+{
+    if (_rogueUnlocked == unlocked) return;
+    _rogueUnlocked = unlocked;
+    Save();
+}
+
+void MetaProgressionManager::SetWarlockUnlocked(bool unlocked)
+{
+    if (_warlockUnlocked == unlocked) return;
+    _warlockUnlocked = unlocked;
+    Save();
+}
+
+void MetaProgressionManager::RecordGameCompleted()
+{
+    if (_gameCompleted) return;
+    _gameCompleted = true;
+    Save();
 }
 
 // ── Bestiary ────────────────────────────────────────────────────────────────

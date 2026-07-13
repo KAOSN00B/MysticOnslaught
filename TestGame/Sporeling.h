@@ -13,6 +13,7 @@ class Sporeling : public Enemy
 {
 public:
     Sporeling(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Plant; }
     ~Sporeling() override;
 
     void Init();

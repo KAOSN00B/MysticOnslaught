@@ -22,6 +22,7 @@ class PumpkinJack : public Enemy
 {
 public:
     PumpkinJack(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Boss; }
     ~PumpkinJack() override;
 
     void Init();

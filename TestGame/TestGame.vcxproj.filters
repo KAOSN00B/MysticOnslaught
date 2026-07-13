@@ -153,6 +153,9 @@
     <ClCompile Include="RoomHazardDirector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SfxBank.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Cyclops.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -220,6 +223,18 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="RunStateController.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RunSession.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ClassUnlockRules.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="VillageLayoutData.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="PrologueController.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -357,6 +372,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RoomHazardDirector.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SfxBank.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AnimationUtils.h">

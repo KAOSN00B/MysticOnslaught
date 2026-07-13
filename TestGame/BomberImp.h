@@ -13,6 +13,7 @@ class BomberImp : public Enemy
 {
 public:
     BomberImp(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Small; }
     ~BomberImp() override;
 
     void Init();

@@ -179,6 +179,7 @@ public:
     void DashParticles(float h, Vector2 playerScreenCenter);
     void SetWorldPos(Vector2 pos);
     void PlayHurtSound() override;
+    void PlayAttackSound() override;   // per-class weapon basic (routes to SfxBank)
     void StartForcedPush(Vector2 direction, float speed);
     void OnForcedPushCollision();
     void ApplyBurnTicks(float tickDelay, int tickCount, float damagePerTick, Vector2 sourcePos);

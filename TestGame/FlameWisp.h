@@ -15,6 +15,7 @@ class FlameWisp : public Enemy
 {
 public:
     FlameWisp(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Spectral; }
     ~FlameWisp() override;
 
     void Init();

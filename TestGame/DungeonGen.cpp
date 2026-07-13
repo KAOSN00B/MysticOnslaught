@@ -17,17 +17,43 @@ void DungeonGen::Generate()
     AssignSpecialRooms();
 }
 
+void DungeonGen::GeneratePrologue()
+{
+    _rooms.clear();
+    _startIdx = 0;
+    _bossIdx = -1;
+    _keyIdx = -1;
+
+    for (int row = 0; row < kGridSize; ++row)
+        for (int col = 0; col < kGridSize; ++col)
+            _grid[row][col] = -1;
+
+    constexpr int row = kGridSize / 2;
+    constexpr int firstCol = 2;
+    for (int index = 0; index < 3; ++index)
+    {
+        DungeonRoom room;
+        room.row = row;
+        room.col = firstCol + index;
+        room.type = RoomType::Standard;
+        room.hasWest = index > 0;
+        room.hasEast = index < 2;
+        _grid[room.row][room.col] = index;
+        _rooms.push_back(room);
+    }
+}
+
 void DungeonGen::GrowRooms()
 {
-    // The run always begins in Zeph's shop on the bottom edge. The first real
-    // dungeon path is directly north, so "up" is always forward from spawn.
+    // Every biome begins in a quiet, empty entrance on the bottom edge. The
+    // first combat room is directly north, so "up" is always forward.
     int startRow = kGridSize - 1;
     int startCol = kGridSize / 2;
 
     DungeonRoom start;
     start.col  = startCol;
     start.row  = startRow;
-    start.type = RoomType::Store;
+    start.type = RoomType::Standard;
     _grid[startRow][startCol] = 0;
     _rooms.push_back(start);
     _startIdx = 0;
@@ -112,20 +138,20 @@ void DungeonGen::AssignSpecialRooms()
         std::swap(pool[i], pool[GetRandomValue(0, i)]);
 
     // Assign exactly one of each special type from the shuffled pool.
-    // No Rest rooms in DungeonRun — healing is handled by the Store on entry.
-    // No Shop rooms — the shop is always the start room.
+    // Rest and Shop rooms are not generated. Zeph is village-only and the
+    // entrance room deliberately contains no service or reward objects.
     int idx = 0;
     if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Elite;    }
     if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Treasure; }
     // All remaining rooms stay Standard.
 
-    // Store room only ever exits north — random growth can attach rooms east/west/south
+    // Entrance room only ever exits north — random growth can attach rooms east/west/south
     // of the start cell, so strip those connections after the fact.
     _rooms[_startIdx].hasSouth = false;
     _rooms[_startIdx].hasEast  = false;
     _rooms[_startIdx].hasWest  = false;
 
-    // Strip reciprocal connections so no neighboring room opens a door facing the Store.
+    // Strip reciprocal connections so no neighboring room opens a door facing the entrance.
     // BuildConnections uses raw grid adjacency, so east/west neighbors of the Store
     // would otherwise generate a door tile pointing into the Store room.
     int storeRow = _rooms[_startIdx].row;
@@ -141,8 +167,8 @@ void DungeonGen::AssignSpecialRooms()
         if (westNeighbor >= 0) _rooms[westNeighbor].hasEast = false;
     }
 
-    // The room directly north of the Store has no south door — once the player
-    // exits the Store they can never walk back in from above.
+    // The room directly north has no south door. Once the player leaves the
+    // quiet entrance, the dungeon closes behind them.
     int northOfStart = _grid[_rooms[_startIdx].row - 1][_rooms[_startIdx].col];
     if (northOfStart >= 0)
         _rooms[northOfStart].hasSouth = false;
@@ -281,4 +307,3 @@ int DungeonGen::DistanceBFS(int fromIdx, int toIdx) const
 
     return dist[toIdx];
 }
-

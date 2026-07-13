@@ -19,6 +19,7 @@ class AncientBear : public Enemy
 {
 public:
     AncientBear(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~AncientBear() override;
 
     void Init();

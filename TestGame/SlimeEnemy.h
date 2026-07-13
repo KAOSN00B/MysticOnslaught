@@ -33,6 +33,7 @@ public:
 
     SlimeEnemy* AsSlime() override { return this; }
     const char* GetTuningName() const override { return IsBig() ? "SlimeBig" : "SlimeSmall"; }
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Slime; }
     SlimeSize   GetSize() const { return _size; }
     bool        IsBig()   const { return _size == SlimeSize::Big; }
 

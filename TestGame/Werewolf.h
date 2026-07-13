@@ -19,6 +19,7 @@ class Werewolf : public Enemy
 {
 public:
     Werewolf(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~Werewolf() override;
 
     void Init();

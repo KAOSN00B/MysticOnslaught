@@ -3,6 +3,7 @@
 #include "Character.h"
 #include "NavigationGrid.h"
 #include "GameBalance.h"
+#include "SfxBank.h"
 #include "raymath.h"
 #include <vector>
 #include <memory>
@@ -96,6 +97,11 @@ public:
     // Colour-variant tier (0-3) — later world zones spawn recoloured, visibly
     // tougher versions. Default is a no-op; types with variant art override.
     virtual void SetVariantTier(int tier) { (void)tier; }
+
+    // What this enemy is "made of" — drives its hurt/death sound family via the
+    // SfxBank so a slime pops, a phantom fades, and armour clangs, instead of
+    // everything sharing the player's death cry. Subclasses override.
+    virtual CreatureFamily GetCreatureFamily() const { return CreatureFamily::Flesh; }
 
     // ── Character Animator (dev tool) + tuning interface ─────────────────────
     // GetTuningName() returns nullptr for types without tuning support; a name

@@ -81,8 +81,11 @@ enum class MusicCue
     None,
     Title,
     Pause,
-    Dungeon,
-    Forest,
+    Dungeon,       // ruins/underground biomes (Caverns, Lost City, Wastelands)
+    Forest,        // nature biomes (Forest, Jungle)
+    BiomeDark,     // dark/evil biomes (Demon's Insides, Graveyard)
+    BiomeGrand,    // grand/holy biomes (Ancient Castle, The Sanctuary)
+    BiomeEthereal, // dreamlike biomes (Dream Realm)
     BossBattle,
     Shop,
     BattleVictory,

@@ -23,6 +23,7 @@ class Minotaur : public Enemy
 {
 public:
     Minotaur(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~Minotaur() override;
 
     void Init();

@@ -9,6 +9,7 @@ class Ogre : public Enemy
 {
 public:
     Ogre(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~Ogre() override;
 
     void Init();

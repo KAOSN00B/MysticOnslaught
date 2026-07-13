@@ -193,6 +193,7 @@
     <ClCompile Include="AncientBear.cpp" />
     <ClCompile Include="PlayerPreview.cpp" />
     <ClCompile Include="RoomHazardDirector.cpp" />
+    <ClCompile Include="SfxBank.cpp" />
     <ClCompile Include="Molarbeast.cpp" />
     <ClCompile Include="Ogre.cpp" />
     <ClCompile Include="OverlayRenderer.cpp" />
@@ -203,6 +204,10 @@
     <ClCompile Include="ProjectileSystem.cpp" />
     <ClCompile Include="RoomDirector.cpp" />
     <ClCompile Include="RunStateController.cpp" />
+    <ClCompile Include="RunSession.cpp" />
+    <ClCompile Include="ClassUnlockRules.cpp" />
+    <ClCompile Include="VillageLayoutData.cpp" />
+    <ClCompile Include="PrologueController.cpp" />
     <ClCompile Include="ShopManager.cpp" />
     <ClCompile Include="SpreadProjectile.cpp" />
     <ClCompile Include="GamepadInput.cpp" />
@@ -278,6 +283,7 @@
     <ClInclude Include="AncientBear.h" />
     <ClInclude Include="PlayerPreview.h" />
     <ClInclude Include="RoomHazardDirector.h" />
+    <ClInclude Include="SfxBank.h" />
     <ClInclude Include="Molarbeast.h" />
     <ClInclude Include="NineSlice.h" />
     <ClInclude Include="Ogre.h" />
@@ -288,6 +294,10 @@
     <ClInclude Include="ProjectileSystem.h" />
     <ClInclude Include="RoomDirector.h" />
     <ClInclude Include="RunStateController.h" />
+    <ClInclude Include="RunSession.h" />
+    <ClInclude Include="ClassUnlockRules.h" />
+    <ClInclude Include="VillageLayoutData.h" />
+    <ClInclude Include="PrologueController.h" />
     <ClInclude Include="ShopManager.h" />
     <ClInclude Include="SpreadProjectile.h" />
     <ClInclude Include="TouchControls.h" />

@@ -13,6 +13,7 @@ class Warchief : public Enemy
 {
 public:
     Warchief(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~Warchief() override;
 
     void Init();

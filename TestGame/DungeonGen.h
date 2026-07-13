@@ -25,9 +25,11 @@ public:
     static constexpr int kTargetRooms = 12;  // how many rooms to aim for per dungeon
 
     void Generate();
+    void GeneratePrologue();
 
     const std::vector<DungeonRoom>& GetRooms() const { return _rooms; }
     int GetStartIndex() const { return _startIdx; }
+    bool IsEntranceRoom(int roomIdx) const { return roomIdx >= 0 && roomIdx == _startIdx; }
     int GetBossIndex()  const { return _bossIdx;  }
     int GetKeyIndex()   const { return _keyIdx;   }
 

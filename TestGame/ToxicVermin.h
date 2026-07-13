@@ -18,6 +18,7 @@ class ToxicVermin : public Enemy
 {
 public:
     ToxicVermin(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Small; }
     ~ToxicVermin() override;
 
     void Init();

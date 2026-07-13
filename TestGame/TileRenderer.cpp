@@ -1,11 +1,14 @@
 #include "TileRenderer.h"
 
-void TileRenderer::Init(const char* tilesheetPath, const char* groundSheetPath, const TileDefSet& defs)
+void TileRenderer::Init(const char* tilesheetPath, const char* groundSheetPath,
+                        const char* sharedRewardSheetPath, const TileDefSet& defs)
 {
-    if (_sheet.id != 0)       { UnloadTexture(_sheet);       _sheet       = {}; }
-    if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
-    _sheet       = LoadTexture(tilesheetPath);
-    _groundSheet = LoadTexture(groundSheetPath);
+    if (_sheet.id != 0)              { UnloadTexture(_sheet);              _sheet = {}; }
+    if (_groundSheet.id != 0)        { UnloadTexture(_groundSheet);        _groundSheet = {}; }
+    if (_sharedRewardSheet.id != 0)  { UnloadTexture(_sharedRewardSheet);  _sharedRewardSheet = {}; }
+    _sheet             = LoadTexture(tilesheetPath);
+    _groundSheet       = LoadTexture(groundSheetPath);
+    _sharedRewardSheet = LoadTexture(sharedRewardSheetPath);
     _defs = defs;
 }
 
@@ -13,6 +16,8 @@ void TileRenderer::Unload()
 {
     if (_sheet.id != 0)       { UnloadTexture(_sheet);       _sheet       = {}; }
     if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
+    if (_sharedRewardSheet.id != 0)
+        { UnloadTexture(_sharedRewardSheet); _sharedRewardSheet = {}; }
 }
 
 void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
@@ -178,11 +183,12 @@ void TileRenderer::DrawRoomProps(const RoomLayout& layout, float scaleX, float s
 void TileRenderer::DrawTile(TileType type, float screenX, float screenY,
                             float scaleX, float scaleY) const
 {
-    int idx = (int)type;
-    bool useGround = (idx >= 0 && idx < (int)TileType::Count && _defs.fromGround[idx]);
-    const Texture2D& tex = useGround ? _groundSheet : _sheet;
+    TileRenderSource source = ResolveTileRenderSource(_defs, type);
+    const Texture2D& tex = source.sheet == TileRenderSheet::Ground ? _groundSheet
+                         : source.sheet == TileRenderSheet::SharedReward ? _sharedRewardSheet
+                         : _sheet;
     if (tex.id == 0) return;
-    Rectangle src = _defs.Get(type);
+    Rectangle src = source.src;
     Rectangle dst{ screenX, screenY, src.width * scaleX, src.height * scaleY };
     DrawTexturePro(tex, src, dst, {}, 0.f, WHITE);
 }

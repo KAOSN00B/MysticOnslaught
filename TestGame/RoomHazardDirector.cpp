@@ -14,7 +14,9 @@ namespace
 {
     // Sprite strip geometry (see PowerUps/Hazard_*.png, cropped from the
     // owned RA_Hell / Caverns tilesets).
-    constexpr int   kLavaFrameW  = 84,  kLavaFrameH  = 96,  kLavaFrames  = 8;
+    // Lava strip is 640x96 = 8 frames of 80px (re-measured: the pools sit on an
+    // 80px pitch, not 84 — the old value drifted the pool right across the loop).
+    constexpr int   kLavaFrameW  = 80,  kLavaFrameH  = 96,  kLavaFrames  = 8;
     constexpr int   kTotemFrameW = 16,  kTotemFrameH = 32,  kTotemFrames = 12;
     constexpr int   kTorchFrameW = 16,  kTorchFrameH = 16,  kTorchFrames = 12;
     constexpr float kLavaFps  = 8.f;

@@ -19,6 +19,7 @@ public:
     void Init();
     void ResetForSpawn(Vector2 pos) override;
     static void UnloadSharedResources();
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Spectral; }
 
     void Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
         const std::vector<std::unique_ptr<Enemy>>& enemies,

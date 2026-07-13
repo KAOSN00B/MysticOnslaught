@@ -113,6 +113,17 @@ public:
     void SetSelectedAscension(int tier);          // clamps to [0, maxUnlocked]; saves
     void RecordAscensionCleared(int tier);        // unlocks tier+1 on a win; saves
 
+    // Story onboarding and class roster progression. Missing keys in older
+    // profile files load as false, preserving backwards compatibility.
+    bool HasCompletedOnboarding() const { return _onboardingComplete; }
+    void SetOnboardingComplete(bool complete = true);
+    bool IsRogueUnlocked() const { return _rogueUnlocked; }
+    bool IsWarlockUnlocked() const { return _warlockUnlocked; }
+    bool HasCompletedGame() const { return _gameCompleted; }
+    void SetRogueUnlocked(bool unlocked = true);
+    void SetWarlockUnlocked(bool unlocked = true);
+    void RecordGameCompleted();
+
 private:
     int  _bankedCells   = 0;
     int  _lifetimeCells = 0;
@@ -120,5 +131,9 @@ private:
     bool _unlocked[(int)MetaUnlockType::Count] = {};
     int  _selectedAscension    = 0;   // difficulty chosen for the next run
     int  _maxAscensionUnlocked = 0;   // highest tier the player may select
+    bool _onboardingComplete = false;
+    bool _rogueUnlocked = false;
+    bool _warlockUnlocked = false;
+    bool _gameCompleted = false;
     std::map<std::string, int> _bestiary;   // enemy name -> lifetime kills
 };

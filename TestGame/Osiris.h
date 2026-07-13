@@ -18,6 +18,7 @@ class Osiris : public Enemy
 {
 public:
     Osiris(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Boss; }
     ~Osiris() override;
 
     void Init();

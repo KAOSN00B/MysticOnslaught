@@ -14,6 +14,7 @@ class LivingBlade : public Enemy
 {
 public:
     LivingBlade(Vector2 pos);
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Metal; }
     ~LivingBlade() override;
 
     void Init();

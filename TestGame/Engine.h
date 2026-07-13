@@ -47,6 +47,10 @@
 #include "WorldConfig.h"
 #include "AudioManager.h"
 #include "RunStateController.h"
+#include "RunSession.h"
+#include "ClassUnlockRules.h"
+#include "PrologueController.h"
+#include "VillageLayoutData.h"
 #include "CombatDirector.h"
 #include "RoomHazardDirector.h"
 #include "OverlayRenderer.h"
@@ -117,7 +121,9 @@ private:
     void SpawnBossForBiome(Vector2 pos);      // picks the boss class for _currentBiome
 
     // Class select + run start
-    void StartMainRun();                       // ResetRunState + enter Caverns
+    void StartMainRun();                       // ResetRunState + enter Forest
+    void StartOnboardingOrVillage();
+    void StartPrologue();
     void UpdateClassSelect();
     void DrawClassSelect();
     int  _classSelectCursor = 0;
@@ -915,9 +921,11 @@ private:
 
     // -- World map (biome selection) ---------------------------------------
     WorldMapManager       _worldMap;
-    int                   _worldZone = 0;          // 0=Caverns, 1-4=picked zones, 5=DemonsInsides
-    std::vector<Biome>    _worldCompletedBiomes;   // biomes played, in order (after Caverns)
+    RunSession            _runSessionData;
+    int                   _worldZone = 0;          // 0=Forest, 1-4=picked zones, 5=DemonsInsides
+    std::vector<Biome>    _worldCompletedBiomes;   // selected biomes played after Forest
     std::vector<int>      _worldChosenNodeIndices; // 0/1/2 tierIdx chosen at each completed tier
+    int                   _worldMapPreparedZone = -1;
 
     // -- Map screen right-panel debug editor -------------------------------
     bool  _mapEditorActive  = false;
@@ -1280,6 +1288,15 @@ private:
     float _biomeTransitionTimer = 0.f;
     bool     _demoEndTouchHeld = false;
     bool     _isMainGameRun   = false; // true when started via "Start Game" (not Dungeon Run)
+    PrologueController _prologue;
+    bool _prologueActive = false;
+    bool _firstDeathRevive = false;
+    int  _deathReviveDialogueLine = 0;
+    bool _firstVillageVisit = false;
+    bool _pendingNewRunFromVillage = false;
+    float _prologueLastHealth = 0.f;
+    bool _villageIntroDialogueActive = false;
+    int  _villageIntroDialogueLine = 0;
     AudioManager _audio;
     CombatDirector _combatDirector;
     OverlayRenderer _overlayRenderer;

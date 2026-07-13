@@ -13,12 +13,40 @@ namespace
     }
 }
 
+MusicCue ResolveDungeonRunMusicCue(const AudioContext& ctx)
+{
+    if (ctx.currentRoomType == RoomType::Boss
+        && ctx.bossFightActive
+        && !ctx.roomClearPending)
+        return MusicCue::BossBattle;
+    return MusicCue::Dungeon;
+}
+
+MusicCue ResolveRoomClearVictoryCue(RoomType roomType)
+{
+    switch (roomType)
+    {
+    case RoomType::Boss:
+        return MusicCue::BossVictory;
+    case RoomType::Standard:
+    case RoomType::Elite:
+    case RoomType::Treasure:
+        return MusicCue::BattleVictory;
+    default:
+        return MusicCue::None;
+    }
+}
+
 void AudioManager::Init()
 {
     _titleThemeMusic = LoadMusicStream(AssetPath("Music/TitleTheme.ogg").c_str());
     _pauseThemeMusic = LoadMusicStream(AssetPath("Music/PauseMenu.ogg").c_str());
     _dungeonThemeMusic = LoadMusicStream(AssetPath("Music/DungeonTheme.ogg").c_str());
     _forestThemeMusic = LoadMusicStream(AssetPath("Music/ForestTheme.ogg").c_str());
+    // Per-mood biome themes (Synth Fantasy pack, streamed WAV — desktop only).
+    _darkBiomeMusic     = LoadMusicStream(AssetPath("Music/BiomeDark.wav").c_str());
+    _grandBiomeMusic    = LoadMusicStream(AssetPath("Music/BiomeGrand.wav").c_str());
+    _etherealBiomeMusic = LoadMusicStream(AssetPath("Music/BiomeEthereal.wav").c_str());
     _bossBattleMusic = LoadMusicStream(AssetPath("Music/BossBattle.ogg").c_str());
     _shopThemeMusic = LoadMusicStream(AssetPath("Music/ZephsShop.ogg").c_str());
     _battleVictoryMusic = LoadMusicStream(AssetPath("Music/BattleVictory.ogg").c_str());
@@ -29,6 +57,9 @@ void AudioManager::Init()
     _pauseThemeMusic.looping = true;
     _dungeonThemeMusic.looping = true;
     _forestThemeMusic.looping = true;
+    _darkBiomeMusic.looping = true;
+    _grandBiomeMusic.looping = true;
+    _etherealBiomeMusic.looping = true;
     _bossBattleMusic.looping = true;
     _shopThemeMusic.looping = true;
     _battleVictoryMusic.looping = false;
@@ -39,6 +70,9 @@ void AudioManager::Init()
     SetMusicVolume(_pauseThemeMusic, 0.35f);
     SetMusicVolume(_dungeonThemeMusic, 0.35f);
     SetMusicVolume(_forestThemeMusic, 0.35f);
+    SetMusicVolume(_darkBiomeMusic, 0.35f);
+    SetMusicVolume(_grandBiomeMusic, 0.35f);
+    SetMusicVolume(_etherealBiomeMusic, 0.35f);
     SetMusicVolume(_bossBattleMusic, 0.35f);
     SetMusicVolume(_shopThemeMusic, 0.35f);
     SetMusicVolume(_battleVictoryMusic, 0.65f);
@@ -52,6 +86,9 @@ void AudioManager::Shutdown()
     UnloadMusicStream(_pauseThemeMusic);
     UnloadMusicStream(_dungeonThemeMusic);
     UnloadMusicStream(_forestThemeMusic);
+    UnloadMusicStream(_darkBiomeMusic);
+    UnloadMusicStream(_grandBiomeMusic);
+    UnloadMusicStream(_etherealBiomeMusic);
     UnloadMusicStream(_bossBattleMusic);
     UnloadMusicStream(_shopThemeMusic);
     UnloadMusicStream(_battleVictoryMusic);
@@ -67,6 +104,9 @@ Music* AudioManager::GetMusicByCue(MusicCue cue)
     case MusicCue::Pause:         return &_pauseThemeMusic;
     case MusicCue::Dungeon:       return &_dungeonThemeMusic;
     case MusicCue::Forest:        return &_forestThemeMusic;
+    case MusicCue::BiomeDark:     return &_darkBiomeMusic;
+    case MusicCue::BiomeGrand:    return &_grandBiomeMusic;
+    case MusicCue::BiomeEthereal: return &_etherealBiomeMusic;
     case MusicCue::BossBattle:    return &_bossBattleMusic;
     case MusicCue::Shop:          return &_shopThemeMusic;
     case MusicCue::BattleVictory: return &_battleVictoryMusic;
@@ -82,6 +122,9 @@ bool AudioManager::IsLoopMusicCue(MusicCue cue) const
         || cue == MusicCue::Pause
         || cue == MusicCue::Dungeon
         || cue == MusicCue::Forest
+        || cue == MusicCue::BiomeDark
+        || cue == MusicCue::BiomeGrand
+        || cue == MusicCue::BiomeEthereal
         || cue == MusicCue::BossBattle
         || cue == MusicCue::Shop;
 }
@@ -91,15 +134,36 @@ bool AudioManager::IsVictoryMusicCue(MusicCue cue) const
     return cue == MusicCue::BattleVictory || cue == MusicCue::BossVictory;
 }
 
+bool AudioManager::IsBiomeLoopCue(MusicCue cue) const
+{
+    return cue == MusicCue::Forest
+        || cue == MusicCue::Dungeon
+        || cue == MusicCue::BiomeDark
+        || cue == MusicCue::BiomeGrand
+        || cue == MusicCue::BiomeEthereal;
+}
+
 MusicCue AudioManager::GetBiomeMusicCue(Biome biome) const
 {
+    // 10 biomes grouped into 5 moods so each biome TYPE has its own theme.
     switch (biome)
     {
     case Biome::Forest:
     case Biome::Jungle:
-        return MusicCue::Forest;
+        return MusicCue::Forest;        // nature
+    case Biome::DemonsInsides:
+    case Biome::Graveyard:
+        return MusicCue::BiomeDark;      // dark / evil
+    case Biome::AncientCastle:
+    case Biome::TheSanctuary:
+        return MusicCue::BiomeGrand;     // grand / holy
+    case Biome::DreamRealm:
+        return MusicCue::BiomeEthereal;  // dreamlike
+    case Biome::Caverns:
+    case Biome::LostCity:
+    case Biome::Wastelands:
     default:
-        return MusicCue::Dungeon;
+        return MusicCue::Dungeon;        // ruins / underground
     }
 }
 
@@ -126,6 +190,9 @@ float AudioManager::GetMusicBaseVolume(MusicCue cue) const
     case MusicCue::Pause:         return 0.35f;
     case MusicCue::Dungeon:       return 0.35f;
     case MusicCue::Forest:        return 0.35f;
+    case MusicCue::BiomeDark:     return 0.35f;
+    case MusicCue::BiomeGrand:    return 0.35f;
+    case MusicCue::BiomeEthereal: return 0.35f;
     case MusicCue::BossBattle:    return 0.35f;
     case MusicCue::Shop:          return 0.35f;
     case MusicCue::BattleVictory: return 0.65f;
@@ -163,7 +230,7 @@ MusicCue AudioManager::GetDesiredLoopMusicCue(const AudioContext& ctx) const
         return GetBiomeMusicCue(ctx.actBiome);
 
     case GameState::DungeonRun:
-        return MusicCue::Dungeon;
+        return ResolveDungeonRunMusicCue(ctx);
 
     case GameState::GameOver:
         return MusicCue::None;
@@ -309,6 +376,17 @@ void AudioManager::Update(const AudioContext& ctx)
     if (ctx.gameState != GameState::GameOver)
         _gameOverMusicPlayed = false;
 
+    // Ease the combat mix toward its target: full during a fight, a calmer
+    // floor when the room is clear. Fast swell in, gentle settle out — biome
+    // exploration loops multiply their volume by this (see below).
+    {
+        const float kCalmMix = 0.40f;
+        float target = ctx.inCombat ? 1.f : kCalmMix;
+        float step   = (target > _combatMix ? 2.0f : 0.7f) * GetFrameTime();
+        _combatMix = (target > _combatMix) ? std::min(target, _combatMix + step)
+                                           : std::max(target, _combatMix - step);
+    }
+
     if (ctx.gameState == GameState::GameOver && _currentMusicCue == MusicCue::None && !_gameOverMusicPlayed)
     {
         _gameOverMusicPlayed = true;
@@ -325,6 +403,10 @@ void AudioManager::Update(const AudioContext& ctx)
             if (IsLoopMusicCue(_currentMusicCue))
             {
                 float baseVolume = GetMusicBaseVolume(_currentMusicCue) * _musicVolumeScale;
+                // Biome exploration music ducks to the calm floor when no
+                // enemies are around; boss/menu/shop loops stay at full volume.
+                if (IsBiomeLoopCue(_currentMusicCue))
+                    baseVolume *= _combatMix;
                 if (_musicFadeInTimer > 0.f)
                 {
                     _musicFadeInTimer = std::max(0.f, _musicFadeInTimer - GetFrameTime());
