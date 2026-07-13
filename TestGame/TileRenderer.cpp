@@ -1,5 +1,25 @@
 #include "TileRenderer.h"
 
+#include <algorithm>
+
+namespace
+{
+    int PlaybackFrame(int frameCount, float fps, AnimPlaybackMode mode, double elapsed)
+    {
+        if (frameCount <= 1 || fps <= 0.f) return 0;
+        const int tick = std::max(0, (int)(elapsed * fps));
+        if (mode == AnimPlaybackMode::PlayOnce)
+            return std::min(tick, frameCount - 1);
+        if (mode == AnimPlaybackMode::PingPong)
+        {
+            const int cycle = frameCount * 2 - 2;
+            const int phase = tick % cycle;
+            return phase < frameCount ? phase : cycle - phase;
+        }
+        return tick % frameCount;
+    }
+}
+
 void TileRenderer::Init(const char* tilesheetPath, const char* groundSheetPath,
                         const char* sharedRewardSheetPath, const TileDefSet& defs)
 {
@@ -23,6 +43,13 @@ void TileRenderer::Unload()
 void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
                             Vector2 screenOffset, bool includeProps) const
 {
+    const std::string animationId = layout.handcrafted ? layout.sourceRoomId : std::string{};
+    if (animationId != _activeRoomAnimationId)
+    {
+        _activeRoomAnimationId = animationId;
+        _roomAnimationStart = GetTime();
+    }
+    const double animationElapsed = GetTime() - _roomAnimationStart;
     float cellW = 16.f * scaleX;
     float cellH = 16.f * scaleY;
 
@@ -73,7 +100,8 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         if (anim.frames.empty()) continue;
         int frame = 0;
         if ((int)anim.frames.size() > 1 && anim.fps > 0.f)
-            frame = (int)(GetTime() * anim.fps) % (int)anim.frames.size();
+            frame = PlaybackFrame((int)anim.frames.size(), anim.fps, anim.playback,
+                                  animationElapsed);
 
         Rectangle src = anim.frames[frame];
 
@@ -140,8 +168,8 @@ void TileRenderer::DrawRoomPropsSplit(const RoomLayout& layout, float scaleX, fl
         if (!inRequestedHalf(p.row, anim.frames[0].height)) continue;
 
         int fc    = (int)anim.frames.size();
-        int frame = (fc > 1 && anim.fps > 0.f)
-            ? (int)(GetTime() * anim.fps) % fc : 0;
+        int frame = PlaybackFrame(fc, anim.fps, anim.playback,
+                                  GetTime() - _roomAnimationStart);
         float sx = screenOffset.x + p.col * cellW;
         float sy = screenOffset.y + p.row * cellH;
         DrawSpriteScaled(anim.frames[frame], sx, sy, scaleX, scaleY);
@@ -171,8 +199,8 @@ void TileRenderer::DrawRoomProps(const RoomLayout& layout, float scaleX, float s
         if (anim.frames.empty()) continue;
 
         int fc    = (int)anim.frames.size();
-        int frame = (fc > 1 && anim.fps > 0.f)
-            ? (int)(GetTime() * anim.fps) % fc : 0;
+        int frame = PlaybackFrame(fc, anim.fps, anim.playback,
+                                  GetTime() - _roomAnimationStart);
 
         float sx = screenOffset.x + p.col * cellW;
         float sy = screenOffset.y + p.row * cellH;

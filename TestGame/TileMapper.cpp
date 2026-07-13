@@ -10,12 +10,43 @@
 #include "raymath.h"
 #include "VirtualCanvas.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
 constexpr float kListRowH = 52.f;
+
+namespace
+{
+    std::string MakeTileAssetId(const char* prefix)
+    {
+        static unsigned long long sequence = 0;
+        const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+        return std::string(prefix) + "_" + std::to_string(ticks) + "_" +
+               std::to_string(++sequence);
+    }
+
+    const char* PlaybackName(AnimPlaybackMode mode)
+    {
+        switch (mode)
+        {
+        case AnimPlaybackMode::PingPong: return "Ping-pong";
+        case AnimPlaybackMode::PlayOnce: return "Once";
+        default: return "Loop";
+        }
+    }
+
+    AnimPlaybackMode NextPlayback(AnimPlaybackMode mode)
+    {
+        return (AnimPlaybackMode)(((int)mode + 1) % 3);
+    }
+}
 
 static int ReadSavedBiomeIndex(FILE* file)
 {
@@ -437,7 +468,7 @@ TileDefSet TileMapper::BuildCurrentDefinitions() const
     {
         const PropDef& source = _propDefs[(std::size_t)i];
         definitions.props.push_back({ source.src, source.collision,
-            "prop_" + std::to_string(i), "Prop " + std::to_string(i + 1) });
+            source.id, source.name });
     }
     for (int i = 0; i < (int)_animPropDefs.size(); ++i)
     {
@@ -446,21 +477,23 @@ TileDefSet TileMapper::BuildCurrentDefinitions() const
         definition.frames = source.frames;
         definition.collision = source.collision;
         definition.fps = source.fps;
-        definition.id = "anim_prop_" + std::to_string(i);
-        definition.name = "Animated Prop " + std::to_string(i + 1);
+        definition.id = source.id;
+        definition.name = source.name;
+        definition.playback = source.playback;
         definitions.animProps.push_back(std::move(definition));
     }
     for (int i = 0; i < (int)_decorDefs.size(); ++i)
-        definitions.decors.push_back({ _decorDefs[(std::size_t)i], {},
-            "decor_" + std::to_string(i), "Decor " + std::to_string(i + 1) });
+        definitions.decors.push_back({ _decorDefs[(std::size_t)i].src, {},
+            _decorDefs[(std::size_t)i].id, _decorDefs[(std::size_t)i].name });
     for (int i = 0; i < (int)_animDecorDefs.size(); ++i)
     {
         const AnimDecorDef& source = _animDecorDefs[(std::size_t)i];
         AnimSpriteDef definition;
         definition.frames = source.frames;
         definition.fps = source.fps;
-        definition.id = "anim_decor_" + std::to_string(i);
-        definition.name = "Animated Decor " + std::to_string(i + 1);
+        definition.id = source.id;
+        definition.name = source.name;
+        definition.playback = source.playback;
         definitions.animDecors.push_back(std::move(definition));
     }
     return definitions;
@@ -487,8 +520,35 @@ void TileMapper::UpdateMapping()
         EnterDrawMap();
         return;
     }
+    std::string* editedAssetName = nullptr;
+    if (_editingAnimPropIdx >= 0 && _editingAnimPropIdx < (int)_animPropDefs.size())
+        editedAssetName = &_animPropDefs[(std::size_t)_editingAnimPropIdx].name;
+    else if (_editingPropIdx >= 0 && _editingPropIdx < (int)_propDefs.size())
+        editedAssetName = &_propDefs[(std::size_t)_editingPropIdx].name;
+
+    if (editedAssetName != nullptr && IsKeyPressed(KEY_F2))
+        _assetNameEditing = true;
+    if (_assetNameEditing && editedAssetName != nullptr)
+    {
+        int codepoint = GetCharPressed();
+        while (codepoint > 0)
+        {
+            if (codepoint >= 32 && codepoint <= 126 && editedAssetName->size() < 48)
+                editedAssetName->push_back((char)codepoint);
+            codepoint = GetCharPressed();
+        }
+        if (IsKeyPressed(KEY_BACKSPACE) && !editedAssetName->empty())
+            editedAssetName->pop_back();
+        if (IsKeyPressed(KEY_ENTER)) _assetNameEditing = false;
+    }
+
     if (IsKeyPressed(KEY_ESCAPE))
     {
+        if (_assetNameEditing)
+        {
+            _assetNameEditing = false;
+            return;
+        }
         // If the collision editor is open, ESC just closes it.
         if (_editingPropIdx >= 0 || _editingAnimPropIdx >= 0)
         {
@@ -512,12 +572,14 @@ void TileMapper::UpdateMapping()
         _screen        = Screen::FileSelect;
         return;
     }
-    if (IsKeyPressed(KEY_S))
+    if (!_assetNameEditing && IsKeyPressed(KEY_S))
         ExportAndSave();
 
     if ((_editingPropIdx >= 0 || _editingAnimPropIdx >= 0) && _panelTab == PanelTab::Props)
-        HandleCollisionEditorMouse();
-    else
+    {
+        if (!_assetNameEditing) HandleCollisionEditorMouse();
+    }
+    else if (!_assetNameEditing)
         HandleMouseMapping();
 }
 
@@ -704,7 +766,8 @@ void TileMapper::HandleMouseMapping()
         if (CheckCollisionPointRec(mouse, { _panelX+10.f, kContentY, panelW-20.f, 24.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         {
-            _propDefs.push_back({ sel, { 0.f, 0.f, sel.width, sel.height } });
+            _propDefs.push_back({ sel, { 0.f, 0.f, sel.width, sel.height },
+                MakeTileAssetId("prop"), "Prop " + std::to_string(_propDefs.size() + 1) });
             _hasSelection = false;
         }
 
@@ -754,6 +817,9 @@ void TileMapper::HandleMouseMapping()
             def.frames    = _pendingAnimPropFrames;
             def.fps       = _animPropFps;
             def.collision = { 0.f, 0.f, def.frames[0].width, def.frames[0].height };
+            def.id        = MakeTileAssetId("anim_prop");
+            def.name      = "Animated Prop " + std::to_string(_animPropDefs.size() + 1);
+            def.playback  = _animPropPlayback;
             _animPropDefs.push_back(std::move(def));
             _pendingAnimPropFrames.clear();
             // Auto-open collision editor for the new entry
@@ -799,6 +865,14 @@ void TileMapper::HandleMouseMapping()
             float ry = propListY + (animRowOffset + i) * kListRowH - _propScrollY;
             if (ry + kListRowH < kContentY || ry > sh) continue;
 
+            Rectangle playbackBtn{ _panelX + panelW - 104.f, ry + 13.f, 64.f, 24.f };
+            if (CheckCollisionPointRec(mouse, playbackBtn) &&
+                IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            {
+                _animPropDefs[(std::size_t)i].playback =
+                    NextPlayback(_animPropDefs[(std::size_t)i].playback);
+                break;
+            }
             Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
             if (CheckCollisionPointRec(mouse, removeBtn) &&
                 IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -835,7 +909,11 @@ void TileMapper::HandleMouseMapping()
         // Static add button
         if (CheckCollisionPointRec(mouse, { _panelX + 10.f, kContentY, panelW - 20.f, 24.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
-        { _decorDefs.push_back(src); _hasSelection = false; }
+        {
+            _decorDefs.push_back({ src, MakeTileAssetId("decor"),
+                "Decor " + std::to_string(_decorDefs.size() + 1) });
+            _hasSelection = false;
+        }
 
         // ── Anim decor builder (mirrors anim prop builder in Props tab) ─────────
         float abY = kContentY + 32.f;
@@ -879,6 +957,9 @@ void TileMapper::HandleMouseMapping()
             AnimDecorDef def;
             def.frames = _pendingAnimDecorFrames;
             def.fps    = _animDecorFps;
+            def.id     = MakeTileAssetId("anim_decor");
+            def.name   = "Animated Decor " + std::to_string(_animDecorDefs.size() + 1);
+            def.playback = _animDecorPlayback;
             _animDecorDefs.push_back(std::move(def));
             _pendingAnimDecorFrames.clear();
         }
@@ -899,6 +980,14 @@ void TileMapper::HandleMouseMapping()
         {
             float ry = listY + ((int)_decorDefs.size() + i) * kListRowH - _decorScrollY;
             if (ry + kListRowH < kContentY || ry > sh) continue;
+            Rectangle playbackBtn{ _panelX + panelW - 104.f, ry + 13.f, 64.f, 24.f };
+            if (CheckCollisionPointRec(mouse, playbackBtn) &&
+                IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            {
+                _animDecorDefs[(std::size_t)i].playback =
+                    NextPlayback(_animDecorDefs[(std::size_t)i].playback);
+                break;
+            }
             Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
             if (CheckCollisionPointRec(mouse, removeBtn) &&
                 IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -969,8 +1058,8 @@ void TileMapper::ExportAndSave() const
             (int)_propDefs[i].collision.width, (int)_propDefs[i].collision.height);
     for (int i = 0; i < (int)_decorDefs.size(); i++)
         TraceLog(LOG_INFO, "Decor[%d]         = { %3d, %3d, %3d, %3d };", i,
-            (int)_decorDefs[i].x, (int)_decorDefs[i].y,
-            (int)_decorDefs[i].width, (int)_decorDefs[i].height);
+            (int)_decorDefs[i].src.x, (int)_decorDefs[i].src.y,
+            (int)_decorDefs[i].src.width, (int)_decorDefs[i].src.height);
     for (int i = 0; i < (int)_animPropDefs.size(); i++)
     {
         TraceLog(LOG_INFO, "AnimProp[%d]      = %dfr  %.0ffps  coll{ %.0f, %.0f, %.0f, %.0f };", i,
@@ -993,138 +1082,101 @@ void TileMapper::ExportAndSave() const
     }
     TraceLog(LOG_INFO, "==========================================");
 
-    std::string path = SavePath();
-    FILE* f = nullptr;
-    f = fopen(path.c_str(), "w");
-    if (f)
+    std::ofstream out(SavePath(), std::ios::trunc);
+    if (!out) return;
+    out << "BIOME " << biomeName << '\n';
+    for (const Assignment& a : _assignments)
     {
-        fprintf(f, "BIOME %s\n", biomeName);
-        for (const Assignment& a : _assignments)
-        {
-            if (a.typeIdx < 0 || a.typeIdx >= kTypeCount) continue;
-            fprintf(f, "%s %d %d %d %d %d\n",
-                a.fromGround ? "GTILE" : "TILE",
-                a.col, a.row, a.spanCols, a.spanRows, a.typeIdx);
-        }
-        for (const PropDef& p : _propDefs)
-            fprintf(f, "PROP %.0f %.0f %.0f %.0f %.0f %.0f %.0f %.0f\n",
-                p.src.x, p.src.y, p.src.width, p.src.height,
-                p.collision.x, p.collision.y, p.collision.width, p.collision.height);
-        for (const AnimPropDef& a : _animPropDefs)
-        {
-            // Format: cx cy cw ch fps frameCount  x0 y0 w0 h0  x1 y1 w1 h1 ...
-            fprintf(f, "ANIMPROP %.0f %.0f %.0f %.0f %.1f %d",
-                a.collision.x, a.collision.y, a.collision.width, a.collision.height,
-                a.fps, (int)a.frames.size());
-            for (const Rectangle& r : a.frames)
-                fprintf(f, " %.0f %.0f %.0f %.0f", r.x, r.y, r.width, r.height);
-            fprintf(f, "\n");
-        }
-        for (const Rectangle& r : _decorDefs)
-            fprintf(f, "DECOR %.0f %.0f %.0f %.0f\n", r.x, r.y, r.width, r.height);
-        for (const AnimDecorDef& a : _animDecorDefs)
-        {
-            fprintf(f, "ANIMDECOR %.1f %d", a.fps, (int)a.frames.size());
-            for (const Rectangle& r : a.frames)
-                fprintf(f, " %.0f %.0f %.0f %.0f", r.x, r.y, r.width, r.height);
-            fprintf(f, "\n");
-        }
-        fclose(f);
-
-        if (_openFileIdx >= 0 && _openFileIdx < (int)_files.size())
-            const_cast<TileMapper*>(this)->_files[_openFileIdx].hasSave = true;
+        if (a.typeIdx < 0 || a.typeIdx >= kTypeCount) continue;
+        out << (a.fromGround ? "GTILE " : "TILE ")
+            << a.col << ' ' << a.row << ' ' << a.spanCols << ' '
+            << a.spanRows << ' ' << a.typeIdx << '\n';
     }
+    for (const PropDef& p : _propDefs)
+        out << "PROPV2 " << std::quoted(p.id) << ' ' << std::quoted(p.name) << ' '
+            << p.src.x << ' ' << p.src.y << ' ' << p.src.width << ' ' << p.src.height << ' '
+            << p.collision.x << ' ' << p.collision.y << ' '
+            << p.collision.width << ' ' << p.collision.height << '\n';
+    for (const AnimPropDef& a : _animPropDefs)
+    {
+        out << "ANIMPROPV2 " << std::quoted(a.id) << ' ' << std::quoted(a.name) << ' '
+            << (int)a.playback << ' ' << a.fps << ' '
+            << a.collision.x << ' ' << a.collision.y << ' '
+            << a.collision.width << ' ' << a.collision.height << ' '
+            << a.frames.size();
+        for (const Rectangle& r : a.frames)
+            out << ' ' << r.x << ' ' << r.y << ' ' << r.width << ' ' << r.height;
+        out << '\n';
+    }
+    for (const DecorDef& decor : _decorDefs)
+        out << "DECORV2 " << std::quoted(decor.id) << ' ' << std::quoted(decor.name) << ' '
+            << decor.src.x << ' ' << decor.src.y << ' '
+            << decor.src.width << ' ' << decor.src.height << '\n';
+    for (const AnimDecorDef& a : _animDecorDefs)
+    {
+        out << "ANIMDECORV2 " << std::quoted(a.id) << ' ' << std::quoted(a.name) << ' '
+            << (int)a.playback << ' ' << a.fps << ' ' << a.frames.size();
+        for (const Rectangle& r : a.frames)
+            out << ' ' << r.x << ' ' << r.y << ' ' << r.width << ' ' << r.height;
+        out << '\n';
+    }
+    out.close();
+    if (_openFileIdx >= 0 && _openFileIdx < (int)_files.size())
+        const_cast<TileMapper*>(this)->_files[_openFileIdx].hasSave = true;
 }
 
 void TileMapper::TryLoadSave()
 {
     if (_openFileIdx < 0 || _openFileIdx >= (int)_files.size()) return;
 
-    std::string path = SavePath();
-    FILE* f = nullptr;
-    f = fopen(path.c_str(), "r");
-    if (!f) return;
+    const std::string path = SavePath();
+    TileDefSet loaded{};
+    if (!loaded.LoadFromFile(path.c_str())) return;
 
-    // First line: BIOME <full name>, including spaces.
-    _files[_openFileIdx].biomeIdx = ReadSavedBiomeIndex(f);
+    for (const SpriteDef& source : loaded.props)
+        _propDefs.push_back({ source.src, source.collision, source.id, source.name });
+    for (const ::AnimPropDef& source : loaded.animProps)
+        _animPropDefs.push_back({ source.frames, source.collision, source.fps,
+                                  source.id, source.name, source.playback });
+    for (const SpriteDef& source : loaded.decors)
+        _decorDefs.push_back({ source.src, source.id, source.name });
+    for (const AnimSpriteDef& source : loaded.animDecors)
+        _animDecorDefs.push_back({ source.frames, source.fps,
+                                   source.id, source.name, source.playback });
 
-    char tag[32]{};
-    while (fscanf(f, "%31s", tag) == 1)
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line))
     {
-        if (strcmp(tag, "TILE") == 0 || strcmp(tag, "GTILE") == 0)
+        if (line.rfind("BIOME ", 0) == 0)
         {
-            bool isGround = (strcmp(tag, "GTILE") == 0);
-            int col, row, sc, sr, ti;
-            if (fscanf(f, "%d %d %d %d %d", &col, &row, &sc, &sr, &ti) != 5) continue;
-            if (ti < 0 || ti >= kTypeCount) continue;
-            Assignment a;
-            a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr;
-            a.typeIdx = ti; a.fromGround = isGround;
-            _assignments.push_back(a);
+            const std::string name = line.substr(6);
+            for (int i = 0; i < kBiomeCount; ++i)
+                if (name == kBiomeNames[i]) { _files[_openFileIdx].biomeIdx = i; break; }
+            continue;
         }
-        else if (strcmp(tag, "PROP") == 0)
+        std::istringstream row(line);
+        std::string tag;
+        if (!(row >> tag)) continue;
+        Assignment assignment;
+        if (tag == "TILE" || tag == "GTILE")
         {
-            float x, y, w, h;
-            if (fscanf(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
-            float cx = 0.f, cy = 0.f, cw = w, ch = h;
-            long savedPos = ftell(f);
-            float tmp[4]{};
-            if (fscanf(f, "%f %f %f %f", &tmp[0], &tmp[1], &tmp[2], &tmp[3]) == 4)
-                { cx = tmp[0]; cy = tmp[1]; cw = tmp[2]; ch = tmp[3]; }
-            else
-                fseek(f, savedPos, SEEK_SET);
-            _propDefs.push_back({ {x, y, w, h}, {cx, cy, cw, ch} });
-        }
-        else if (strcmp(tag, "DECOR") == 0)
-        {
-            float x, y, w, h;
-            if (fscanf(f, "%f %f %f %f", &x, &y, &w, &h) != 4) continue;
-            _decorDefs.push_back({ x, y, w, h });
-        }
-        else if (strcmp(tag, "ANIMDECOR") == 0)
-        {
-            float fps;
-            int   fc;
-            if (fscanf(f, "%f %d", &fps, &fc) != 2) continue;
-            AnimDecorDef def;
-            def.fps = fps;
-            for (int i = 0; i < fc; i++)
-            {
-                float fx, fy, fw, fh;
-                if (fscanf(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
-                def.frames.push_back({ fx, fy, fw, fh });
-            }
-            if (!def.frames.empty())
-                _animDecorDefs.push_back(std::move(def));
-        }
-        else if (strcmp(tag, "ANIMPROP") == 0)
-        {
-            float cx, cy, cw, ch, fps;
-            int   fc;
-            if (fscanf(f, "%f %f %f %f %f %d", &cx, &cy, &cw, &ch, &fps, &fc) != 6) continue;
-            AnimPropDef def;
-            def.collision = { cx, cy, cw, ch };
-            def.fps       = fps;
-            for (int i = 0; i < fc; i++)
-            {
-                float fx, fy, fw, fh;
-                if (fscanf(f, "%f %f %f %f", &fx, &fy, &fw, &fh) != 4) break;
-                def.frames.push_back({ fx, fy, fw, fh });
-            }
-            if (!def.frames.empty())
-                _animPropDefs.push_back(std::move(def));
+            assignment.fromGround = tag == "GTILE";
+            if (!(row >> assignment.col >> assignment.row >> assignment.spanCols
+                      >> assignment.spanRows >> assignment.typeIdx)) continue;
         }
         else
         {
-            // Legacy format: tag is the col integer.
-            int col = atoi(tag), row, sc, sr, ti;
-            if (fscanf(f, "%d %d %d %d", &row, &sc, &sr, &ti) != 4) continue;
-            if (ti < 0 || ti >= kTypeCount) continue;
-            Assignment a; a.col = col; a.row = row; a.spanCols = sc; a.spanRows = sr; a.typeIdx = ti;
-            _assignments.push_back(a);
+            char* end = nullptr;
+            const long col = std::strtol(tag.c_str(), &end, 10);
+            if (end == nullptr || *end != '\0') continue;
+            assignment.col = (int)col;
+            if (!(row >> assignment.row >> assignment.spanCols
+                      >> assignment.spanRows >> assignment.typeIdx)) continue;
         }
+        if (assignment.typeIdx >= 0 && assignment.typeIdx < kTypeCount)
+            _assignments.push_back(assignment);
     }
-    fclose(f);
 }
 
 // ── Drawing helpers ───────────────────────────────────────────────────────────
@@ -1596,8 +1648,7 @@ void TileMapper::DrawPanel() const
                 DrawTexturePro(_sheet, _propDefs[i].src, dst, {}, 0.f, WHITE);
                 DrawRectangleLinesEx(dst, 1.f, Fade(WHITE, 0.3f));
             }
-            DrawText(TextFormat("#%d  %dx%d", i,
-                (int)_propDefs[i].src.width, (int)_propDefs[i].src.height),
+            DrawText(_propDefs[i].name.c_str(),
                 (int)(_panelX+54.f), (int)(ry+9.f), 12, RAYWHITE);
             DrawText(sel ? "[click to close]" : "[click to edit hitbox]",
                 (int)(_panelX+54.f), (int)(ry+27.f), 10,
@@ -1633,11 +1684,17 @@ void TileMapper::DrawPanel() const
                 DrawRectangleLinesEx(dst, 1.f, Fade(ORANGE, 0.5f));
             }
             int fc = (int)_animPropDefs[i].frames.size();
-            DrawText(TextFormat("Anim #%d  %dfr  %.0ffps", i, fc, _animPropDefs[i].fps),
+            DrawText(TextFormat("%s  %dfr", _animPropDefs[i].name.c_str(), fc),
                 (int)(_panelX+54.f), (int)(ry+9.f), 11, ORANGE);
             DrawText(sel ? "[click to close]" : "[click to edit hitbox]",
                 (int)(_panelX+54.f), (int)(ry+27.f), 10,
                 sel ? Color{255,160,60,255} : Fade(ORANGE,0.55f));
+            Rectangle pb{ _panelX+panelW-104.f, ry+13.f, 64.f, 24.f };
+            DrawRectangleRec(pb, Fade(ORANGE, 0.24f));
+            DrawRectangleLinesEx(pb, 1.f, Fade(ORANGE, 0.55f));
+            const char* playback = PlaybackName(_animPropDefs[i].playback);
+            DrawText(playback, (int)(pb.x + pb.width * 0.5f - MeasureText(playback, 9) * 0.5f),
+                (int)(pb.y + 7.f), 9, ORANGE);
             Rectangle rb{ _panelX+panelW-36.f, ry+13.f, 26.f, 24.f };
             bool rh = CheckCollisionPointRec(mouse2, rb);
             DrawRectangleRec(rb, rh ? Fade(RED,0.85f) : Fade(RED,0.45f));
@@ -1764,9 +1821,9 @@ void TileMapper::DrawPanel() const
             DrawRectangleLinesEx({ _panelX+6.f, ry, panelW-12.f, kListRowH-2.f },
                 1.f, Fade(WHITE, 0.15f));
             if (_sheet.id != 0)
-                DrawTexturePro(_sheet, _decorDefs[i],
+                DrawTexturePro(_sheet, _decorDefs[i].src,
                     { _panelX+12.f, ry+7.f, 36.f, 36.f }, {}, 0.f, WHITE);
-            DrawText(TextFormat("Static #%d", i),
+            DrawText(_decorDefs[i].name.c_str(),
                 (int)(_panelX+54.f), (int)(ry+15.f), 11, RAYWHITE);
             Rectangle rb{ _panelX+panelW-36.f, ry+13.f, 26.f, 24.f };
             DrawRectangleRec(rb, Fade(RED, 0.45f));
@@ -1786,9 +1843,15 @@ void TileMapper::DrawPanel() const
             if (_sheet.id != 0 && !_animDecorDefs[i].frames.empty())
                 DrawTexturePro(_sheet, _animDecorDefs[i].frames[0],
                     { _panelX+12.f, ry+7.f, 36.f, 36.f }, {}, 0.f, WHITE);
-            DrawText(TextFormat("Anim #%d  %dfr %.0ffps", i,
-                    (int)_animDecorDefs[i].frames.size(), _animDecorDefs[i].fps),
+            DrawText(TextFormat("%s  %dfr", _animDecorDefs[i].name.c_str(),
+                    (int)_animDecorDefs[i].frames.size()),
                 (int)(_panelX+54.f), (int)(ry+15.f), 11, ORANGE);
+            Rectangle pb{ _panelX+panelW-104.f, ry+13.f, 64.f, 24.f };
+            DrawRectangleRec(pb, Fade(ORANGE, 0.24f));
+            DrawRectangleLinesEx(pb, 1.f, Fade(ORANGE, 0.55f));
+            const char* playback = PlaybackName(_animDecorDefs[i].playback);
+            DrawText(playback, (int)(pb.x + pb.width * 0.5f - MeasureText(playback, 9) * 0.5f),
+                (int)(pb.y + 7.f), 9, ORANGE);
             Rectangle rb{ _panelX+panelW-36.f, ry+13.f, 26.f, 24.f };
             DrawRectangleRec(rb, Fade(RED, 0.45f));
             DrawText("X", (int)(rb.x+rb.width*0.5f-MeasureText("X",13)*0.5f),
@@ -2039,13 +2102,13 @@ void TileMapper::GetCollEditorLayout(float& offX, float& offY, float& zoom) cons
         { offX = offY = zoom = 0.f; return; }
 
     float availW = _panelX - 40.f;
-    float availH = (float)kVirtualHeight - 120.f;
+    float availH = (float)kVirtualHeight - 145.f;
     zoom = std::min({ availW / src->width, availH / src->height, 24.f });
     zoom = std::max(zoom, 4.f);
     float dw = src->width  * zoom;
     float dh = src->height * zoom;
     offX = 20.f + (availW - dw) * 0.5f;
-    offY = 60.f + (availH - dh) * 0.5f;
+    offY = 85.f + (availH - dh) * 0.5f;
 }
 
 void TileMapper::HandleCollisionEditorMouse()
@@ -2144,6 +2207,7 @@ void TileMapper::DrawCollisionEditor() const
     int              frameCount = 1;
     float            fps        = 8.f;
     int              editIdx    = -1;
+    const std::string* assetName = nullptr;
 
     if (_editingAnimPropIdx >= 0 && _editingAnimPropIdx < (int)_animPropDefs.size()
         && !_animPropDefs[_editingAnimPropIdx].frames.empty())
@@ -2154,12 +2218,14 @@ void TileMapper::DrawCollisionEditor() const
         frameCount = (int)_animPropDefs[_editingAnimPropIdx].frames.size();
         fps        = _animPropDefs[_editingAnimPropIdx].fps;
         editIdx    = _editingAnimPropIdx;
+        assetName  = &_animPropDefs[_editingAnimPropIdx].name;
     }
     else if (_editingPropIdx >= 0 && _editingPropIdx < (int)_propDefs.size())
     {
         srcPtr  = &_propDefs[_editingPropIdx].src;
         collPtr = &_propDefs[_editingPropIdx].collision;
         editIdx = _editingPropIdx;
+        assetName = &_propDefs[_editingPropIdx].name;
     }
     else return;
 
@@ -2182,7 +2248,12 @@ void TileMapper::DrawCollisionEditor() const
         DrawText(TextFormat("Collision Editor  —  Prop #%d  (%dx%d px source)",
             editIdx, (int)srcRect.width, (int)srcRect.height),
             20, 12, 16, GOLD);
-    DrawText("[ESC] Done  •  [S] Save", 20, 34, 13, Fade(WHITE, 0.45f));
+    DrawText(TextFormat("Name: %s%s", assetName ? assetName->c_str() : "Asset",
+        _assetNameEditing ? "_" : ""), 20, 34, 14,
+        _assetNameEditing ? GOLD : RAYWHITE);
+    DrawText(_assetNameEditing ? "Type name  [Enter] finish  [Esc] cancel"
+                               : "[F2] Rename  [ESC] Done  [S] Save",
+             20, 54, 13, Fade(WHITE, 0.48f));
 
     // For animated props, cycle the live frame so you can see every frame
     // while adjusting the hitbox. The hitbox applies to all frames.

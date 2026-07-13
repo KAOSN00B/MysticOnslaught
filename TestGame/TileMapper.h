@@ -85,13 +85,41 @@ private:
     };
 
     // A prop sprite + its collision box (source-pixel coords, relative to src top-left).
-    struct PropDef { Rectangle src; Rectangle collision; };
+    struct PropDef
+    {
+        Rectangle src;
+        Rectangle collision;
+        std::string id;
+        std::string name;
+    };
+
+    struct DecorDef
+    {
+        Rectangle src;
+        std::string id;
+        std::string name;
+    };
 
     // An animated prop — each frame is a separate drag-selected source rectangle.
-    struct AnimPropDef { std::vector<Rectangle> frames; Rectangle collision; float fps; };
+    struct AnimPropDef
+    {
+        std::vector<Rectangle> frames;
+        Rectangle collision;
+        float fps = 8.f;
+        std::string id;
+        std::string name;
+        AnimPlaybackMode playback = AnimPlaybackMode::Loop;
+    };
 
     // An animated decoration — each frame is a separately drag-selected source rectangle.
-    struct AnimDecorDef { std::vector<Rectangle> frames; float fps; };
+    struct AnimDecorDef
+    {
+        std::vector<Rectangle> frames;
+        float fps = 8.f;
+        std::string id;
+        std::string name;
+        AnimPlaybackMode playback = AnimPlaybackMode::Loop;
+    };
 
     // Eight handles used by the collision-box editor.
     enum class CollHandle { None, TL, TC, TR, ML, MR, BL, BC, BR, Body };
@@ -188,12 +216,14 @@ private:
     // Props and decorations defined for this tileset.
     std::vector<PropDef>      _propDefs;
     std::vector<AnimPropDef>  _animPropDefs;
-    std::vector<Rectangle>    _decorDefs;
+    std::vector<DecorDef>     _decorDefs;
     std::vector<AnimDecorDef> _animDecorDefs;
     float _propScrollY      = 0.f;
     float _decorScrollY     = 0.f;
     float _animDecorFps     = 8.f;  // fps for the anim decor being built
     float _animPropFps      = 8.f;  // fps for the anim prop being built
+    AnimPlaybackMode _animDecorPlayback = AnimPlaybackMode::Loop;
+    AnimPlaybackMode _animPropPlayback  = AnimPlaybackMode::Loop;
 
     // Frames accumulated during anim prop/decor building; cleared after Finalize or Clear.
     std::vector<Rectangle> _pendingAnimPropFrames;
@@ -205,6 +235,7 @@ private:
     int        _editingAnimPropIdx = -1;
     CollHandle _collHandle     = CollHandle::None;
     bool       _collDragging   = false;
+    bool       _assetNameEditing = false;
     Vector2    _collDragStart  = {};
     Rectangle  _collDragOrig   = {};
 

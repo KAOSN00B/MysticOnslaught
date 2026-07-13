@@ -20,8 +20,14 @@ class RoomLibrary
 public:
     void Refresh(const std::filesystem::path& root);
     const std::vector<RoomBlueprint>& Rooms() const { return _rooms; }
+    const RoomBlueprint* FindById(std::string_view id) const;
     const RoomBlueprint* Choose(const RoomRequest& request,
                                 std::string_view avoidId = {}) const;
+    std::optional<RoomLayout> Resolve(const RoomRequest& request,
+                                      const TileDefSet& definitions,
+                                      std::string_view avoidId,
+                                      std::string& selectedId,
+                                      std::string& warning) const;
 
     bool SaveRoom(const RoomBlueprint& room, bool overwrite, std::string& error);
     bool DeleteRoom(std::string_view id, std::string& error);

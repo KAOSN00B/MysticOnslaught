@@ -2,6 +2,7 @@
 #include "TileDefs.h"
 #include "RoomLayout.h"
 #include "raylib.h"
+#include <string>
 
 // ── TileRenderer ──────────────────────────────────────────────────────────────
 // Draws a RoomLayout to the screen using a tilesheet and a TileDefSet.
@@ -56,4 +57,6 @@ private:
     Texture2D  _groundSheet{};
     Texture2D  _sharedRewardSheet{};
     TileDefSet _defs{};
+    mutable std::string _activeRoomAnimationId;
+    mutable double _roomAnimationStart = 0.0;
 };

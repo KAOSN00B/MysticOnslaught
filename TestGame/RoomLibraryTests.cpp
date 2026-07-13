@@ -53,6 +53,8 @@ int main()
     assert(library.Rooms().size() == 4);
     assert(library.NameExists("Narrow Crossing"));
     assert(!library.NameExists("Narrow Crossing", "crossing-a"));
+    assert(library.FindById("crossing-a") != nullptr);
+    assert(library.FindById("missing") == nullptr);
 
     RoomRequest request;
     request.biome = Biome::Caverns;
@@ -69,6 +71,23 @@ int main()
     const RoomBlueprint* alternate = library.Choose(request, selected->id);
     assert(alternate != nullptr);
     assert(alternate->id != selected->id);
+
+    TileDefSet definitions{};
+    std::string selectedId;
+    std::string warning;
+    std::optional<RoomLayout> resolved = library.Resolve(
+        request, definitions, selected->id, selectedId, warning);
+    assert(resolved.has_value());
+    assert(resolved->handcrafted);
+    assert(resolved->sourceRoomId == alternate->id);
+    assert(selectedId == alternate->id);
+
+    RoomRequest missingRequest = request;
+    missingRequest.roomType = RoomType::Boss;
+    selectedId = "unchanged";
+    resolved = library.Resolve(missingRequest, definitions, {}, selectedId, warning);
+    assert(!resolved.has_value());
+    assert(selectedId.empty());
 
     request.roomType = RoomType::Boss;
     assert(library.Choose(request) == nullptr);

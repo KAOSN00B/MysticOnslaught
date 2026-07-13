@@ -39,6 +39,13 @@ void RoomLibrary::Refresh(const std::filesystem::path& root)
     }
 }
 
+const RoomBlueprint* RoomLibrary::FindById(std::string_view id) const
+{
+    for (const RoomBlueprint& room : _rooms)
+        if (room.id == id) return &room;
+    return nullptr;
+}
+
 const RoomBlueprint* RoomLibrary::Choose(const RoomRequest& request,
                                          std::string_view avoidId) const
 {
@@ -58,6 +65,23 @@ const RoomBlueprint* RoomLibrary::Choose(const RoomRequest& request,
     static thread_local std::mt19937 generator(std::random_device{}());
     std::uniform_int_distribution<std::size_t> pick(0, candidates.size() - 1);
     return candidates[pick(generator)];
+}
+
+std::optional<RoomLayout> RoomLibrary::Resolve(const RoomRequest& request,
+                                                const TileDefSet& definitions,
+                                                std::string_view avoidId,
+                                                std::string& selectedId,
+                                                std::string& warning) const
+{
+    selectedId.clear();
+    warning.clear();
+    const RoomBlueprint* blueprint = Choose(request, avoidId);
+    if (blueprint == nullptr) return std::nullopt;
+
+    std::optional<RoomLayout> layout = BuildRoomLayout(*blueprint, definitions, warning);
+    if (!layout.has_value()) return std::nullopt;
+    selectedId = blueprint->id;
+    return layout;
 }
 
 bool RoomLibrary::NameExists(std::string_view name, std::string_view exceptId) const

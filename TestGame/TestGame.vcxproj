@@ -151,6 +151,7 @@
     <ClCompile Include="RoomBlueprint.cpp" />
     <ClCompile Include="RoomLibrary.cpp" />
     <ClCompile Include="RoomEditor.cpp" />
+    <ClCompile Include="RoomCollision.cpp" />
     <ClCompile Include="TileDefs.cpp" />
     <ClCompile Include="TileMapper.cpp" />
     <ClCompile Include="TileRenderer.cpp" />
@@ -243,6 +244,7 @@
     <ClInclude Include="RoomBlueprint.h" />
     <ClInclude Include="RoomLibrary.h" />
     <ClInclude Include="RoomEditor.h" />
+    <ClInclude Include="RoomCollision.h" />
     <ClInclude Include="VFXManager.h" />
     <ClInclude Include="DamageNumberManager.h" />
     <ClInclude Include="EncounterPlanner.h" />
