@@ -148,6 +148,9 @@
     <ClCompile Include="DungeonGen.cpp" />
     <ClCompile Include="NavigationGrid.cpp" />
     <ClCompile Include="RoomLayout.cpp" />
+    <ClCompile Include="RoomBlueprint.cpp" />
+    <ClCompile Include="RoomLibrary.cpp" />
+    <ClCompile Include="RoomEditor.cpp" />
     <ClCompile Include="TileDefs.cpp" />
     <ClCompile Include="TileMapper.cpp" />
     <ClCompile Include="TileRenderer.cpp" />
@@ -237,6 +240,9 @@
     <ClInclude Include="SettingsManager.h" />
     <ClInclude Include="VirtualCanvas.h" />
     <ClInclude Include="NavigationGrid.h" />
+    <ClInclude Include="RoomBlueprint.h" />
+    <ClInclude Include="RoomLibrary.h" />
+    <ClInclude Include="RoomEditor.h" />
     <ClInclude Include="VFXManager.h" />
     <ClInclude Include="DamageNumberManager.h" />
     <ClInclude Include="EncounterPlanner.h" />

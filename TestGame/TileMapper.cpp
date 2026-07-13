@@ -142,6 +142,15 @@ void TileMapper::Update()
 {
     if (_screen == Screen::FileSelect)
         UpdateFileSelect();
+    else if (_screen == Screen::DrawMap)
+    {
+        _roomEditor.Update();
+        if (_roomEditor.WantsBack())
+        {
+            _roomEditor.ClearWantsBack();
+            _screen = Screen::Mapping;
+        }
+    }
     else
         UpdateMapping();
 }
@@ -150,6 +159,8 @@ void TileMapper::Draw() const
 {
     if (_screen == Screen::FileSelect)
         DrawFileSelect();
+    else if (_screen == Screen::DrawMap)
+        _roomEditor.Draw();
     else
         DrawMapping();
 }
@@ -408,8 +419,74 @@ void TileMapper::LoadSheet(const std::string& path)
     _offY = 10.f + (availH - combinedH) * 0.5f;
 }
 
+TileDefSet TileMapper::BuildCurrentDefinitions() const
+{
+    TileDefSet definitions{};
+    for (const Assignment& assignment : _assignments)
+    {
+        if (assignment.typeIdx < 0 || assignment.typeIdx >= (int)TileType::Count) continue;
+        int index = assignment.typeIdx;
+        definitions.assigned[index] = true;
+        definitions.fromGround[index] = assignment.fromGround;
+        definitions.rects[index] = {
+            (float)(assignment.col * kTileSize), (float)(assignment.row * kTileSize),
+            (float)(assignment.spanCols * kTileSize), (float)(assignment.spanRows * kTileSize)
+        };
+    }
+    for (int i = 0; i < (int)_propDefs.size(); ++i)
+    {
+        const PropDef& source = _propDefs[(std::size_t)i];
+        definitions.props.push_back({ source.src, source.collision,
+            "prop_" + std::to_string(i), "Prop " + std::to_string(i + 1) });
+    }
+    for (int i = 0; i < (int)_animPropDefs.size(); ++i)
+    {
+        const AnimPropDef& source = _animPropDefs[(std::size_t)i];
+        ::AnimPropDef definition;
+        definition.frames = source.frames;
+        definition.collision = source.collision;
+        definition.fps = source.fps;
+        definition.id = "anim_prop_" + std::to_string(i);
+        definition.name = "Animated Prop " + std::to_string(i + 1);
+        definitions.animProps.push_back(std::move(definition));
+    }
+    for (int i = 0; i < (int)_decorDefs.size(); ++i)
+        definitions.decors.push_back({ _decorDefs[(std::size_t)i], {},
+            "decor_" + std::to_string(i), "Decor " + std::to_string(i + 1) });
+    for (int i = 0; i < (int)_animDecorDefs.size(); ++i)
+    {
+        const AnimDecorDef& source = _animDecorDefs[(std::size_t)i];
+        AnimSpriteDef definition;
+        definition.frames = source.frames;
+        definition.fps = source.fps;
+        definition.id = "anim_decor_" + std::to_string(i);
+        definition.name = "Animated Decor " + std::to_string(i + 1);
+        definitions.animDecors.push_back(std::move(definition));
+    }
+    return definitions;
+}
+
+void TileMapper::EnterDrawMap()
+{
+    if (_openFileIdx < 0 || _openFileIdx >= (int)_files.size()) return;
+    ExportAndSave();
+    TileDefSet definitions = BuildCurrentDefinitions();
+    std::string roomRoot = AssetFolderPath("Rooms");
+    _roomEditor.Bind(_files[_openFileIdx].stem,
+                     (Biome)_files[_openFileIdx].biomeIdx,
+                     definitions, _sheet, _groundSheet, roomRoot);
+    _screen = Screen::DrawMap;
+}
+
 void TileMapper::UpdateMapping()
 {
+    Rectangle drawMapButton{ 18.f, 18.f, 150.f, 38.f };
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        CheckCollisionPointRec(GetVirtualMousePos(), drawMapButton))
+    {
+        EnterDrawMap();
+        return;
+    }
     if (IsKeyPressed(KEY_ESCAPE))
     {
         // If the collision editor is open, ESC just closes it.
@@ -1073,6 +1150,10 @@ void TileMapper::DrawMapping() const
         DrawText(hint, 10, kVirtualHeight - 20, 14, Fade(WHITE, 0.4f));
     }
     DrawPanel();
+    Rectangle drawMapButton{ 18.f, 18.f, 150.f, 38.f };
+    DrawRectangleRec(drawMapButton, Color{ 35, 105, 150, 245 });
+    DrawRectangleLinesEx(drawMapButton, 1.5f, SKYBLUE);
+    DrawText("Draw Map", 49, 27, 20, WHITE);
 }
 
 void TileMapper::DrawSheet() const

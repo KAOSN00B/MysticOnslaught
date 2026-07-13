@@ -1,5 +1,6 @@
 #pragma once
 #include "raylib.h"
+#include "RoomEditor.h"
 #include <string>
 #include <vector>
 
@@ -29,6 +30,8 @@ public:
     void Draw() const;
 
     bool WantsToExit() const { return _wantsToExit; }
+    bool ConsumeRoomPlaytestRequest() { return _roomEditor.ConsumePlaytestRequest(); }
+    const RoomBlueprint& EditedRoom() const { return _roomEditor.Blueprint(); }
 
     // ── Tile types ────────────────────────────────────────────────────────────
     static constexpr const char* kTypeNames[] = {
@@ -71,7 +74,7 @@ public:
 
 private:
     // ── Internal state ────────────────────────────────────────────────────────
-    enum class Screen    { FileSelect, Mapping };
+    enum class Screen    { FileSelect, Mapping, DrawMap };
     enum class PanelTab  { Tiles, Props, Decors, SpawnZone };
 
     struct Assignment
@@ -112,6 +115,8 @@ private:
     void LoadSheet(const std::string& path);
     void UpdateMapping();
     void DrawMapping() const;
+    TileDefSet BuildCurrentDefinitions() const;
+    void EnterDrawMap();
 
     void HandleMouseMapping();
     void DrawSheet()       const;
@@ -218,4 +223,5 @@ private:
     int _openFileIdx = -1;
 
     static constexpr float kPanelFrac = 0.30f;
+    RoomEditor _roomEditor;
 };
