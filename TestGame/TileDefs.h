@@ -1,18 +1,34 @@
 #pragma once
 #include "raylib.h"
+#include <string>
+#include <string_view>
 #include <vector>
+
+enum class RoomAssetKind : unsigned char;
+
+enum class AnimPlaybackMode : unsigned char
+{
+    Loop = 0,
+    PingPong = 1,
+    PlayOnce = 2,
+};
 
 // A single sprite entry in the props or decorations array.
 // collision: rect in source pixels relative to sprite top-left. Default = full sprite.
 struct SpriteDef {
     Rectangle src;
     Rectangle collision;
+    std::string id;
+    std::string name;
 };
 
 // An animated sprite (e.g. torch/fire). Each frame is a separate source rectangle.
 struct AnimSpriteDef {
     std::vector<Rectangle> frames;  // one entry per frame, in playback order
     float                  fps = 8.f;
+    std::string            id;
+    std::string            name;
+    AnimPlaybackMode       playback = AnimPlaybackMode::Loop;
 };
 
 // An animated prop — each frame is a separate source rectangle you selected in the TileMapper.
@@ -21,6 +37,9 @@ struct AnimPropDef {
     std::vector<Rectangle> frames;    // one entry per frame, in playback order
     Rectangle              collision; // hitbox in source-pixel space of frame[0]
     float                  fps = 8.f;
+    std::string            id;
+    std::string            name;
+    AnimPlaybackMode       playback = AnimPlaybackMode::Loop;
 };
 
 // ── TileType ──────────────────────────────────────────────────────────────────
@@ -74,6 +93,10 @@ struct TileDefSet
     // Load assignments from a tilemapper_<stem>.txt save file.
     // Returns true if the file was found and read.
     bool LoadFromFile(const char* path);
+
+    // Resolve a room's stable authored asset id once when building RoomLayout.
+    // Returns -1 when the referenced definition no longer exists.
+    int FindAssetIndex(RoomAssetKind kind, std::string_view id) const;
 
     bool IsAssigned(TileType t) const
     {
