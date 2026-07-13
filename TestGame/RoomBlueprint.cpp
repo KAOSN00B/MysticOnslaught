@@ -418,3 +418,52 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
     error.clear();
     return room;
 }
+
+std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
+                                          const TileDefSet& definitions,
+                                          std::string& warning)
+{
+    warning.clear();
+    std::string validationError;
+    if (!blueprint.Validate(validationError))
+    {
+        warning = validationError;
+        return std::nullopt;
+    }
+
+    RoomLayout layout{};
+    layout.handcrafted = true;
+    layout.sourceRoomId = blueprint.id;
+    for (int row = 0; row < RoomLayout::kRows; ++row)
+    {
+        for (int col = 0; col < RoomLayout::kCols; ++col)
+        {
+            layout.tiles[row][col] = blueprint.tiles[row][col];
+            layout.fall[row][col] = blueprint.fall[row][col];
+        }
+    }
+
+    int skipped = 0;
+    for (const RoomAssetPlacement& placement : blueprint.placements)
+    {
+        const int definitionIndex = definitions.FindAssetIndex(placement.kind, placement.assetId);
+        if (definitionIndex < 0)
+        {
+            ++skipped;
+            continue;
+        }
+        const SpritePlacement runtimePlacement{
+            definitionIndex, placement.col, placement.row
+        };
+        switch (placement.kind)
+        {
+        case RoomAssetKind::Prop:      layout.props.push_back(runtimePlacement); break;
+        case RoomAssetKind::AnimProp:  layout.animProps.push_back(runtimePlacement); break;
+        case RoomAssetKind::Decor:     layout.decors.push_back(runtimePlacement); break;
+        case RoomAssetKind::AnimDecor: layout.animDecors.push_back(runtimePlacement); break;
+        }
+    }
+    if (skipped > 0)
+        warning = "Skipped " + std::to_string(skipped) + " missing room asset reference(s)";
+    return layout;
+}

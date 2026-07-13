@@ -51,3 +51,7 @@ struct RoomBlueprint
     static std::optional<RoomBlueprint> Load(const std::filesystem::path& path,
                                               std::string& error);
 };
+
+std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
+                                          const TileDefSet& definitions,
+                                          std::string& warning);

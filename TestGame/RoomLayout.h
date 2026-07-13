@@ -1,6 +1,7 @@
 #pragma once
 #include "TileDefs.h"
 #include "GameTypes.h"
+#include <string>
 #include <vector>
 
 // A placed prop or decoration instance inside a room.
@@ -23,8 +24,11 @@ struct RoomLayout
     static constexpr int kRows = 16;
 
     int visualVariant = 0; // index into the active biome's editable visual palette
+    bool handcrafted = false;
+    std::string sourceRoomId;
 
     TileType tiles[kRows][kCols]{};
+    bool fall[kRows][kCols]{};
     std::vector<SpritePlacement> props;       // solid objects with collision
     std::vector<SpritePlacement> animProps;   // animated solid objects with collision
     std::vector<SpritePlacement> decors;      // static floor decorations, no collision
