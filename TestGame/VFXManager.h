@@ -20,7 +20,8 @@ public:
     // Call once after all VFX textures are loaded by Engine.
     void Init(Texture2D* fireballCastTex,  Texture2D* fireballHitTex,
               Texture2D* genericHitTex,    Texture2D* iceHitTex,
-              Texture2D* lightningCastTex, Texture2D* healEffectTex);
+              Texture2D* lightningCastTex, Texture2D* thunderHitTex,
+              Texture2D* healEffectTex);
 
     // Advance frame counters; remove finished effects.
     void Update(float dt);
@@ -136,5 +137,6 @@ private:
     Texture2D* _genericHitTex    = nullptr;
     Texture2D* _iceHitTex        = nullptr;
     Texture2D* _lightningCastTex = nullptr;
+    Texture2D* _thunderHitTex    = nullptr;   // electric impact (Thunder_Blast, 64px cells)
     Texture2D* _healEffectTex    = nullptr;
 };

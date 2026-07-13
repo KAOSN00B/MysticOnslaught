@@ -155,6 +155,19 @@ bool RoomHazardDirector::TryPlaceWallTorch(Vector2 pos, Vector2 fireDir,
     return true;
 }
 
+void RoomHazardDirector::RestoreHazard(RoomHazardType type, Vector2 pos, Vector2 fireDir, float health)
+{
+    EnsureSharedTexturesLoaded();
+    RoomHazard hazard;
+    hazard.type = type;
+    hazard.pos  = pos;
+    InitHazardDefaults(hazard);   // per-type destructible/pressure + entry grace
+    hazard.fireDir = fireDir;
+    hazard.health  = health;      // damage taken on the first visit sticks
+    hazard.state   = RoomHazardState::Active;   // known hazard — no telegraph replay
+    _hazards.push_back(hazard);
+}
+
 void RoomHazardDirector::Update(const RoomHazardContext& ctx)
 {
     const float dt = ctx.deltaTime;

@@ -171,6 +171,12 @@
     <ClCompile Include="VFXManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="DamageNumberManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EncounterPlanner.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="GoldPickup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -384,6 +390,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="VFXManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DamageNumberManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EncounterPlanner.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="GoldPickup.h">

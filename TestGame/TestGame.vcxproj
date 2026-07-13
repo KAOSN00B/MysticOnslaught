@@ -152,6 +152,8 @@
     <ClCompile Include="TileMapper.cpp" />
     <ClCompile Include="TileRenderer.cpp" />
     <ClCompile Include="VFXManager.cpp" />
+    <ClCompile Include="DamageNumberManager.cpp" />
+    <ClCompile Include="EncounterPlanner.cpp" />
     <ClCompile Include="Game.cpp" />
     <ClCompile Include="GoldPickup.cpp" />
     <ClCompile Include="HealPickup.cpp" />
@@ -231,6 +233,8 @@
     <ClInclude Include="VirtualCanvas.h" />
     <ClInclude Include="NavigationGrid.h" />
     <ClInclude Include="VFXManager.h" />
+    <ClInclude Include="DamageNumberManager.h" />
+    <ClInclude Include="EncounterPlanner.h" />
     <ClInclude Include="Game.h" />
     <ClInclude Include="GameBalance.h" />
     <ClInclude Include="GameTypes.h" />

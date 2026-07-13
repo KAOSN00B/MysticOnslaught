@@ -13,13 +13,15 @@
 
 void VFXManager::Init(Texture2D* fireballCastTex,  Texture2D* fireballHitTex,
                       Texture2D* genericHitTex,    Texture2D* iceHitTex,
-                      Texture2D* lightningCastTex, Texture2D* healEffectTex)
+                      Texture2D* lightningCastTex, Texture2D* thunderHitTex,
+                      Texture2D* healEffectTex)
 {
     _fireballCastTex  = fireballCastTex;
     _fireballHitTex   = fireballHitTex;
     _genericHitTex    = genericHitTex;
     _iceHitTex        = iceHitTex;
     _lightningCastTex = lightningCastTex;
+    _thunderHitTex    = thunderHitTex;
     _healEffectTex    = healEffectTex;
 }
 
@@ -230,10 +232,25 @@ void VFXManager::SpawnHitEffect(Character::CastType castType,
         effect.tint       = Color{ 100, 200, 255, 255 };
         break;
     case Character::CastType::ElectricSpread:
-        effect.texture    = _genericHitTex;
-        effect.frameCount = 5;
-        effect.scale      = 4.f;
-        effect.tint       = WHITE;
+        // Real lightning burst (Thunder_Blast: 64px cells, 11 frames — same
+        // layout the electric ultimate draws). Falls back to the generic hit
+        // if the asset is missing so electric never draws nothing.
+        if (_thunderHitTex && _thunderHitTex->id != 0)
+        {
+            effect.texture     = _thunderHitTex;
+            effect.frameWidth  = 64;
+            effect.frameHeight = 64;
+            effect.frameCount  = 11;
+            effect.scale       = 2.5f;
+            effect.tint        = WHITE;
+        }
+        else
+        {
+            effect.texture    = _genericHitTex;
+            effect.frameCount = 5;
+            effect.scale      = 4.f;
+            effect.tint       = Color{ 255, 230, 120, 255 };   // at least tint it electric
+        }
         break;
     default:
         effect.active = false;

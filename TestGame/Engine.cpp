@@ -252,6 +252,7 @@ Engine::~Engine()
     UnloadTexture(_genericHitTex);
     UnloadTexture(_iceHitTex);
     UnloadTexture(_lightningCastTex);
+    UnloadTexture(_thunderHitTex);
     UnloadTexture(_healEffectTex);
     UnloadTexture(_roomClearExplosionTex);
     UnloadTexture(_abilityIconFireTex);
@@ -395,11 +396,27 @@ void Engine::Init()
     _fireballHitTex  = LoadTexture(AssetPath("PowerUps/Fireball_Hit.png").c_str());
     _genericHitTex   = LoadTexture(AssetPath("PowerUps/Hit03.png").c_str());
     _iceHitTex       = LoadTexture(AssetPath("PowerUps/Ice_Shard_Hit.png").c_str());
-    _lightningCastTex = LoadTexture(AssetPath("PowerUps/LightningCast.png").c_str());
+    // Was "LightningCast.png" (no underscore) — that file doesn't exist, so the
+    // electric cast effect was silently invisible. The real asset is Lightning_Cast.png.
+    _lightningCastTex = LoadTexture(AssetPath("PowerUps/Lightning_Cast.png").c_str());
+    // Electric IMPACT sprite — electric hits used to reuse the red generic Hit03.
+    // Thunder_Blast is a 64px-cell, 11-frame burst (same layout the electric
+    // ultimate already draws, so the slicing is known-good).
+    _thunderHitTex   = LoadTexture(AssetPath("PowerUps/Thunder_Blast.png").c_str());
     _healEffectTex = LoadTexture(AssetPath("PowerUps/Health_Up.png").c_str());
     _roomClearExplosionTex = LoadTexture(AssetPath("PowerUps/Flame_Explosion.png").c_str());
     _vfx.Init(&_fireballCastTex, &_fireballHitTex, &_genericHitTex,
-              &_iceHitTex, &_lightningCastTex, &_healEffectTex);
+              &_iceHitTex, &_lightningCastTex, &_thunderHitTex, &_healEffectTex);
+    _damageNumbers.Init(GetFontDefault());
+    DamageNumberSettings& damageSettings = _damageNumbers.GetSettings();
+    damageSettings.visibleCap = Balance::DamageNumbers::kVisibleCap;
+    damageSettings.minFontSize = Balance::DamageNumbers::kMinFontSize;
+    damageSettings.maxFontSize = Balance::DamageNumbers::kMaxFontSize;
+    damageSettings.damageReference = Balance::DamageNumbers::kDamageReference;
+    damageSettings.riseSpeed = Balance::DamageNumbers::kRiseSpeed;
+    damageSettings.lifetime = Balance::DamageNumbers::kLifetime;
+    damageSettings.outlineOffset = Balance::DamageNumbers::kOutline;
+    damageSettings.mergeWindow = Balance::DamageNumbers::kMergeWindow;
     _abilityIconFireTex     = LoadTexture(AssetPath("PowerUps/FireBallPickup.png").c_str());
     _abilityIconIceTex      = LoadTexture(AssetPath("PowerUps/IceSpellPickup.png").c_str());
     _abilityIconElectricTex = LoadTexture(AssetPath("PowerUps/LightningPickup.png").c_str());
@@ -501,6 +518,7 @@ void Engine::Init()
     _enemyProjectiles.clear();
     _poisonClouds.clear();
     _vfx.Clear();
+    _damageNumbers.Clear();
     _enemies.clear();
 
     _pickupSpawnTimer = kDefaultTimedPickupInterval;
@@ -792,7 +810,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _props.clear();
     // Pending reinforcement waves and room hazards never follow the player
     // through a door — each room owns its own pressure.
-    _dungeonReinforcementTypeIds.clear();
+    _dungeonReinforcements.clear();
     _dungeonReinforcementTimer = 0.f;
     _roomHazards.ClearRoom();
     _roomPressureSpent  = 0;
@@ -984,6 +1002,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
     _vfx.Clear();
+    _damageNumbers.Clear();
     _cyclopsLasers.clear();
     _lavaBalls.clear();
     _enemyProjectiles.clear();
@@ -1556,7 +1575,6 @@ void Engine::Update(float dt)
     if (_playerHurtTimer > 0.f) _playerHurtTimer -= dt;
     if (_deathVignette   > 0.f) _deathVignette   -= dt * 0.6f;   // slow fade during the death beat
 
-    _vfx.SetDamageNumberScale((int)_juiceDamageScale);   // live juice tuning
     if (_debug.IsActive() && IsKeyPressed(KEY_J)) _juicePanelOpen = !_juicePanelOpen;
     if (_juicePanelOpen) UpdateJuicePanel();
 
@@ -2350,6 +2368,7 @@ void Engine::UpdateGamePlay(float dt)
         UpdateWarlockMinions(dt);
         UpdatePoisonClouds(dt);
         _vfx.Update(dt);
+        _damageNumbers.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
         UpdateBossSupportRespawns(dt);
@@ -4830,23 +4849,106 @@ void Engine::DrawAbilityBar()
             (int)(expBarY + hc.expBarH / 2.f - eFs / 2.f),
             eFs, WHITE);
 
+        const int armour = _player.GetArmour();
+        const int maxArmour = _player.GetMaxArmour();
+        const float armourIconH = std::max(1.f, hc.armourSize);
+        const float armourScale = (_upgradeDefenseTex.height > 0)
+            ? armourIconH / (float)_upgradeDefenseTex.height : 1.f;
+        const float armourIconW = (_upgradeDefenseTex.width > 0)
+            ? _upgradeDefenseTex.width * armourScale : armourIconH;
+        const float armourGap = armourIconH * 0.35f;
+        const float armourRight = maxArmour > 0
+            ? hc.armourX + maxArmour * armourIconW + (maxArmour - 1) * armourGap
+            : hc.armourX;
+
         if (_upgradeDefenseTex.id != 0)
         {
-            const int armour = _player.GetArmour();
-            const int maxArmour = _player.GetMaxArmour();
-            const float armourIconH = std::max(1.f, hc.armourSize);
-            const float scale = armourIconH / (float)_upgradeDefenseTex.height;
-            const float iconW = _upgradeDefenseTex.width * scale;
-            const float iconGap = armourIconH * 0.35f;
             float iconX = hc.armourX;
             const float iconY = hc.armourY;
 
             for (int i = 0; i < maxArmour; i++)
             {
                 Color tint = (i < armour) ? WHITE : Fade(WHITE, 0.38f);
-                DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, scale, tint);
-                iconX += iconW + iconGap;
+                DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, armourScale, tint);
+                iconX += armourIconW + armourGap;
             }
+        }
+
+        bool showMechanic = true;
+        float progress = 0.f;
+        Color classColor = WHITE;
+        const char* mechanicLabel = "";
+        bool primed = false;
+
+        switch (_player.GetClass())
+        {
+        case PlayerClass::Warrior:
+            progress = std::clamp(_player.GetRagePercent(), 0.f, 1.f);
+            classColor = Color{ 255, 120, 30, 255 };
+            mechanicLabel = TextFormat("RAGE  %d%%", (int)std::round(progress * 100.f));
+            primed = progress >= 1.f;
+            break;
+        case PlayerClass::Rogue:
+        {
+            const int current = _player.GetComboPoints();
+            const int maximum = std::max(1, _player.GetMaxComboPoints());
+            progress = (float)current / (float)maximum;
+            classColor = Color{ 235, 65, 85, 255 };
+            mechanicLabel = TextFormat("COMBO  %d / %d", current, maximum);
+            primed = current >= maximum;
+            break;
+        }
+        case PlayerClass::Hunter:
+        {
+            const int required = std::max(1, _player.GetHunterMarkEvery());
+            const int current = std::clamp(_hunterShotsSinceMark, 0, required);
+            progress = (float)current / (float)required;
+            classColor = Color{ 95, 210, 105, 255 };
+            mechanicLabel = TextFormat("MARK  %d / %d", current, required);
+            primed = current == required - 1;
+            break;
+        }
+        case PlayerClass::Paladin:
+            progress = std::clamp(_player.GetFaithPercent(), 0.f, 1.f);
+            classColor = Color{ 240, 205, 85, 255 };
+            mechanicLabel = TextFormat("FAITH  %d%%", (int)std::round(progress * 100.f));
+            primed = progress >= 1.f;
+            break;
+        default:
+            showMechanic = false;
+            break;
+        }
+
+        const float mechanicH = std::max(28.f, armourIconH);
+        const float mechanicY = expBarY - mechanicH - 10.f;
+        const float mechanicX = armourRight + 18.f;
+        const float mechanicRight = expBarX + expBarW;
+        const float mechanicW = mechanicRight - mechanicX;
+        if (showMechanic && mechanicW >= 180.f)
+        {
+            Color pulseColor = classColor;
+            if (primed)
+            {
+                const float pulse = sinf((float)GetTime() * 8.f) * 0.5f + 0.5f;
+                pulseColor = ColorLerp(classColor, WHITE, pulse * 0.35f);
+            }
+
+            Rectangle mechanicRect{ mechanicX, mechanicY, mechanicW, mechanicH };
+            DrawRectangleRounded(mechanicRect, 0.22f, 6, Color{ 8, 10, 14, 235 });
+            if (progress > 0.f)
+                DrawRectangleRounded({ mechanicX, mechanicY, mechanicW * progress, mechanicH },
+                                     0.22f, 6, Fade(pulseColor, 0.88f));
+            DrawRectangleRoundedLines(mechanicRect, 0.22f, 6, pulseColor);
+
+            const int mechanicFs = 18;
+            const int labelW = MeasureText(mechanicLabel, mechanicFs);
+            const int labelX = (int)(mechanicX + mechanicW * 0.5f - labelW * 0.5f);
+            const int labelY = (int)(mechanicY + mechanicH * 0.5f - mechanicFs * 0.5f);
+            DrawText(mechanicLabel, labelX - 2, labelY, mechanicFs, BLACK);
+            DrawText(mechanicLabel, labelX + 2, labelY, mechanicFs, BLACK);
+            DrawText(mechanicLabel, labelX, labelY - 2, mechanicFs, BLACK);
+            DrawText(mechanicLabel, labelX, labelY + 2, mechanicFs, BLACK);
+            DrawText(mechanicLabel, labelX, labelY, mechanicFs, WHITE);
         }
     }
     Vector2 mouse = GetVirtualMousePos();
@@ -7459,12 +7561,21 @@ void Engine::HandlePlayerMeleeDamage()
             bool crit = false;
             int base = (int)std::round(_player.GetMeleeDamage() * _player.GetClassDamageMult());
             int dmg  = ScalePlayerHit(*enemy, std::max(1, base), crit);
+            const float healthBefore = enemy->GetHealthValue();
             enemy->TakeDamage(dmg, _player.GetWorldPos());
-            ApplyPlayerLifesteal(dmg);
+            Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
+            if (blocked != Enemy::HitBlockReason::None)
+            {
+                ShowBlockedHitFeedback(*enemy, blocked);
+                continue;
+            }
+            const int actualDamage = RegisterHitFx(*enemy, healthBefore, crit, false, false, 1u);
+            if (actualDamage <= 0)
+                continue;
+            ApplyPlayerLifesteal(actualDamage);
             _player.AddRage(8.f);         // Warrior: every landed swing stokes Rage (no-op for others)
             _player.AddComboPoints(1);    // Rogue: quick strikes bank combo points (no-op for others)
             _player.AddFaith(4.f);        // Paladin: righteous blows build Faith (no-op for others)
-            RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
             _vfx.SpawnHitEffect(Character::CastType::None, enemy->GetWorldPos(), _player.GetFacingDirection());
             hitAny = true;
         }
@@ -7848,18 +7959,22 @@ bool Engine::DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
     combo = (int)roundf(combo * _player.GetComboBonusMult());
     bool crit = false;
     int dealt = ScalePlayerHit(enemy, std::max(1, damage), crit);
+    const float healthBefore = enemy.GetHealthValue();
     enemy.TakeDamage(dealt, _player.GetWorldPos());
     Enemy::HitBlockReason blocked = enemy.ConsumeHitBlock();
     if (blocked != Enemy::HitBlockReason::None)
     {
-        ShowBlockedHitFeedback(enemy.GetWorldPos(), blocked);
+        ShowBlockedHitFeedback(enemy, blocked);
         return false;
     }
-    RegisterHitFx(enemy.GetWorldPos(), dealt, crit, !enemy.IsAlive(), enemy.IsBoss(), crit ? GOLD : RED);
+    const std::uint32_t attackId = 100u + static_cast<std::uint32_t>(element);
+    if (RegisterHitFx(enemy, healthBefore, crit, false, false, attackId) <= 0)
+        return false;
     if (combo > 0 && enemy.IsAlive())
     {
+        const float comboHealthBefore = enemy.GetHealthValue();
         enemy.TakeDamage(combo, _player.GetWorldPos());
-        RegisterHitFx(enemy.GetWorldPos(), combo, false, !enemy.IsAlive(), enemy.IsBoss(), GOLD);
+        RegisterHitFx(enemy, comboHealthBefore, false, false, false, attackId + 1000u);
     }
     if (burn)
         enemy.ApplyBurn(0.45f, std::max(1, _player.GetBoltBurnDamage(element)), _player.GetWorldPos());
@@ -8318,6 +8433,7 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
 
         bool crit = false;
         int dmg = ScalePlayerHit(*enemy, std::max(1, damage), crit);
+        const float healthBefore = enemy->GetHealthValue();
         // ignoreShield lets the Hunter's Puncture Shot bypass a Shieldbearer's
         // frontal block (and any future block); normal hits respect the shield.
         if (ignoreShield) enemy->TakeDamageUnblockable(dmg, playerPos);
@@ -8328,15 +8444,17 @@ int Engine::DamageEnemiesInRect(Rectangle worldRect, int damage, float knockback
         Enemy::HitBlockReason blk = enemy->ConsumeHitBlock();
         if (blk != Enemy::HitBlockReason::None)
         {
-            ShowBlockedHitFeedback(enemy->GetWorldPos(), blk);
+            ShowBlockedHitFeedback(*enemy, blk);
             continue;
         }
 
-        ApplyPlayerLifesteal(dmg);
+        const int actualDamage = RegisterHitFx(*enemy, healthBefore, crit, false, false, 2u);
+        if (actualDamage <= 0)
+            continue;
+        ApplyPlayerLifesteal(actualDamage);
         _player.AddRage(4.f);         // Warrior: ability hits build Rage per enemy struck (no-op for others)
         _player.AddComboPoints(1);    // Rogue: ability hits bank combo per enemy struck (no-op for others)
         _player.AddFaith(3.f);        // Paladin: holy hits build Faith per enemy struck (no-op for others)
-        RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
 
         if (stunSeconds  > 0.f) enemy->ApplyFreeze(stunSeconds);          // stun ≈ frozen hold
         if (bleedSeconds > 0.f) enemy->ApplyBleed(bleedDmgPerTick, bleedSeconds);  // real bleed DoT (shared status)
@@ -8405,21 +8523,24 @@ int Engine::DamageEnemiesInDirectedBox(Vector2 origin, Vector2 direction, float 
 
         bool crit = false;
         int dmg = ScalePlayerHit(*enemy, std::max(1, damage), crit);
+        const float healthBefore = enemy->GetHealthValue();
         if (ignoreShield) enemy->TakeDamageUnblockable(dmg, playerPos);
         else              enemy->TakeDamage(dmg, playerPos);
 
         Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
         if (blocked != Enemy::HitBlockReason::None)
         {
-            ShowBlockedHitFeedback(enemy->GetWorldPos(), blocked);
+            ShowBlockedHitFeedback(*enemy, blocked);
             continue;
         }
 
-        ApplyPlayerLifesteal(dmg);
+        const int actualDamage = RegisterHitFx(*enemy, healthBefore, crit, false, false, 3u);
+        if (actualDamage <= 0)
+            continue;
+        ApplyPlayerLifesteal(actualDamage);
         _player.AddRage(4.f);
         _player.AddComboPoints(1);
         _player.AddFaith(3.f);
-        RegisterHitFx(enemy->GetWorldPos(), dmg, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
         if (stunSeconds > 0.f) enemy->ApplyFreeze(stunSeconds);
         if (bleedSeconds > 0.f) enemy->ApplyBleed(bleedDmgPerTick, bleedSeconds);
         ++hitCount;
@@ -8788,29 +8909,29 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
 
             bool crit = false;
             damage = ScalePlayerHit(*enemy, std::max(1, damage), crit);
+            const float healthBefore = enemy->GetHealthValue();
             enemy->TakeDamage(damage, playerPos);
 
             Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
             if (blocked != Enemy::HitBlockReason::None)
             {
-                ShowBlockedHitFeedback(enemy->GetWorldPos(), blocked);
+                ShowBlockedHitFeedback(*enemy, blocked);
                 if (_debug.IsActive())
                     TraceLog(LOG_INFO, "BACKSTAB blocked (%s side)", rearHit ? "rear?!" : "front");
                 continue;
             }
 
-            ApplyPlayerLifesteal(damage);
+            const int actualDamage = RegisterHitFx(*enemy, healthBefore, crit, rearHit, false, 4u);
+            if (actualDamage <= 0)
+                continue;
+            ApplyPlayerLifesteal(actualDamage);
             _player.AddRage(4.f);
             _player.AddComboPoints(1);
             _player.AddFaith(3.f);
-            RegisterHitFx(enemy->GetWorldPos(), damage, crit, !enemy->IsAlive(), enemy->IsBoss(), YELLOW);
-
             if (rearHit)
             {
                 enemy->ApplyBleed(dmgVal(1.f), 3.f);        // deep wound bleeds
                 enemy->ApplyVulnerability(1.3f, 4.f);       // exposes the victim
-                _vfx.SpawnFloatingLabel(enemy->GetWorldPos(), "BACKSTAB!",
-                                        Color{ 255, 90, 90, 255 }, 1.25f);
                 rearStrikes++;
             }
             struck++;
@@ -9671,26 +9792,37 @@ void Engine::UpdateUltimateSequence(float dt)
 
 namespace
 {
-    struct JuiceParam { const char* name; float step; float lo; float hi; bool isBool; };
+    struct JuiceParam { const char* name; float step; float lo; float hi; bool isBool; bool isInteger; };
     const JuiceParam kJuiceParams[] = {
-        { "Damage # scale",  10.f,  1.f,   999.f, false },
-        { "Crit slow dur",   0.05f, 0.f,   1.5f,  false },
-        { "Crit slow scale", 0.05f, 0.05f, 1.f,   false },
-        { "Boss slow dur",   0.1f,  0.f,   3.f,   false },
-        { "Boss slow scale", 0.05f, 0.05f, 1.f,   false },
-        { "Kill hit-stop",   0.01f, 0.f,   0.3f,  false },
-        { "Shake mult",      0.1f,  0.f,   3.f,   false },
-        { "Crit focus dark", 0.05f, 0.f,   1.f,   false },
-        { "FORCE CRIT",      0.f,   0.f,   1.f,   true  },
+        { "Crit slow dur",       0.05f, 0.f,   1.5f,  false, false },
+        { "Crit slow scale",     0.05f, 0.05f, 1.f,   false, false },
+        { "Boss slow dur",       0.1f,  0.f,   3.f,   false, false },
+        { "Boss slow scale",     0.05f, 0.05f, 1.f,   false, false },
+        { "Kill hit-stop",       0.01f, 0.f,   0.3f,  false, false },
+        { "Shake mult",          0.1f,  0.f,   3.f,   false, false },
+        { "Crit focus dark",     0.05f, 0.f,   1.f,   false, false },
+        { "FORCE CRIT",          0.f,   0.f,   1.f,   true,  false },
+        { "Damage numbers",      0.f,   0.f,   1.f,   true,  false },
+        { "Minimum font",        1.f,   12.f,  48.f,  false, true  },
+        { "Maximum font",        1.f,   16.f,  72.f,  false, true  },
+        { "Damage reference",    1.f,   1.f,   100.f, false, false },
+        { "Rise speed",          5.f,   10.f,  240.f, false, false },
+        { "Horizontal drift",    2.f,   0.f,   100.f, false, false },
+        { "Lifetime",            0.05f, 0.25f, 2.f,   false, false },
+        { "Outline",             0.25f, 0.f,   5.f,   false, false },
+        { "Merge window",        0.01f, 0.f,   0.5f,  false, false },
+        { "Visible cap",         1.f,   4.f,   96.f,  false, true  },
+        { "Freeze number anim",  0.f,   0.f,   1.f,   true,  false },
     };
     constexpr int kJuiceParamCount = (int)(sizeof(kJuiceParams) / sizeof(kJuiceParams[0]));
 }
 
 void Engine::UpdateJuicePanel()
 {
-    float* vals[] = { &_juiceDamageScale, &_juiceCritSlowDur, &_juiceCritSlowScale,
-                      &_juiceBossSlowDur, &_juiceBossSlowScale, &_juiceKillHitStop,
-                      &_juiceShakeMult, &_juiceCritFocus };
+    float* juiceValues[] = { &_juiceCritSlowDur, &_juiceCritSlowScale,
+                             &_juiceBossSlowDur, &_juiceBossSlowScale, &_juiceKillHitStop,
+                             &_juiceShakeMult, &_juiceCritFocus };
+    DamageNumberSettings& numbers = _damageNumbers.GetSettings();
 
     if (IsKeyPressed(KEY_ESCAPE)) { _juicePanelOpen = false; return; }
     if (IsKeyPressed(KEY_DOWN)) _juiceSel = (_juiceSel + 1) % kJuiceParamCount;
@@ -9710,42 +9842,82 @@ void Engine::UpdateJuicePanel()
     if (p.isBool)
     {
         if (dir != 0 || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE))
-            _juiceForceCrit = !_juiceForceCrit;
+        {
+            if (_juiceSel == 7) _juiceForceCrit = !_juiceForceCrit;
+            else if (_juiceSel == 8) numbers.enabled = !numbers.enabled;
+            else if (_juiceSel == 18) numbers.freezeAnimation = !numbers.freezeAnimation;
+        }
     }
     else if (dir != 0)
     {
-        float* v = vals[_juiceSel];
-        *v += dir * p.step;
-        if (*v < p.lo) *v = p.lo;
-        if (*v > p.hi) *v = p.hi;
+        float value = 0.f;
+        if (_juiceSel < 7) value = *juiceValues[_juiceSel];
+        else switch (_juiceSel)
+        {
+        case 9:  value = (float)numbers.minFontSize; break;
+        case 10: value = (float)numbers.maxFontSize; break;
+        case 11: value = numbers.damageReference; break;
+        case 12: value = numbers.riseSpeed; break;
+        case 13: value = numbers.horizontalDrift; break;
+        case 14: value = numbers.lifetime; break;
+        case 15: value = numbers.outlineOffset; break;
+        case 16: value = numbers.mergeWindow; break;
+        case 17: value = (float)numbers.visibleCap; break;
+        }
+        value = std::clamp(value + dir * p.step, p.lo, p.hi);
+        if (_juiceSel < 7) *juiceValues[_juiceSel] = value;
+        else switch (_juiceSel)
+        {
+        case 9:  numbers.minFontSize = (int)value; break;
+        case 10: numbers.maxFontSize = (int)value; break;
+        case 11: numbers.damageReference = value; break;
+        case 12: numbers.riseSpeed = value; break;
+        case 13: numbers.horizontalDrift = value; break;
+        case 14: numbers.lifetime = value; break;
+        case 15: numbers.outlineOffset = value; break;
+        case 16: numbers.mergeWindow = value; break;
+        case 17: numbers.visibleCap = (int)value; break;
+        }
+        numbers.maxFontSize = std::max(numbers.maxFontSize, numbers.minFontSize);
         _juiceNudgeCd = 0.07f;
     }
 }
 
 void Engine::DrawJuicePanel()
 {
-    float vals[] = { _juiceDamageScale, _juiceCritSlowDur, _juiceCritSlowScale,
+    const DamageNumberSettings& numbers = _damageNumbers.GetSettings();
+    const DamageNumberStats& stats = _damageNumbers.GetStats();
+    float vals[] = { _juiceCritSlowDur, _juiceCritSlowScale,
                      _juiceBossSlowDur, _juiceBossSlowScale, _juiceKillHitStop,
-                     _juiceShakeMult, _juiceCritFocus };
+                     _juiceShakeMult, _juiceCritFocus, _juiceForceCrit ? 1.f : 0.f,
+                     numbers.enabled ? 1.f : 0.f, (float)numbers.minFontSize,
+                     (float)numbers.maxFontSize, numbers.damageReference, numbers.riseSpeed,
+                     numbers.horizontalDrift, numbers.lifetime, numbers.outlineOffset,
+                     numbers.mergeWindow, (float)numbers.visibleCap,
+                     numbers.freezeAnimation ? 1.f : 0.f };
     const float sw = (float)kVirtualWidth;
-    float pw = 520.f, ph = 44.f + kJuiceParamCount * 34.f, px = sw - pw - 30.f, py = 120.f;
+    float pw = 520.f, ph = 82.f + kJuiceParamCount * 28.f, px = sw - pw - 30.f, py = 70.f;
     DrawRectangleRounded({ px, py, pw, ph }, 0.04f, 6, Fade(Color{ 18, 16, 26, 255 }, 0.94f));
     DrawRectangleRoundedLines({ px, py, pw, ph }, 0.04f, 6, Color{ 235, 210, 140, 255 });
     DrawText("JUICE TUNING", (int)(px + 18.f), (int)(py + 12.f), 24, Color{ 235, 210, 140, 255 });
 
     for (int i = 0; i < kJuiceParamCount; i++)
     {
-        float y = py + 44.f + i * 34.f;
+        float y = py + 44.f + i * 28.f;
         bool sel = (i == _juiceSel);
         if (sel) DrawRectangle((int)(px + 6.f), (int)y - 2, (int)pw - 12, 30, Fade(GOLD, 0.16f));
-        DrawText(kJuiceParams[i].name, (int)(px + 18.f), (int)y, 22, sel ? GOLD : RAYWHITE);
+        DrawText(kJuiceParams[i].name, (int)(px + 18.f), (int)y, 19, sel ? GOLD : RAYWHITE);
         const char* valTxt = kJuiceParams[i].isBool
-            ? (_juiceForceCrit ? "ON" : "off")
-            : ((i == 0) ? TextFormat("%.0f", vals[i]) : TextFormat("%.2f", vals[i]));
-        DrawText(valTxt, (int)(px + pw - 110.f), (int)y, 22, sel ? GOLD : Color{ 180, 210, 255, 255 });
+            ? (vals[i] > 0.5f ? "ON" : "off")
+            : (kJuiceParams[i].isInteger ? TextFormat("%.0f", vals[i]) : TextFormat("%.2f", vals[i]));
+        DrawText(valTxt, (int)(px + pw - 110.f), (int)y, 19, sel ? GOLD : Color{ 180, 210, 255, 255 });
     }
-    DrawText("Up/Down: pick   Left/Right: adjust (hold)   J/ESC: close",
-             (int)(px + 18.f), (int)(py + ph - 26.f), 16, Color{ 165, 160, 185, 255 });
+    DrawText(TextFormat("POOL %d/%d  visible %d  merged %llu  suppressed %llu  high %d",
+                        stats.active, stats.capacity, stats.visible, stats.merged,
+                        stats.suppressed, stats.highWater),
+             (int)(px + 18.f), (int)(py + ph - 48.f), 16, Color{ 120, 220, 190, 255 });
+    DrawText("Up/Down: pick   Left/Right: adjust   J/ESC: close",
+             (int)(px + 18.f), (int)(py + ph - 24.f), 16, Color{ 165, 160, 185, 255 });
 }
 
 void Engine::DrawScreenFx()
@@ -9790,10 +9962,31 @@ void Engine::DrawScreenFx()
     if (_juicePanelOpen) DrawJuicePanel();
 }
 
-void Engine::RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bool isBoss, Color textColor)
+int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
+                          bool backstab, bool damageOverTime, std::uint32_t attackId)
 {
-    _vfx.SpawnFloatingText(enemyPos, dmg, crit ? GOLD : textColor, crit ? 1.7f : 1.f);
-    _vfx.SpawnImpactBurst(enemyPos, crit ? GOLD : textColor,
+    const int damage = CalculateActualDamage(healthBefore, enemy.GetHealthValue());
+    if (damage <= 0)
+        return 0;
+
+    const bool killed = !enemy.IsAlive();
+    const bool isBoss = enemy.IsBoss();
+    DamageNumberEvent event{};
+    event.targetId = enemy.GetCombatId();
+    event.attackId = attackId;
+    event.worldPos = enemy.GetWorldPos();
+    event.finalDamage = damage;
+    event.outcome = crit ? DamageNumberOutcome::Critical : DamageNumberOutcome::Normal;
+    event.backstab = backstab;
+    event.killingBlow = killed;
+    event.elite = enemy.IsEliteMiniboss();
+    event.boss = isBoss;
+    event.damageOverTime = damageOverTime;
+    _damageNumbers.Submit(event);
+
+    const Color impactColor = crit ? Color{ 255, 205, 45, 255 }
+                                   : Color{ 230, 45, 50, 255 };
+    _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor,
                           killed ? 12 : (crit ? 9 : 4), killed ? 360.f : 240.f);
 
     if (killed)
@@ -9813,26 +10006,32 @@ void Engine::RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bo
         // Focus spotlight on the hit — screen pos via the same camera transform
         // the world objects use.
         _critFocusTimer     = _critFocusDur = 0.3f;
+        const Vector2 enemyPos = enemy.GetWorldPos();
         _critFocusScreenPos = Vector2{
             enemyPos.x - (_cameraPos.x - _shakeOffset.x) + kVirtualWidth  * 0.5f,
             enemyPos.y - (_cameraPos.y - _shakeOffset.y) + kVirtualHeight * 0.5f };
     }
+    return damage;
 }
 
-void Engine::ShowBlockedHitFeedback(Vector2 enemyPos, Enemy::HitBlockReason reason)
+void Engine::ShowBlockedHitFeedback(Enemy& enemy, Enemy::HitBlockReason reason)
 {
     Color labelColor{ 170, 200, 255, 255 };
-    const char* word = "SHIELDED";
+    DamageNumberOutcome outcome = DamageNumberOutcome::Blocked;
     if (reason == Enemy::HitBlockReason::Blocked)
-        word = "BLOCKED";
+        outcome = DamageNumberOutcome::Blocked;
     else if (reason == Enemy::HitBlockReason::Immune)
     {
-        word = "IMMUNE";
+        outcome = DamageNumberOutcome::Immune;
         labelColor = Color{ 190, 190, 210, 255 };
     }
-    _vfx.SpawnFloatingLabel(enemyPos, word, labelColor);
+    DamageNumberEvent event{};
+    event.targetId = enemy.GetCombatId();
+    event.worldPos = enemy.GetWorldPos();
+    event.outcome = outcome;
+    _damageNumbers.Submit(event);
     // A few pale sparks sell the denial without implying damage was dealt.
-    _vfx.SpawnImpactBurst(enemyPos, labelColor, 5, 200.f);
+    _vfx.SpawnImpactBurst(enemy.GetWorldPos(), labelColor, 5, 200.f);
 }
 
 void Engine::ShowBossCallout(Vector2 enemyPos, const char* text)
@@ -9860,9 +10059,13 @@ void Engine::ApplyPendingReflect()
     if (best)
     {
         int r = (int)lroundf(dmg);
-        bool bossKill = best->IsBoss();
+        const float healthBefore = best->GetHealthValue();
         best->TakeDamage(r, _player.GetWorldPos());
-        RegisterHitFx(best->GetWorldPos(), r, false, !best->IsAlive(), bossKill, Color{ 255, 220, 120, 255 });
+        Enemy::HitBlockReason blocked = best->ConsumeHitBlock();
+        if (blocked != Enemy::HitBlockReason::None)
+            ShowBlockedHitFeedback(*best, blocked);
+        else
+            RegisterHitFx(*best, healthBefore, false, false, false, 5u);
     }
 }
 
@@ -9895,7 +10098,17 @@ void Engine::ApplyUltimateImpact()
         int baseDmg = enemy->AsMolarbeast() ? std::min(3, _player.GetUltimateHitDamage(_ultimateElement)) : _player.GetUltimateHitDamage(_ultimateElement);
         bool ultCrit = false;
         int dmg = ScalePlayerHit(*enemy, baseDmg, ultCrit);
+        const float healthBefore = enemy->GetHealthValue();
         enemy->TakeDamage(dmg, playerPos);
+
+        Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
+        if (blocked != Enemy::HitBlockReason::None)
+        {
+            ShowBlockedHitFeedback(*enemy, blocked);
+            continue;
+        }
+        RegisterHitFx(*enemy, healthBefore, ultCrit, false, false,
+                      200u + static_cast<std::uint32_t>(_ultimateElement));
 
         if (_ultimateElement == AbilityType::FireUltimate)
             enemy->ApplyBurn(0.5f, _player.GetBoltBurnDamage(_ultimateElement), playerPos);
@@ -10168,8 +10381,20 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 bool basicCrit = false;
                 int base = std::max(1, (int)std::round(_player.GetMeleeDamage() * 0.6f * _player.GetClassDamageMult()));
                 int dmg = ScalePlayerHit(*enemy, base, basicCrit);
+                const float healthBefore = enemy->GetHealthValue();
                 enemy->TakeDamage(dmg, _player.GetWorldPos());
-                ApplyPlayerLifesteal(dmg);
+                Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
+                if (blocked != Enemy::HitBlockReason::None)
+                {
+                    ShowBlockedHitFeedback(*enemy, blocked);
+                    _vfx.SpawnHitEffect(elementToCastType(element), projectile.GetWorldPos(), projectile.GetDirection());
+                    projectile.Destroy();
+                    break;
+                }
+                const int actualDamage = RegisterHitFx(*enemy, healthBefore, basicCrit, false, false, 6u);
+                if (actualDamage <= 0)
+                    continue;
+                ApplyPlayerLifesteal(actualDamage);
 
                 // Hunter class identity: every 3rd landed shot MARKS the target,
                 // feeding the marked-prey damage bonus (see ScalePlayerHit). This
@@ -10186,7 +10411,6 @@ void Engine::UpdateSpreadProjectiles(float dt)
                     }
                 }
 
-                RegisterHitFx(enemy->GetWorldPos(), dmg, basicCrit, !enemy->IsAlive(), enemy->IsBoss(), RAYWHITE);
                 _vfx.SpawnHitEffect(elementToCastType(element), projectile.GetWorldPos(), projectile.GetDirection());
                 projectile.Destroy();
                 break;
@@ -12663,6 +12887,7 @@ void Engine::ResetRunState()
     _displayGold = (float)_player.GetGold();  _displayCells = (float)_player.GetCells();
     _displayHpPct = 1.f; _displayManaPct = 1.f;
     _vfx.Clear();
+    _damageNumbers.Clear();
     _player.Init();
 
     // Meta progression: permanent unlocks + gold retained from the last death.
@@ -12918,6 +13143,7 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
     // 2. ApplyEnemyPowerLevel - single global multiplier, advances every 10 rooms.
     // 3. SetTarget - restore player pointer so pooled enemies rejoin the run.
     // _wave = total rooms entered this run, used here for scaling only.
+    enemy.SetCombatId(_nextCombatTargetId++);
     enemy.SetWaveScale(_wave);
     enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
 
@@ -13883,8 +14109,13 @@ void Engine::UpdateWarlockMinions(float dt)
             {
                 bool crit = false;
                 int dmg = ScalePlayerHit(*target, kBaseDamage, crit);
+                const float healthBefore = target->GetHealthValue();
                 target->TakeDamage(dmg, m.pos);
-                RegisterHitFx(target->GetWorldPos(), dmg, crit, !target->IsAlive(), target->IsBoss(), Color{ 195, 130, 240, 255 });
+                Enemy::HitBlockReason blocked = target->ConsumeHitBlock();
+                if (blocked != Enemy::HitBlockReason::None)
+                    ShowBlockedHitFeedback(*target, blocked);
+                else
+                    RegisterHitFx(*target, healthBefore, crit, false, false, 7u);
                 m.attackCooldown = kCooldown;
             }
         }
@@ -13978,8 +14209,13 @@ void Engine::ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
             if (!e->IsActive() || e->IsDying()) continue;
             if (Vector2Distance(e->GetWorldPos(), pos) < radius)
             {
+                const float healthBefore = e->GetHealthValue();
                 e->TakeDamage(3, pos);
-                e->ApplyBurn(0.5f, 2, pos);
+                Enemy::HitBlockReason blocked = e->ConsumeHitBlock();
+                if (blocked != Enemy::HitBlockReason::None)
+                    ShowBlockedHitFeedback(*e, blocked);
+                else if (RegisterHitFx(*e, healthBefore, false, false, false, 3001u) > 0)
+                    e->ApplyBurn(0.5f, 2, pos);
             }
         }
     }
@@ -14005,8 +14241,13 @@ void Engine::ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
             if (!e->IsActive() || e->IsDying()) continue;
             if (Vector2Distance(e->GetWorldPos(), pos) < radius)
             {
+                const float healthBefore = e->GetHealthValue();
                 e->TakeDamage(2, pos);
-                e->ApplyElectricCharge();
+                Enemy::HitBlockReason blocked = e->ConsumeHitBlock();
+                if (blocked != Enemy::HitBlockReason::None)
+                    ShowBlockedHitFeedback(*e, blocked);
+                else if (RegisterHitFx(*e, healthBefore, false, false, false, 3002u) > 0)
+                    e->ApplyElectricCharge();
             }
         }
     }
@@ -14224,8 +14465,15 @@ void Engine::UpdateCyclopsLasers(float dt)
                     continue;
 
                 int laserDmg = laser.GetDamage();
+                const float healthBefore = _player.GetHealthValue();
                 _player.TakeDamage(laserDmg, laser.GetWorldPos());
-                _vfx.SpawnFloatingText(_player.GetWorldPos(), -laserDmg, RED);
+                DamageNumberEvent incoming{};
+                incoming.targetId = 0;
+                incoming.attackId = 9001u;
+                incoming.worldPos = _player.GetWorldPos();
+                incoming.finalDamage = CalculateActualDamage(healthBefore, _player.GetHealthValue());
+                incoming.outcome = DamageNumberOutcome::Incoming;
+                if (incoming.finalDamage > 0) _damageNumbers.Submit(incoming);
                 laser.OnHitPlayer();
                 TriggerScreenShake(2.5f, 0.07f);
                 break;
@@ -14305,8 +14553,15 @@ void Engine::UpdateLavaBallProjectiles(float dt)
             CheckCollisionRecs(collisionRec, _player.GetCollisionRec()))
         {
             static constexpr int kLavaBallDamage = 2;
+            const float healthBefore = _player.GetHealthValue();
             _player.TakeDamage(kLavaBallDamage, projectile.GetWorldPos());
-            _vfx.SpawnFloatingText(_player.GetWorldPos(), -kLavaBallDamage, RED);
+            DamageNumberEvent incoming{};
+            incoming.targetId = 0;
+            incoming.attackId = 9002u;
+            incoming.worldPos = _player.GetWorldPos();
+            incoming.finalDamage = CalculateActualDamage(healthBefore, _player.GetHealthValue());
+            incoming.outcome = DamageNumberOutcome::Incoming;
+            if (incoming.finalDamage > 0) _damageNumbers.Submit(incoming);
             projectile.OnPlayerHit();
             if (projectile.IsFlying())
             {
@@ -14891,8 +15146,9 @@ void Engine::DrawDungeonMiniMap(float originX, float originY, float cellPx, bool
 // opening and by reinforcement waves so both paths place roles identically.
 // typeIds: 0 shadow, 1 archer, 2 slime, 3 wisp, 4 sporeling, 5 shieldbearer,
 //          6 phantom, 7 bomber, 8 warchief, 9 blade
-Enemy* Engine::SpawnDungeonGruntByTypeId(int typeId, Vector2 pos, float cellW, float cellH)
+Enemy* Engine::SpawnDungeonGrunt(const EncounterSpawnEntry& entry, Vector2 pos, float cellW, float cellH)
 {
+    const int typeId = EncounterTypeId(entry.kind);
     Enemy* spawned = nullptr;
     switch (typeId)
     {
@@ -14917,6 +15173,8 @@ Enemy* Engine::SpawnDungeonGruntByTypeId(int typeId, Vector2 pos, float cellW, f
         EnemyRole role = spawned->GetEncounterRole();
         if (role != EnemyRole::Grunt && role != EnemyRole::Charger)
             spawned->Teleport(GetDungeonSpawnPosForRole(role, cellW, cellH));
+        if (entry.swarmProfile)
+            spawned->ApplyDifficultyScaling(0.75f, 0.85f);
     }
     return spawned;
 }
@@ -14927,17 +15185,22 @@ void Engine::SpawnDungeonRoomEnemies()
 
     DungeonRoomState& roomState = _dungeonRoomStates[_dungeonRoomIdx];
 
-    // Rooms that have already been cleared don't respawn.
+    // Rooms that have already been cleared don't respawn enemies — but lava
+    // stays: terrain doesn't despawn just because the fight is over. Turret
+    // hazards stay quiet in cleared rooms (backtracking shouldn't be shot at).
     if (roomState.cleared)
     {
         _dungeonEnemiesSpawned = false;
+        RestoreDungeonRoomHazardState(_dungeonRoomIdx, /*lavaOnly=*/true);
         return;
     }
 
-    // Re-entering a half-cleared room restores only the enemies that were still alive.
+    // Re-entering a half-cleared room restores only the enemies that were
+    // still alive, plus every hazard that wasn't destroyed.
     if (roomState.enemiesInitialized)
     {
         RestoreDungeonRoomEnemyState(_dungeonRoomIdx);
+        RestoreDungeonRoomHazardState(_dungeonRoomIdx, /*lavaOnly=*/false);
         return;
     }
 
@@ -14973,6 +15236,7 @@ void Engine::SpawnDungeonRoomEnemies()
     for (const auto& [idx, state] : _dungeonRoomStates)
         if (state.cleared) clearedRooms++;
     int tier = (clearedRooms <= 2) ? 0 : (clearedRooms <= 5) ? 1 : 2;
+    _roomEncounterTier = tier;
 
     if (i == bossIdx)
     {
@@ -14983,8 +15247,13 @@ void Engine::SpawnDungeonRoomEnemies()
         float bossX = sw * 0.5f;
         float bossY = sh * 0.28f;
         SpawnBossForBiome({ bossX, bossY });
-        if (tier >= 1)
-            spawnAt([&](Vector2 p){ SpawnCyclops(p); }, 1);
+        // Boss rooms retain crowd pressure, but use mostly cheap adds so the
+        // boss pattern remains the encounter's readable centrepiece.
+        const int addCount = GetRandomValue(4 + tier * 2, 6 + tier * 2);
+        const int heavyAdds = tier >= 1 ? 1 : 0;
+        spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, addCount - heavyAdds);
+        if (heavyAdds > 0)
+            spawnAt([&](Vector2 p){ SpawnCyclops(p); }, heavyAdds);
     }
     else if (type == RoomType::Treasure)
     {
@@ -15033,60 +15302,15 @@ void Engine::SpawnDungeonRoomEnemies()
         // Roguelite pacing: rooms get genuinely crowded as the run deepens.
         // Body counts + the pressure budget live in Balance::Pressure; anything
         // beyond the opening cap arrives later as reinforcement waves.
-        int tierIdx   = std::clamp(tier, 0, 2);
-        int minBasics = Balance::Pressure::kMinBasics[tierIdx];
-        int maxBasics = Balance::Pressure::kMaxBasics[tierIdx];
+        const int tierIdx = std::clamp(tier, 0, 2);
 
         // Later world zones add one extra body on top of the room-tier count.
-        int zoneBonus = _worldZone / 2;   // zones 0-1 = 0, 2-3 = +1, 4-5 = +2
-        minBasics += zoneBonus;
-        maxBasics += zoneBonus;
+        const int zoneBonus = _worldZone / 2;   // zones 0-1 = 0, 2-3 = +1, 4-5 = +2
 
         // Demon Insides: the gauntlet biome — significantly harder rooms.
-        if (_currentBiome == Biome::DemonsInsides)
-            maxBasics += 5;
-
-        int basicCount = GetRandomValue(minBasics, maxBasics);
-
-        // Room affix (Swarm) can inflate the crowd for this room.
-        basicCount = (int)ceilf(basicCount * GetRoomAffixDef(_currentRoomAffix).enemyCountMult);
-
         // Each grunt slot rolls its enemy type from a weighted table. Early
         // rooms lean on the familiar shadow grunt; later rooms mix in every
         // specialised type. The Warchief is rare and capped at one per room.
-        bool warchiefSpawnedThisRoom = false;
-        auto rollGruntTypeId = [&]() -> int
-        {
-            struct TypeWeight { int weight; int typeId; };
-            // typeIds: 0 shadow, 1 archer, 2 slime, 3 wisp, 4 sporeling,
-            //          5 shieldbearer, 6 phantom, 7 bomber, 8 warchief, 9 blade
-            TypeWeight table[10] = {
-                { tier == 0 ? 40 : (tier == 1 ? 26 : 18), 0 },
-                { tier == 0 ?  9 : 11, 1 },
-                { tier == 0 ?  9 : 10, 2 },
-                { tier == 0 ?  6 : 10, 3 },
-                { tier == 0 ?  8 :  9, 4 },
-                { tier == 0 ?  7 :  9, 5 },
-                { tier == 0 ?  5 :  9, 6 },
-                { tier == 0 ?  5 :  8, 7 },
-                { (tier >= 1 && !warchiefSpawnedThisRoom) ? 4 : 0, 8 },
-                { tier == 0 ?  5 :  8, 9 },
-            };
-
-            int total = 0;
-            for (const TypeWeight& entry : table) total += entry.weight;
-            int roll = GetRandomValue(1, total);
-
-            int typeId = 0;
-            for (const TypeWeight& entry : table)
-            {
-                roll -= entry.weight;
-                if (roll <= 0) { typeId = entry.typeId; break; }
-            }
-            if (typeId == 8) warchiefSpawnedThisRoom = true;
-            return typeId;
-        };
-
         // ── Environmental hazard roll (first slice of Phase 6 integration) ───
         // Standard combat rooms only, frequency by tier. The hazard's pressure
         // cost comes straight out of the enemy budget below, so hazard rooms
@@ -15103,31 +15327,46 @@ void Engine::SpawnDungeonRoomEnemies()
                     { sw - cellW, sh * 0.5f },   // east door
                     _player.GetWorldPos()        // entry position
                 };
+                // Lava belongs where the ground already feels dangerous —
+                // hot/underground/evil sets. Never Forest, Jungle, or Graveyard.
                 bool lavaBiome = _currentBiome == Biome::Caverns ||
                                  _currentBiome == Biome::DemonsInsides ||
-                                 _currentBiome == Biome::Wastelands;
-                int typeRoll = GetRandomValue(0, 2);
-                RoomHazardType hazardType = (typeRoll == 1 && lavaBiome) ? RoomHazardType::LavaPool
-                                          : (typeRoll == 2)             ? RoomHazardType::FireballTorch
-                                                                        : RoomHazardType::FireTotem;
+                                 _currentBiome == Biome::Wastelands ||
+                                 _currentBiome == Biome::AncientCastle;
+                // Weighted type pick: in lava-eligible biomes the pool is the
+                // STAR (half the rolls), so it actually shows up in a zone
+                // instead of losing a flat 1-in-3 to the turret types.
+                int typeRoll = GetRandomValue(1, 100);
+                RoomHazardType hazardType;
+                if (lavaBiome)
+                    hazardType = (typeRoll <= 50) ? RoomHazardType::LavaPool
+                               : (typeRoll <= 80) ? RoomHazardType::FireTotem
+                                                  : RoomHazardType::FireballTorch;
+                else
+                    hazardType = (typeRoll <= 60) ? RoomHazardType::FireTotem
+                                                  : RoomHazardType::FireballTorch;
+
+                bool placed = false;
                 if (hazardType == RoomHazardType::FireballTorch)
                 {
                     bool onWestWall = GetRandomValue(0, 1) == 0;
                     float laneOffset = Balance::Hazards::kTorchDoorBandHalf + (float)GetRandomValue(0, 160);
                     float laneY = sh * 0.5f + ((GetRandomValue(0, 1) == 0) ? -laneOffset : laneOffset);
                     Vector2 torchPos{ onWestWall ? cellW * 2.f : sw - cellW * 2.f, laneY };
-                    _roomHazards.TryPlaceWallTorch(torchPos, { onWestWall ? 1.f : -1.f, 0.f },
-                                                   forbiddenSpots, Balance::Hazards::kMinDistFromDoorway);
+                    placed = _roomHazards.TryPlaceWallTorch(torchPos, { onWestWall ? 1.f : -1.f, 0.f },
+                                                            forbiddenSpots, Balance::Hazards::kMinDistFromDoorway);
                 }
                 else
                 {
                     Rectangle roomBounds{ 0.f, 0.f, sw, sh };
-                    for (int attempt = 0; attempt < 8; attempt++)
-                        if (_roomHazards.TryPlaceHazard(hazardType, GetDungeonSpawnPos(cellW, cellH),
-                                                        forbiddenSpots, Balance::Hazards::kMinDistFromEntry,
-                                                        roomBounds))
-                            break;
+                    for (int attempt = 0; attempt < 12 && !placed; attempt++)
+                        placed = _roomHazards.TryPlaceHazard(hazardType, GetDungeonSpawnPos(cellW, cellH),
+                                                             forbiddenSpots, Balance::Hazards::kMinDistFromEntry,
+                                                             roomBounds);
                 }
+                TraceLog(LOG_INFO, "HAZARD roll: type %d %s (biome %d, tier %d)",
+                         (int)hazardType, placed ? "PLACED" : "failed all attempts",
+                         (int)_currentBiome, tierIdx);
             }
         }
 
@@ -15138,45 +15377,31 @@ void Engine::SpawnDungeonRoomEnemies()
         // grunts/sporelings 1, specialists (ranged/tank/assassin/zoner) 2,
         // Warchief (support elite) 3 — mirrors the EnemyRole cost model.
         // Hazards spend from the same budget (fewer bodies in hazard rooms).
-        static constexpr int kTypePressureCost[10] = { 1, 2, 2, 2, 1, 2, 2, 2, 3, 2 };
-        const int pressureCap = std::max(4, Balance::Pressure::kRoomPressureCap[tierIdx]
-                                            - _roomHazards.TotalPressureCost());
-        std::vector<int> plannedTypeIds;
-        plannedTypeIds.reserve(basicCount);
-        int pressureSpent = 0;
-        for (int n = 0; n < basicCount; n++)
-        {
-            int typeId = rollGruntTypeId();
-            int cost   = kTypePressureCost[typeId];
-            if (pressureSpent + cost > pressureCap)
-            {
-                if (pressureSpent + 1 > pressureCap)
-                    break;                    // budget exhausted
-                typeId = 0; cost = 1;         // downgrade to a plain grunt
-            }
-            plannedTypeIds.push_back(typeId);
-            pressureSpent += cost;
-        }
-        _roomPressureSpent  = pressureSpent;
-        _roomPressureCapDbg = pressureCap;
-
         // Opening slice vs reinforcement waves: never open the fight with more
         // bodies than the tier's readable cap — the surplus streams in later.
-        _dungeonOpeningCap = Balance::Pressure::kOpeningActiveCap[tierIdx];
-        int openingCount = std::min((int)plannedTypeIds.size(), _dungeonOpeningCap);
-        _dungeonReinforcementTypeIds.assign(plannedTypeIds.begin() + openingCount,
-                                            plannedTypeIds.end());
+        EncounterRequest encounterRequest{};
+        encounterRequest.tier = tierIdx;
+        encounterRequest.seed = static_cast<std::uint32_t>(GetRandomValue(1, 0x7ffffffe));
+        encounterRequest.hazardPressure = _roomHazards.TotalPressureCost();
+        encounterRequest.populationBonus = zoneBonus + (_currentBiome == Biome::DemonsInsides ? 2 : 0);
+        encounterRequest.swarm = _currentRoomAffix == RoomAffix::Swarm;
+        EncounterPlan encounter = EncounterPlanner::Build(encounterRequest);
+        _roomPressureSpent = encounter.debug.totalPressure;
+        _roomPressureCapDbg = Balance::Pressure::kDangerCap[tierIdx];
+        _dungeonOpeningCap = Balance::Pressure::kOpeningBodyCap[tierIdx];
+        const int openingCount = static_cast<int>(encounter.opening.size());
+        _dungeonReinforcements = encounter.reinforcements;
         _dungeonReinforcementTimer = Balance::Pressure::kReinforceInterval;
         if (_debug.IsActive())
             TraceLog(LOG_INFO, "ROOM PRESSURE tier %d: %d/%d (bodies %d, opening %d, reinforcements %d)",
-                     tierIdx, pressureSpent, pressureCap, (int)plannedTypeIds.size(),
-                     openingCount, (int)_dungeonReinforcementTypeIds.size());
+                     tierIdx, encounter.debug.totalPressure, Balance::Pressure::kDangerCap[tierIdx],
+                     encounter.debug.plannedPopulation, openingCount, (int)_dungeonReinforcements.size());
 
         // Ancient Castle: spawn in a tight cluster so enemies charge together.
         if (_currentBiome == Biome::AncientCastle && openingCount > 1)
         {
             Vector2 clusterCenter = GetDungeonSpawnPos(cellW, cellH);
-            SpawnBasicEnemy(clusterCenter);
+            SpawnDungeonGrunt(encounter.opening[0], clusterCenter, cellW, cellH);
             for (int n = 1; n < openingCount; n++)
             {
                 float   angle = (float)GetRandomValue(0, 628) / 100.f;
@@ -15185,14 +15410,14 @@ void Engine::SpawnDungeonRoomEnemies()
                     std::clamp(clusterCenter.x + cosf(angle) * dist, 80.f, sw - 80.f),
                     std::clamp(clusterCenter.y + sinf(angle) * dist, 80.f, sh - 80.f)
                 };
-                SpawnBasicEnemy(clusterPos);
+                SpawnDungeonGrunt(encounter.opening[n], clusterPos, cellW, cellH);
             }
         }
         else
         {
             for (int n = 0; n < openingCount; n++)
-                SpawnDungeonGruntByTypeId(plannedTypeIds[n],
-                                          GetDungeonSpawnPos(cellW, cellH), cellW, cellH);
+                SpawnDungeonGrunt(encounter.opening[n],
+                                  GetDungeonSpawnPos(cellW, cellH), cellW, cellH);
         }
 
         // Cyclops: rare early, moderate mid, common late.
@@ -15227,6 +15452,42 @@ void Engine::SpawnDungeonRoomEnemies()
     roomState.enemiesInitialized = true;
     _dungeonEnemiesSpawned = true;
     SaveDungeonRoomEnemyState();
+    SaveDungeonRoomHazardState();
+    roomState.hazardsInitialized = true;
+}
+
+// ── Hazard persistence ────────────────────────────────────────────────────────
+// Snapshot the current room's hazards (position, health, destroyed flag) so
+// leaving and re-entering a room brings back the same layout instead of a
+// fresh roll — destroyed stays destroyed, damaged stays damaged.
+void Engine::SaveDungeonRoomHazardState()
+{
+    if (_dungeonRoomIdx < 0) return;
+    DungeonRoomState& roomState = _dungeonRoomStates[_dungeonRoomIdx];
+    roomState.hazards.clear();
+    for (const RoomHazard& hazard : _roomHazards.Hazards())
+    {
+        DungeonHazardSnapshot snap;
+        snap.type      = (int)hazard.type;
+        snap.pos       = hazard.pos;
+        snap.fireDir   = hazard.fireDir;
+        snap.health    = hazard.health;
+        snap.destroyed = (hazard.state == RoomHazardState::Destroyed);
+        roomState.hazards.push_back(snap);
+    }
+}
+
+void Engine::RestoreDungeonRoomHazardState(int roomIdx, bool lavaOnly)
+{
+    auto stateIt = _dungeonRoomStates.find(roomIdx);
+    if (stateIt == _dungeonRoomStates.end()) return;
+    for (const DungeonHazardSnapshot& snap : stateIt->second.hazards)
+    {
+        if (snap.destroyed) continue;
+        RoomHazardType type = (RoomHazardType)snap.type;
+        if (lavaOnly && type != RoomHazardType::LavaPool) continue;
+        _roomHazards.RestoreHazard(type, snap.pos, snap.fireDir, snap.health);
+    }
 }
 
 void Engine::ClearDungeonEnemies()
@@ -15244,6 +15505,7 @@ void Engine::ClearDungeonEnemies()
     _warriorVfx.clear();
     _pickups.clear();
     _vfx.Clear();
+    _damageNumbers.Clear();
     _pendingExp    = 0.f;
     _dungeonEnemiesSpawned = false;
     _treasureChestSpawned  = false;
@@ -18200,6 +18462,16 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.hazards            = &_enemyHazardZones;
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
 
+        // Enemy-fired shots and environmental shots use independent safety
+        // limits. Preserve older active shots first and discard only overflow
+        // appended by this frame's enemy casts; hazards apply their own cap
+        // immediately below.
+        const int enemyProjectileCap = Balance::Pressure::kEnemyProjectileCap[
+            std::clamp(_roomEncounterTier, 0, 2)];
+        if ((int)_enemyProjectiles.size() > enemyProjectileCap)
+            _enemyProjectiles.erase(_enemyProjectiles.begin() + enemyProjectileCap,
+                                    _enemyProjectiles.end());
+
         if (_currentBiome == Biome::DreamRealm)
             UpdateDreamFlicker(dt);
 
@@ -18217,10 +18489,22 @@ void Engine::UpdateDungeonRun(float dt)
                 if (projectile.IsActive() && projectile.GetKind() == EnemyProjectileKind::FireBolt)
                     envBoltsInFlight++;
             hazardCtx.envProjectilesInFlight = envBoltsInFlight;
+            // Hazard damage rides the same growth curve as enemy damage
+            // (+kDamagePerLevel per power level), so hazards stay relevant
+            // without ever spiking ahead of the run.
+            {
+                int powerLevel = 1 + (_wave - 1) / Balance::Curve::kRoomsPerPowerLevel;
+                float damageGrowth = 1.f + Balance::Curve::kDamagePerLevel * (float)(powerLevel - 1);
+                hazardCtx.scaledBoltDamage = std::max(1, (int)roundf((float)Balance::Hazards::kTotemBoltDamage  * damageGrowth));
+                hazardCtx.scaledTickDamage = std::max(1, (int)roundf((float)Balance::Hazards::kHazardTickDamage * damageGrowth));
+            }
             hazardCtx.spawnFireBolt = [&](Vector2 pos, Vector2 dir, int damage)
             {
                 EnemyProjectile bolt;
                 bolt.Init(pos, dir, EnemyProjectileKind::FireBolt, damage);
+                // Hazard bolts stay SMALL — a wisp bolt at 55% sprite+hitbox
+                // size (Balance::Hazards::kHazardBoltScale is the knob).
+                bolt.SetScale(Balance::Hazards::kHazardBoltScale);
                 _enemyProjectiles.push_back(bolt);
             };
             hazardCtx.damagePlayer = [&](int damage, Vector2 fromPos)
@@ -18228,6 +18512,9 @@ void Engine::UpdateDungeonRun(float dt)
                 _player.TakeDamage(damage, fromPos);
             };
             _roomHazards.Update(hazardCtx);
+            // Persist hazard health/destroyed state every frame (cheap: the
+            // room holds at most a few hazards) so re-entry stays truthful.
+            SaveDungeonRoomHazardState();
         }
 
         HandlePlayerMeleeDamage();
@@ -18289,6 +18576,7 @@ void Engine::UpdateDungeonRun(float dt)
         UpdateMageSpells(dt);
         UpdatePoisonClouds(dt);
         _vfx.Update(dt);
+        _damageNumbers.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
 
@@ -18383,7 +18671,7 @@ void Engine::UpdateDungeonRun(float dt)
         // Queued surplus bodies stream in when the field thins out or the wave
         // timer fires, so late-run populations pressure the player continuously
         // without opening the fight as an unreadable wall.
-        if (_dungeonEnemiesSpawned && !_dungeonReinforcementTypeIds.empty() && !_dungeonScrolling)
+        if (_dungeonEnemiesSpawned && !_dungeonReinforcements.empty() && !_dungeonScrolling)
         {
             _dungeonReinforcementTimer -= dt;
             int activeEnemies = GetActiveEnemyCount();
@@ -18391,22 +18679,44 @@ void Engine::UpdateDungeonRun(float dt)
                            (activeEnemies <= Balance::Pressure::kReinforceRefillActive);
             if (release)
             {
-                int spawnable = std::max(1, _dungeonOpeningCap - activeEnemies);
-                int waveSize  = std::min(spawnable, (int)_dungeonReinforcementTypeIds.size());
+                const int tierIdx = std::clamp(_roomEncounterTier, 0, 2);
+                auto rolePressure = [](EnemyRole role) {
+                    switch (role)
+                    {
+                    case EnemyRole::Support: case EnemyRole::Summoner: return 3;
+                    case EnemyRole::Ranged: case EnemyRole::Tank: case EnemyRole::Assassin:
+                    case EnemyRole::Zoner: case EnemyRole::HeavyRanged: return 2;
+                    default: return 1;
+                    }
+                };
+                int activePressure = 0;
+                for (const auto& enemy : _enemies)
+                    if (enemy->IsActive() && enemy->IsAlive())
+                        activePressure += rolePressure(enemy->GetEncounterRole());
+
+                const int bodySlots = std::max(0, _dungeonOpeningCap - activeEnemies);
+                int pressureSlots = std::max(0, Balance::Pressure::kDangerCap[tierIdx]
+                                                - _roomHazards.TotalPressureCost() - activePressure);
+                int waveSize = 0;
                 float waveCellW = (float)kVirtualWidth  / (float)RoomLayout::kCols;
                 float waveCellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
-                for (int n = 0; n < waveSize; n++)
+                while (waveSize < bodySlots && !_dungeonReinforcements.empty())
                 {
-                    SpawnDungeonGruntByTypeId(_dungeonReinforcementTypeIds.back(),
-                        GetDungeonSpawnPos(waveCellW, waveCellH), waveCellW, waveCellH);
-                    _dungeonReinforcementTypeIds.pop_back();
+                    const EncounterSpawnEntry& entry = _dungeonReinforcements.front();
+                    if (entry.pressureCost > pressureSlots)
+                        break;
+                    SpawnDungeonGrunt(entry, GetDungeonSpawnPos(waveCellW, waveCellH), waveCellW, waveCellH);
+                    pressureSlots -= entry.pressureCost;
+                    _dungeonReinforcements.pop_front();
+                    ++waveSize;
                 }
                 _dungeonReinforcementTimer = Balance::Pressure::kReinforceInterval;
-                _vfx.SpawnFloatingLabel({ (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.30f },
-                                        "REINFORCEMENTS!", Color{ 255, 170, 70, 255 }, 1.4f);
+                if (waveSize > 0)
+                    _vfx.SpawnFloatingLabel({ (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.30f },
+                                            "REINFORCEMENTS!", Color{ 255, 170, 70, 255 }, 1.4f);
                 if (_debug.IsActive())
                     TraceLog(LOG_INFO, "REINFORCEMENT wave: +%d (queued left %d)",
-                             waveSize, (int)_dungeonReinforcementTypeIds.size());
+                             waveSize, (int)_dungeonReinforcements.size());
             }
         }
 
@@ -18414,7 +18724,7 @@ void Engine::UpdateDungeonRun(float dt)
         if (_dungeonEnemiesSpawned)
         {
             SaveDungeonRoomEnemyState();
-            bool allDead = _dungeonReinforcementTypeIds.empty();   // waves still pending = not cleared
+            bool allDead = _dungeonReinforcements.empty();   // waves still pending = not cleared
             for (const auto& e : _enemies)
                 if (e->IsActive()) { allDead = false; break; }
             if (allDead)
@@ -19074,6 +19384,7 @@ void Engine::DrawDungeonRun()
                 // behind draw over them (see split above).
                 _tileRenderer.DrawRoomPropsSplit(_dungeonRoomLayout, scaleX, scaleY,
                                                  _shakeOffset, playerFeetScreenY, true);
+                _damageNumbers.Draw(worldOffset);
             }
         }
         else
@@ -19633,9 +19944,11 @@ void Engine::DrawEnemyFacingDebug() const
 
     // Room pressure readout (Balance::Pressure): spent/cap, pending waves,
     // live hazards. Zeroed in non-combat rooms.
-    DrawText(TextFormat("PRESSURE %d / %d   waves queued %d   hazards %d",
+    DrawText(TextFormat("PRESSURE %d / %d   waves %d   hazards %d   shots %d/%d",
                         _roomPressureSpent, _roomPressureCapDbg,
-                        (int)_dungeonReinforcementTypeIds.size(), _roomHazards.ActiveCount()),
+                        (int)_dungeonReinforcements.size(), _roomHazards.ActiveCount(),
+                        (int)_enemyProjectiles.size(),
+                        Balance::Pressure::kEnemyProjectileCap[std::clamp(_roomEncounterTier, 0, 2)]),
              20, 150, 20, ORANGE);
 }
 

@@ -218,16 +218,50 @@ namespace Balance::Facing
 // Tier index everywhere: 0 = early rooms, 1 = mid, 2 = late (cleared-room count).
 namespace Balance::Pressure
 {
-    inline constexpr int   kRoomPressureCap[3]  = { 10, 16, 22 };
+    // Population controls spectacle; danger controls how many costly roles may
+    // threaten the player simultaneously. Keeping these separate lets a room
+    // contain a large fragile crowd without also becoming a wall of tanks and
+    // ranged fire.
+    inline constexpr int   kPopulationMin[3]    = { 8, 12, 18 };
+    inline constexpr int   kPopulationMax[3]    = { 12, 18, 26 };
+    inline constexpr int   kOpeningBodyCap[3]   = { 10, 14, 18 };
+    inline constexpr int   kDangerCap[3]        = { 12, 18, 24 };
+    inline constexpr int   kSwarmPeakMin        = 28;
+    inline constexpr int   kSwarmPeakMax        = 32;
+
+    inline constexpr int   kRangedCap[3]        = { 2, 3, 4 };
+    inline constexpr int   kTankCap[3]          = { 1, 2, 2 };
+    inline constexpr int   kSupportCap[3]       = { 0, 1, 2 };
+    inline constexpr int   kAssassinCap[3]      = { 1, 2, 3 };
+    inline constexpr int   kZonerCap[3]         = { 1, 2, 3 };
+    inline constexpr int   kExpensiveUnitCap[3] = { 3, 5, 7 };
+    inline constexpr int   kEnemyProjectileCap[3]       = { 12, 16, 20 };
+    inline constexpr int   kEnvironmentalProjectileCap[3] = { 8, 10, 12 };
+
+    // Legacy names remain temporarily for non-standard encounters while the
+    // standard-room planner uses the clearer population/danger vocabulary.
+    inline constexpr int   kRoomPressureCap[3]  = { 12, 18, 24 };
     // Max enemies alive when the fight OPENS; the surplus becomes waves.
-    inline constexpr int   kOpeningActiveCap[3] = { 7, 10, 12 };
+    inline constexpr int   kOpeningActiveCap[3] = { 10, 14, 18 };
     // Standard-room body counts rolled before the pressure clamp.
-    inline constexpr int   kMinBasics[3] = { 4, 6, 8 };
-    inline constexpr int   kMaxBasics[3] = { 6, 9, 12 };
+    inline constexpr int   kMinBasics[3] = { 8, 12, 18 };
+    inline constexpr int   kMaxBasics[3] = { 12, 18, 26 };
     // A reinforcement wave releases when live enemies drop to this count,
     // or on the interval timer — whichever comes first.
     inline constexpr int   kReinforceRefillActive = 4;
     inline constexpr float kReinforceInterval     = 6.f;
+}
+
+namespace Balance::DamageNumbers
+{
+    inline constexpr int   kVisibleCap      = 32;
+    inline constexpr int   kMinFontSize     = 20;
+    inline constexpr int   kMaxFontSize     = 42;
+    inline constexpr float kDamageReference = 12.f;
+    inline constexpr float kRiseSpeed       = 92.f;
+    inline constexpr float kLifetime        = 0.90f;
+    inline constexpr float kOutline         = 2.f;
+    inline constexpr float kMergeWindow     = 0.20f;
 }
 
 // ── Room hazards (RoomHazardDirector) ────────────────────────────────────────

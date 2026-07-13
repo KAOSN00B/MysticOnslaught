@@ -1574,12 +1574,12 @@ void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
 
 void Enemy::ApplyDifficultyScaling(float healthMult, float damageMult)
 {
-    if (healthMult > 1.f)
+    if (healthMult > 0.f && healthMult != 1.f)
     {
-        _maxHealth = std::ceil(_maxHealth * healthMult);
+        _maxHealth = std::max(1.f, std::ceil(_maxHealth * healthMult));
         _health    = _maxHealth;
     }
-    if (damageMult > 1.f)
+    if (damageMult > 0.f && damageMult != 1.f)
         _attackPower *= damageMult;
 }
 

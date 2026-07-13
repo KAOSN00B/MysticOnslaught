@@ -44,6 +44,33 @@ enemy pressure budget. Boss/Elite/Treasure/Store/Rest rooms never roll.
 KNOWN LIMITS (deliberate, revisit later): hazards don't respawn when
 re-entering a half-cleared room (they only exist on first visit); no
 destruction VFX/sound yet; deterministic per-room seeding still Phase 6.
+
+ROBERT FEEDBACK PASS (2026-07-12, built + smoke-tested):
+- Hazard fireballs SMALL: EnemyProjectile gained SetScale(mult) (sprite AND
+  hitbox); hazard bolts spawn at Balance::Hazards::kHazardBoltScale = 0.55
+  (~81px sprite / ~29px hitbox vs the wisp's 147/52). That constant is THE
+  size knob.
+- Hazard damage scales with the run: Engine pre-computes scaledBolt/TickDamage
+  from the enemy power level curve (base 1 x (1 + kDamagePerLevel*(PL-1)),
+  PL = 1 + (_wave-1)/kRoomsPerPowerLevel) into RoomHazardContext; the director
+  no longer reads flat constants for damage.
+- Lava biome list: Caverns / DemonsInsides / Wastelands / AncientCastle
+  (added — "feels evil"); never Forest, Jungle, or Graveyard.
+
+PHASE 6 REMAINDER (2026-07-12, after Robert saw no lava in Ancient Castle):
+- Weighted hazard type roll: lava biomes now 50% lava / 30% totem / 20% torch
+  (was a flat 1-in-3 → lava appeared in ~1 room per zone). Non-lava biomes:
+  60% totem / 40% torch. Placement attempts 8 -> 12; every roll TraceLogs
+  type + PLACED/failed + biome + tier.
+- HAZARD PERSISTENCE (replaces the deterministic-seed plan — better):
+  DungeonRoomState gained DungeonHazardSnapshot list; saved every frame during
+  combat + at spawn (SaveDungeonRoomHazardState), rebuilt on re-entry via
+  RoomHazardDirector::RestoreHazard (Active immediately, no telegraph replay,
+  entry grace still applies; health/destroyed persist). Cleared rooms restore
+  LAVA ONLY — terrain stays, turrets never shoot at backtracking players.
+- NOTE: a parallel Codex refactor renamed the reinforcement queue
+  (std::deque<EncounterSpawnEntry> _dungeonReinforcements + SpawnDungeonGrunt)
+  and beefed up boss-room adds — integrated with, not reverted.
 ================================================================================
 
 --------------------------------------------------------------------------------

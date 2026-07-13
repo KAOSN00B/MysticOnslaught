@@ -96,6 +96,11 @@ public:
                            const std::vector<Vector2>& forbiddenSpots,
                            float minForbiddenDist);
 
+    // Rebuild a persisted hazard on room re-entry — no placement validation
+    // (the spot was validated on first placement) and no telegraph replay,
+    // but the room-entry action grace still applies.
+    void RestoreHazard(RoomHazardType type, Vector2 pos, Vector2 fireDir, float health);
+
     void Update(const RoomHazardContext& ctx);
     // worldOffset = screen-shake offset (dungeon world == screen otherwise).
     void Draw(Vector2 worldOffset) const;

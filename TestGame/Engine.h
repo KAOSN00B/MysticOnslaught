@@ -40,6 +40,8 @@
 #include "TouchControls.h"
 #include "NavigationGrid.h"
 #include "VFXManager.h"
+#include "DamageNumberManager.h"
+#include "EncounterPlanner.h"
 #include "ShopManager.h"
 #include "DebugPanel.h"
 #include "WorldConfig.h"
@@ -476,7 +478,6 @@ private:
 
     // ── Live juice tuning (debug panel: J in debug mode) ────────────────────────
     // Runtime copies of the feel constants so they can be nudged while playing.
-    float _juiceDamageScale   = 25.f;
     float _juiceCritSlowDur   = 0.30f;
     float _juiceCritSlowScale = 0.40f;
     float _juiceBossSlowDur    = 0.80f;
@@ -493,9 +494,11 @@ private:
 
     // Central hit feedback: floating number (pop on crit), impact sparks, and on
     // crit → slow-mo + focus, on kill → hit-stop (boss kill → cinematic slow-mo).
-    void  RegisterHitFx(Vector2 enemyPos, int dmg, bool crit, bool killed, bool isBoss, Color textColor);
+    int RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
+                      bool backstab = false, bool damageOverTime = false,
+                      std::uint32_t attackId = 0);
     // Floating "SHIELDED" / "BLOCKED" callout when a hit is denied (see Enemy::ConsumeHitBlock).
-    void  ShowBlockedHitFeedback(Vector2 enemyPos, Enemy::HitBlockReason reason);
+    void ShowBlockedHitFeedback(Enemy& enemy, Enemy::HitBlockReason reason);
     // Big floating boss-state word (ENRAGED / PHASE SHIFT) on a state transition.
     void  ShowBossCallout(Vector2 enemyPos, const char* text);
     void GrantRelic(RelicType type);              // adds relic + shows a toast
@@ -1175,6 +1178,7 @@ private:
     Texture2D _genericHitTex{};   // Hit03.png � melee hit splat + electric impact sprite
     Texture2D _iceHitTex{};       // Ice_Shard_Hit.png � ice ability impact
     Texture2D _lightningCastTex{};
+    Texture2D _thunderHitTex{};      // electric impact burst (Thunder_Blast.png)
     Texture2D _healEffectTex{};
     Texture2D _roomClearExplosionTex{};
 
@@ -1228,6 +1232,8 @@ private:
     std::vector<UltimateBlast>       _ultimateBlasts;
     std::vector<SpreadProjectile>    _spreadProjectiles;
     VFXManager     _vfx;
+    DamageNumberManager _damageNumbers;
+    std::uint64_t _nextCombatTargetId = 1;
     NavigationGrid _nav;
     ShopManager    _shop;
     std::vector<std::unique_ptr<Enemy>>   _enemies;
@@ -1343,6 +1349,17 @@ private:
         std::string type;
         Vector2     pos{};
     };
+    // Environmental hazards persist per room: destroyed ones stay destroyed,
+    // live ones are rebuilt on re-entry (lava even in cleared rooms — terrain
+    // doesn't despawn; turret hazards only while the room still has a fight).
+    struct DungeonHazardSnapshot
+    {
+        int     type = 0;            // RoomHazardType as int
+        Vector2 pos{};
+        Vector2 fireDir{ 1.f, 0.f };
+        float   health = 3.f;
+        bool    destroyed = false;
+    };
     struct DungeonRoomState
     {
         bool cleared = false;
@@ -1350,6 +1367,8 @@ private:
         bool visited = false;             // player has entered — map remembers the type
         int  eliteMechanic = -1;
         std::vector<DungeonEnemySnapshot> survivors;
+        std::vector<DungeonHazardSnapshot> hazards;
+        bool hazardsInitialized = false;  // first-visit roll already happened
 
         // Room-events / decision-room state (rolled at generation time, seeded by
         // the dungeon seed, so it never rerolls on re-entry and dailies match).
@@ -1406,14 +1425,19 @@ private:
     // tier's pressure cap, spawn only the opening slice, and queue the surplus
     // as reinforcement waves so big populations stay readable.
     RoomHazardDirector _roomHazards;                 // environmental hazards, current room
-    std::vector<int> _dungeonReinforcementTypeIds;   // queued grunt typeIds
+    std::deque<EncounterSpawnEntry> _dungeonReinforcements;
     float _dungeonReinforcementTimer = 0.f;
     int   _dungeonOpeningCap  = 7;                   // opening active cap for this room
+    int   _roomEncounterTier  = 0;
     int   _roomPressureSpent  = 0;                   // debug readout
     int   _roomPressureCapDbg = 0;                   // debug readout
     // Spawns one mixed-table grunt by typeId (shared by the room opening and
     // reinforcement waves), including the role-based placement nudge.
-    Enemy* SpawnDungeonGruntByTypeId(int typeId, Vector2 pos, float cellW, float cellH);
+    Enemy* SpawnDungeonGrunt(const EncounterSpawnEntry& entry, Vector2 pos, float cellW, float cellH);
+    // Hazard persistence: snapshot the live hazards into the current room's
+    // state and rebuild them on re-entry (lavaOnly = cleared-room terrain).
+    void SaveDungeonRoomHazardState();
+    void RestoreDungeonRoomHazardState(int roomIdx, bool lavaOnly);
 
     std::unordered_map<int, DungeonRoomState> _dungeonRoomStates;
     bool  _dungeonEnemiesSpawned  = false;

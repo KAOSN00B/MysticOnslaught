@@ -15,7 +15,7 @@ struct GameSettings
     float masterVolume = 1.0f;  // 0.0 - 1.0, applied via Raylib SetMasterVolume()
     float musicVolume  = 1.0f;  // 0.0 - 1.0, scales all music stream volumes
     float sfxVolume    = 1.0f;  // 0.0 - 1.0, applied to Sound objects before play
-    bool  abilityAimToggle = false; // false: hold/release, true: press/press
+    bool  abilityAimToggle = true;  // false: hold/release, true: press/press
 };
 
 class SettingsManager

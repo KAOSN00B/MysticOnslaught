@@ -87,6 +87,8 @@ call emcc ^
   %SRC%\ShopManager.cpp ^
   %SRC%\TouchControls.cpp ^
   %SRC%\VFXManager.cpp ^
+  %SRC%\DamageNumberManager.cpp ^
+  %SRC%\EncounterPlanner.cpp ^
   %SRC%\WorldConfig.cpp ^
   %SRC%\DungeonGen.cpp ^
   %SRC%\RoomLayout.cpp ^

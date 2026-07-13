@@ -6,6 +6,7 @@
 #include "raymath.h"
 #include <vector>
 #include <memory>
+#include <cstdint>
 
 class Cyclops;
 class Ogre;
@@ -275,6 +276,8 @@ public:
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
+    std::uint64_t GetCombatId() const { return _combatId; }
+    void SetCombatId(std::uint64_t id) { _combatId = id; }
     bool IsEliteMiniboss() const { return _isEliteMiniboss; }
     void SetIsEliteMiniboss(bool b);
 
@@ -440,6 +443,7 @@ protected:
     static constexpr float kPathRefreshMax = 0.70f;  // maximum refresh interval
     static constexpr int   kMaxWaypoints   = 14;     // path length cap
     bool _isActive        = true;
+    std::uint64_t _combatId = 0;
     bool _bestiaryRecorded = false;   // has this death been counted in the bestiary
     bool _isEliteMiniboss = false;
     bool _isInvulnerable  = false;   // bodyguard shield (engine-driven)
