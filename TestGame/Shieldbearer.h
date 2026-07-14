@@ -13,7 +13,7 @@ class Shieldbearer : public Enemy
 {
 public:
     Shieldbearer(Vector2 pos);
-    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Metal; }
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~Shieldbearer() override;
 
     void Init();
@@ -27,6 +27,7 @@ public:
     void TakeDamageUnblockable(int damage, Vector2 attackerPos) override { Enemy::TakeDamage(damage, attackerPos); }
     void DrawEnemy(Vector2 heroWorldPos) override;
     Rectangle GetCollisionRec() const override;
+    void PlayDeathSound() override;
 
     Shieldbearer* AsShieldbearer() override { return this; }
     EnemyRole GetEncounterRole() const override { return EnemyRole::Tank; }

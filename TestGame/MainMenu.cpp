@@ -17,7 +17,7 @@ MainMenu::~MainMenu()
     if (_borderTex.id  != 0) UnloadTexture(_borderTex);
     if (_bannerTex.id  != 0) UnloadTexture(_bannerTex);
     if (_playBtnTex.id != 0) UnloadTexture(_playBtnTex);
-    if (_htpBtnTex.id  != 0) UnloadTexture(_htpBtnTex);
+    if (_continueBtnTex.id != 0) UnloadTexture(_continueBtnTex);
 }
 
 void MainMenu::Init()
@@ -34,8 +34,8 @@ void MainMenu::Init()
     float startX = sw / 2.f - buttonWidth / 2.f;
 
     // Y stored as offset from group top � draw adds _btnEdFirstY at runtime
-    _buttons.push_back({ "Start Game",  { startX, 0.f,                           buttonWidth, buttonHeight } });
-    _buttons.push_back({ "How To Play", { startX, (buttonHeight + gap),           buttonWidth, buttonHeight } });
+    _buttons.push_back({ "New Game", { startX, 0.f,                           buttonWidth, buttonHeight } });
+    _buttons.push_back({ "Continue", { startX, (buttonHeight + gap),           buttonWidth, buttonHeight } });
     _buttons.push_back({ "Settings",    { startX, (buttonHeight + gap) * 2.f,     buttonWidth, buttonHeight } });
     _buttons.push_back({ "Quit",        { startX, (buttonHeight + gap) * 3.f,     buttonWidth, buttonHeight } });
     _buttons.push_back({ "Debug Mode",  { sw * 0.71f, sh * 0.54f, buttonWidth * 0.90f, buttonHeight * 0.95f } });
@@ -54,7 +54,7 @@ void MainMenu::Init()
 
     _startPressed          = false;
     _quitPressed           = false;
-    _howToPressed          = false;
+    _continuePressed       = false;
     _debugPressed          = false;
     _dungeonRunPressed     = false;
     _tileMapperPressed     = false;
@@ -77,8 +77,8 @@ void MainMenu::Init()
         _bannerTex  = LoadTexture(AssetPath("UI/TitleBanner.png").c_str());
     if (_playBtnTex.id == 0)
         _playBtnTex = LoadTexture(AssetPath("UI/PlayButton.png").c_str());
-    if (_htpBtnTex.id == 0)
-        _htpBtnTex  = LoadTexture(AssetPath("UI/HowToPlayButton.png").c_str());
+    if (_continueBtnTex.id == 0)
+        _continueBtnTex = LoadTexture(AssetPath("UI/HowToPlayButton.png").c_str());
 }
 
 void MainMenu::Update()
@@ -86,7 +86,7 @@ void MainMenu::Update()
     // Reset all per-frame press flags so returning to menu without Init() doesn't re-fire
     _startPressed           = false;
     _quitPressed            = false;
-    _howToPressed           = false;
+    _continuePressed        = false;
     _debugPressed           = false;
     _dungeonRunPressed      = false;
     _tileMapperPressed      = false;
@@ -109,7 +109,7 @@ void MainMenu::Update()
             && !_devToolsVisible)
             continue;
 
-        bool isPanelBtn = (button.text == "Start Game" || button.text == "How To Play" ||
+        bool isPanelBtn = (button.text == "New Game" || button.text == "Continue" ||
                            button.text == "Settings"   || button.text == "Quit");
         Rectangle checkBounds = button.bounds;
         if (isPanelBtn)
@@ -120,9 +120,9 @@ void MainMenu::Update()
 
         if (button.hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
-            if (button.text == "Start Game")   _startPressed      = true;
+            if (button.text == "New Game")     _startPressed      = true;
             if (button.text == "Quit")         _quitPressed       = true;
-            if (button.text == "How To Play")  _howToPressed      = true;
+            if (button.text == "Continue")     _continuePressed   = true;
             if (button.text == "Debug Mode")   _debugPressed      = true;
             if (button.text == "Dungeon Run")    _dungeonRunPressed      = true;
             if (button.text == "Tile Editor")   _tileMapperPressed      = true;
@@ -132,7 +132,7 @@ void MainMenu::Update()
         }
     }
 
-    // -- Gamepad navigation for panel buttons (Start Game / HTP / Settings / Quit) --
+    // -- Gamepad navigation for panel buttons (New Game / Continue / Settings / Quit) --
     {
         // Mouse movement hands control back to the cursor
         Vector2 mouseDelta = GetMouseDelta();
@@ -177,7 +177,7 @@ void MainMenu::Update()
             switch (_gpSelected)
             {
             case 0: _startPressed    = true; break;
-            case 1: _howToPressed    = true; break;
+            case 1: _continuePressed = true; break;
             case 2: _settingsPressed = true; break;
             case 3: _quitPressed     = true; break;
             }
@@ -499,12 +499,12 @@ void MainMenu::Draw()
         Texture2D* tex  = &_playBtnTex;
         Color      tint = WHITE;
 
-        if (button.text == "How To Play")
-            tex = &_htpBtnTex;
+        if (button.text == "Continue")
+            tex = &_continueBtnTex;
         else if (button.text == "Quit")
             tint = Color{ 230, 80, 80, 255 };
 
-        bool isPanelBtn = (button.text == "Start Game" || button.text == "How To Play" ||
+        bool isPanelBtn = (button.text == "New Game" || button.text == "Continue" ||
                            button.text == "Settings"   || button.text == "Quit");
         Rectangle drawBounds = button.bounds;
         if (isPanelBtn)
@@ -549,7 +549,7 @@ void MainMenu::Draw()
 
 bool MainMenu::StartPressed()       const { return _startPressed;       }
 bool MainMenu::QuitPressed()        const { return _quitPressed;        }
-bool MainMenu::HowToPressed()       const { return _howToPressed;       }
+bool MainMenu::ContinuePressed()    const { return _continuePressed;    }
 bool MainMenu::DebugPressed()       const { return _debugPressed;       }
 
 void MainMenu::SetDebugUnlocked(bool unlocked)

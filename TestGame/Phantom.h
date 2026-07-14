@@ -19,7 +19,7 @@ public:
     void Init();
     void ResetForSpawn(Vector2 pos) override;
     static void UnloadSharedResources();
-    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Spectral; }
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Small; }
 
     void Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
         const std::vector<std::unique_ptr<Enemy>>& enemies,
@@ -41,6 +41,7 @@ public:
     bool IsPhased() const { return _phased; }
 
     void PlayAttackSound() override;
+    void PlayDeathSound() override;
 
 private:
     static void EnsureSharedResourcesLoaded();

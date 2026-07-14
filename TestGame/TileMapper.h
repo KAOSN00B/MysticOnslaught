@@ -91,6 +91,7 @@ private:
         Rectangle collision;
         std::string id;
         std::string name;
+        std::string sourceSheet;
     };
 
     struct DecorDef
@@ -98,6 +99,7 @@ private:
         Rectangle src;
         std::string id;
         std::string name;
+        std::string sourceSheet;
     };
 
     // An animated prop — each frame is a separate drag-selected source rectangle.
@@ -109,6 +111,7 @@ private:
         std::string id;
         std::string name;
         AnimPlaybackMode playback = AnimPlaybackMode::Loop;
+        std::string sourceSheet;
     };
 
     // An animated decoration — each frame is a separately drag-selected source rectangle.
@@ -119,6 +122,7 @@ private:
         std::string id;
         std::string name;
         AnimPlaybackMode playback = AnimPlaybackMode::Loop;
+        std::string sourceSheet;
     };
 
     // Eight handles used by the collision-box editor.
@@ -170,6 +174,13 @@ private:
     Rectangle GridToScreen(int col, int row, int spanCols, int spanRows) const;
     float     GroundSheetScreenY() const;   // top-left Y of the ground sheet in screen space
     Rectangle GridToGroundScreen(int col, int row, int spanCols, int spanRows) const;
+    float SourceSheetScreenY(const std::string& sourceSheet) const;
+    Rectangle GridToSourceScreen(const std::string& sourceSheet, int col, int row,
+                                 int spanCols, int spanRows) const;
+    Texture2D SourceTexture(const std::string& sourceSheet) const;
+    int SourceCols(const std::string& sourceSheet) const;
+    int SourceRows(const std::string& sourceSheet) const;
+    std::string SourceAtPoint(Vector2 point) const;
 
     // ── State ─────────────────────────────────────────────────────────────────
     Screen   _screen    = Screen::FileSelect;
@@ -184,6 +195,8 @@ private:
     // Mapping state
     Texture2D   _sheet{};
     Texture2D   _groundSheet{};   // Ground TIles.png — always loaded, shown below main sheet
+    Texture2D   _waterSheet{};
+    Texture2D   _lavaSheet{};
     float _scale    = 1.f;
     float _minScale = 1.f;        // fit-to-view scale; zoom cannot go below this
     float _offX     = 0.f;
@@ -192,6 +205,10 @@ private:
     int   _sheetRows  = 0;
     int   _groundCols = 0;
     int   _groundRows = 0;
+    int   _waterCols = 0;
+    int   _waterRows = 0;
+    int   _lavaCols = 0;
+    int   _lavaRows = 0;
     float _panelX     = 0.f;
 
     // Middle-mouse pan
@@ -205,6 +222,10 @@ private:
 
     bool _hasSelection   = false;
     bool _selFromGround  = false;   // selection was made on Ground TIles sheet
+    std::string _selSourceSheet;
+    std::string _dragSourceSheet;
+    std::string _pendingAnimPropSource;
+    std::string _pendingAnimDecorSource;
     bool _dragFromGround = false;   // current drag is on Ground TIles sheet
     int  _selC0 = 0, _selR0 = 0;
     int  _selC1 = 0, _selR1 = 0;

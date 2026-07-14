@@ -76,7 +76,7 @@ int main()
     std::string selectedId;
     std::string warning;
     std::optional<RoomLayout> resolved = library.Resolve(
-        request, definitions, selected->id, selectedId, warning);
+        request, definitions, nullptr, selected->id, selectedId, warning);
     assert(resolved.has_value());
     assert(resolved->handcrafted);
     assert(resolved->sourceRoomId == alternate->id);
@@ -85,7 +85,7 @@ int main()
     RoomRequest missingRequest = request;
     missingRequest.roomType = RoomType::Boss;
     selectedId = "unchanged";
-    resolved = library.Resolve(missingRequest, definitions, {}, selectedId, warning);
+    resolved = library.Resolve(missingRequest, definitions, nullptr, {}, selectedId, warning);
     assert(!resolved.has_value());
     assert(selectedId.empty());
 

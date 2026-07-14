@@ -65,6 +65,25 @@ int main()
     assert(extended.animProps[0].frames.size() == 3);
     assert(extended.animDecors[0].playback == AnimPlaybackMode::PlayOnce);
     assert(extended.FindAssetIndex(RoomAssetKind::AnimDecor, "torch-id") == 0);
+    assert(extended.props[0].sourceSheet.empty());
+    assert(extended.animProps[0].sourceSheet.empty());
+
+    const std::filesystem::path sharedPath = root / "shared-sheets.txt";
+    WriteText(sharedPath,
+        "BIOME Forest\n"
+        "PROPV3 \"water-edge\" \"Water Edge\" \"FD_Animated_Water\" 0 0 16 16 0 0 16 16\n"
+        "ANIMPROPV3 \"lava-flow\" \"Lava Flow\" \"RA_Hell_Animations\" 0 8 0 0 16 16 2 "
+        "0 0 16 16 16 0 16 16\n"
+        "ANIMDECORV3 \"water-ripple\" \"Water Ripple\" \"FD_Animated_Water\" 1 6 2 "
+        "0 16 16 16 16 16 16 16\n");
+    TileDefSet shared{};
+    assert(shared.LoadFromFile(sharedPath.string().c_str()));
+    assert(shared.props.size() == 1);
+    assert(shared.props[0].sourceSheet == "FD_Animated_Water");
+    assert(shared.animProps.size() == 1);
+    assert(shared.animProps[0].sourceSheet == "RA_Hell_Animations");
+    assert(shared.animDecors.size() == 1);
+    assert(shared.animDecors[0].sourceSheet == "FD_Animated_Water");
 
     std::filesystem::remove_all(root, ec);
     return 0;

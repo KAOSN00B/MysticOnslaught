@@ -162,6 +162,12 @@ void Shieldbearer::PlayAttackSound()
     PlaySound(_attackSound);
 }
 
+void Shieldbearer::PlayDeathSound()
+{
+    // Armored orc roars on death — deeper than a basic beast, like a heavy guardian
+    SfxBank::Get().Play(SfxId::BossRoar, 0.50f, true);
+}
+
 void Shieldbearer::EnsureSharedResourcesLoaded()
 {
     if (_sharedResourcesLoaded)

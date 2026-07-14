@@ -72,7 +72,7 @@ private:
     static void EnsureSharedResourcesLoaded();
 
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
-    void HandleChasing(float dt, Vector2 heroWorldPos);
+    void HandleChasing(float dt, Vector2 heroWorldPos, const std::vector<Vector2>& propCenters);
     void HandleMelee();
     void HandleJumpCharge(float dt);
     void HandleAirborne(float dt);

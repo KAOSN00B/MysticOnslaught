@@ -313,6 +313,12 @@ void LivingBlade::PlayAttackSound()
     PlaySound(_attackSound);
 }
 
+void LivingBlade::PlayDeathSound()
+{
+    // Possessed blade shatters on death — high-pitched metallic crack
+    SfxBank::Get().Play(SfxId::DeathSmall, 0.65f, true);
+}
+
 void LivingBlade::EnsureSharedResourcesLoaded()
 {
     if (_sharedResourcesLoaded)

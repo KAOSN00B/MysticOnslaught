@@ -1,5 +1,18 @@
 #pragma once
 
+#include "PlayerClass.h"
+
+enum class PrologueEntryMode
+{
+    NewGame,
+    Continue,
+};
+
+bool ShouldPlayPrologue(PrologueEntryMode mode);
+const char* GetPrologueBasicAttackName(PlayerClass playerClass);
+int GetFirstPoeDialogueLineCount();
+const char* GetFirstPoeDialogueLine(int index);
+
 enum class ProloguePhase
 {
     Inactive,

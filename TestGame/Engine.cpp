@@ -22,6 +22,7 @@
 #include "NineSlice.h"
 #include "VirtualCanvas.h"
 #include "RoomLayout.h"
+#include "RoomCollision.h"
 #include "VirtualCanvas.h"
 #include "raymath.h"
 #include "VirtualCanvas.h"
@@ -45,11 +46,6 @@ namespace
     const char* kPoeRevivalLine =
         "How unfortunate. The dungeon claims another soul... but I am not finished "
         "with you yet, little mystic. Rise -- and tell me what you will become.";
-    const char* kFirstPoeLines[] = {
-        "Hm. You're stronger than you look. Could've been stronger, with proper guidance.",
-        "Guess you'll do.",
-        "I can bring you back. In exchange, you're going to work for me."
-    };
     const char* kFirstZephLines[] = {
         "Oh. You must be new here.",
         "You'll find sanctuary here, at least for now. The monsters tend to keep their distance.",
@@ -565,6 +561,15 @@ void Engine::EnsureAudioInitialized()
     InitAudioDevice();
     _audioInitialised = true;
 
+    // Give every streamed Music a larger ring buffer than raylib's 4096-frame
+    // default. UpdateMusicStream refills the buffer once per frame on the main
+    // thread, so a single long frame (entering a shop, loading textures, a
+    // hitch) can drain a small buffer and produce an audible stutter — most
+    // noticeable on the quiet menu/shop themes where nothing masks it. Doubling
+    // the buffer gives roughly twice the headroom before an underrun. Must be
+    // set before any LoadMusicStream call below.
+    SetAudioStreamBufferSizeDefault(8192);
+
     _pickupSound       = LoadSound(AssetPath("Sounds/PickupSound.ogg").c_str());
     _fireballCastSound = LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
     _explosionSound    = LoadSound(AssetPath("Sounds/GS1_Spell_Explode.ogg").c_str());
@@ -765,6 +770,77 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
     _curseShrineUsed = false;
 }
 
+void Engine::RefreshHandcraftedRooms()
+{
+    _roomLibrary.Refresh(AssetFolderPath("Rooms"));
+    _roomAssetCatalog.Refresh(AssetFolderPath("MapTilesets"));
+    _tileRenderer.LoadRoomAssetCatalog(_roomAssetCatalog);
+    _lastHandcraftedRoomId.clear();
+}
+
+RoomLayout Engine::BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definitions,
+                                          int visualVariant, int propDensityBonus)
+{
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (roomIdx < 0 || roomIdx >= (int)rooms.size()) return {};
+    const DungeonRoom& room = rooms[(std::size_t)roomIdx];
+
+    if (_useHandcraftedDungeonRooms)
+    {
+        std::string mapperStem = GetBiomeName(_currentBiome);
+        if (visualVariant >= 0 && visualVariant < (int)_dungeonVisualVariants.size())
+            mapperStem = _dungeonVisualVariants[(std::size_t)visualVariant].mapperStem;
+
+        RoomRequest request;
+        request.biome = _currentBiome;
+        request.tilesetStem = mapperStem;
+        request.roomType = room.type;
+        request.doorMask = RoomDoorMask(room.hasNorth, room.hasSouth,
+                                        room.hasEast, room.hasWest);
+
+        std::string selectedId;
+        std::string warning;
+        if (!_forcedHandcraftedRoomId.empty())
+        {
+            const RoomBlueprint* forced = _roomLibrary.FindById(_forcedHandcraftedRoomId);
+            if (forced != nullptr && forced->biome == request.biome &&
+                forced->tilesetStem == request.tilesetStem &&
+                forced->roomType == request.roomType &&
+                forced->DoorMask() == request.doorMask)
+            {
+                std::optional<RoomLayout> authored =
+                    BuildRoomLayout(*forced, definitions, warning, &_roomAssetCatalog);
+                if (authored.has_value())
+                {
+                    authored->visualVariant = visualVariant;
+                    _lastHandcraftedRoomId = forced->id;
+                    _forcedHandcraftedRoomId.clear();
+                    if (!warning.empty())
+                        TraceLog(LOG_WARNING, "ROOM: %s", warning.c_str());
+                    return std::move(*authored);
+                }
+            }
+        }
+        std::optional<RoomLayout> authored = _roomLibrary.Resolve(
+            request, definitions, &_roomAssetCatalog,
+            _lastHandcraftedRoomId, selectedId, warning);
+        if (authored.has_value())
+        {
+            authored->visualVariant = visualVariant;
+            _lastHandcraftedRoomId = selectedId;
+            if (!warning.empty())
+                TraceLog(LOG_WARNING, "ROOM: %s", warning.c_str());
+            return std::move(*authored);
+        }
+    }
+
+    RoomLayout generated = RoomLayout::Generate(
+        room.hasNorth, room.hasSouth, room.hasEast, room.hasWest, room.type,
+        &definitions, propDensityBonus);
+    generated.visualVariant = visualVariant;
+    return generated;
+}
+
 void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates)
 {
     const auto& rooms = _dungeonGen.GetRooms();
@@ -784,11 +860,8 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     // Forest/Jungle stay the densest biomes — smaller bonus now that every
     // biome's base prop counts were raised (footprint placement keeps it clean).
     int propDensityBonus = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 2 : 0;
-    _dungeonRoomLayout = RoomLayout::Generate(
-        room.hasNorth, room.hasSouth,
-        room.hasEast,  room.hasWest, room.type,
-        &_tileDefs, propDensityBonus);
-    _dungeonRoomLayout.visualVariant = visualVariant;
+    _dungeonRoomLayout = BuildDungeonRoomLayout(
+        roomIdx, _tileDefs, visualVariant, propDensityBonus);
 
     if (resetRoomStates)
     {
@@ -839,7 +912,14 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     if (freshCombatRoom) ActivatePendingModifiers();
     else { _roomModHpMult = 1.f; _roomModDmgMult = 1.f; }
 
-    _player.SetWorldPos(playerSpawnPos);
+    const float roomCellW = (float)kVirtualWidth / (float)RoomLayout::kCols;
+    const float roomCellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
+    _dungeonRoomEntrySpawnPos = _dungeonRoomLayout.handcrafted
+        ? FindNearestSafeRoomPosition(_dungeonRoomLayout, playerSpawnPos,
+                                      roomCellW, roomCellH)
+        : playerSpawnPos;
+    _dungeonFallRecoveryCooldown = 0.f;
+    _player.SetWorldPos(_dungeonRoomEntrySpawnPos);
     _player.SetCombatLocked(false);
     _player.SetDashAllowedWhileCombatLocked(false);
     _player.SetManaRegenPaused(false);
@@ -1690,8 +1770,21 @@ void Engine::Update(float dt)
 
         if (_menu.StartPressed())
         {
-            // Choose a class first; the run begins from the class-select screen.
+            // New Game is the repeatable onboarding path while the tutorial is
+            // being tuned. Saved onboarding progress is deliberately untouched.
             _isDailyRun = false;   // normal (randomly seeded) run
+            _prologueEntryMode = PrologueEntryMode::NewGame;
+            _classSelectCursor = (int)_player.GetClass();
+            ReloadAppearancePortrait();
+            _classSelectReturnState = GameState::Menu;
+            _gameState = GameState::ClassSelect;
+        }
+        if (_menu.ContinuePressed())
+        {
+            // Continue is the testing shortcut into the established village
+            // flow. Hero selection still makes class and appearance explicit.
+            _isDailyRun = false;
+            _prologueEntryMode = PrologueEntryMode::Continue;
             _classSelectCursor = (int)_player.GetClass();
             ReloadAppearancePortrait();
             _classSelectReturnState = GameState::Menu;
@@ -1701,6 +1794,7 @@ void Engine::Update(float dt)
         {
             _isDailyRun = true;
             _dailySeed  = ComputeDailySeed();
+            _prologueEntryMode = PrologueEntryMode::Continue;
             _classSelectCursor = (int)_player.GetClass();
             ReloadAppearancePortrait();
             _classSelectReturnState = GameState::Menu;
@@ -1717,13 +1811,12 @@ void Engine::Update(float dt)
         }
         if (_menu.QuitPressed())
             _shouldClose = true;
-        if (_menu.HowToPressed())
-        {
-            _runState.OpenHowToPlay(GameState::Menu, _touchModeActive);
-        }
         if (_menu.DungeonRunPressed())
         {
             _isMainGameRun = false;
+            _useHandcraftedDungeonRooms = true;
+            _forcedHandcraftedRoomId.clear();
+            RefreshHandcraftedRooms();
             _dungeonGen.Generate();
             _dungeonView          = DungeonView::Graph;
             _dungeonRoomIdx = -1;
@@ -1816,6 +1909,61 @@ void Engine::Update(float dt)
 
     case GameState::TileMapper:
         _tileMapper.Update();
+        if (_tileMapper.ConsumeRoomPlaytestRequest())
+        {
+            const RoomBlueprint playtestRoom = _tileMapper.EditedRoom();
+            _tileMapper.Unload();
+
+            _isMainGameRun = false;
+            _useHandcraftedDungeonRooms = true;
+            RefreshHandcraftedRooms();
+            _forcedHandcraftedRoomId = playtestRoom.id;
+            _currentBiome = playtestRoom.biome;
+            _pendingBiome = _currentBiome;
+            _dungeonRoomIdx = -1;
+
+            int playtestRoomIdx = -1;
+            for (int attempt = 0; attempt < 64 && playtestRoomIdx < 0; ++attempt)
+            {
+                _dungeonGen.Generate();
+                const auto& rooms = _dungeonGen.GetRooms();
+                for (int i = 0; i < (int)rooms.size(); ++i)
+                {
+                    const DungeonRoom& candidate = rooms[(std::size_t)i];
+                    if (candidate.type == playtestRoom.roomType &&
+                        RoomDoorMask(candidate.hasNorth, candidate.hasSouth,
+                                     candidate.hasEast, candidate.hasWest) == playtestRoom.DoorMask())
+                    {
+                        playtestRoomIdx = i;
+                        break;
+                    }
+                }
+            }
+
+            LoadTilesetForBiome(_currentBiome);
+            if (playtestRoomIdx >= 0)
+            {
+                for (int i = 0; i < (int)_dungeonVisualVariants.size(); ++i)
+                {
+                    if (_dungeonVisualVariants[(std::size_t)i].mapperStem == playtestRoom.tilesetStem)
+                    {
+                        if (playtestRoomIdx < (int)_dungeonRoomVisualVariants.size())
+                            _dungeonRoomVisualVariants[(std::size_t)playtestRoomIdx] = i;
+                        break;
+                    }
+                }
+                EnterDungeonRoom(playtestRoomIdx, DungeonDoorSide::None,
+                                 GetDungeonBottomSpawnPos(), true);
+            }
+            else
+            {
+                _forcedHandcraftedRoomId.clear();
+                _dungeonView = DungeonView::Graph;
+                _message = "No dungeon room matches this door layout yet";
+                _gameState = GameState::DungeonRun;
+            }
+            break;
+        }
         if (_tileMapper.WantsToExit())
         {
             _tileMapper.Unload();
@@ -3913,8 +4061,9 @@ void Engine::DrawVillagePlayground()
     DrawVillageCitizens(worldOffset);
     if (_villageShopNpcActive) _shop.DrawNpc(Vector2{ -_cameraPos.x, -_cameraPos.y });
 
-    if (_villageIntroDialogueActive)
+    auto drawVillageIntroDialogue = [&]()
     {
+        if (!_villageIntroDialogueActive) return;
         const char* line = kFirstZephLines[std::clamp(_villageIntroDialogueLine, 0, 3)];
         Rectangle panel{ kVirtualWidth * 0.14f, kVirtualHeight * 0.70f,
                          kVirtualWidth * 0.72f, kVirtualHeight * 0.20f };
@@ -3955,7 +4104,7 @@ void Engine::DrawVillagePlayground()
             DrawText(wrappedLine.c_str(), (int)drawX, (int)drawY, fontSize, RAYWHITE);
         DrawText("E / Enter", (int)(panel.x + panel.width - 130.f),
                  (int)(panel.y + panel.height - 34.f), 20, Fade(RAYWHITE, 0.7f));
-    }
+    };
 
     Vector2 mouse = GetVirtualMousePos();
     Vector2 mouseWorld{ mouse.x - worldOffset.x, mouse.y - worldOffset.y };
@@ -4041,6 +4190,10 @@ void Engine::DrawVillagePlayground()
         DrawRectangle((int)(kVirtualWidth * 0.5f - w * 0.5f - 16), 54, w + 32, 38, Fade(BLACK, 0.65f));
         DrawText(_villagePlaygroundMessage.c_str(), (int)(kVirtualWidth * 0.5f - w * 0.5f), 62, fs, GOLD);
     }
+
+    // Dialogue is the final village foreground pass so HUD and world UI can
+    // never cover the speaker or text.
+    drawVillageIntroDialogue();
 }
 
 void Engine::Draw()
@@ -10445,9 +10598,11 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 for (int c = 0; c < RoomLayout::kCols; c++)
                 {
                     TileType t = _dungeonRoomLayout.tiles[r][c];
-                    if (t == TileType::Floor || t == TileType::FloorVariant ||
+                    if ((!_dungeonRoomLayout.solid[r][c] || RoomPlacementClearsAtDoor(
+                            {(float)c,(float)r,1.f,1.f},_dungeonRoomLayout)) &&
+                        (t == TileType::Floor || t == TileType::FloorVariant ||
                         t == TileType::DoorOpen || t == TileType::Void ||
-                        t == TileType::None)
+                        t == TileType::None))
                     {
                         continue;
                     }
@@ -10466,9 +10621,9 @@ void Engine::UpdateSpreadProjectiles(float dt)
             for (const SpritePlacement& prop : _dungeonRoomLayout.props)
             {
                 if (blocked) break;
-                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
-
-                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+                const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,prop,_tileDefs);
+                if (defs==nullptr || prop.defIdx<0 || prop.defIdx>=(int)defs->props.size()) continue;
+                const Rectangle& coll = defs->props[prop.defIdx].collision;
                 Rectangle propRect{
                     prop.col * cellW + coll.x * pxScaleX,
                     prop.row * cellH + coll.y * pxScaleY,
@@ -10977,7 +11132,7 @@ void Engine::UpdateDeathRevive()
     if (advance)
     {
         if (!fullyShown) { _deathReviveTypeT = kDeathReviveTypeDur; return; }
-        if (_firstDeathRevive && _deathReviveDialogueLine < 2)
+        if (_firstDeathRevive && _deathReviveDialogueLine < GetFirstPoeDialogueLineCount() - 1)
         {
             ++_deathReviveDialogueLine;
             _deathReviveTypeT = 0.f;
@@ -11058,7 +11213,7 @@ void Engine::DrawDeathRevive()
 
     // Typed body text with simple word-wrap.
     const char* revivalLine = _firstDeathRevive
-        ? kFirstPoeLines[std::clamp(_deathReviveDialogueLine, 0, 2)]
+        ? GetFirstPoeDialogueLine(_deathReviveDialogueLine)
         : kPoeRevivalLine;
     int shown = (int)((float)strlen(revivalLine) *
                       std::min(_deathReviveTypeT / kDeathReviveTypeDur, 1.f));
@@ -12734,6 +12889,7 @@ void Engine::LoadDungeonVisualVariantAssets(int variantIdx, TileDefSet& defs, Ti
     defs = {};
     defs.LoadFromFile(AssetPath(txtFile.c_str()).c_str());
     renderer.Init(sheetPath.c_str(), groundPath.c_str(), sharedRewardPath.c_str(), defs);
+    renderer.LoadRoomAssetCatalog(_roomAssetCatalog);
 }
 
 // Loads visual-variant data and initializes the first connected room wing.
@@ -12992,6 +13148,11 @@ bool Engine::IsSpawnPositionValid(Vector2 pos)
 
 void Engine::ResetRunState()
 {
+    // Class and appearance are player choices, not run-scoped progression.
+    // Preserve both before Character::Init reloads all sprite sheets.
+    const PlayerClass selectedClass = _player.GetClass();
+    const std::string selectedAppearance = _player.GetAppearance();
+
     _player.SetDashAllowedWhileCombatLocked(false);
     _nav.CancelAndReset();
     ResetMusicState();
@@ -13091,6 +13252,8 @@ void Engine::ResetRunState()
     _displayHpPct = 1.f; _displayManaPct = 1.f;
     _vfx.Clear();
     _damageNumbers.Clear();
+    _player.SetClass(selectedClass);
+    _player.SetAppearance(selectedAppearance.c_str());
     _player.Init();
 
     // Meta progression: permanent unlocks + gold retained from the last death.
@@ -13610,6 +13773,9 @@ int Engine::ComputeDailySeed() const
 void Engine::StartMainRun()
 {
     _debug.Deactivate();
+    _useHandcraftedDungeonRooms = false;
+    _lastHandcraftedRoomId.clear();
+    _forcedHandcraftedRoomId.clear();
     // One-wallet meta loop: gold persists from the village INTO the run (only a
     // death zeroes it, in HandlePlayerDeathMetaPenalty). Capture the village
     // wallet before ResetRunState reseeds it, then restore it afterwards so the
@@ -13640,14 +13806,19 @@ void Engine::StartMainRun()
     _fadeInDuration = 1.0f;
 }
 
-void Engine::StartOnboardingOrVillage()
+void Engine::StartSelectedGameMode()
 {
-    if (!_meta.HasCompletedOnboarding())
+    if (ShouldPlayPrologue(_prologueEntryMode))
     {
         StartPrologue();
         return;
     }
 
+    // Continue skips onboarding, so initialize the sprite sheets here using
+    // the class and appearance that were just confirmed on hero select.
+    const int walletGold = _player.GetGold();
+    _player.Init();
+    _player.SetGold(walletGold);
     _pendingNewRunFromVillage = true;
     _firstVillageVisit = false;
     EnterVillage();
@@ -13656,6 +13827,9 @@ void Engine::StartOnboardingOrVillage()
 void Engine::StartPrologue()
 {
     int walletGold = _player.GetGold();
+    _useHandcraftedDungeonRooms = false;
+    _lastHandcraftedRoomId.clear();
+    _forcedHandcraftedRoomId.clear();
     ResetRunState();
     _player.SetGold(walletGold);
     _isMainGameRun = false;
@@ -13804,7 +13978,7 @@ void Engine::UpdateClassSelect()
         }
         _player.SetAppearance(GetAppearancePrefix(_appearanceCursor));
         _player.SetClass(selectedClass);
-        StartOnboardingOrVillage();
+        StartSelectedGameMode();
     }
 }
 
@@ -14989,7 +15163,10 @@ Vector2 Engine::GetDungeonSpawnPos(float cellW, float cellH) const
         int row = GetRandomValue(2, RoomLayout::kRows - 3);
 
         TileType t = _dungeonRoomLayout.tiles[row][col];
-        if (t != TileType::Floor && t != TileType::FloorVariant)
+        if ((_dungeonRoomLayout.solid[row][col] && !RoomPlacementClearsAtDoor(
+                {(float)col,(float)row,1.f,1.f},_dungeonRoomLayout)) ||
+            _dungeonRoomLayout.fall[row][col] ||
+            (t != TileType::Floor && t != TileType::FloorVariant))
             continue;
 
         // Don't spawn on a prop cell.
@@ -15516,7 +15693,9 @@ void Engine::SpawnDungeonRoomEnemies()
                     center.x + cosf(angle) * sw * 0.40f,
                     center.y + sinf(angle) * sh * 0.34f
                 };
-                SpawnSkeletonArcher(position);
+                Enemy* spawned = SpawnSkeletonArcher(position);
+                SkeletonArcher* archer = spawned != nullptr ? spawned->AsSkeletonArcher() : nullptr;
+                if (archer != nullptr) archer->EnableRelentlessFire();
             }
         }
         roomState.enemiesInitialized = true;
@@ -15883,12 +16062,19 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
         || room.type == RoomType::Treasure
         || room.type == RoomType::Store;
 
+    layout.roomCleared = alwaysOpen;
+
     int doorStartC = GetDungeonDoorStartCol();
     int doorStartR = GetDungeonDoorStartRow();
 
     auto shouldOpen = [&](DungeonDoorSide side) {
         return alwaysOpen || side == entryDoorSide;
     };
+
+    layout.doorZoneOpen[(int)RoomWallSide::Top] = shouldOpen(DungeonDoorSide::North);
+    layout.doorZoneOpen[(int)RoomWallSide::Bottom] = shouldOpen(DungeonDoorSide::South);
+    layout.doorZoneOpen[(int)RoomWallSide::Left] = shouldOpen(DungeonDoorSide::West);
+    layout.doorZoneOpen[(int)RoomWallSide::Right] = shouldOpen(DungeonDoorSide::East);
 
     auto setNorth = [&](bool open) {
         for (int dc = 0; dc < kDungeonDoorSpanCols; dc++)
@@ -15909,6 +16095,8 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
 
     if (room.type == RoomType::Boss)
     {
+        layout.roomCleared = cleared;
+        for (bool& open : layout.doorZoneOpen) open = cleared;
         if (room.hasNorth) setNorth(false);
         if (room.hasSouth) setSouth(false);
         if (room.hasWest)  setWest(false);
@@ -16144,9 +16332,11 @@ void Engine::RebuildDungeonNav()
         for (int c = 0; c < RoomLayout::kCols; c++)
         {
             TileType t = _dungeonRoomLayout.tiles[r][c];
-            if (t == TileType::Floor        || t == TileType::FloorVariant ||
+            if ((!_dungeonRoomLayout.solid[r][c] || RoomPlacementClearsAtDoor(
+                    {(float)c,(float)r,1.f,1.f},_dungeonRoomLayout)) &&
+                (t == TileType::Floor        || t == TileType::FloorVariant ||
                 t == TileType::DoorOpen     || t == TileType::Void         ||
-                t == TileType::None)
+                t == TileType::None))
                 continue;
             solids.push_back({ c * cellW, r * cellH, cellW, cellH });
         }
@@ -16157,8 +16347,9 @@ void Engine::RebuildDungeonNav()
     // part of the physical collider.
     for (const SpritePlacement& p : _dungeonRoomLayout.props)
     {
-        if (p.defIdx < 0 || p.defIdx >= (int)_tileDefs.props.size()) continue;
-        const Rectangle& coll = _tileDefs.props[p.defIdx].collision;
+        const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,p,_tileDefs);
+        if (defs==nullptr || p.defIdx<0 || p.defIdx>=(int)defs->props.size()) continue;
+        const Rectangle& coll = defs->props[p.defIdx].collision;
         solids.push_back({
             p.col * cellW + coll.x * pxSX,
             p.row * cellH + coll.y * pxSY,
@@ -16167,8 +16358,9 @@ void Engine::RebuildDungeonNav()
     }
     for (const SpritePlacement& p : _dungeonRoomLayout.animProps)
     {
-        if (p.defIdx < 0 || p.defIdx >= (int)_tileDefs.animProps.size()) continue;
-        const Rectangle& coll = _tileDefs.animProps[p.defIdx].collision;
+        const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,p,_tileDefs);
+        if (defs==nullptr || p.defIdx<0 || p.defIdx>=(int)defs->animProps.size()) continue;
+        const Rectangle& coll = defs->animProps[p.defIdx].collision;
         solids.push_back({
             p.col * cellW + coll.x * pxSX,
             p.row * cellH + coll.y * pxSY,
@@ -16205,9 +16397,11 @@ void Engine::ResolveDungeonEnemyCollisions()
             for (int c = std::max(0, ec - 2); c <= std::min(RoomLayout::kCols - 1, ec + 2); c++)
             {
                 TileType t = _dungeonRoomLayout.tiles[r][c];
-                if (t == TileType::Floor        || t == TileType::FloorVariant ||
+                if ((!_dungeonRoomLayout.solid[r][c] || RoomPlacementClearsAtDoor(
+                        {(float)c,(float)r,1.f,1.f},_dungeonRoomLayout)) &&
+                    (t == TileType::Floor        || t == TileType::FloorVariant ||
                     t == TileType::DoorOpen     || t == TileType::Void         ||
-                    t == TileType::None)
+                    t == TileType::None))
                     continue;
 
                 Rectangle wallRect{ c * cellW, r * cellH, cellW, cellH };
@@ -16296,8 +16490,9 @@ void Engine::ResolveDungeonEnemyCollisions()
 
             for (const SpritePlacement& prop : _dungeonRoomLayout.props)
             {
-                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
-                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+                const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,prop,_tileDefs);
+                if(defs==nullptr||prop.defIdx<0||prop.defIdx>=(int)defs->props.size()) continue;
+                const Rectangle& coll = defs->props[prop.defIdx].collision;
                 resolveEnemyVsPropRect({
                     prop.col * cellW + coll.x * pxSX,
                     prop.row * cellH + coll.y * pxSY,
@@ -16305,8 +16500,9 @@ void Engine::ResolveDungeonEnemyCollisions()
             }
             for (const SpritePlacement& prop : _dungeonRoomLayout.animProps)
             {
-                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.animProps.size()) continue;
-                const Rectangle& coll = _tileDefs.animProps[prop.defIdx].collision;
+                const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,prop,_tileDefs);
+                if(defs==nullptr||prop.defIdx<0||prop.defIdx>=(int)defs->animProps.size()) continue;
+                const Rectangle& coll = defs->animProps[prop.defIdx].collision;
                 resolveEnemyVsPropRect({
                     prop.col * cellW + coll.x * pxSX,
                     prop.row * cellH + coll.y * pxSY,
@@ -18502,6 +18698,7 @@ void Engine::UpdateDungeonRun(float dt)
         }
 
         UpdateAbilityAiming();
+        const Vector2 playerPosBeforeUpdate = _player.GetWorldPos();
         _player.Update(dt);
         HandlePlayerCastRequest();
         UpdateDungeonMagicGemAndBarrier(dt);
@@ -18581,10 +18778,8 @@ void Engine::UpdateDungeonRun(float dt)
             {
                 _dungeonScrollTileRenderer.Unload();
             }
-            _dungeonScrollNextLayout  = RoomLayout::Generate(
-                next.hasNorth, next.hasSouth, next.hasEast, next.hasWest, next.type,
-                nextDefs);
-            _dungeonScrollNextLayout.visualVariant = nextVisualVariant;
+            _dungeonScrollNextLayout = BuildDungeonRoomLayout(
+                nextIdx, *nextDefs, nextVisualVariant);
             _dungeonScrollNextEntryDoorSide = OppositeDungeonDoorSide(dr, dc);
             ApplyDungeonRoomDoorState(_dungeonScrollNextLayout, nextIdx, _dungeonScrollNextEntryDoorSide);
             _dungeonScrollNextIdx     = nextIdx;
@@ -18653,6 +18848,22 @@ void Engine::UpdateDungeonRun(float dt)
             if ((pos.x != posBefore.x || pos.y != posBefore.y) && _player.IsBeingForcedPushed())
                 _player.OnForcedPushCollision();
 
+            // Authored rooms may paint interior walls and void gaps anywhere on
+            // the 28x16 grid. Resolve movement one axis at a time so the player
+            // slides along those shapes instead of sticking at corners.
+            if (_dungeonRoomLayout.handcrafted)
+            {
+                const Vector2 desiredPos = _player.GetWorldPos();
+                const Vector2 resolvedPos = ResolveHandcraftedTileMovement(
+                    _dungeonRoomLayout, playerPosBeforeUpdate, desiredPos,
+                    _player.GetCollisionRec(), cellW, cellH);
+                if (resolvedPos.x != desiredPos.x || resolvedPos.y != desiredPos.y)
+                {
+                    _player.SetWorldPos(resolvedPos);
+                    if (_player.IsBeingForcedPushed()) _player.OnForcedPushCollision();
+                }
+            }
+
             // Prop collision - resolve player out of each prop's stored collision rect.
             float pxScaleX = cellW / 16.f;
             float pxScaleY = cellH / 16.f;
@@ -18674,8 +18885,9 @@ void Engine::UpdateDungeonRun(float dt)
             };
             for (const SpritePlacement& prop : _dungeonRoomLayout.props)
             {
-                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
-                const Rectangle& coll = _tileDefs.props[prop.defIdx].collision;
+                const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,prop,_tileDefs);
+                if(defs==nullptr||prop.defIdx<0||prop.defIdx>=(int)defs->props.size()) continue;
+                const Rectangle& coll = defs->props[prop.defIdx].collision;
                 resolvePlayerVsPropRect({
                     prop.col * cellW + coll.x * pxScaleX,
                     prop.row * cellH + coll.y * pxScaleY,
@@ -18683,12 +18895,29 @@ void Engine::UpdateDungeonRun(float dt)
             }
             for (const SpritePlacement& prop : _dungeonRoomLayout.animProps)
             {
-                if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.animProps.size()) continue;
-                const Rectangle& coll = _tileDefs.animProps[prop.defIdx].collision;
+                const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,prop,_tileDefs);
+                if(defs==nullptr||prop.defIdx<0||prop.defIdx>=(int)defs->animProps.size()) continue;
+                const Rectangle& coll = defs->animProps[prop.defIdx].collision;
                 resolvePlayerVsPropRect({
                     prop.col * cellW + coll.x * pxScaleX,
                     prop.row * cellH + coll.y * pxScaleY,
                     coll.width * pxScaleX, coll.height * pxScaleY });
+            }
+
+            _dungeonFallRecoveryCooldown = std::max(0.f, _dungeonFallRecoveryCooldown - dt);
+            if (_dungeonRoomLayout.handcrafted && _dungeonFallRecoveryCooldown <= 0.f)
+            {
+                const Rectangle body = _player.GetCollisionRec();
+                const Vector2 feet{ body.x + body.width * 0.5f,
+                                    body.y + body.height * 0.88f };
+                if (IsRoomFallPoint(_dungeonRoomLayout, feet, cellW, cellH))
+                {
+                    _player.TakePitfallDamage(1);
+                    _dungeonFallRecoveryCooldown = 0.8f;
+                    _message = "You fell";
+                    if (_player.GetHealthValue() > 0.f)
+                        _player.SetWorldPos(_dungeonRoomEntrySpawnPos);
+                }
             }
         }
 
@@ -18817,13 +19046,15 @@ void Engine::UpdateDungeonRun(float dt)
         };
         for (const SpritePlacement& prop : _dungeonRoomLayout.props)
         {
-            if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.props.size()) continue;
-            addDungeonPropCenter(prop, _tileDefs.props[prop.defIdx].collision);
+            const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,prop,_tileDefs);
+            if(defs==nullptr||prop.defIdx<0||prop.defIdx>=(int)defs->props.size()) continue;
+            addDungeonPropCenter(prop, defs->props[prop.defIdx].collision);
         }
         for (const SpritePlacement& prop : _dungeonRoomLayout.animProps)
         {
-            if (prop.defIdx < 0 || prop.defIdx >= (int)_tileDefs.animProps.size()) continue;
-            addDungeonPropCenter(prop, _tileDefs.animProps[prop.defIdx].collision);
+            const TileDefSet* defs=ResolveRoomDefinitions(_dungeonRoomLayout,prop,_tileDefs);
+            if(defs==nullptr||prop.defIdx<0||prop.defIdx>=(int)defs->animProps.size()) continue;
+            addDungeonPropCenter(prop, defs->animProps[prop.defIdx].collision);
         }
 
         EnemyRuntimeContext eCtx{};
@@ -19862,21 +20093,20 @@ void Engine::DrawDungeonRun()
                 switch (_prologue.GetPhase())
                 {
                 case ProloguePhase::BasicAttack:
-                    prompt = bindings.attack == KEY_NULL
-                        ? "Press LMB to attack - defeat the grunts"
-                        : TextFormat("Press %s to attack - defeat the grunts", GetKeyName(bindings.attack));
+                    prompt = TextFormat("They're coming. %s - %s.",
+                        bindings.attack == KEY_NULL ? "LMB" : GetKeyName(bindings.attack),
+                        GetPrologueBasicAttackName(_player.GetClass()));
                     break;
                 case ProloguePhase::Ability:
-                    prompt = TextFormat("You are a skilled %s - press %s to use %s",
-                        GetPlayerClassInfo(_player.GetClass()).name,
+                    prompt = TextFormat("Use what you know. %s - %s.",
                         GetKeyName(bindings.ability[0]),
                         GetAbilityName(_player.GetLearnedAbility(0)));
                     break;
                 case ProloguePhase::Dash:
-                    prompt = TextFormat("Press %s to dash", GetKeyName(bindings.dash));
+                    prompt = TextFormat("Move! %s to dash through danger.", GetKeyName(bindings.dash));
                     break;
                 case ProloguePhase::LastStand:
-                    prompt = TextFormat("SURROUNDED  -  STORY HP %d / 3",
+                    prompt = TextFormat("There are too many. Keep moving.  HP %d / 3",
                                         3 - _prologue.GetLastStandHits());
                     break;
                 default: break;
@@ -19950,10 +20180,6 @@ void Engine::DrawDungeonRun()
                 DrawText(msg, (int)(sw * 0.5f - mw * 0.5f), (int)(sh * 0.3f), 54, Fade(Color{ 120, 255, 170, 255 }, a));
             }
 
-            // Draw cutscene overlay (dialogue box, fade, etc.) on top of the game.
-            if (_cutscene.IsActive())
-                _cutscene.Draw(_shopBorderTex, _shopZephTex, GetPromptModeForUi());
-
             if (_debug.IsActive())
             {
                 DrawDebugToggleTab();
@@ -19967,6 +20193,11 @@ void Engine::DrawDungeonRun()
             }
             if (_isHitboxEditorActive)
                 DrawHitboxEditor();
+
+            // Dialogue is deliberately after gameplay and debug HUD. The
+            // dialogue-layout editor remains last so its handles stay usable.
+            if (_cutscene.IsActive())
+                _cutscene.Draw(_shopBorderTex, _shopZephTex, GetPromptModeForUi());
             if (_isDlgEditorActive)
                 DrawDialogueBoxEditor();
         }

@@ -2,6 +2,47 @@
 
 #include <algorithm>
 
+namespace
+{
+    constexpr const char* kFirstPoeDialogue[] = {
+        "Hm. You're stronger than you look. Could've been stronger, with proper guidance.",
+        "Guess you'll do.",
+        "These monsters have kept me very busy. Every body they leave behind becomes my problem.",
+        "I can bring you back. In exchange, you're going to thin their numbers for me.",
+        "Do try to last longer next time.",
+    };
+}
+
+bool ShouldPlayPrologue(PrologueEntryMode mode)
+{
+    return mode == PrologueEntryMode::NewGame;
+}
+
+const char* GetPrologueBasicAttackName(PlayerClass playerClass)
+{
+    switch (playerClass)
+    {
+    case PlayerClass::Mage:    return "Arcane Staff Bolt";
+    case PlayerClass::Warrior: return "Sword Slash";
+    case PlayerClass::Hunter:  return "Bow Shot";
+    case PlayerClass::Rogue:   return "Dagger Strike";
+    case PlayerClass::Paladin: return "Shielded Slash";
+    case PlayerClass::Warlock: return "Shadow Staff Bolt";
+    default:                   return "Basic Attack";
+    }
+}
+
+int GetFirstPoeDialogueLineCount()
+{
+    return (int)(sizeof(kFirstPoeDialogue) / sizeof(kFirstPoeDialogue[0]));
+}
+
+const char* GetFirstPoeDialogueLine(int index)
+{
+    index = std::clamp(index, 0, GetFirstPoeDialogueLineCount() - 1);
+    return kFirstPoeDialogue[index];
+}
+
 void PrologueController::Begin()
 {
     _phase = ProloguePhase::BasicAttack;

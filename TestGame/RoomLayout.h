@@ -9,6 +9,29 @@ struct SpritePlacement
 {
     int defIdx;   // index into TileDefSet::props or TileDefSet::decors
     int col, row; // tile-grid position within the room
+    std::string sourceTileset; // empty = active biome definitions
+};
+
+struct RoomTilePlacement
+{
+    std::string sourceTileset;
+    TileType type = TileType::Floor;
+    bool ground = false;
+    Rectangle src{};
+    int col = 0;
+    int row = 0;
+};
+
+struct RoomSourceDefinitions
+{
+    std::string stem;
+    TileDefSet definitions;
+};
+
+struct RoomDoorZone
+{
+    bool enabled = false;
+    Rectangle tiles{}; // tile-space rectangle, independent from draw scale
 };
 
 // ── RoomLayout ────────────────────────────────────────────────────────────────
@@ -26,9 +49,19 @@ struct RoomLayout
     int visualVariant = 0; // index into the active biome's editable visual palette
     bool handcrafted = false;
     std::string sourceRoomId;
+    float wallTopDepth = 1.0f;
+    float wallBottomDepth = 1.0f;
+    float wallLeftDepth = 1.0f;
+    float wallRightDepth = 1.0f;
 
     TileType tiles[kRows][kCols]{};
     bool fall[kRows][kCols]{};
+    bool solid[kRows][kCols]{};
+    RoomDoorZone doorZones[4]{}; // top, bottom, left, right
+    bool doorZoneOpen[4]{};
+    bool roomCleared = false;
+    std::vector<RoomTilePlacement> visualTiles;
+    std::vector<RoomSourceDefinitions> assetSources;
     std::vector<SpritePlacement> props;       // solid objects with collision
     std::vector<SpritePlacement> animProps;   // animated solid objects with collision
     std::vector<SpritePlacement> decors;      // static floor decorations, no collision
@@ -46,3 +79,13 @@ struct RoomLayout
                                const TileDefSet* defs     = nullptr,
                                int      propDensityBonus  = 0);
 };
+
+inline const TileDefSet* ResolveRoomDefinitions(const RoomLayout& room,
+                                                const SpritePlacement& placement,
+                                                const TileDefSet& fallback)
+{
+    if (placement.sourceTileset.empty()) return &fallback;
+    for (const RoomSourceDefinitions& source : room.assetSources)
+        if (source.stem == placement.sourceTileset) return &source.definitions;
+    return nullptr;
+}

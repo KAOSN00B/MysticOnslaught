@@ -1072,6 +1072,17 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
 
+void Character::TakePitfallDamage(int damage)
+{
+    if (_dying || damage <= 0) return;
+    const float healthBefore = _health;
+    // Falling is an environmental penalty rather than an enemy hit: it always
+    // costs HP, does not consume armour, and does not trigger Rage/Faith.
+    BaseCharacter::TakeDamage(damage, _worldPos);
+    _telemDamageTaken += std::max(0.f, healthBefore - _health);
+    GrantInvulnerability(1.f);
+}
+
 void Character::TakeFractionalDamage(float damage, Vector2 attackerPos)
 {
     if (_hasIFrames || _dashInvincible || _forcedPushActive)

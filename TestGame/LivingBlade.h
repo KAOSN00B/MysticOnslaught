@@ -14,7 +14,7 @@ class LivingBlade : public Enemy
 {
 public:
     LivingBlade(Vector2 pos);
-    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Metal; }
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Small; }
     ~LivingBlade() override;
 
     void Init();
@@ -35,6 +35,7 @@ public:
     bool UsesDirectPursuit() const override { return true; }
 
     void PlayAttackSound() override;
+    void PlayDeathSound() override;
 
 private:
     enum class BladeState { Resting, WindingUp, Dashing };

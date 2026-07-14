@@ -53,6 +53,23 @@ struct HazardZone
     float   radius;   // damage radius (enemies keep an extra margin beyond it)
 };
 
+// ── Squad directive (crowd behaviour) ────────────────────────────────────────
+// One shared battlefield read the CombatDirector rebuilds every frame and hands
+// to every enemy: how bold the pack should be (threat assessment of the player),
+// which tank is anchoring the advance, whether someone already has the player
+// engaged, and where the allies are massed. Enemies consult it in HandleMovement
+// so the crowd behaves like a pack — rallying behind tanks, flanking an engaged
+// player, hanging back to support — instead of a stream of solo chargers.
+struct SquadDirective
+{
+    float   aggression    = 1.f;    // kAggressionMin..kAggressionMax (see Balance::Squad)
+    bool    hasLeader     = false;  // an active Tank anchor exists
+    Vector2 leaderPos{};            // that tank's world position
+    bool    playerEngaged = false;  // an ally is attacking the player right now
+    Vector2 allyCentroid{};         // average position of active allies
+    int     allyCount     = 0;      // active, alive, non-boss enemies
+};
+
 class Enemy : public BaseCharacter
 {
 public:
@@ -80,6 +97,15 @@ public:
     // frame by CombatDirector before Update; the pointed-to vector is owned by
     // Engine and stays valid for the whole frame. May be null (no hazards).
     void SetHazardZones(const std::vector<HazardZone>* zones) { _hazardZones = zones; }
+
+    // Squad-level crowd directive (threat tier, formation leader, engagement).
+    // Set every frame by CombatDirector before Update; the pointed-to struct is
+    // owned by the director and stays valid for the whole frame. May be null.
+    void SetSquadDirective(const SquadDirective* directive) { _squadDirective = directive; }
+
+    // True while the attack animation is committed — read by CombatDirector to
+    // detect "someone already has the player engaged" for the squad directive.
+    bool IsCommittedToAttack() const { return _attacking; }
 
     // ── Facing & directional checks (see Balance::Facing) ─────────────────────
     // Sprites face horizontally, so the forward vector is {facingSign, 0}. These
@@ -432,6 +458,8 @@ protected:
     NavigationGrid* _nav    = nullptr;   // non-owning; set once by Engine on spawn
     // Non-owning; refreshed each frame by CombatDirector (see SetHazardZones).
     const std::vector<HazardZone>* _hazardZones = nullptr;
+    // Non-owning; refreshed each frame by CombatDirector (see SetSquadDirective).
+    const SquadDirective* _squadDirective = nullptr;
 
     // ── Facing commitment (ticked in Update) ──────────────────────────────────
     float _facingLockTimer    = 0.f;   // > 0: facing frozen (attack + recovery)

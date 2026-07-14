@@ -43,6 +43,7 @@ public:
     bool    WantsToFireArrow() const { return _wantsToFire; }
     Vector2 GetArrowDirection() const { return _fireDirection; }
     void    OnArrowFired();
+    void    EnableRelentlessFire();
 
     void PlayAttackSound() override;
 
@@ -63,6 +64,7 @@ private:
     float   _shotCooldown   = 0.f;
     bool    _drawingBow     = false;
     bool    _wantsToFire    = false;
+    bool    _relentlessFire = false;
     Vector2 _fireDirection  = {};
     float   _strafeSign     = 1.f;   // which way to circle inside the band
     float   _strafeSwapTimer = 0.f;

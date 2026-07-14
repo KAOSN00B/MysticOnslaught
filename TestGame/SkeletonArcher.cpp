@@ -109,6 +109,7 @@ void SkeletonArcher::ResetForSpawn(Vector2 pos)
     _shotCooldown  = (float)GetRandomValue(60, 160) / 100.f;   // stagger opening shots
     _drawingBow    = false;
     _wantsToFire   = false;
+    _relentlessFire = false;
     _fireDirection = Vector2Zero();
     _strafeSign    = (GetRandomValue(0, 1) == 0) ? -1.f : 1.f;
     _strafeSwapTimer = (float)GetRandomValue(150, 320) / 100.f;
@@ -203,7 +204,7 @@ void SkeletonArcher::Update(float dt, Vector2 heroWorldPos,
             _shotCooldown -= dt;
 
         float distToPlayer = Vector2Distance(_worldPos, heroWorldPos);
-        bool  hasLineOfSight = !hasNavigationTarget;
+        bool  hasLineOfSight = _relentlessFire || !hasNavigationTarget;
 
         // Begin the draw-bow telegraph when in range with a clear line.
         if (!_drawingBow && !_takingDamage &&
@@ -246,6 +247,15 @@ void SkeletonArcher::HandleKiteMovement(float dt, const std::vector<Vector2>& pr
 {
     if (_target == nullptr || _dying)
         return;
+
+    if (_relentlessFire)
+    {
+        _velocity = Vector2Zero();
+        float dx = _target->GetFeetWorldPos().x - _worldPos.x;
+        if      (dx < -20.f) _rightLeft = -1.f;
+        else if (dx >  20.f) _rightLeft =  1.f;
+        return;
+    }
 
     // Stand still and face the player while drawing / releasing the bow.
     if (_drawingBow || _wantsToFire)
@@ -524,6 +534,14 @@ void SkeletonArcher::OnArrowFired()
 {
     _wantsToFire   = false;
     _fireDirection = Vector2Zero();
+}
+
+void SkeletonArcher::EnableRelentlessFire()
+{
+    _relentlessFire = true;
+    _drawDurationInst = 0.45f;
+    _shotCooldownInst = 0.08f;
+    _shotCooldown = (float)GetRandomValue(8, 75) / 100.f;
 }
 
 // =============================================================================

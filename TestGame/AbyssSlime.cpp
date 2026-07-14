@@ -175,7 +175,7 @@ void AbyssSlime::SetAnimation(const Texture2D& sheet, float frameTime, bool rese
 // =============================================================================
 void AbyssSlime::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget*/, bool /*hasNavigationTarget*/,
     const std::vector<std::unique_ptr<Enemy>>& /*enemies*/,
-    const std::vector<Vector2>& /*propCenters*/)
+    const std::vector<Vector2>& propCenters)
 {
     if (!_isActive)
         return;
@@ -231,7 +231,7 @@ void AbyssSlime::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarg
 
         switch (_state)
         {
-        case State::Chasing:        if (!controlled) HandleChasing(dt, heroWorldPos); break;
+        case State::Chasing:        if (!controlled) HandleChasing(dt, heroWorldPos, propCenters); break;
         case State::MeleeAttacking: HandleMelee();            break;
         case State::JumpCharging:   HandleJumpCharge(dt);     break;
         case State::Airborne:       HandleAirborne(dt);       break;
@@ -255,7 +255,7 @@ void AbyssSlime::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarg
 // Hop locomotion — the slime never walks. Short bouncy hops close the gap;
 // the grounded pauses between hops are the player's punish windows.
 // =============================================================================
-void AbyssSlime::HandleChasing(float dt, Vector2 heroWorldPos)
+void AbyssSlime::HandleChasing(float dt, Vector2 heroWorldPos, const std::vector<Vector2>& propCenters)
 {
     Vector2 toPlayer = Vector2Subtract(heroWorldPos, _worldPos);
     float dist = Vector2Length(toPlayer);
@@ -320,13 +320,56 @@ void AbyssSlime::HandleChasing(float dt, Vector2 heroWorldPos)
     }
 
     // Otherwise wait out the grounded pause, then hop toward the player with a
-    // little angle jitter so the approach path wobbles.
+    // little angle jitter so the approach path wobbles. Add obstacle avoidance
+    // so the slime doesn't get stuck hopping into pillars.
     _hopPauseTimer -= dt;
     if (_hopPauseTimer <= 0.f && dist > 120.f)
     {
+        Vector2 moveDir = Vector2Normalize(toPlayer);
+
+        // Prop repulsion — steer away from nearby pillars
+        for (const Vector2& propCenter : propCenters)
+        {
+            float dist_prop = Vector2Distance(_worldPos, propCenter);
+            if (dist_prop < 180.f && dist_prop > 0.f)
+            {
+                Vector2 away = Vector2Subtract(_worldPos, propCenter);
+                if (Vector2Length(away) > 0.01f)
+                {
+                    away = Vector2Normalize(away);
+                    float strength = (180.f - dist_prop) / 180.f;
+                    moveDir = Vector2Add(moveDir, Vector2Scale(away, strength * 2.5f));
+                }
+            }
+        }
+
+        // Hazard repulsion — avoid player-made damage zones strongly
+        if (_hazardZones != nullptr)
+        {
+            for (const HazardZone& hazard : *_hazardZones)
+            {
+                float avoidRange = hazard.radius + 100.f;
+                float dist_hazard = Vector2Distance(_worldPos, hazard.pos);
+                if (dist_hazard >= avoidRange || dist_hazard <= 0.f)
+                    continue;
+
+                Vector2 away = Vector2Subtract(_worldPos, hazard.pos);
+                if (Vector2Length(away) > 0.01f)
+                {
+                    away = Vector2Normalize(away);
+                    float strength = (avoidRange - dist_hazard) / avoidRange;
+                    moveDir = Vector2Add(moveDir, Vector2Scale(away, strength * 4.0f));
+                }
+            }
+        }
+
+        if (Vector2Length(moveDir) > 0.01f)
+            moveDir = Vector2Normalize(moveDir);
+
+        // Apply angle jitter to the avoidance-aware direction
+        float targetAngle = atan2f(moveDir.y, moveDir.x);
         float jitter = (float)GetRandomValue(-35, 35) / 100.f;   // ±0.35 rad
-        float baseAngle = atan2f(toPlayer.y, toPlayer.x) + jitter;
-        _hopDirection = Vector2{ cosf(baseAngle), sinf(baseAngle) };
+        _hopDirection = Vector2{ cosf(targetAngle + jitter), sinf(targetAngle + jitter) };
         _isHopping = true;
         _hopTimer  = 0.f;
         SetAnimation(_sharedWalkAnim, _hopDuration / (float)_sheetFrameCount, true);

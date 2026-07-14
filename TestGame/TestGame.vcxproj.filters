@@ -177,6 +177,9 @@
     <ClCompile Include="RoomLibrary.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="RoomAssetCatalog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="RoomEditor.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -423,6 +426,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RoomLibrary.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RoomAssetCatalog.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RoomEditor.h">

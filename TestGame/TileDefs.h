@@ -20,6 +20,8 @@ struct SpriteDef {
     Rectangle collision;
     std::string id;
     std::string name;
+    // Empty means the owning biome sheet; otherwise this is a MapTilesets stem.
+    std::string sourceSheet;
 };
 
 // An animated sprite (e.g. torch/fire). Each frame is a separate source rectangle.
@@ -29,6 +31,7 @@ struct AnimSpriteDef {
     std::string            id;
     std::string            name;
     AnimPlaybackMode       playback = AnimPlaybackMode::Loop;
+    std::string            sourceSheet;
 };
 
 // An animated prop — each frame is a separate source rectangle you selected in the TileMapper.
@@ -40,6 +43,7 @@ struct AnimPropDef {
     std::string            id;
     std::string            name;
     AnimPlaybackMode       playback = AnimPlaybackMode::Loop;
+    std::string            sourceSheet;
 };
 
 // ── TileType ──────────────────────────────────────────────────────────────────

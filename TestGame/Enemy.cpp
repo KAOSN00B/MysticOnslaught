@@ -711,6 +711,94 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     if (!usingWaypoints && !hasNavigationTarget)
         targetPos = Vector2Add(playerCenter, _approachOffset);
 
+    // ── Squad role steering (see Balance::Squad) ──────────────────────────────
+    // Reshapes WHERE this enemy wants to be based on its tactical role and the
+    // shared battlefield read. Separation / prop / hazard shaping below still
+    // applies on top, so packs flow around obstacles the same way individuals do.
+    bool holdStandoff = false;
+    if (_squadDirective != nullptr && !_inAttackRange)
+    {
+        namespace Squad = Balance::Squad;
+        float distToPlayerNow = Vector2Distance(_worldPos, playerCenter);
+
+        switch (GetEncounterRole())
+        {
+        case EnemyRole::Grunt:
+        case EnemyRole::Charger:
+        {
+            // Formation coherence: grunts still far from the fight rally toward
+            // a slot behind the tank and advance as a pack instead of forming a
+            // single-file conga line to the player.
+            if (_squadDirective->hasLeader && distToPlayerNow > Squad::kLeaderBreakoffDist)
+            {
+                float leaderDistToPlayer = Vector2Distance(_squadDirective->leaderPos, playerCenter);
+                float distToLeader = Vector2Distance(_worldPos, _squadDirective->leaderPos);
+                if (distToLeader < Squad::kLeaderMaxRange &&
+                    distToPlayerNow > leaderDistToPlayer + Squad::kLeaderFollowMargin)
+                {
+                    Vector2 leaderToPlayer = Vector2Subtract(playerCenter, _squadDirective->leaderPos);
+                    if (Vector2Length(leaderToPlayer) > 0.01f)
+                    {
+                        Vector2 behindLeader = Vector2Scale(Vector2Normalize(leaderToPlayer),
+                                                            -Squad::kLeaderSlotBehind);
+                        // Personal approach offset spreads the pack across the
+                        // tank's back line instead of stacking on one point.
+                        Vector2 rallySlot = Vector2Add(
+                            Vector2Add(_squadDirective->leaderPos, behindLeader),
+                            Vector2Scale(_approachOffset, 0.5f));
+                        targetPos = Vector2Lerp(targetPos, rallySlot, Squad::kLeaderPullWeight);
+                    }
+                }
+            }
+            // Wary standoff: when the pack has low confidence and an ally already
+            // has the player engaged, hold the ring instead of piling on.
+            if (_squadDirective->aggression < Squad::kWaryThreshold &&
+                _squadDirective->playerEngaged &&
+                distToPlayerNow < Squad::kStandoffRadius)
+            {
+                holdStandoff = true;
+            }
+            break;
+        }
+        case EnemyRole::Support:
+        {
+            // Supports fight from the back of the pack: drift toward the ally
+            // mass, pushed to its far side from the player. Alone they fight
+            // normally — a lone hanging-back Warchief would just be a statue.
+            if (_squadDirective->allyCount >= Squad::kSupportMinAllies &&
+                distToPlayerNow < Squad::kSupportHangBackDist)
+            {
+                Vector2 centroidFromPlayer = Vector2Subtract(_squadDirective->allyCentroid, playerCenter);
+                if (Vector2Length(centroidFromPlayer) > 0.01f)
+                {
+                    Vector2 hangPoint = Vector2Add(_squadDirective->allyCentroid,
+                        Vector2Scale(Vector2Normalize(centroidFromPlayer), 90.f));
+                    targetPos = Vector2Lerp(targetPos, hangPoint, Squad::kSupportAllyPullWeight);
+                }
+            }
+            break;
+        }
+        case EnemyRole::Assassin:
+        {
+            // Flank: while an ally holds the player's attention, aim PAST the
+            // player so the approach curls onto their far side instead of
+            // joining the frontal dogpile.
+            if (_squadDirective->playerEngaged && distToPlayerNow > 80.f)
+            {
+                Vector2 throughPlayer = Vector2Subtract(playerCenter, _worldPos);
+                if (Vector2Length(throughPlayer) > 0.01f)
+                {
+                    targetPos = Vector2Add(playerCenter,
+                        Vector2Scale(Vector2Normalize(throughPlayer), Squad::kAssassinFlankDepth));
+                }
+            }
+            break;
+        }
+        default:
+            break;   // Tank/Ranged/Zoner/Summoner keep their own pursuit styles
+        }
+    }
+
     Vector2 toPlayer = Vector2Subtract(targetPos, _worldPos);
 
     Vector2 moveDir = Vector2Zero();
@@ -817,6 +905,19 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     if (Vector2Length(moveDir) > 0.01f)
         moveDir = Vector2Normalize(moveDir);
 
+    // Wary standoff overrides pursuit: circle the ring around the player and
+    // drift gently outward, waiting for the engaged ally's turn to end.
+    if (holdStandoff)
+    {
+        Vector2 fromPlayer = Vector2Subtract(_worldPos, playerCenter);
+        if (Vector2Length(fromPlayer) > 0.01f)
+        {
+            Vector2 radial  = Vector2Normalize(fromPlayer);
+            Vector2 tangent = { -radial.y * _flankSide, radial.x * _flankSide };
+            moveDir = Vector2Normalize(Vector2Add(tangent, Vector2Scale(radial, 0.35f)));
+        }
+    }
+
     Vector2 oldPos = _worldPos;
     bool slotAvailable = CanTakeAttackSlot(enemies);
     bool shouldFlank = _inAttackRange && !slotAvailable;
@@ -841,13 +942,37 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
     {
         // Warchief banner: allies inside the aura move noticeably faster.
         float moveSpeed = HasWarAura() ? _speed * kWarAuraSpeedMultiplier : _speed;
+
+        // Threat tiers: a frenzied pack pushes faster, a wary one creeps; the
+        // tank gets a small lead bonus when it has a pack to bring with it.
+        if (_squadDirective != nullptr)
+        {
+            namespace Squad = Balance::Squad;
+            if (_squadDirective->aggression >= Squad::kFrenzyThreshold)
+                moveSpeed *= Squad::kFrenzySpeedMult;
+            else if (_squadDirective->aggression < Squad::kWaryThreshold)
+                moveSpeed *= Squad::kWarySpeedMult;
+
+            if (GetEncounterRole() == EnemyRole::Tank &&
+                _squadDirective->allyCount >= Squad::kTankLeadMinPack)
+            {
+                moveSpeed *= Squad::kTankLeadSpeedMult;
+            }
+        }
+
         _worldPos = Vector2Add(_worldPos, Vector2Scale(moveDir, moveSpeed * dt));
         intentionalMove = true;
     }
 
     // Position-level push: resolve physical overlap with other enemies.
+    // minSep must be close to the body diameter or sprites visibly pile on top
+    // of each other (the old 60 was far smaller than the ~80px bodies, so a pack
+    // orbited the player as one blob). The resolve fraction is high enough that a
+    // dense cluster actually spreads within a few frames instead of hovering at
+    // the overlap threshold — both enemies in a pair run this, so 0.5 each frees
+    // the full gap between any pair per frame.
     {
-        const float minSep = 60.f;
+        const float minSep = 84.f;
         for (const auto& other : enemies)
         {
             if (other.get() == this) continue;
@@ -857,7 +982,7 @@ void Enemy::HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigatio
             if (dist < minSep && dist > 0.01f)
             {
                 Vector2 push = Vector2Normalize(Vector2Subtract(_worldPos, other->_worldPos));
-                _worldPos = Vector2Add(_worldPos, Vector2Scale(push, (minSep - dist) * 0.35f));
+                _worldPos = Vector2Add(_worldPos, Vector2Scale(push, (minSep - dist) * 0.5f));
             }
         }
     }
@@ -940,7 +1065,16 @@ bool Enemy::CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies
             committed++;
     }
 
-    return committed < kMaxCommittedGrunts;
+    // Blood frenzy (see Balance::Squad): a pack that smells a kill lets one
+    // extra attacker commit, so pressure visibly ramps as the player weakens.
+    int maxCommitted = kMaxCommittedGrunts;
+    if (_squadDirective != nullptr &&
+        _squadDirective->aggression >= Balance::Squad::kFrenzyThreshold)
+    {
+        maxCommitted += Balance::Squad::kFrenzyExtraAttackers;
+    }
+
+    return committed < maxCommitted;
 }
 
 bool Enemy::UpdateEliteLunge(float dt)

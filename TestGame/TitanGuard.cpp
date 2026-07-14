@@ -616,6 +616,12 @@ void TitanGuard::EnsureSharedResourcesLoaded()
     _sharedResourcesLoaded = true;
 }
 
+void TitanGuard::PlayDeathSound()
+{
+    // Fortress guardian roars on death — mighty and heavy, lower pitch than Shieldbearer
+    SfxBank::Get().Play(SfxId::BossRoar, 0.45f, true);
+}
+
 void TitanGuard::UnloadSharedResources()
 {
     if (!_sharedResourcesLoaded) return;

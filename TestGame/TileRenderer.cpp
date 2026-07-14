@@ -1,4 +1,6 @@
 #include "TileRenderer.h"
+#include "RoomAssetCatalog.h"
+#include "RoomCollision.h"
 
 #include <algorithm>
 
@@ -38,6 +40,21 @@ void TileRenderer::Unload()
     if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
     if (_sharedRewardSheet.id != 0)
         { UnloadTexture(_sharedRewardSheet); _sharedRewardSheet = {}; }
+    for (LoadedRoomSource& source : _roomSources)
+        if (source.texture.id != 0) UnloadTexture(source.texture);
+    _roomSources.clear();
+}
+
+void TileRenderer::LoadRoomAssetCatalog(const RoomAssetCatalog& catalog)
+{
+    for (LoadedRoomSource& source : _roomSources)
+        if (source.texture.id != 0) UnloadTexture(source.texture);
+    _roomSources.clear();
+    for (const RoomAssetSource& source : catalog.Sources())
+    {
+        Texture2D texture = LoadTexture(source.imagePath.string().c_str());
+        if (texture.id != 0) _roomSources.push_back({ source.stem, texture });
+    }
 }
 
 void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,
@@ -77,25 +94,44 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         }
     }
 
+    // Authored ground overlays are independent from collision and survive door clears.
+    for (const RoomTilePlacement& visual : layout.visualTiles)
+    {
+        if (!visual.ground) continue;
+        const Texture2D* texture = FindRoomSourceTexture(visual.sourceTileset);
+        if (texture == nullptr) continue;
+        DrawSpriteScaled(visual.src,
+            screenOffset.x + visual.col * cellW,
+            screenOffset.y + visual.row * cellH,
+            scaleX, scaleY, texture);
+    }
+
     // ── Pass 1.5a: static decorations (half-size, centred in cell) ───────────
     for (const SpritePlacement& d : layout.decors)
     {
-        if (d.defIdx < 0 || d.defIdx >= (int)_defs.decors.size()) continue;
-        const Rectangle& src = _defs.decors[d.defIdx].src;
+        const TileDefSet* definitions = ResolveRoomDefinitions(layout, d, _defs);
+        if (definitions == nullptr || d.defIdx < 0 || d.defIdx >= (int)definitions->decors.size()) continue;
+        const SpriteDef& definition = definitions->decors[d.defIdx];
+        const Rectangle& src = definition.src;
+        const Texture2D* texture = FindRoomSourceTexture(
+            definition.sourceSheet.empty() ? d.sourceTileset : definition.sourceSheet);
         float dScaleX = scaleX * 0.75f;
         float dScaleY = scaleY * 0.75f;
         // Centre the smaller sprite within the full cell.
         float sx = screenOffset.x + d.col * cellW + (cellW - src.width  * dScaleX) * 0.5f;
         float sy = screenOffset.y + d.row * cellH + (cellH - src.height * dScaleY) * 0.5f;
-        DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY);
+        DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY, texture);
     }
 
     // ── Pass 1.5b: animated decorations (torches, fire) ──────────────────────
     // Frame is computed from elapsed time so every instance animates automatically.
     for (const SpritePlacement& d : layout.animDecors)
     {
-        if (d.defIdx < 0 || d.defIdx >= (int)_defs.animDecors.size()) continue;
-        const AnimSpriteDef& anim = _defs.animDecors[d.defIdx];
+        const TileDefSet* definitions = ResolveRoomDefinitions(layout, d, _defs);
+        if (definitions == nullptr || d.defIdx < 0 || d.defIdx >= (int)definitions->animDecors.size()) continue;
+        const AnimSpriteDef& anim = definitions->animDecors[d.defIdx];
+        const Texture2D* texture = FindRoomSourceTexture(
+            anim.sourceSheet.empty() ? d.sourceTileset : anim.sourceSheet);
 
         if (anim.frames.empty()) continue;
         int frame = 0;
@@ -110,7 +146,7 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         float dScaleY = scaleY * 0.75f;
         float sx = screenOffset.x + d.col * cellW + (cellW - src.width  * dScaleX) * 0.5f;
         float sy = screenOffset.y + d.row * cellH + (cellH - src.height * dScaleY) * 0.5f;
-        DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY);
+        DrawSpriteScaled(src, sx, sy, dScaleX, dScaleY, texture);
     }
 
     // ── Pass 2: walls on top ──────────────────────────────────────────────────
@@ -128,6 +164,22 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
             float sy = screenOffset.y + r * cellH;
             DrawTile(type, sx, sy, scaleX, scaleY);
         }
+    }
+
+    // Non-ground art is the destructible visual wall layer. Door clear zones
+    // remove only this pass, never the floor underneath it.
+    for (const RoomTilePlacement& visual : layout.visualTiles)
+    {
+        if (visual.ground) continue;
+        Rectangle occupied{ (float)visual.col, (float)visual.row,
+            visual.src.width / 16.f, visual.src.height / 16.f };
+        if (RoomPlacementClearsAtDoor(occupied, layout)) continue;
+        const Texture2D* texture = FindRoomSourceTexture(visual.sourceTileset);
+        if (texture == nullptr) continue;
+        DrawSpriteScaled(visual.src,
+            screenOffset.x + visual.col * cellW,
+            screenOffset.y + visual.row * cellH,
+            scaleX, scaleY, texture);
     }
 
     // ── Pass 3: props — the room's top layer. Gameplay passes includeProps=false
@@ -152,18 +204,22 @@ void TileRenderer::DrawRoomPropsSplit(const RoomLayout& layout, float scaleX, fl
 
     for (const SpritePlacement& p : layout.props)
     {
-        if (p.defIdx < 0 || p.defIdx >= (int)_defs.props.size()) continue;
-        const Rectangle& src = _defs.props[p.defIdx].src;
+        const TileDefSet* definitions = ResolveRoomDefinitions(layout, p, _defs);
+        if (definitions == nullptr || p.defIdx < 0 || p.defIdx >= (int)definitions->props.size()) continue;
+        const Rectangle& src = definitions->props[p.defIdx].src;
         if (!inRequestedHalf(p.row, src.height)) continue;
         float sx = screenOffset.x + p.col * cellW;
         float sy = screenOffset.y + p.row * cellH;
-        DrawSpriteScaled(src, sx, sy, scaleX, scaleY);
+        DrawSpriteScaled(src, sx, sy, scaleX, scaleY,
+            FindRoomSourceTexture(definitions->props[p.defIdx].sourceSheet.empty()
+                ? p.sourceTileset : definitions->props[p.defIdx].sourceSheet));
     }
 
     for (const SpritePlacement& p : layout.animProps)
     {
-        if (p.defIdx < 0 || p.defIdx >= (int)_defs.animProps.size()) continue;
-        const AnimPropDef& anim = _defs.animProps[p.defIdx];
+        const TileDefSet* definitions = ResolveRoomDefinitions(layout, p, _defs);
+        if (definitions == nullptr || p.defIdx < 0 || p.defIdx >= (int)definitions->animProps.size()) continue;
+        const AnimPropDef& anim = definitions->animProps[p.defIdx];
         if (anim.frames.empty()) continue;
         if (!inRequestedHalf(p.row, anim.frames[0].height)) continue;
 
@@ -172,7 +228,9 @@ void TileRenderer::DrawRoomPropsSplit(const RoomLayout& layout, float scaleX, fl
                                   GetTime() - _roomAnimationStart);
         float sx = screenOffset.x + p.col * cellW;
         float sy = screenOffset.y + p.row * cellH;
-        DrawSpriteScaled(anim.frames[frame], sx, sy, scaleX, scaleY);
+        DrawSpriteScaled(anim.frames[frame], sx, sy, scaleX, scaleY,
+                         FindRoomSourceTexture(anim.sourceSheet.empty()
+                            ? p.sourceTileset : anim.sourceSheet));
     }
 }
 
@@ -185,17 +243,22 @@ void TileRenderer::DrawRoomProps(const RoomLayout& layout, float scaleX, float s
     // ── Static props ──────────────────────────────────────────────────────────
     for (const SpritePlacement& p : layout.props)
     {
-        if (p.defIdx < 0 || p.defIdx >= (int)_defs.props.size()) continue;
+        const TileDefSet* definitions = ResolveRoomDefinitions(layout, p, _defs);
+        if (definitions == nullptr || p.defIdx < 0 || p.defIdx >= (int)definitions->props.size()) continue;
         float sx = screenOffset.x + p.col * cellW;
         float sy = screenOffset.y + p.row * cellH;
-        DrawSpriteScaled(_defs.props[p.defIdx].src, sx, sy, scaleX, scaleY);
+        const SpriteDef& definition = definitions->props[p.defIdx];
+        DrawSpriteScaled(definition.src, sx, sy, scaleX, scaleY,
+                         FindRoomSourceTexture(definition.sourceSheet.empty()
+                            ? p.sourceTileset : definition.sourceSheet));
     }
 
     // ── Animated props (same layer, each frame is a direct rect) ─────────────
     for (const SpritePlacement& p : layout.animProps)
     {
-        if (p.defIdx < 0 || p.defIdx >= (int)_defs.animProps.size()) continue;
-        const AnimPropDef& anim = _defs.animProps[p.defIdx];
+        const TileDefSet* definitions = ResolveRoomDefinitions(layout, p, _defs);
+        if (definitions == nullptr || p.defIdx < 0 || p.defIdx >= (int)definitions->animProps.size()) continue;
+        const AnimPropDef& anim = definitions->animProps[p.defIdx];
         if (anim.frames.empty()) continue;
 
         int fc    = (int)anim.frames.size();
@@ -204,7 +267,9 @@ void TileRenderer::DrawRoomProps(const RoomLayout& layout, float scaleX, float s
 
         float sx = screenOffset.x + p.col * cellW;
         float sy = screenOffset.y + p.row * cellH;
-        DrawSpriteScaled(anim.frames[frame], sx, sy, scaleX, scaleY);
+        DrawSpriteScaled(anim.frames[frame], sx, sy, scaleX, scaleY,
+                         FindRoomSourceTexture(anim.sourceSheet.empty()
+                            ? p.sourceTileset : anim.sourceSheet));
     }
 }
 
@@ -222,9 +287,19 @@ void TileRenderer::DrawTile(TileType type, float screenX, float screenY,
 }
 
 void TileRenderer::DrawSpriteScaled(Rectangle src, float screenX, float screenY,
-                                    float scaleX, float scaleY) const
+                                    float scaleX, float scaleY,
+                                    const Texture2D* sourceTexture) const
 {
-    if (_sheet.id == 0) return;
+    const Texture2D& texture = sourceTexture != nullptr ? *sourceTexture : _sheet;
+    if (texture.id == 0) return;
     Rectangle dst{ screenX, screenY, src.width * scaleX, src.height * scaleY };
-    DrawTexturePro(_sheet, src, dst, {}, 0.f, WHITE);
+    DrawTexturePro(texture, src, dst, {}, 0.f, WHITE);
+}
+
+const Texture2D* TileRenderer::FindRoomSourceTexture(const std::string& stem) const
+{
+    if (stem.empty()) return nullptr;
+    for (const LoadedRoomSource& source : _roomSources)
+        if (source.stem == stem) return &source.texture;
+    return nullptr;
 }

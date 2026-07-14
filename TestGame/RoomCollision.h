@@ -5,6 +5,8 @@
 bool IsSolidRoomTile(TileType tile);
 bool IsRoomFallPoint(const RoomLayout& room, Vector2 worldPoint,
                      float cellWidth, float cellHeight);
+bool RoomPlacementClearsAtDoor(Rectangle occupiedTiles,
+                               const RoomLayout& room);
 Vector2 ResolveHandcraftedTileMovement(const RoomLayout& room,
                                        Vector2 previousWorldPos,
                                        Vector2 desiredWorldPos,

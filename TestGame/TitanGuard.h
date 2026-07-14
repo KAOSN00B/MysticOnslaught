@@ -18,7 +18,7 @@ class TitanGuard : public Enemy
 {
 public:
     TitanGuard(Vector2 pos);
-    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Metal; }
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
     ~TitanGuard() override;
 
     void Init();
@@ -31,6 +31,7 @@ public:
     void SetWaveScale(int wave) override;
     void DrawEnemy(Vector2 cameraRef) override;
     void TakeDamage(int damage, Vector2 attackerPos) override;
+    void PlayDeathSound() override;
     void ApplyFreeze(float duration) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule() const override;

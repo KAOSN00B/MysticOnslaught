@@ -252,6 +252,53 @@ namespace Balance::Pressure
     inline constexpr float kReinforceInterval     = 6.f;
 }
 
+namespace Balance::Squad
+{
+    // ── Crowd behaviour: threat tiers, formation coherence, role tactics ─────
+    // The CombatDirector reads the battlefield once per frame (player health,
+    // ally count, who is attacking) and hands every enemy a SquadDirective.
+    // Enemies use it to fight like a pack instead of a queue of solo chargers.
+
+    // Aggression (threat assessment). 1.0 = neutral. Enemies smell blood when
+    // the player is hurt and grow cautious when outnumbered themselves.
+    inline constexpr float kAggressionMin            = 0.70f;
+    inline constexpr float kAggressionMax            = 1.30f;
+    inline constexpr float kPlayerLowHealthFrac      = 0.35f;  // below this → frenzy bonus
+    inline constexpr float kPlayerHealthyFrac        = 0.80f;  // above this → respect
+    inline constexpr float kLowHealthAggroBonus      = 0.25f;
+    inline constexpr float kHealthyAggroPenalty      = 0.10f;
+    inline constexpr int   kPackCourageCount         = 5;      // this many allies → bolder
+    inline constexpr float kPackCourageBonus         = 0.15f;
+    inline constexpr int   kLonelyCount              = 2;      // this few allies → warier
+    inline constexpr float kLonelyPenalty            = 0.15f;
+
+    // What aggression does. Frenzied enemies move faster and one extra attacker
+    // may commit; wary enemies hold a standoff ring while an ally has the fight.
+    inline constexpr float kFrenzyThreshold          = 1.15f;  // above → frenzy effects
+    inline constexpr float kWaryThreshold            = 0.85f;  // below → standoff effects
+    inline constexpr float kFrenzySpeedMult          = 1.12f;
+    inline constexpr float kWarySpeedMult            = 0.92f;
+    inline constexpr int   kFrenzyExtraAttackers     = 1;      // added to the 2-attacker slot cap
+    inline constexpr float kStandoffRadius           = 330.f;  // wary grunts circle here
+    inline constexpr float kEngagedNearPlayerRadius  = 260.f;  // "ally is on the player" check
+
+    // Formation coherence. Grunts farther from the player than the tank rally
+    // toward a slot behind it and advance as a pack until the fight is joined.
+    inline constexpr float kLeaderMaxRange           = 900.f;  // leader too far → ignore
+    inline constexpr float kLeaderFollowMargin       = 150.f;  // must be this much farther than leader
+    inline constexpr float kLeaderSlotBehind         = 130.f;  // rally point offset behind the tank
+    inline constexpr float kLeaderPullWeight         = 0.85f;  // blend strength toward the slot
+    inline constexpr float kLeaderBreakoffDist       = 380.f;  // this close to player → free hunt
+
+    // Role tactics.
+    inline constexpr float kTankLeadSpeedMult        = 1.08f;  // tank leads the charge
+    inline constexpr int   kTankLeadMinPack          = 3;      // needs a pack behind to push
+    inline constexpr float kSupportHangBackDist      = 430.f;  // support keeps this far from player
+    inline constexpr float kSupportAllyPullWeight    = 0.75f;  // pull toward the ally centroid
+    inline constexpr int   kSupportMinAllies         = 2;      // alone → fight normally
+    inline constexpr float kAssassinFlankDepth       = 150.f;  // aim point past/behind the player
+}
+
 namespace Balance::DamageNumbers
 {
     inline constexpr int   kVisibleCap      = 32;

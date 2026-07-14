@@ -1,4 +1,6 @@
 #include "RoomBlueprint.h"
+#include "RoomAssetCatalog.h"
+#include "RoomCollision.h"
 
 #include <fstream>
 #include <iomanip>
@@ -17,6 +19,9 @@ constexpr unsigned long kMoveFileWriteThrough = 0x8;
 
 namespace
 {
+    constexpr float kMinWallDepth = 0.25f;
+    constexpr float kMaxWallDepth = 4.0f;
+
     const char* AssetKindTag(RoomAssetKind kind)
     {
         switch (kind)
@@ -88,8 +93,13 @@ RoomBlueprint RoomBlueprint::CreateDefault()
                                 col == RoomLayout::kCols - 1;
             room.tiles[row][col] = border ? TileType::WallBody : TileType::Floor;
             room.fall[row][col] = false;
+            room.solid[row][col] = border;
         }
     }
+    room.doorZones[(int)RoomWallSide::Top] = { false, { 12.f, 0.f, 5.f, 1.f } };
+    room.doorZones[(int)RoomWallSide::Bottom] = { false, { 12.f, 15.f, 5.f, 1.f } };
+    room.doorZones[(int)RoomWallSide::Left] = { false, { 0.f, 6.f, 1.f, 3.f } };
+    room.doorZones[(int)RoomWallSide::Right] = { false, { 27.f, 6.f, 1.f, 3.f } };
     return room;
 }
 
@@ -109,6 +119,17 @@ bool RoomBlueprint::Validate(std::string& error) const
     {
         error = "Room has too many asset placements";
         return false;
+    }
+    const float wallDepths[] = {
+        wallTopDepth, wallBottomDepth, wallLeftDepth, wallRightDepth
+    };
+    for (float depth : wallDepths)
+    {
+        if (depth < kMinWallDepth || depth > kMaxWallDepth)
+        {
+            error = "Room wall collider depths must be between 0.25 and 4 tiles";
+            return false;
+        }
     }
 
     const int biomeValue = static_cast<int>(biome);
@@ -154,6 +175,37 @@ bool RoomBlueprint::Validate(std::string& error) const
             return false;
         }
     }
+    for (const RoomTilePlacement& placement : visualTiles)
+    {
+        if (placement.sourceTileset.empty())
+        {
+            error = "Room visual tile has an empty source tileset";
+            return false;
+        }
+        if (placement.src.width <= 0.f || placement.src.height <= 0.f)
+        {
+            error = "Room visual tile has an empty source rectangle";
+            return false;
+        }
+        if (placement.col < 0 || placement.col >= RoomLayout::kCols ||
+            placement.row < 0 || placement.row >= RoomLayout::kRows)
+        {
+            error = "Room visual tile is outside the room grid";
+            return false;
+        }
+    }
+    for (const RoomDoorZone& zone : doorZones)
+    {
+        if (!zone.enabled) continue;
+        if (zone.tiles.width <= 0.f || zone.tiles.height <= 0.f ||
+            zone.tiles.x < 0.f || zone.tiles.y < 0.f ||
+            zone.tiles.x + zone.tiles.width > RoomLayout::kCols ||
+            zone.tiles.y + zone.tiles.height > RoomLayout::kRows)
+        {
+            error = "Room door zone is outside the room grid";
+            return false;
+        }
+    }
     return true;
 }
 
@@ -186,6 +238,8 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
     out << "ROOMTYPE " << static_cast<int>(roomType) << '\n';
     out << "DOORS " << (hasNorth ? 1 : 0) << ' ' << (hasSouth ? 1 : 0) << ' '
         << (hasEast ? 1 : 0) << ' ' << (hasWest ? 1 : 0) << '\n';
+    out << "WALL_DEPTHS " << wallTopDepth << ' ' << wallBottomDepth << ' '
+        << wallLeftDepth << ' ' << wallRightDepth << '\n';
     out << "TILES_BEGIN\n";
     for (int row = 0; row < RoomLayout::kRows; ++row)
     {
@@ -200,6 +254,7 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
     for (const RoomAssetPlacement& placement : placements)
     {
         out << AssetKindTag(placement.kind) << ' ' << std::quoted(placement.assetId)
+            << ' ' << std::quoted(placement.sourceTileset)
             << ' ' << placement.col << ' ' << placement.row << '\n';
     }
     out << "PLACEMENTS_END\nFALL_BEGIN\n";
@@ -210,6 +265,29 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
         out << '\n';
     }
     out << "FALL_END\n";
+    out << "SOLID_BEGIN\n";
+    for (int row = 0; row < RoomLayout::kRows; ++row)
+    {
+        for (int col = 0; col < RoomLayout::kCols; ++col)
+            out << (solid[row][col] ? '1' : '0');
+        out << '\n';
+    }
+    out << "SOLID_END\nVISUALS_BEGIN\n";
+    for (const RoomTilePlacement& placement : visualTiles)
+        out << (placement.ground ? "GROUND " : "VISUAL ")
+            << std::quoted(placement.sourceTileset) << ' '
+            << (int)placement.type << ' '
+            << placement.src.x << ' ' << placement.src.y << ' '
+            << placement.src.width << ' ' << placement.src.height << ' '
+            << placement.col << ' ' << placement.row << '\n';
+    out << "VISUALS_END\n";
+    for (int i = 0; i < 4; ++i)
+    {
+        const RoomDoorZone& zone = doorZones[i];
+        out << "DOORZONE " << i << ' ' << (zone.enabled ? 1 : 0) << ' '
+            << zone.tiles.x << ' ' << zone.tiles.y << ' '
+            << zone.tiles.width << ' ' << zone.tiles.height << '\n';
+    }
     out.flush();
     if (!out)
     {
@@ -246,16 +324,16 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
         error = "Room file is empty";
         return std::nullopt;
     }
+    int fileVersion = 0;
     {
         std::istringstream header(line);
         std::string tag;
-        int version = 0;
-        if (!(header >> tag >> version) || tag != "MROOM")
+        if (!(header >> tag >> fileVersion) || tag != "MROOM")
         {
             error = "Room file header is invalid";
             return std::nullopt;
         }
-        if (version != kVersion)
+        if (fileVersion != 1 && fileVersion != kVersion)
         {
             error = "Unsupported room file version";
             return std::nullopt;
@@ -266,6 +344,7 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
     bool sawTiles = false;
     bool sawPlacements = false;
     bool sawFall = false;
+    bool sawSolid = false;
 
     while (std::getline(in, line))
     {
@@ -316,7 +395,21 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
                 std::string tag;
                 RoomAssetPlacement placement;
                 if (!(values >> tag) || !ParseAssetKind(tag, placement.kind) ||
-                    !(values >> std::quoted(placement.assetId) >> placement.col >> placement.row))
+                    !(values >> std::quoted(placement.assetId)))
+                {
+                    error = "Room placement record is invalid";
+                    return std::nullopt;
+                }
+                if (fileVersion >= 2)
+                {
+                    if (!(values >> std::quoted(placement.sourceTileset)
+                                 >> placement.col >> placement.row))
+                    {
+                        error = "Room placement source record is invalid";
+                        return std::nullopt;
+                    }
+                }
+                else if (!(values >> placement.col >> placement.row))
                 {
                     error = "Room placement record is invalid";
                     return std::nullopt;
@@ -363,6 +456,61 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
             sawFall = true;
             continue;
         }
+        if (line == "SOLID_BEGIN")
+        {
+            for (int row = 0; row < RoomLayout::kRows; ++row)
+            {
+                if (!std::getline(in, line) || line.size() != RoomLayout::kCols)
+                {
+                    error = "Room solid row must contain exactly 28 cells";
+                    return std::nullopt;
+                }
+                for (int col = 0; col < RoomLayout::kCols; ++col)
+                {
+                    if (line[col] != '0' && line[col] != '1')
+                    {
+                        error = "Room solid row contains an invalid cell";
+                        return std::nullopt;
+                    }
+                    room.solid[row][col] = line[col] == '1';
+                }
+            }
+            if (!std::getline(in, line) || line != "SOLID_END")
+            {
+                error = "Room solid section has no end marker";
+                return std::nullopt;
+            }
+            sawSolid = true;
+            continue;
+        }
+        if (line == "VISUALS_BEGIN")
+        {
+            bool ended = false;
+            while (std::getline(in, line))
+            {
+                if (line == "VISUALS_END") { ended = true; break; }
+                if (line.empty()) continue;
+                std::istringstream values(line);
+                std::string tag;
+                RoomTilePlacement placement;
+                int type = -1;
+                if (!(values >> tag >> std::quoted(placement.sourceTileset)
+                             >> type >> placement.src.x >> placement.src.y
+                             >> placement.src.width >> placement.src.height
+                             >> placement.col >> placement.row) ||
+                    (tag != "GROUND" && tag != "VISUAL") ||
+                    type < 0 || type >= (int)TileType::Count)
+                {
+                    error = "Room visual tile record is invalid";
+                    return std::nullopt;
+                }
+                placement.ground = tag == "GROUND";
+                placement.type = (TileType)type;
+                room.visualTiles.push_back(std::move(placement));
+            }
+            if (!ended) { error = "Room visuals section has no end marker"; return std::nullopt; }
+            continue;
+        }
 
         std::istringstream values(line);
         std::string tag;
@@ -406,13 +554,46 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
             room.hasEast = east != 0;
             room.hasWest = west != 0;
         }
+        else if (tag == "WALL_DEPTHS")
+        {
+            if (!(values >> room.wallTopDepth >> room.wallBottomDepth
+                         >> room.wallLeftDepth >> room.wallRightDepth))
+            {
+                error = "Invalid room wall collider depths";
+                return std::nullopt;
+            }
+        }
+        else if (tag == "DOORZONE")
+        {
+            int index = -1, enabled = 0;
+            RoomDoorZone zone;
+            if (!(values >> index >> enabled >> zone.tiles.x >> zone.tiles.y
+                         >> zone.tiles.width >> zone.tiles.height) ||
+                index < 0 || index >= 4 || enabled < 0 || enabled > 1)
+            {
+                error = "Invalid room door zone";
+                return std::nullopt;
+            }
+            zone.enabled = enabled != 0;
+            room.doorZones[index] = zone;
+        }
         // Unknown metadata tags are ignored for forward compatibility.
     }
 
-    if (!sawTiles || !sawPlacements || !sawFall)
+    if (!sawTiles || !sawPlacements || !sawFall || (fileVersion >= 2 && !sawSolid))
     {
         error = "Room file is missing a required section";
         return std::nullopt;
+    }
+    if (fileVersion == 1)
+    {
+        for (int row = 0; row < RoomLayout::kRows; ++row)
+            for (int col = 0; col < RoomLayout::kCols; ++col)
+                room.solid[row][col] = IsSolidRoomTile(room.tiles[row][col]);
+        room.doorZones[(int)RoomWallSide::Top].enabled = room.hasNorth;
+        room.doorZones[(int)RoomWallSide::Bottom].enabled = room.hasSouth;
+        room.doorZones[(int)RoomWallSide::Left].enabled = room.hasWest;
+        room.doorZones[(int)RoomWallSide::Right].enabled = room.hasEast;
     }
     if (!room.Validate(error)) return std::nullopt;
     error.clear();
@@ -421,7 +602,8 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
 
 std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
                                           const TileDefSet& definitions,
-                                          std::string& warning)
+                                          std::string& warning,
+                                          const RoomAssetCatalog* catalog)
 {
     warning.clear();
     std::string validationError;
@@ -434,26 +616,47 @@ std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
     RoomLayout layout{};
     layout.handcrafted = true;
     layout.sourceRoomId = blueprint.id;
+    layout.wallTopDepth = blueprint.wallTopDepth;
+    layout.wallBottomDepth = blueprint.wallBottomDepth;
+    layout.wallLeftDepth = blueprint.wallLeftDepth;
+    layout.wallRightDepth = blueprint.wallRightDepth;
+    for (int i = 0; i < 4; ++i) layout.doorZones[i] = blueprint.doorZones[i];
+    layout.visualTiles = blueprint.visualTiles;
     for (int row = 0; row < RoomLayout::kRows; ++row)
     {
         for (int col = 0; col < RoomLayout::kCols; ++col)
         {
             layout.tiles[row][col] = blueprint.tiles[row][col];
             layout.fall[row][col] = blueprint.fall[row][col];
+            layout.solid[row][col] = blueprint.solid[row][col];
         }
     }
 
     int skipped = 0;
     for (const RoomAssetPlacement& placement : blueprint.placements)
     {
-        const int definitionIndex = definitions.FindAssetIndex(placement.kind, placement.assetId);
+        const std::string sourceStem = placement.sourceTileset.empty()
+            ? blueprint.tilesetStem : placement.sourceTileset;
+        const TileDefSet* sourceDefinitions = &definitions;
+        if (sourceStem != blueprint.tilesetStem)
+        {
+            const RoomAssetSource* source = catalog != nullptr ? catalog->Find(sourceStem) : nullptr;
+            sourceDefinitions = source != nullptr ? &source->definitions : nullptr;
+        }
+        const int definitionIndex = sourceDefinitions != nullptr
+            ? sourceDefinitions->FindAssetIndex(placement.kind, placement.assetId) : -1;
         if (definitionIndex < 0)
         {
             ++skipped;
             continue;
         }
+        bool sourceStored = false;
+        for (const RoomSourceDefinitions& source : layout.assetSources)
+            sourceStored = sourceStored || source.stem == sourceStem;
+        if (!sourceStored)
+            layout.assetSources.push_back({ sourceStem, *sourceDefinitions });
         const SpritePlacement runtimePlacement{
-            definitionIndex, placement.col, placement.row
+            definitionIndex, placement.col, placement.row, sourceStem
         };
         switch (placement.kind)
         {

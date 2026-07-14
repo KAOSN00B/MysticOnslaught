@@ -17,7 +17,7 @@ public:
 
     bool StartPressed()          const;
     bool QuitPressed()           const;
-    bool HowToPressed()          const;
+    bool ContinuePressed()       const;
     bool DebugPressed()          const;
     bool DungeonRunPressed()     const;
     bool TileMapperPressed()     const;
@@ -44,11 +44,11 @@ private:
     Texture2D _borderTex{};
     Texture2D _bannerTex{};
     Texture2D _playBtnTex{};
-    Texture2D _htpBtnTex{};
+    Texture2D _continueBtnTex{};
 
     bool _startPressed         = false;
     bool _quitPressed          = false;
-    bool _howToPressed         = false;
+    bool _continuePressed      = false;
     bool _debugPressed         = false;
     bool _dungeonRunPressed      = false;
     bool _tileMapperPressed      = false;

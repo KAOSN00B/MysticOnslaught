@@ -35,8 +35,18 @@ int main()
     source.roomType = RoomType::Standard;
     source.hasNorth = true;
     source.hasSouth = true;
+    source.wallTopDepth = 1.75f;
+    source.wallBottomDepth = 0.50f;
+    source.wallLeftDepth = 1.25f;
+    source.wallRightDepth = 2.00f;
     source.tiles[5][7] = TileType::FloorVariant;
     source.fall[6][8] = true;
+    source.solid[4][5] = true;
+    source.visualTiles.push_back({ "Forest", TileType::WallBody, false,
+        { 16.f, 32.f, 16.f, 16.f }, 5, 4 });
+    source.visualTiles.push_back({ "Ground TIles", TileType::FloorVariant, true,
+        { 0.f, 0.f, 16.f, 16.f }, 5, 4 });
+    source.doorZones[(int)RoomWallSide::Top] = { true, { 11.f, 0.f, 6.f, 1.5f } };
     source.placements.push_back(
         { RoomAssetKind::AnimProp, "water_center_01", 8, 5 });
 
@@ -54,8 +64,18 @@ int main()
     assert(loaded->tilesetStem == "Caverns");
     assert(loaded->roomType == RoomType::Standard);
     assert(loaded->DoorMask() == RoomDoorMask(true, true, false, false));
+    assert(loaded->wallTopDepth == 1.75f);
+    assert(loaded->wallBottomDepth == 0.50f);
+    assert(loaded->wallLeftDepth == 1.25f);
+    assert(loaded->wallRightDepth == 2.00f);
     assert(loaded->tiles[5][7] == TileType::FloorVariant);
     assert(loaded->fall[6][8]);
+    assert(loaded->solid[4][5]);
+    assert(loaded->visualTiles.size() == 2);
+    assert(loaded->visualTiles[0].sourceTileset == "Forest");
+    assert(!loaded->visualTiles[0].ground);
+    assert(loaded->visualTiles[1].ground);
+    assert(loaded->doorZones[(int)RoomWallSide::Top].tiles.width == 6.f);
     assert(loaded->placements.size() == 1);
     assert(loaded->placements[0].kind == RoomAssetKind::AnimProp);
     assert(loaded->placements[0].assetId == "water_center_01");
@@ -81,8 +101,15 @@ int main()
     std::optional<RoomLayout> layout = BuildRoomLayout(convertible, definitions, error);
     assert(layout.has_value());
     assert(layout->handcrafted);
+    assert(layout->wallTopDepth == 1.75f);
+    assert(layout->wallBottomDepth == 0.50f);
+    assert(layout->wallLeftDepth == 1.25f);
+    assert(layout->wallRightDepth == 2.00f);
     assert(layout->tiles[5][7] == TileType::FloorVariant);
     assert(layout->fall[6][8]);
+    assert(layout->solid[4][5]);
+    assert(layout->visualTiles.size() == 2);
+    assert(layout->doorZones[(int)RoomWallSide::Top].tiles.height == 1.5f);
     assert(layout->props.size() == 1);
     assert(layout->props[0].defIdx == 0);
     assert(layout->props[0].col == 3 && layout->props[0].row == 4);

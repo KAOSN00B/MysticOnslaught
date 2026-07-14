@@ -114,14 +114,31 @@ void TileMapper::Init(const char* folderPath)
         _groundCols = _groundSheet.width  / kTileSize;
         _groundRows = _groundSheet.height / kTileSize;
     }
+    if (_waterSheet.id != 0) { UnloadTexture(_waterSheet); _waterSheet = {}; }
+    if (_lavaSheet.id != 0) { UnloadTexture(_lavaSheet); _lavaSheet = {}; }
+    _waterSheet = LoadTexture((std::string(folderPath) + "/FD_Animated_Water.png").c_str());
+    _lavaSheet = LoadTexture((std::string(folderPath) + "/RA_Hell_Animations.png").c_str());
+    if (_waterSheet.id != 0)
+    {
+        _waterCols = _waterSheet.width / kTileSize;
+        _waterRows = _waterSheet.height / kTileSize;
+    }
+    if (_lavaSheet.id != 0)
+    {
+        _lavaCols = _lavaSheet.width / kTileSize;
+        _lavaRows = _lavaSheet.height / kTileSize;
+    }
 
     ScanFolder(folderPath);
 }
 
 void TileMapper::Unload()
 {
+    _roomEditor.Unload();
     if (_sheet.id != 0)       { UnloadTexture(_sheet);       _sheet       = {}; }
     if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
+    if (_waterSheet.id != 0)  { UnloadTexture(_waterSheet);  _waterSheet = {}; }
+    if (_lavaSheet.id != 0)   { UnloadTexture(_lavaSheet);   _lavaSheet = {}; }
 }
 
 void TileMapper::ScanFolder(const char* folderPath)
@@ -141,7 +158,9 @@ void TileMapper::ScanFolder(const char* folderPath)
             TilesetFile f;
             f.fullPath = entry.path().string();
             f.stem     = entry.path().stem().string();
-            if (f.stem == "Ground TIles") continue;  // always shown separately, not a biome
+            if (f.stem == "Ground TIles" || f.stem == "FD_Animated_Water" ||
+                f.stem == "RA_Hell_Animations")
+                continue;  // shared sheets are shown beneath every biome
             f.biomeIdx = 0;
 
             // Check whether a save file exists for this tileset.
@@ -398,6 +417,10 @@ void TileMapper::OpenSelectedFile()
     _collHandle     = CollHandle::None;
     _hasSelection    = false;
     _selFromGround   = false;
+    _selSourceSheet.clear();
+    _dragSourceSheet.clear();
+    _pendingAnimPropSource.clear();
+    _pendingAnimDecorSource.clear();
     _dragFromGround  = false;
     _isDragging      = false;
     _hoveredTypeIdx  = -1;
@@ -436,9 +459,12 @@ void TileMapper::LoadSheet(const std::string& path)
     float availW = _panelX - 20.f;
     float availH = sh - 30.f;
 
-    // Fit both sheets (main + ground) stacked with a gap.
-    int   maxCols   = std::max(_sheetCols,  _groundCols);
-    int   totalRows = _sheetRows + (_groundSheet.id != 0 ? kGroundGap / kTileSize + _groundRows : 0);
+    // Fit biome plus all shared sheets stacked with labelled gaps.
+    int maxCols = std::max({ _sheetCols, _groundCols, _waterCols, _lavaCols });
+    int totalRows = _sheetRows;
+    if (_groundSheet.id != 0) totalRows += kGroundGap / kTileSize + _groundRows;
+    if (_waterSheet.id != 0) totalRows += kGroundGap / kTileSize + _waterRows;
+    if (_lavaSheet.id != 0) totalRows += kGroundGap / kTileSize + _lavaRows;
     float fitScaleW = availW / (float)(maxCols  * kTileSize);
     float fitScaleH = availH / (float)(totalRows * kTileSize);
     _minScale = std::max(std::min(fitScaleW, fitScaleH), 0.25f);
@@ -468,7 +494,7 @@ TileDefSet TileMapper::BuildCurrentDefinitions() const
     {
         const PropDef& source = _propDefs[(std::size_t)i];
         definitions.props.push_back({ source.src, source.collision,
-            source.id, source.name });
+            source.id, source.name, source.sourceSheet });
     }
     for (int i = 0; i < (int)_animPropDefs.size(); ++i)
     {
@@ -480,11 +506,13 @@ TileDefSet TileMapper::BuildCurrentDefinitions() const
         definition.id = source.id;
         definition.name = source.name;
         definition.playback = source.playback;
+        definition.sourceSheet = source.sourceSheet;
         definitions.animProps.push_back(std::move(definition));
     }
     for (int i = 0; i < (int)_decorDefs.size(); ++i)
         definitions.decors.push_back({ _decorDefs[(std::size_t)i].src, {},
-            _decorDefs[(std::size_t)i].id, _decorDefs[(std::size_t)i].name });
+            _decorDefs[(std::size_t)i].id, _decorDefs[(std::size_t)i].name,
+            _decorDefs[(std::size_t)i].sourceSheet });
     for (int i = 0; i < (int)_animDecorDefs.size(); ++i)
     {
         const AnimDecorDef& source = _animDecorDefs[(std::size_t)i];
@@ -494,6 +522,7 @@ TileDefSet TileMapper::BuildCurrentDefinitions() const
         definition.id = source.id;
         definition.name = source.name;
         definition.playback = source.playback;
+        definition.sourceSheet = source.sourceSheet;
         definitions.animDecors.push_back(std::move(definition));
     }
     return definitions;
@@ -507,7 +536,8 @@ void TileMapper::EnterDrawMap()
     std::string roomRoot = AssetFolderPath("Rooms");
     _roomEditor.Bind(_files[_openFileIdx].stem,
                      (Biome)_files[_openFileIdx].biomeIdx,
-                     definitions, _sheet, _groundSheet, roomRoot);
+                     definitions, _sheet, _groundSheet, roomRoot,
+                     std::filesystem::path(_files[_openFileIdx].fullPath).parent_path());
     _screen = Screen::DrawMap;
 }
 
@@ -623,49 +653,34 @@ void TileMapper::HandleMouseMapping()
         else _middleDragging = false;
     }
 
-    // ── Sheet drag-selection (left-mouse, both sheets) ────────────────────────
-    float cellPx      = kTileSize * _scale;
-    float mainRight   = _offX + _sheetCols * cellPx;
-    float mainBottom  = _offY + _sheetRows * cellPx;
-    float groundTop   = GroundSheetScreenY();
-    float groundRight = _offX + _groundCols * cellPx;
-    float groundBot   = groundTop + _groundRows * cellPx;
-
-    bool inMain   = (mouse.x >= _offX && mouse.x < mainRight &&
-                     mouse.y >= _offY && mouse.y < mainBottom);
-    bool inGround = (_groundSheet.id != 0 &&
-                     mouse.x >= _offX && mouse.x < groundRight &&
-                     mouse.y >= groundTop && mouse.y < groundBot);
-
-    if (inMain || inGround)
+    // ── Sheet drag-selection (biome, ground, water, or lava) ─────────────────
+    float cellPx = kTileSize * _scale;
+    const std::string hoveredSource = SourceAtPoint(mouse);
+    if (hoveredSource != "#none")
     {
-        int gc, gr;
-        if (inMain)
-        {
-            Vector2 g = ScreenToGrid(mouse);
-            gc = std::max(0, std::min((int)g.x, _sheetCols - 1));
-            gr = std::max(0, std::min((int)g.y, _sheetRows - 1));
-        }
-        else
-        {
-            gc = std::max(0, std::min((int)((mouse.x - _offX)    / cellPx), _groundCols - 1));
-            gr = std::max(0, std::min((int)((mouse.y - groundTop) / cellPx), _groundRows - 1));
-        }
+        const int cols = SourceCols(hoveredSource);
+        const int rows = SourceRows(hoveredSource);
+        const float top = SourceSheetScreenY(hoveredSource);
+        int gc = std::max(0, std::min((int)((mouse.x - _offX) / cellPx), cols - 1));
+        int gr = std::max(0, std::min((int)((mouse.y - top) / cellPx), rows - 1));
 
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
-            _isDragging     = true;
-            _dragFromGround = inGround;
+            _isDragging = true;
+            _dragSourceSheet = hoveredSource;
+            _dragFromGround = hoveredSource == "Ground TIles";
             _dragC0 = _dragC1 = gc;
             _dragR0 = _dragR1 = gr;
         }
-        if (_isDragging && IsMouseButtonDown(MOUSE_LEFT_BUTTON) && (_dragFromGround == inGround))
+        if (_isDragging && IsMouseButtonDown(MOUSE_LEFT_BUTTON) &&
+            _dragSourceSheet == hoveredSource)
             { _dragC1 = gc; _dragR1 = gr; }
         if (_isDragging && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
         {
             _isDragging    = false;
             _hasSelection  = true;
             _selFromGround = _dragFromGround;
+            _selSourceSheet = _dragSourceSheet;
             _selC0 = std::min(_dragC0, _dragC1); _selR0 = std::min(_dragR0, _dragR1);
             _selC1 = std::max(_dragC0, _dragC1); _selR1 = std::max(_dragR0, _dragR1);
         }
@@ -767,7 +782,8 @@ void TileMapper::HandleMouseMapping()
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         {
             _propDefs.push_back({ sel, { 0.f, 0.f, sel.width, sel.height },
-                MakeTileAssetId("prop"), "Prop " + std::to_string(_propDefs.size() + 1) });
+                MakeTileAssetId("prop"), "Prop " + std::to_string(_propDefs.size() + 1),
+                _selSourceSheet });
             _hasSelection = false;
         }
 
@@ -778,8 +794,13 @@ void TileMapper::HandleMouseMapping()
         if (CheckCollisionPointRec(mouse, { _panelX+10.f, abY, panelW-20.f, 24.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         {
-            _pendingAnimPropFrames.push_back(sel);
-            _hasSelection = false;
+            if (_pendingAnimPropFrames.empty()) _pendingAnimPropSource = _selSourceSheet;
+            if (_pendingAnimPropSource == _selSourceSheet)
+            {
+                _pendingAnimPropFrames.push_back(sel);
+                _hasSelection = false;
+            }
+            else TraceLog(LOG_WARNING, "TileMapper: animation frames must use one source sheet");
         }
 
         // FPS stepper
@@ -820,8 +841,10 @@ void TileMapper::HandleMouseMapping()
             def.id        = MakeTileAssetId("anim_prop");
             def.name      = "Animated Prop " + std::to_string(_animPropDefs.size() + 1);
             def.playback  = _animPropPlayback;
+            def.sourceSheet = _pendingAnimPropSource;
             _animPropDefs.push_back(std::move(def));
             _pendingAnimPropFrames.clear();
+            _pendingAnimPropSource.clear();
             // Auto-open collision editor for the new entry
             _editingAnimPropIdx = (int)_animPropDefs.size() - 1;
             _editingPropIdx     = -1;
@@ -911,7 +934,7 @@ void TileMapper::HandleMouseMapping()
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         {
             _decorDefs.push_back({ src, MakeTileAssetId("decor"),
-                "Decor " + std::to_string(_decorDefs.size() + 1) });
+                "Decor " + std::to_string(_decorDefs.size() + 1), _selSourceSheet });
             _hasSelection = false;
         }
 
@@ -920,8 +943,13 @@ void TileMapper::HandleMouseMapping()
         if (CheckCollisionPointRec(mouse, { _panelX + 10.f, abY, panelW - 20.f, 24.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         {
-            _pendingAnimDecorFrames.push_back(src);
-            _hasSelection = false;
+            if (_pendingAnimDecorFrames.empty()) _pendingAnimDecorSource = _selSourceSheet;
+            if (_pendingAnimDecorSource == _selSourceSheet)
+            {
+                _pendingAnimDecorFrames.push_back(src);
+                _hasSelection = false;
+            }
+            else TraceLog(LOG_WARNING, "TileMapper: animation frames must use one source sheet");
         }
 
         // FPS stepper
@@ -960,8 +988,10 @@ void TileMapper::HandleMouseMapping()
             def.id     = MakeTileAssetId("anim_decor");
             def.name   = "Animated Decor " + std::to_string(_animDecorDefs.size() + 1);
             def.playback = _animDecorPlayback;
+            def.sourceSheet = _pendingAnimDecorSource;
             _animDecorDefs.push_back(std::move(def));
             _pendingAnimDecorFrames.clear();
+            _pendingAnimDecorSource.clear();
         }
 
         // List area: static decors then animated decors
@@ -1000,6 +1030,13 @@ void TileMapper::HandleMouseMapping()
 void TileMapper::ConfirmSelection(int typeIdx)
 {
     if (!_hasSelection || typeIdx < 0 || typeIdx >= kTypeCount) return;
+    if (_selSourceSheet == "FD_Animated_Water" ||
+        _selSourceSheet == "RA_Hell_Animations")
+    {
+        TraceLog(LOG_WARNING,
+            "TileMapper: shared water/lava sheets must be saved as props or decor");
+        return;
+    }
     _assignments.erase(
         std::remove_if(_assignments.begin(), _assignments.end(),
             [typeIdx](const Assignment& a){ return a.typeIdx == typeIdx; }),
@@ -1093,13 +1130,15 @@ void TileMapper::ExportAndSave() const
             << a.spanRows << ' ' << a.typeIdx << '\n';
     }
     for (const PropDef& p : _propDefs)
-        out << "PROPV2 " << std::quoted(p.id) << ' ' << std::quoted(p.name) << ' '
+        out << "PROPV3 " << std::quoted(p.id) << ' ' << std::quoted(p.name) << ' '
+            << std::quoted(p.sourceSheet) << ' '
             << p.src.x << ' ' << p.src.y << ' ' << p.src.width << ' ' << p.src.height << ' '
             << p.collision.x << ' ' << p.collision.y << ' '
             << p.collision.width << ' ' << p.collision.height << '\n';
     for (const AnimPropDef& a : _animPropDefs)
     {
-        out << "ANIMPROPV2 " << std::quoted(a.id) << ' ' << std::quoted(a.name) << ' '
+        out << "ANIMPROPV3 " << std::quoted(a.id) << ' ' << std::quoted(a.name) << ' '
+            << std::quoted(a.sourceSheet) << ' '
             << (int)a.playback << ' ' << a.fps << ' '
             << a.collision.x << ' ' << a.collision.y << ' '
             << a.collision.width << ' ' << a.collision.height << ' '
@@ -1109,12 +1148,14 @@ void TileMapper::ExportAndSave() const
         out << '\n';
     }
     for (const DecorDef& decor : _decorDefs)
-        out << "DECORV2 " << std::quoted(decor.id) << ' ' << std::quoted(decor.name) << ' '
+        out << "DECORV3 " << std::quoted(decor.id) << ' ' << std::quoted(decor.name) << ' '
+            << std::quoted(decor.sourceSheet) << ' '
             << decor.src.x << ' ' << decor.src.y << ' '
             << decor.src.width << ' ' << decor.src.height << '\n';
     for (const AnimDecorDef& a : _animDecorDefs)
     {
-        out << "ANIMDECORV2 " << std::quoted(a.id) << ' ' << std::quoted(a.name) << ' '
+        out << "ANIMDECORV3 " << std::quoted(a.id) << ' ' << std::quoted(a.name) << ' '
+            << std::quoted(a.sourceSheet) << ' '
             << (int)a.playback << ' ' << a.fps << ' ' << a.frames.size();
         for (const Rectangle& r : a.frames)
             out << ' ' << r.x << ' ' << r.y << ' ' << r.width << ' ' << r.height;
@@ -1134,15 +1175,18 @@ void TileMapper::TryLoadSave()
     if (!loaded.LoadFromFile(path.c_str())) return;
 
     for (const SpriteDef& source : loaded.props)
-        _propDefs.push_back({ source.src, source.collision, source.id, source.name });
+        _propDefs.push_back({ source.src, source.collision, source.id, source.name,
+                              source.sourceSheet });
     for (const ::AnimPropDef& source : loaded.animProps)
         _animPropDefs.push_back({ source.frames, source.collision, source.fps,
-                                  source.id, source.name, source.playback });
+                                  source.id, source.name, source.playback,
+                                  source.sourceSheet });
     for (const SpriteDef& source : loaded.decors)
-        _decorDefs.push_back({ source.src, source.id, source.name });
+        _decorDefs.push_back({ source.src, source.id, source.name, source.sourceSheet });
     for (const AnimSpriteDef& source : loaded.animDecors)
         _animDecorDefs.push_back({ source.frames, source.fps,
-                                   source.id, source.name, source.playback });
+                                   source.id, source.name, source.playback,
+                                   source.sourceSheet });
 
     std::ifstream in(path);
     std::string line;
@@ -1231,6 +1275,18 @@ void TileMapper::DrawSheet() const
             { _offX, gy, _groundSheet.width * _scale, _groundSheet.height * _scale },
             {}, 0.f, WHITE);
     }
+    auto drawShared = [&](Texture2D texture, const char* stem, Color labelColor)
+    {
+        if (texture.id == 0) return;
+        const float y = SourceSheetScreenY(stem);
+        DrawText(stem, (int)_offX,
+            (int)(y - 18.f * std::max(_scale / _minScale, 1.f)), 14,
+            Fade(labelColor, 0.85f));
+        DrawTexturePro(texture, {0,0,(float)texture.width,(float)texture.height},
+            {_offX,y,texture.width*_scale,texture.height*_scale},{},0.f,WHITE);
+    };
+    drawShared(_waterSheet, "FD_Animated_Water", SKYBLUE);
+    drawShared(_lavaSheet, "RA_Hell_Animations", ORANGE);
 }
 
 void TileMapper::DrawGrid() const
@@ -1247,24 +1303,28 @@ void TileMapper::DrawGrid() const
         DrawLineV({ _offX, _offY + r * cellPx },
                   { _offX + _sheetCols * cellPx, _offY + r * cellPx }, Fade(WHITE, 0.14f));
 
-    // Ground sheet grid
-    if (_groundSheet.id != 0)
+    // Shared-sheet grids
+    const std::string sharedSheets[] = {
+        "Ground TIles", "FD_Animated_Water", "RA_Hell_Animations"
+    };
+    for (const std::string& source : sharedSheets)
     {
-        for (int c = 0; c <= _groundCols; c++)
-            DrawLineV({ _offX + c * cellPx, groundY },
-                      { _offX + c * cellPx, groundY + _groundRows * cellPx }, Fade(GOLD, 0.14f));
-        for (int r = 0; r <= _groundRows; r++)
-            DrawLineV({ _offX, groundY + r * cellPx },
-                      { _offX + _groundCols * cellPx, groundY + r * cellPx }, Fade(GOLD, 0.14f));
+        Texture2D texture = SourceTexture(source);
+        if (texture.id == 0) continue;
+        const int cols = SourceCols(source);
+        const int rows = SourceRows(source);
+        const float y = SourceSheetScreenY(source);
+        for (int c = 0; c <= cols; c++)
+            DrawLineV({_offX+c*cellPx,y},{_offX+c*cellPx,y+rows*cellPx},Fade(GOLD,.14f));
+        for (int r = 0; r <= rows; r++)
+            DrawLineV({_offX,y+r*cellPx},{_offX+cols*cellPx,y+r*cellPx},Fade(GOLD,.14f));
     }
 
     // Hover highlight (main or ground sheet)
     Vector2 mouse = GetVirtualMousePos();
     bool inMain   = (mouse.x >= _offX && mouse.x < _offX + _sheetCols  * cellPx &&
                      mouse.y >= _offY  && mouse.y < _offY  + _sheetRows  * cellPx);
-    bool inGround = (_groundSheet.id != 0 &&
-                     mouse.x >= _offX && mouse.x < _offX + _groundCols * cellPx &&
-                     mouse.y >= groundY && mouse.y < groundY + _groundRows * cellPx);
+    const std::string hoverSource = SourceAtPoint(mouse);
 
     if (inMain)
     {
@@ -1275,11 +1335,14 @@ void TileMapper::DrawGrid() const
         DrawText(TextFormat("(%d, %d)", gc * kTileSize, gr * kTileSize),
             (int)(_offX + gc * cellPx + 2.f), (int)(_offY + gr * cellPx - 14.f), 11, YELLOW);
     }
-    else if (inGround)
+    else if (hoverSource != "#none")
     {
-        int gc = std::max(0, std::min((int)((mouse.x - _offX)   / cellPx), _groundCols - 1));
-        int gr = std::max(0, std::min((int)((mouse.y - groundY) / cellPx), _groundRows - 1));
-        DrawRectangleLinesEx(GridToGroundScreen(gc, gr, 1, 1), 1.5f, Fade(GOLD, 0.85f));
+        const int cols = SourceCols(hoverSource);
+        const int rows = SourceRows(hoverSource);
+        const float y = SourceSheetScreenY(hoverSource);
+        int gc = std::max(0, std::min((int)((mouse.x-_offX)/cellPx), cols-1));
+        int gr = std::max(0, std::min((int)((mouse.y-y)/cellPx), rows-1));
+        DrawRectangleLinesEx(GridToSourceScreen(hoverSource,gc,gr,1,1),1.5f,Fade(GOLD,.85f));
         DrawText(TextFormat("GT (%d, %d)", gc * kTileSize, gr * kTileSize),
             (int)(_offX + gc * cellPx + 2.f), (int)(groundY + gr * cellPx - 14.f), 11, GOLD);
     }
@@ -1290,7 +1353,7 @@ void TileMapper::DrawAssignments() const
     for (const Assignment& a : _assignments)
     {
         Rectangle r = a.fromGround
-            ? GridToGroundScreen(a.col, a.row, a.spanCols, a.spanRows)
+            ? GridToSourceScreen("Ground TIles", a.col, a.row, a.spanCols, a.spanRows)
             : GridToScreen(a.col, a.row, a.spanCols, a.spanRows);
         Color c = (a.typeIdx >= 0 && a.typeIdx < kTypeCount)
             ? kTypeColors[a.typeIdx] : Fade(WHITE, 0.15f);
@@ -1326,9 +1389,8 @@ void TileMapper::DrawSelection() const
         fromGround = _selFromGround;
     }
 
-    Rectangle r = fromGround
-        ? GridToGroundScreen(c0, r0, c1 - c0 + 1, r1 - r0 + 1)
-        : GridToScreen(c0, r0, c1 - c0 + 1, r1 - r0 + 1);
+    Rectangle r = GridToSourceScreen(fromGround ? "Ground TIles" : _selSourceSheet,
+        c0, r0, c1 - c0 + 1, r1 - r0 + 1);
     Color col = fromGround ? GOLD : SKYBLUE;
     DrawRectangleRec(r, Fade(col, 0.28f));
     DrawRectangleLinesEx(r, 2.f, col);
@@ -1593,8 +1655,9 @@ void TileMapper::DrawPanel() const
                         (int)(tx+2.f), (int)(thumbY+10.f), 11, Fade(ORANGE, 0.7f));
                     break;
                 }
-                if (_sheet.id != 0)
-                    DrawTexturePro(_sheet, _pendingAnimPropFrames[i],
+                Texture2D pendingTexture = SourceTexture(_pendingAnimPropSource);
+                if (pendingTexture.id != 0)
+                    DrawTexturePro(pendingTexture, _pendingAnimPropFrames[i],
                         { tx, thumbY+10.f, thumbSz, thumbSz }, {}, 0.f, WHITE);
                 DrawRectangleLinesEx({ tx, thumbY+10.f, thumbSz, thumbSz }, 1.f,
                     Fade(ORANGE, 0.5f));
@@ -1642,10 +1705,11 @@ void TileMapper::DrawPanel() const
             Rectangle row{ _panelX+6.f, ry, panelW-12.f, kListRowH-2.f };
             DrawRectangleRec(row, sel ? Color{30,60,120,220} : Color{22,22,32,200});
             DrawRectangleLinesEx(row, 1.f, sel ? Color{80,160,255,255} : Fade(WHITE,0.15f));
-            if (_sheet.id != 0)
+            Texture2D propTexture = SourceTexture(_propDefs[i].sourceSheet);
+            if (propTexture.id != 0)
             {
                 Rectangle dst{ _panelX+12.f, ry+7.f, 36.f, 36.f };
-                DrawTexturePro(_sheet, _propDefs[i].src, dst, {}, 0.f, WHITE);
+                DrawTexturePro(propTexture, _propDefs[i].src, dst, {}, 0.f, WHITE);
                 DrawRectangleLinesEx(dst, 1.f, Fade(WHITE, 0.3f));
             }
             DrawText(_propDefs[i].name.c_str(),
@@ -1674,13 +1738,14 @@ void TileMapper::DrawPanel() const
                 sel ? Color{255,140,40,255} : Color{180,90,40,120});
 
             // Thumbnail — cycle live through defined frames
-            if (_sheet.id != 0 && !_animPropDefs[i].frames.empty())
+            Texture2D animTexture = SourceTexture(_animPropDefs[i].sourceSheet);
+            if (animTexture.id != 0 && !_animPropDefs[i].frames.empty())
             {
                 int fc    = (int)_animPropDefs[i].frames.size();
                 int frame = (fc > 1 && _animPropDefs[i].fps > 0.f)
                     ? (int)(GetTime() * _animPropDefs[i].fps) % fc : 0;
                 Rectangle dst{ _panelX+12.f, ry+7.f, 36.f, 36.f };
-                DrawTexturePro(_sheet, _animPropDefs[i].frames[frame], dst, {}, 0.f, WHITE);
+                DrawTexturePro(animTexture, _animPropDefs[i].frames[frame], dst, {}, 0.f, WHITE);
                 DrawRectangleLinesEx(dst, 1.f, Fade(ORANGE, 0.5f));
             }
             int fc = (int)_animPropDefs[i].frames.size();
@@ -1773,8 +1838,9 @@ void TileMapper::DrawPanel() const
                         (int)(tx+2.f), (int)(thumbY+10.f), 11, Fade(ORANGE, 0.7f));
                     break;
                 }
-                if (_sheet.id != 0)
-                    DrawTexturePro(_sheet, _pendingAnimDecorFrames[i],
+                Texture2D pendingTexture = SourceTexture(_pendingAnimDecorSource);
+                if (pendingTexture.id != 0)
+                    DrawTexturePro(pendingTexture, _pendingAnimDecorFrames[i],
                         { tx, thumbY+10.f, thumbSz, thumbSz }, {}, 0.f, WHITE);
                 DrawRectangleLinesEx({ tx, thumbY+10.f, thumbSz, thumbSz }, 1.f,
                     Fade(ORANGE, 0.5f));
@@ -1820,8 +1886,9 @@ void TileMapper::DrawPanel() const
                 Color{22,22,32,200});
             DrawRectangleLinesEx({ _panelX+6.f, ry, panelW-12.f, kListRowH-2.f },
                 1.f, Fade(WHITE, 0.15f));
-            if (_sheet.id != 0)
-                DrawTexturePro(_sheet, _decorDefs[i].src,
+            Texture2D decorTexture = SourceTexture(_decorDefs[i].sourceSheet);
+            if (decorTexture.id != 0)
+                DrawTexturePro(decorTexture, _decorDefs[i].src,
                     { _panelX+12.f, ry+7.f, 36.f, 36.f }, {}, 0.f, WHITE);
             DrawText(_decorDefs[i].name.c_str(),
                 (int)(_panelX+54.f), (int)(ry+15.f), 11, RAYWHITE);
@@ -1840,8 +1907,9 @@ void TileMapper::DrawPanel() const
                 Color{32,22,16,200});
             DrawRectangleLinesEx({ _panelX+6.f, ry, panelW-12.f, kListRowH-2.f },
                 1.f, Color{180,90,40,120});
-            if (_sheet.id != 0 && !_animDecorDefs[i].frames.empty())
-                DrawTexturePro(_sheet, _animDecorDefs[i].frames[0],
+            Texture2D animDecorTexture = SourceTexture(_animDecorDefs[i].sourceSheet);
+            if (animDecorTexture.id != 0 && !_animDecorDefs[i].frames.empty())
+                DrawTexturePro(animDecorTexture, _animDecorDefs[i].frames[0],
                     { _panelX+12.f, ry+7.f, 36.f, 36.f }, {}, 0.f, WHITE);
             DrawText(TextFormat("%s  %dfr", _animDecorDefs[i].name.c_str(),
                     (int)_animDecorDefs[i].frames.size()),
@@ -2277,8 +2345,12 @@ void TileMapper::DrawCollisionEditor() const
         }
 
     // Sprite (animated props cycle live; static props show the fixed frame)
-    if (_sheet.id != 0)
-        DrawTexturePro(_sheet, drawSrc,
+    const std::string sourceSheet = isAnim
+        ? _animPropDefs[_editingAnimPropIdx].sourceSheet
+        : _propDefs[_editingPropIdx].sourceSheet;
+    Texture2D editTexture = SourceTexture(sourceSheet);
+    if (editTexture.id != 0)
+        DrawTexturePro(editTexture, drawSrc,
             { offX, offY, spriteW, spriteH }, {}, 0.f, WHITE);
 
     // Collision rect overlay
@@ -2337,13 +2409,71 @@ Rectangle TileMapper::GridToScreen(int col, int row, int spanCols, int spanRows)
 
 float TileMapper::GroundSheetScreenY() const
 {
-    return _offY + (_sheetRows * kTileSize + kGroundGap) * _scale;
+    return SourceSheetScreenY("Ground TIles");
 }
 
 Rectangle TileMapper::GridToGroundScreen(int col, int row, int spanCols, int spanRows) const
 {
-    float cellPx = kTileSize * _scale;
-    float gy     = GroundSheetScreenY();
-    return { _offX + col * cellPx, gy + row * cellPx,
-             spanCols * cellPx, spanRows * cellPx };
+    return GridToSourceScreen("Ground TIles", col, row, spanCols, spanRows);
+}
+
+float TileMapper::SourceSheetScreenY(const std::string& sourceSheet) const
+{
+    float y = _offY;
+    if (sourceSheet.empty()) return y;
+    y += (_sheetRows * kTileSize + kGroundGap) * _scale;
+    if (sourceSheet == "Ground TIles") return y;
+    if (_groundSheet.id != 0) y += (_groundRows * kTileSize + kGroundGap) * _scale;
+    if (sourceSheet == "FD_Animated_Water") return y;
+    if (_waterSheet.id != 0) y += (_waterRows * kTileSize + kGroundGap) * _scale;
+    return y;
+}
+
+Rectangle TileMapper::GridToSourceScreen(const std::string& sourceSheet, int col, int row,
+                                         int spanCols, int spanRows) const
+{
+    const float cellPx = kTileSize * _scale;
+    const float y = SourceSheetScreenY(sourceSheet);
+    return {_offX+col*cellPx,y+row*cellPx,spanCols*cellPx,spanRows*cellPx};
+}
+
+Texture2D TileMapper::SourceTexture(const std::string& sourceSheet) const
+{
+    if (sourceSheet == "Ground TIles") return _groundSheet;
+    if (sourceSheet == "FD_Animated_Water") return _waterSheet;
+    if (sourceSheet == "RA_Hell_Animations") return _lavaSheet;
+    return _sheet;
+}
+
+int TileMapper::SourceCols(const std::string& sourceSheet) const
+{
+    if (sourceSheet == "Ground TIles") return _groundCols;
+    if (sourceSheet == "FD_Animated_Water") return _waterCols;
+    if (sourceSheet == "RA_Hell_Animations") return _lavaCols;
+    return _sheetCols;
+}
+
+int TileMapper::SourceRows(const std::string& sourceSheet) const
+{
+    if (sourceSheet == "Ground TIles") return _groundRows;
+    if (sourceSheet == "FD_Animated_Water") return _waterRows;
+    if (sourceSheet == "RA_Hell_Animations") return _lavaRows;
+    return _sheetRows;
+}
+
+std::string TileMapper::SourceAtPoint(Vector2 point) const
+{
+    const std::string sources[] = {
+        "", "Ground TIles", "FD_Animated_Water", "RA_Hell_Animations"
+    };
+    const float cellPx = kTileSize * _scale;
+    for (const std::string& source : sources)
+    {
+        Texture2D texture = SourceTexture(source);
+        if (texture.id == 0) continue;
+        Rectangle bounds{_offX,SourceSheetScreenY(source),
+                         SourceCols(source)*cellPx,SourceRows(source)*cellPx};
+        if (CheckCollisionPointRec(point,bounds)) return source;
+    }
+    return "#none";
 }

@@ -476,6 +476,70 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
     }
     const std::vector<Vector2>& propCenters = _propCentersScratch;
 
+    // ── Squad directive: one battlefield read shared by every enemy ──────────
+    // Threat assessment (does the player look beatable?), the tank anchoring the
+    // advance, whether the player is already engaged, and where allies are
+    // massed. Built once here, then handed to each enemy before its Update.
+    SquadDirective squadDirective;
+    {
+        namespace Squad = Balance::Squad;
+
+        Vector2 allySum{};
+        Enemy*  leaderTank = nullptr;
+        float   leaderTankDist = 0.f;
+
+        for (const auto& enemy : *ctx.enemies)
+        {
+            if (!enemy->IsActive() || !enemy->IsAlive() || enemy->IsDying())
+                continue;
+            if (enemy->IsBoss())
+                continue;   // bosses fight their own fight, not in the pack
+
+            squadDirective.allyCount++;
+            allySum = Vector2Add(allySum, enemy->GetWorldPos());
+
+            float distToPlayer = Vector2Distance(enemy->GetWorldPos(), playerFeet);
+            if (enemy->GetEncounterRole() == EnemyRole::Tank &&
+                (leaderTank == nullptr || distToPlayer < leaderTankDist))
+            {
+                leaderTank = enemy.get();
+                leaderTankDist = distToPlayer;
+            }
+
+            if (enemy->IsCommittedToAttack() && distToPlayer < Squad::kEngagedNearPlayerRadius)
+                squadDirective.playerEngaged = true;
+        }
+
+        if (squadDirective.allyCount > 0)
+            squadDirective.allyCentroid = Vector2Scale(allySum, 1.f / (float)squadDirective.allyCount);
+        if (leaderTank != nullptr)
+        {
+            squadDirective.hasLeader = true;
+            squadDirective.leaderPos = leaderTank->GetWorldPos();
+        }
+
+        // Threat tiers: a hurt player draws blood-frenzy, a healthy one respect;
+        // pack size adds courage, thin numbers add caution.
+        float playerHealthFraction = 1.f;
+        if (ctx.player->GetMaxHealthValue() > 0.f)
+            playerHealthFraction = ctx.player->GetHealthValue() / ctx.player->GetMaxHealthValue();
+
+        float aggression = 1.f;
+        if (playerHealthFraction < Squad::kPlayerLowHealthFrac)
+            aggression += Squad::kLowHealthAggroBonus;
+        else if (playerHealthFraction > Squad::kPlayerHealthyFrac)
+            aggression -= Squad::kHealthyAggroPenalty;
+
+        if (squadDirective.allyCount >= Squad::kPackCourageCount)
+            aggression += Squad::kPackCourageBonus;
+        else if (squadDirective.allyCount <= Squad::kLonelyCount)
+            aggression -= Squad::kLonelyPenalty;
+
+        squadDirective.aggression =
+            (aggression < Squad::kAggressionMin) ? Squad::kAggressionMin :
+            (aggression > Squad::kAggressionMax) ? Squad::kAggressionMax : aggression;
+    }
+
     // Spawning during iteration would invalidate the loop when ctx.enemies
     // reallocates, so boss summons are collected here and executed after.
     std::vector<Vector2> pendingSmallSlimeSpawns;
@@ -497,6 +561,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
         }
 
         enemy->SetHazardZones(ctx.hazards);   // player damage zones to steer around
+        enemy->SetSquadDirective(&squadDirective);   // pack behaviour (threat/formation)
         enemy->Update(dt, playerFeet, navigationTarget, hasNavigationTarget, *ctx.enemies, propCenters);
 
         if (Cyclops* cyclops = enemy->AsCyclops())

@@ -437,6 +437,12 @@ void FlameWisp::PlayAttackSound()
     PlaySound(_attackSound);
 }
 
+void FlameWisp::PlayDeathSound()
+{
+    // Fire wisp extinguishes on death — high chirp, not echoey
+    SfxBank::Get().Play(SfxId::DeathSmall, 0.60f, true);
+}
+
 // =============================================================================
 void FlameWisp::EnsureSharedResourcesLoaded()
 {

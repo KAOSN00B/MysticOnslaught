@@ -98,10 +98,12 @@ bool TileDefSet::LoadFromFile(const char* path)
             assigned[typeIdx] = true;
             fromGround[typeIdx] = tag == "GTILE";
         }
-        else if (tag == "PROP" || tag == "PROPV2")
+        else if (tag == "PROP" || tag == "PROPV2" || tag == "PROPV3")
         {
             SpriteDef def{};
-            if (tag == "PROPV2" && !(in >> std::quoted(def.id) >> std::quoted(def.name))) continue;
+            if ((tag == "PROPV2" || tag == "PROPV3") &&
+                !(in >> std::quoted(def.id) >> std::quoted(def.name))) continue;
+            if (tag == "PROPV3" && !(in >> std::quoted(def.sourceSheet))) continue;
             if (!(in >> def.src.x >> def.src.y >> def.src.width >> def.src.height)) continue;
             def.collision = { 0.f, 0.f, def.src.width, def.src.height };
             Rectangle authored{};
@@ -114,10 +116,12 @@ bool TileDefSet::LoadFromFile(const char* path)
             }
             if (!def.id.empty()) props.push_back(std::move(def));
         }
-        else if (tag == "DECOR" || tag == "DECORV2")
+        else if (tag == "DECOR" || tag == "DECORV2" || tag == "DECORV3")
         {
             SpriteDef def{};
-            if (tag == "DECORV2" && !(in >> std::quoted(def.id) >> std::quoted(def.name))) continue;
+            if ((tag == "DECORV2" || tag == "DECORV3") &&
+                !(in >> std::quoted(def.id) >> std::quoted(def.name))) continue;
+            if (tag == "DECORV3" && !(in >> std::quoted(def.sourceSheet))) continue;
             if (!(in >> def.src.x >> def.src.y >> def.src.width >> def.src.height)) continue;
             if (tag == "DECOR")
             {
@@ -126,14 +130,16 @@ bool TileDefSet::LoadFromFile(const char* path)
             }
             if (!def.id.empty()) decors.push_back(std::move(def));
         }
-        else if (tag == "ANIMPROP" || tag == "ANIMPROPV2")
+        else if (tag == "ANIMPROP" || tag == "ANIMPROPV2" || tag == "ANIMPROPV3")
         {
             AnimPropDef def{};
             int frameCount = 0;
-            if (tag == "ANIMPROPV2")
+            if (tag == "ANIMPROPV2" || tag == "ANIMPROPV3")
             {
                 int playback = 0;
-                if (!(in >> std::quoted(def.id) >> std::quoted(def.name) >> playback >> def.fps
+                if (!(in >> std::quoted(def.id) >> std::quoted(def.name))) continue;
+                if (tag == "ANIMPROPV3" && !(in >> std::quoted(def.sourceSheet))) continue;
+                if (!(in >> playback >> def.fps
                          >> def.collision.x >> def.collision.y
                          >> def.collision.width >> def.collision.height >> frameCount) ||
                     !ReadPlayback(playback, def.playback))
@@ -151,15 +157,16 @@ bool TileDefSet::LoadFromFile(const char* path)
             if (ReadFrames(in, frameCount, def.frames) && !def.id.empty())
                 animProps.push_back(std::move(def));
         }
-        else if (tag == "ANIMDECOR" || tag == "ANIMDECORV2")
+        else if (tag == "ANIMDECOR" || tag == "ANIMDECORV2" || tag == "ANIMDECORV3")
         {
             AnimSpriteDef def{};
             int frameCount = 0;
-            if (tag == "ANIMDECORV2")
+            if (tag == "ANIMDECORV2" || tag == "ANIMDECORV3")
             {
                 int playback = 0;
-                if (!(in >> std::quoted(def.id) >> std::quoted(def.name)
-                         >> playback >> def.fps >> frameCount) ||
+                if (!(in >> std::quoted(def.id) >> std::quoted(def.name))) continue;
+                if (tag == "ANIMDECORV3" && !(in >> std::quoted(def.sourceSheet))) continue;
+                if (!(in >> playback >> def.fps >> frameCount) ||
                     !ReadPlayback(playback, def.playback))
                     continue;
             }

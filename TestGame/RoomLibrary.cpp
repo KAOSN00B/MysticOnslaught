@@ -69,6 +69,7 @@ const RoomBlueprint* RoomLibrary::Choose(const RoomRequest& request,
 
 std::optional<RoomLayout> RoomLibrary::Resolve(const RoomRequest& request,
                                                 const TileDefSet& definitions,
+                                                const RoomAssetCatalog* catalog,
                                                 std::string_view avoidId,
                                                 std::string& selectedId,
                                                 std::string& warning) const
@@ -78,7 +79,7 @@ std::optional<RoomLayout> RoomLibrary::Resolve(const RoomRequest& request,
     const RoomBlueprint* blueprint = Choose(request, avoidId);
     if (blueprint == nullptr) return std::nullopt;
 
-    std::optional<RoomLayout> layout = BuildRoomLayout(*blueprint, definitions, warning);
+    std::optional<RoomLayout> layout = BuildRoomLayout(*blueprint, definitions, warning, catalog);
     if (!layout.has_value()) return std::nullopt;
     selectedId = blueprint->id;
     return layout;

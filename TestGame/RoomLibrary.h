@@ -1,6 +1,7 @@
 #pragma once
 
 #include "RoomBlueprint.h"
+#include "RoomAssetCatalog.h"
 
 #include <filesystem>
 #include <string>
@@ -25,6 +26,7 @@ public:
                                 std::string_view avoidId = {}) const;
     std::optional<RoomLayout> Resolve(const RoomRequest& request,
                                       const TileDefSet& definitions,
+                                      const RoomAssetCatalog* catalog,
                                       std::string_view avoidId,
                                       std::string& selectedId,
                                       std::string& warning) const;

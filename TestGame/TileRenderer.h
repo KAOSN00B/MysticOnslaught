@@ -3,6 +3,9 @@
 #include "RoomLayout.h"
 #include "raylib.h"
 #include <string>
+#include <vector>
+
+class RoomAssetCatalog;
 
 // ── TileRenderer ──────────────────────────────────────────────────────────────
 // Draws a RoomLayout to the screen using a tilesheet and a TileDefSet.
@@ -18,6 +21,7 @@ public:
     void Init(const char* tilesheetPath, const char* groundSheetPath,
               const char* sharedRewardSheetPath, const TileDefSet& defs);
     void Unload();
+    void LoadRoomAssetCatalog(const RoomAssetCatalog& catalog);
 
     // Draw every tile in the layout.
     // scaleX/scaleY: display pixels per source pixel on each axis.
@@ -51,12 +55,21 @@ private:
     void DrawTile(TileType type, float screenX, float screenY,
                   float scaleX, float scaleY) const;
     void DrawSpriteScaled(Rectangle src, float screenX, float screenY,
-                          float scaleX, float scaleY) const;
+                          float scaleX, float scaleY,
+                          const Texture2D* sourceTexture = nullptr) const;
+    const Texture2D* FindRoomSourceTexture(const std::string& stem) const;
+
+    struct LoadedRoomSource
+    {
+        std::string stem;
+        Texture2D texture{};
+    };
 
     Texture2D  _sheet{};
     Texture2D  _groundSheet{};
     Texture2D  _sharedRewardSheet{};
     TileDefSet _defs{};
+    std::vector<LoadedRoomSource> _roomSources;
     mutable std::string _activeRoomAnimationId;
     mutable double _roomAnimationStart = 0.0;
 };

@@ -70,6 +70,8 @@
 #include "DungeonGen.h"
 #include "TileDefs.h"
 #include "RoomLayout.h"
+#include "RoomLibrary.h"
+#include "RoomAssetCatalog.h"
 #include "TileRenderer.h"
 #include "GamepadInput.h"
 #include "InputPrompts.h"
@@ -122,11 +124,12 @@ private:
 
     // Class select + run start
     void StartMainRun();                       // ResetRunState + enter Forest
-    void StartOnboardingOrVillage();
+    void StartSelectedGameMode();
     void StartPrologue();
     void UpdateClassSelect();
     void DrawClassSelect();
     int  _classSelectCursor = 0;
+    PrologueEntryMode _prologueEntryMode = PrologueEntryMode::NewGame;
     Texture2D _classPortraits[(int)PlayerClass::Count]{};   // idle sheets for the select cards
     // Appearance selection (independent of class).
     int  _appearanceCursor = 2;                 // default Hero03
@@ -690,6 +693,9 @@ private:
     void GenerateStartingAbilityOptions();
     void DrawStartingAbilityChoice();
     void EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates);
+    RoomLayout BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definitions,
+                                      int visualVariant, int propDensityBonus = 0);
+    void RefreshHandcraftedRooms();
     Vector2 GetDungeonBottomSpawnPos() const;
     void EnterDungeonShopIfNeeded(const DungeonRoom& room);
     void UpdateSpreadProjectiles(float dt);
@@ -1345,6 +1351,11 @@ private:
     DungeonGen   _dungeonGen;
     TileDefSet   _tileDefs;
     TileRenderer _tileRenderer;
+    RoomLibrary  _roomLibrary;
+    RoomAssetCatalog _roomAssetCatalog;
+    bool         _useHandcraftedDungeonRooms = false;
+    std::string  _lastHandcraftedRoomId;
+    std::string  _forcedHandcraftedRoomId;
     TileDefSet   _dungeonScrollTileDefs;
     TileRenderer _dungeonScrollTileRenderer;
     struct DungeonVisualVariant
@@ -1416,6 +1427,8 @@ private:
     DungeonView _dungeonView          = DungeonView::Graph;
     int        _dungeonRoomIdx = -1;
     RoomLayout _dungeonRoomLayout{};
+    Vector2   _dungeonRoomEntrySpawnPos{};
+    float     _dungeonFallRecoveryCooldown = 0.f;
 
     enum class DungeonDoorSide { None = -1, North, South, West, East };
     DungeonDoorSide _dungeonEntryDoorSide = DungeonDoorSide::None;

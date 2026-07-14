@@ -166,6 +166,7 @@ public:
 
     void TakeDamage(int damage, Vector2 attackerPos) override;
     void TakeFractionalDamage(float damage, Vector2 attackerPos);
+    void TakePitfallDamage(int damage);
     virtual void Death() override;
 
     // Lightweight revive — resets HP, dying/hit state, and push state without reloading assets.

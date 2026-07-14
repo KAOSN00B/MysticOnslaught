@@ -150,6 +150,7 @@
     <ClCompile Include="RoomLayout.cpp" />
     <ClCompile Include="RoomBlueprint.cpp" />
     <ClCompile Include="RoomLibrary.cpp" />
+    <ClCompile Include="RoomAssetCatalog.cpp" />
     <ClCompile Include="RoomEditor.cpp" />
     <ClCompile Include="RoomCollision.cpp" />
     <ClCompile Include="TileDefs.cpp" />
@@ -243,6 +244,7 @@
     <ClInclude Include="NavigationGrid.h" />
     <ClInclude Include="RoomBlueprint.h" />
     <ClInclude Include="RoomLibrary.h" />
+    <ClInclude Include="RoomAssetCatalog.h" />
     <ClInclude Include="RoomEditor.h" />
     <ClInclude Include="RoomCollision.h" />
     <ClInclude Include="VFXManager.h" />

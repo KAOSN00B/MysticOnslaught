@@ -15,7 +15,7 @@ class FlameWisp : public Enemy
 {
 public:
     FlameWisp(Vector2 pos);
-    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Spectral; }
+    CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Small; }
     ~FlameWisp() override;
 
     void Init();
@@ -46,6 +46,7 @@ public:
     void    OnBoltCast();
 
     void PlayAttackSound() override;
+    void PlayDeathSound() override;
 
 private:
     enum class WispState

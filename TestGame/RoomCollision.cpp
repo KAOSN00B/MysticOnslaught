@@ -11,6 +11,40 @@ namespace
         return a.x < b.x + b.width && a.x + a.width > b.x &&
                a.y < b.y + b.height && a.y + a.height > b.y;
     }
+
+    bool HitsAdjustedRoomEdge(const RoomLayout& room, Rectangle body,
+                              float cellWidth, float cellHeight)
+    {
+        const float roomWidth = RoomLayout::kCols * cellWidth;
+        const float roomHeight = RoomLayout::kRows * cellHeight;
+
+        for (int col = 0; col < RoomLayout::kCols; ++col)
+        {
+            const float x = col * cellWidth;
+            if (IsSolidRoomTile(room.tiles[0][col]) &&
+                RectanglesOverlap(body, { x, 0.f, cellWidth,
+                                          room.wallTopDepth * cellHeight }))
+                return true;
+            if (IsSolidRoomTile(room.tiles[RoomLayout::kRows - 1][col]) &&
+                RectanglesOverlap(body, { x, roomHeight - room.wallBottomDepth * cellHeight,
+                                          cellWidth, room.wallBottomDepth * cellHeight }))
+                return true;
+        }
+
+        for (int row = 0; row < RoomLayout::kRows; ++row)
+        {
+            const float y = row * cellHeight;
+            if (IsSolidRoomTile(room.tiles[row][0]) &&
+                RectanglesOverlap(body, { 0.f, y,
+                                          room.wallLeftDepth * cellWidth, cellHeight }))
+                return true;
+            if (IsSolidRoomTile(room.tiles[row][RoomLayout::kCols - 1]) &&
+                RectanglesOverlap(body, { roomWidth - room.wallRightDepth * cellWidth, y,
+                                          room.wallRightDepth * cellWidth, cellHeight }))
+                return true;
+        }
+        return false;
+    }
 }
 
 bool IsSolidRoomTile(TileType tile)
@@ -50,6 +84,17 @@ bool IsRoomFallPoint(const RoomLayout& room, Vector2 worldPoint,
     return room.fall[row][col];
 }
 
+bool RoomPlacementClearsAtDoor(Rectangle occupiedTiles, const RoomLayout& room)
+{
+    for (int i = 0; i < 4; ++i)
+    {
+        const RoomDoorZone& zone = room.doorZones[i];
+        if (!zone.enabled || (!room.roomCleared && !room.doorZoneOpen[i])) continue;
+        if (RectanglesOverlap(occupiedTiles, zone.tiles)) return true;
+    }
+    return false;
+}
+
 Vector2 ResolveHandcraftedTileMovement(const RoomLayout& room,
                                        Vector2 previousWorldPos,
                                        Vector2 desiredWorldPos,
@@ -68,6 +113,15 @@ Vector2 ResolveHandcraftedTileMovement(const RoomLayout& room,
                           collisionAtDesiredPos.width, collisionAtDesiredPos.height };
     };
     auto hitsSolid = [&](Rectangle body) {
+        for (int i = 0; i < 4; ++i)
+        {
+            const RoomDoorZone& zone = room.doorZones[i];
+            if (!zone.enabled || room.roomCleared || room.doorZoneOpen[i]) continue;
+            Rectangle zoneWorld{zone.tiles.x*cellWidth,zone.tiles.y*cellHeight,
+                                zone.tiles.width*cellWidth,zone.tiles.height*cellHeight};
+            if (RectanglesOverlap(body,zoneWorld)) return true;
+        }
+        if (HitsAdjustedRoomEdge(room, body, cellWidth, cellHeight)) return true;
         const int minCol = std::max(0, (int)std::floor(body.x / cellWidth));
         const int maxCol = std::min(RoomLayout::kCols - 1,
             (int)std::floor((body.x + body.width - 0.001f) / cellWidth));
@@ -78,7 +132,12 @@ Vector2 ResolveHandcraftedTileMovement(const RoomLayout& room,
         {
             for (int col = minCol; col <= maxCol; ++col)
             {
-                if (!IsSolidRoomTile(room.tiles[row][col])) continue;
+                // Border cells use the room's independently authored edge depths.
+                if (row == 0 || row == RoomLayout::kRows - 1 ||
+                    col == 0 || col == RoomLayout::kCols - 1)
+                    continue;
+                if (RoomPlacementClearsAtDoor({(float)col,(float)row,1.f,1.f},room)) continue;
+                if (!room.solid[row][col] && !IsSolidRoomTile(room.tiles[row][col])) continue;
                 const Rectangle tileRect{ col * cellWidth, row * cellHeight,
                                           cellWidth, cellHeight };
                 if (RectanglesOverlap(body, tileRect)) return true;
@@ -106,6 +165,8 @@ Vector2 FindNearestSafeRoomPosition(const RoomLayout& room,
         if (desiredCol >= 0 && desiredCol < RoomLayout::kCols &&
             desiredRow >= 0 && desiredRow < RoomLayout::kRows &&
             !room.fall[desiredRow][desiredCol] &&
+            (!room.solid[desiredRow][desiredCol] ||
+             RoomPlacementClearsAtDoor({(float)desiredCol,(float)desiredRow,1.f,1.f},room)) &&
             !IsSolidRoomTile(room.tiles[desiredRow][desiredCol]))
             return desiredWorldPos;
     }
@@ -116,7 +177,10 @@ Vector2 FindNearestSafeRoomPosition(const RoomLayout& room,
     {
         for (int col = 0; col < RoomLayout::kCols; ++col)
         {
-            if (room.fall[row][col] || IsSolidRoomTile(room.tiles[row][col])) continue;
+            if (room.fall[row][col] ||
+                (room.solid[row][col] &&
+                 !RoomPlacementClearsAtDoor({(float)col,(float)row,1.f,1.f},room)) ||
+                IsSolidRoomTile(room.tiles[row][col])) continue;
             const Vector2 candidate{ (col + 0.5f) * cellWidth,
                                      (row + 0.5f) * cellHeight };
             const float dx = candidate.x - desiredWorldPos.x;

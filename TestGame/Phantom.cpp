@@ -140,9 +140,24 @@ void Phantom::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget*
             float driftSpeed = _speed * (_phased ? kPhasedSpeedMult : 1.f);
             if (HasWarAura())
                 driftSpeed *= kWarAuraSpeedMultiplier;
-            Vector2 drift = Vector2Scale(Vector2Normalize(toPlayer), driftSpeed * dt);
-            drift.y += sinf(_bobTimer * 2.6f) * 20.f * dt;
-            _worldPos = Vector2Add(_worldPos, drift);
+
+            // Flanking ambush: while PHASED (untouchable, passes through
+            // everything) it aims PAST the player so it re-materializes on
+            // their far side, instead of always arriving from the front.
+            Vector2 driftTarget = heroWorldPos;
+            if (_phased && dist > 90.f)
+            {
+                driftTarget = Vector2Add(heroWorldPos,
+                    Vector2Scale(Vector2Normalize(toPlayer), Balance::Squad::kAssassinFlankDepth));
+            }
+
+            Vector2 toDriftTarget = Vector2Subtract(driftTarget, _worldPos);
+            if (Vector2Length(toDriftTarget) > 0.01f)
+            {
+                Vector2 drift = Vector2Scale(Vector2Normalize(toDriftTarget), driftSpeed * dt);
+                drift.y += sinf(_bobTimer * 2.6f) * 20.f * dt;
+                _worldPos = Vector2Add(_worldPos, drift);
+            }
         }
 
         // Bite while tangible and in range — simple touch attack.
@@ -283,6 +298,12 @@ void Phantom::PlayAttackSound()
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.5f);
     PlaySound(_attackSound);
+}
+
+void Phantom::PlayDeathSound()
+{
+    // Ghost dissolves on death — spectral dissipation, higher pitch than most
+    SfxBank::Get().Play(SfxId::DeathSmall, 0.55f, true);
 }
 
 void Phantom::EnsureSharedResourcesLoaded()
