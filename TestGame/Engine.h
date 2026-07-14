@@ -1355,6 +1355,11 @@ private:
     RoomAssetCatalog _roomAssetCatalog;
     bool         _useHandcraftedDungeonRooms = false;
     bool         _editorPlaytestActive = false; // playtesting a room from the map editor
+    RoomBlueprint _editorPlaytestBlueprint{};   // exact in-memory room; never procgen fallback
+    int          _editorPlaytestStartRoomIdx = -1;
+    std::vector<std::string> _editorPlaytestRoomIds; // stable library assignment per graph node
+    bool         _editorPlaytestEnemiesOn = true; // live enemy/door toggle in playtest
+    void SetPlaytestEnemies(bool enemiesOn);      // respawn/clear enemies + doors live
     std::string  _lastHandcraftedRoomId;
     std::string  _forcedHandcraftedRoomId;
     TileDefSet   _dungeonScrollTileDefs;

@@ -4,12 +4,19 @@
 #include <string>
 #include <vector>
 
+// Which vertical band a decoration draws in. Ground sits just above the floor
+// (below walls/visual), Visual sits with the wall layer, Decor is the normal
+// floor-decor band above the walls. Props are always their own top band.
+// This lets animated water/lava authored as Decor be painted "as ground".
+enum class RoomDrawBand : unsigned char { Decor = 0, Ground = 1, Visual = 2 };
+
 // A placed prop or decoration instance inside a room.
 struct SpritePlacement
 {
     int defIdx;   // index into TileDefSet::props or TileDefSet::decors
     int col, row; // tile-grid position within the room
     std::string sourceTileset; // empty = active biome definitions
+    RoomDrawBand band = RoomDrawBand::Decor; // decor-only: which layer it draws in
 };
 
 struct RoomTilePlacement
@@ -46,6 +53,14 @@ struct RoomLayout
     static constexpr int kCols = 28;
     static constexpr int kRows = 16;
 
+    // Predetermined door lanes — these MUST match the dungeon door span used by
+    // the main game (Engine GetDungeonDoorStartCol/Row, span 5 cols / 3 rows) so
+    // handcrafted rooms line up 1:1 with procedural rooms and never misalign.
+    static constexpr int kDoorSpanCols = 5;
+    static constexpr int kDoorSpanRows = 3;
+    static constexpr int kDoorStartCol = kCols / 2 - kDoorSpanCols / 2; // 12
+    static constexpr int kDoorStartRow = kRows / 2 - kDoorSpanRows / 2; // 7
+
     int visualVariant = 0; // index into the active biome's editable visual palette
     bool handcrafted = false;
     std::string sourceRoomId;
@@ -58,6 +73,7 @@ struct RoomLayout
     bool fall[kRows][kCols]{};
     bool solid[kRows][kCols]{};
     RoomDoorZone doorZones[4]{}; // top, bottom, left, right
+    std::vector<Rectangle> colliders; // free-size collision rects, tile space
     bool doorZoneOpen[4]{};
     bool roomCleared = false;
     std::vector<RoomTilePlacement> visualTiles;

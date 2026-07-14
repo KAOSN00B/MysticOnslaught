@@ -23,6 +23,9 @@ struct RoomAssetPlacement
     int col = 0;
     int row = 0;
     std::string sourceTileset; // empty = room.tilesetStem (version 1 compatibility)
+    // Decor/AnimDecor only: which layer band it draws in. Lets a Decor asset
+    // (e.g. animated water/lava) be painted as Ground or Visual. Ignored for props.
+    RoomDrawBand band = RoomDrawBand::Decor;
 };
 
 enum class RoomWallSide : unsigned char
@@ -34,6 +37,12 @@ enum class RoomWallSide : unsigned char
 };
 
 unsigned char RoomDoorMask(bool north, bool south, bool east, bool west);
+
+// The fixed tile-space rectangle for a door on the given side. Predetermined and
+// identical for every room so handcrafted door openings always line up with the
+// procedural dungeon door lanes (no free placement, no misalignment).
+Rectangle PredeterminedDoorZone(RoomWallSide side);
+void ApplyActiveRoomDoorMask(RoomLayout& layout, unsigned char doorMask);
 
 struct RoomBlueprint
 {
@@ -59,6 +68,10 @@ struct RoomBlueprint
     bool fall[RoomLayout::kRows][RoomLayout::kCols]{};
     bool solid[RoomLayout::kRows][RoomLayout::kCols]{};
     RoomDoorZone doorZones[4]{};
+    // Free-size collision rectangles in TILE space (may be smaller than a tile).
+    // These sit alongside the full-tile `solid[][]` grid — brush paints the grid,
+    // the Rectangle tool draws these adjustable boxes (fences, thin walls, etc.).
+    std::vector<Rectangle> colliders;
     std::vector<RoomTilePlacement> visualTiles;
     std::vector<RoomAssetPlacement> placements;
 

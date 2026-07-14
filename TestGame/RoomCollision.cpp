@@ -169,6 +169,13 @@ Vector2 ResolveHandcraftedTileMovement(const RoomLayout& room,
                 if (RectanglesOverlap(body, tileRect)) return true;
             }
         }
+        // Free-size authored collider rectangles (may be smaller than a tile).
+        for (const Rectangle& c : room.colliders)
+        {
+            const Rectangle world{ c.x * cellWidth, c.y * cellHeight,
+                                   c.width * cellWidth, c.height * cellHeight };
+            if (RectanglesOverlap(body, world)) return true;
+        }
         return false;
     };
 
@@ -184,6 +191,16 @@ Vector2 FindNearestSafeRoomPosition(const RoomLayout& room,
                                     Vector2 desiredWorldPos,
                                     float cellWidth, float cellHeight)
 {
+    // A point sits inside an authored free collider rectangle.
+    auto inCollider = [&](float x, float y) -> bool
+    {
+        for (const Rectangle& c : room.colliders)
+            if (x >= c.x * cellWidth && x < (c.x + c.width) * cellWidth &&
+                y >= c.y * cellHeight && y < (c.y + c.height) * cellHeight)
+                return true;
+        return false;
+    };
+
     if (cellWidth > 0.f && cellHeight > 0.f)
     {
         const int desiredCol = (int)std::floor(desiredWorldPos.x / cellWidth);
@@ -193,7 +210,8 @@ Vector2 FindNearestSafeRoomPosition(const RoomLayout& room,
             !room.fall[desiredRow][desiredCol] &&
             (!room.solid[desiredRow][desiredCol] ||
              RoomPlacementClearsAtDoor({(float)desiredCol,(float)desiredRow,1.f,1.f},room)) &&
-            !IsSolidRoomTile(room.tiles[desiredRow][desiredCol]))
+            !IsSolidRoomTile(room.tiles[desiredRow][desiredCol]) &&
+            !inCollider(desiredWorldPos.x, desiredWorldPos.y))
             return desiredWorldPos;
     }
 
@@ -209,6 +227,7 @@ Vector2 FindNearestSafeRoomPosition(const RoomLayout& room,
                 IsSolidRoomTile(room.tiles[row][col])) continue;
             const Vector2 candidate{ (col + 0.5f) * cellWidth,
                                      (row + 0.5f) * cellHeight };
+            if (inCollider(candidate.x, candidate.y)) continue;
             const float dx = candidate.x - desiredWorldPos.x;
             const float dy = candidate.y - desiredWorldPos.y;
             const float distanceSq = dx * dx + dy * dy;

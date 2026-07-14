@@ -1025,6 +1025,8 @@ void Character::RefreshForRoomEntry()
 
 void Character::TakeDamage(int damage, Vector2 attackerPos)
 {
+    if (_invulnerableLock)
+        return;
     if (_hasIFrames || _dashInvincible || _forcedPushActive)
         return;
 
@@ -1085,6 +1087,8 @@ void Character::TakePitfallDamage(int damage)
 
 void Character::TakeFractionalDamage(float damage, Vector2 attackerPos)
 {
+    if (_invulnerableLock)
+        return;
     if (_hasIFrames || _dashInvincible || _forcedPushActive)
         return;
     if (_dying || damage <= 0.f)

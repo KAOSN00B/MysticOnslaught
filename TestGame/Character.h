@@ -185,6 +185,10 @@ public:
     void OnForcedPushCollision();
     void ApplyBurnTicks(float tickDelay, int tickCount, float damagePerTick, Vector2 sourcePos);
     void GrantInvulnerability(float duration);
+    // Persistent damage immunity (map-editor playtest "invincible" mode). Unlike
+    // i-frames it never expires and does not flicker the sprite.
+    void SetInvulnerableLock(bool locked) { _invulnerableLock = locked; }
+    bool IsInvulnerableLocked() const { return _invulnerableLock; }
     bool IsBeingForcedPushed() const { return _forcedPushActive; }
     bool IsForceLocked() const { return _forcedPushActive || _forcedPushStunTimer > 0.f; }
     bool IsDashing() const { return _isDashing; }
@@ -610,6 +614,7 @@ private:
     bool _manaRegenPaused   = false;
     float _abilityAimMoveScale = 1.f;
     bool _castingAbility = false;
+    bool _invulnerableLock = false;  // editor-playtest god mode; never expires
     bool _isDashing = false;
     bool _dashAnimPlaying = false;
     bool _playDashParticles = false;

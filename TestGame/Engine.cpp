@@ -785,6 +785,42 @@ RoomLayout Engine::BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definit
     if (roomIdx < 0 || roomIdx >= (int)rooms.size()) return {};
     const DungeonRoom& room = rooms[(std::size_t)roomIdx];
 
+    // Editor playtest loads the exact in-memory blueprint, including unsaved
+    // edits. A bad blueprint must fail visibly, never turn into a procgen room.
+    if (_editorPlaytestActive)
+    {
+        const RoomBlueprint* blueprint = nullptr;
+        if (roomIdx == _editorPlaytestStartRoomIdx)
+            blueprint = &_editorPlaytestBlueprint;
+        else if (roomIdx >= 0 && roomIdx < (int)_editorPlaytestRoomIds.size())
+            blueprint = _roomLibrary.FindById(_editorPlaytestRoomIds[(std::size_t)roomIdx]);
+
+        if (blueprint == nullptr)
+        {
+            TraceLog(LOG_ERROR, "ROOM PLAYTEST: graph node %d has no handcrafted room", roomIdx);
+            return {};
+        }
+
+        std::string warning;
+        std::optional<RoomLayout> authored = BuildRoomLayout(
+            *blueprint, definitions, warning, &_roomAssetCatalog);
+        if (!warning.empty())
+            TraceLog(authored.has_value() ? LOG_WARNING : LOG_ERROR,
+                     "ROOM PLAYTEST: %s", warning.c_str());
+        if (authored.has_value())
+        {
+            // Exact rooms already have this mask. A four-door safety room is
+            // adapted here: only graph-required door zones can open; unused
+            // sides keep their authored wall art and collision intact.
+            const unsigned char mask = RoomDoorMask(
+                room.hasNorth, room.hasSouth, room.hasEast, room.hasWest);
+            ApplyActiveRoomDoorMask(*authored, mask);
+            authored->visualVariant = visualVariant;
+            return std::move(*authored);
+        }
+        return {};
+    }
+
     if (_useHandcraftedDungeonRooms)
     {
         std::string mapperStem = GetBiomeName(_currentBiome);
@@ -871,7 +907,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _magicGemCollected = false;
         _bossBarrierUnlocked = false;
         _bossBarrierMessageTimer = 0.f;
-        if (!_prologueActive)
+        if (!_prologueActive && !_editorPlaytestActive)
             RollDungeonRoomSpecials();   // tag decision rooms for this fresh dungeon
     }
 
@@ -1685,21 +1721,33 @@ void Engine::Update(float dt)
 {
     // A real run always launches from the menu, so clear the playtest flag there —
     // guarantees the Back-to-Editor overlay can never leak into a normal game.
-    if (_gameState == GameState::Menu) _editorPlaytestActive = false;
+    if (_gameState == GameState::Menu)
+    {
+        _editorPlaytestActive = false;
+        _player.SetInvulnerableLock(false);
+    }
 
     // While playtesting a room from the map editor, a "Back to Editor" button
-    // (top-centre) or F1 returns to the editor with the room still open.
+    // (top-centre) or F1 returns to the editor with the room still open. A second
+    // button flips enemies on/off live so door locking/unlocking can be tested.
     if (_editorPlaytestActive)
     {
+        const Vector2 mp = GetVirtualMousePos();
         const Rectangle backBtn{ (float)kVirtualWidth * 0.5f - 130.f, 12.f, 260.f, 42.f };
+        const Rectangle enemyBtn{ backBtn.x + backBtn.width + 14.f, 12.f, 230.f, 42.f };
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(mp, enemyBtn))
+            SetPlaytestEnemies(!_editorPlaytestEnemiesOn);
         const bool clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
-                             CheckCollisionPointRec(GetVirtualMousePos(), backBtn);
+                             CheckCollisionPointRec(mp, backBtn);
         if (clicked || IsKeyPressed(KEY_F1))
         {
             _editorPlaytestActive = false;
+            _player.SetInvulnerableLock(false);
             _gameState = GameState::TileMapper;
             return;
         }
+        if (IsKeyPressed(KEY_F2))   // keyboard shortcut for the enemy toggle
+            SetPlaytestEnemies(!_editorPlaytestEnemiesOn);
     }
 
     // Juice timers tick in real time (slow-mo only scales the gameplay sim).
@@ -1934,47 +1982,136 @@ void Engine::Update(float dt)
             // Keep the map editor loaded so "Back to Editor" can return to it with
             // the room still open (see the _editorPlaytestActive handling below).
             _editorPlaytestActive = true;
+            _editorPlaytestBlueprint = playtestRoom;
 
             _isMainGameRun = false;
-            _useHandcraftedDungeonRooms = true;
+            _useHandcraftedDungeonRooms = false;
+            _editorPlaytestEnemiesOn = true;   // start with enemies (doors locked)
+            _player.SetInvulnerableLock(true);  // can't die while testing
             RefreshHandcraftedRooms();
-            _forcedHandcraftedRoomId = playtestRoom.id;
+            _forcedHandcraftedRoomId.clear();
             _currentBiome = playtestRoom.biome;
             _pendingBiome = _currentBiome;
             _dungeonRoomIdx = -1;
 
-            int playtestRoomIdx = -1;
-            for (int attempt = 0; attempt < 64 && playtestRoomIdx < 0; ++attempt)
-            {
-                _dungeonGen.Generate();
+            // Which door layouts the designer has authored a room for (bit mask
+            // N=1,S=2,E=4,W=8). A dungeon is "fully handmade" when every room's
+            // door layout is one of these — then NO procgen room is ever used.
+            bool availableMask[16] = { false };
+            for (int mask = 1; mask < 16; ++mask)
+                availableMask[mask] = !_roomLibrary.PlaytestCandidates(
+                    playtestRoom.biome, (unsigned char)mask).empty();
+            availableMask[playtestRoom.DoorMask() & 15] = true;
+
+            auto findEditedSlot = [&]() -> int {
                 const auto& rooms = _dungeonGen.GetRooms();
                 for (int i = 0; i < (int)rooms.size(); ++i)
                 {
-                    const DungeonRoom& candidate = rooms[(std::size_t)i];
-                    if (candidate.type == playtestRoom.roomType &&
-                        RoomDoorMask(candidate.hasNorth, candidate.hasSouth,
-                                     candidate.hasEast, candidate.hasWest) == playtestRoom.DoorMask())
+                    const DungeonRoom& c = rooms[(std::size_t)i];
+                    if (RoomDoorMask(c.hasNorth, c.hasSouth, c.hasEast, c.hasWest) == playtestRoom.DoorMask())
+                        return i;
+                }
+                return -1;
+            };
+            auto fullyHandcraftable = [&]() -> bool {
+                for (const DungeonRoom& c : _dungeonGen.GetRooms())
+                {
+                    const unsigned char m =
+                        RoomDoorMask(c.hasNorth, c.hasSouth, c.hasEast, c.hasWest) & 15;
+                    if (m != 0 && !availableMask[m]) return false;
+                }
+                return true;
+            };
+
+            int playtestRoomIdx = -1;
+            // Phase 1: prefer a layout every room of which maps to an authored
+            // room (no procgen at all), that also has a slot for the edited room.
+            for (int attempt = 0; attempt < 600 && playtestRoomIdx < 0; ++attempt)
+            {
+                _dungeonGen.GenerateEditorPlaytest();
+                const int slot = findEditedSlot();
+                if (slot >= 0 && fullyHandcraftable()) playtestRoomIdx = slot;
+            }
+            // A second search gives constrained libraries more chances, but it
+            // still requires complete handcrafted coverage.
+            if (playtestRoomIdx < 0)
+            {
+                for (int attempt = 0; attempt < 64 && playtestRoomIdx < 0; ++attempt)
+                {
+                    _dungeonGen.GenerateEditorPlaytest();
+                    const int slot = findEditedSlot();
+                    if (slot >= 0 && fullyHandcraftable()) playtestRoomIdx = slot;
+                }
+                if (playtestRoomIdx >= 0)
+                {
+                    bool missing[16] = { false };
+                    for (const DungeonRoom& c : _dungeonGen.GetRooms())
                     {
-                        playtestRoomIdx = i;
+                        const unsigned char m =
+                            RoomDoorMask(c.hasNorth, c.hasSouth, c.hasEast, c.hasWest) & 15;
+                        if (m != 0 && !availableMask[m]) missing[m] = true;
+                    }
+                    auto maskName = [](int m) { std::string s;
+                        if (m & 1) s += "N"; if (m & 2) s += "S";
+                        if (m & 8) s += "W"; if (m & 4) s += "E"; return s; };
+                    std::string list;
+                    for (int m = 1; m < 16; ++m)
+                        if (missing[m]) { if (!list.empty()) list += ", "; list += maskName(m); }
+                    if (!list.empty())
+                        _message = "Missing handcrafted doors: " + list;
+                }
+            }
+
+            _editorPlaytestStartRoomIdx = playtestRoomIdx;
+            _editorPlaytestRoomIds.clear();
+            if (playtestRoomIdx >= 0)
+            {
+                const auto& graphRooms = _dungeonGen.GetRooms();
+                _editorPlaytestRoomIds.resize(graphRooms.size());
+                for (int i = 0; i < (int)graphRooms.size(); ++i)
+                {
+                    if (i == playtestRoomIdx) continue;
+                    const DungeonRoom& graphRoom = graphRooms[(std::size_t)i];
+                    const unsigned char requiredMask = RoomDoorMask(
+                        graphRoom.hasNorth, graphRoom.hasSouth,
+                        graphRoom.hasEast, graphRoom.hasWest);
+                    std::vector<const RoomBlueprint*> candidates =
+                        _roomLibrary.PlaytestCandidates(playtestRoom.biome, requiredMask);
+                    if (candidates.empty())
+                    {
+                        playtestRoomIdx = -1;
                         break;
                     }
+                    const int pick = GetRandomValue(0, (int)candidates.size() - 1);
+                    _editorPlaytestRoomIds[(std::size_t)i] =
+                        candidates[(std::size_t)pick]->id;
                 }
+                _editorPlaytestStartRoomIdx = playtestRoomIdx;
             }
 
             LoadTilesetForBiome(_currentBiome);
             if (playtestRoomIdx >= 0)
             {
-                for (int i = 0; i < (int)_dungeonVisualVariants.size(); ++i)
+                for (int roomIdx = 0; roomIdx < (int)_dungeonGen.GetRooms().size(); ++roomIdx)
                 {
-                    if (_dungeonVisualVariants[(std::size_t)i].mapperStem == playtestRoom.tilesetStem)
+                    const RoomBlueprint* selected = roomIdx == playtestRoomIdx
+                        ? &playtestRoom
+                        : _roomLibrary.FindById(_editorPlaytestRoomIds[(std::size_t)roomIdx]);
+                    if (selected == nullptr) continue;
+                    for (int variantIdx = 0; variantIdx < (int)_dungeonVisualVariants.size(); ++variantIdx)
                     {
-                        if (playtestRoomIdx < (int)_dungeonRoomVisualVariants.size())
-                            _dungeonRoomVisualVariants[(std::size_t)playtestRoomIdx] = i;
-                        break;
+                        if (_dungeonVisualVariants[(std::size_t)variantIdx].mapperStem == selected->tilesetStem)
+                        {
+                            if (roomIdx < (int)_dungeonRoomVisualVariants.size())
+                                _dungeonRoomVisualVariants[(std::size_t)roomIdx] = variantIdx;
+                            break;
+                        }
                     }
                 }
+                // Spawn in the middle of the room the designer is editing.
                 EnterDungeonRoom(playtestRoomIdx, DungeonDoorSide::None,
-                                 GetDungeonBottomSpawnPos(), true);
+                                 { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f },
+                                 true);
             }
             else
             {
@@ -4512,6 +4649,18 @@ void Engine::Draw()
         const char* label = "< Back to Editor  (F1)";
         DrawText(label, (int)(backBtn.x + backBtn.width * 0.5f - MeasureText(label, 22) * 0.5f),
                  (int)(backBtn.y + 10.f), 22, RAYWHITE);
+
+        // Live enemy/door toggle.
+        const Rectangle enemyBtn{ backBtn.x + backBtn.width + 14.f, 12.f, 230.f, 42.f };
+        const bool ehov = CheckCollisionPointRec(GetVirtualMousePos(), enemyBtn);
+        const bool on = _editorPlaytestEnemiesOn;
+        DrawRectangleRounded(enemyBtn, 0.3f, 6,
+            on ? (ehov ? Color{190,90,70,235} : Color{120,45,40,225})
+               : (ehov ? Color{70,150,90,235} : Color{35,90,55,225}));
+        DrawRectangleRoundedLines(enemyBtn, 0.3f, 6, ehov ? WHITE : Fade(WHITE, .55f));
+        const char* elabel = on ? "Enemies: ON  (F2)" : "Enemies: OFF  (F2)";
+        DrawText(elabel, (int)(enemyBtn.x + enemyBtn.width * 0.5f - MeasureText(elabel, 20) * 0.5f),
+                 (int)(enemyBtn.y + 11.f), 20, RAYWHITE);
     }
 }
 
@@ -16066,6 +16215,45 @@ Engine::DungeonDoorSide Engine::OppositeDungeonDoorSide(int dr, int dc) const
     return DungeonDoorSide::None;
 }
 
+// Map-editor playtest: flip between "enemies encountered" (doors lock) and
+// "room clear" (all doors open) live, so the designer can test door
+// locking/unlocking without leaving the room.
+void Engine::SetPlaytestEnemies(bool enemiesOn)
+{
+    _editorPlaytestEnemiesOn = enemiesOn;
+    if (_dungeonRoomIdx < 0) return;
+    DungeonRoomState& roomState = _dungeonRoomStates[_dungeonRoomIdx];
+
+    // Clear whatever is currently alive first. Reset the elite-mechanic state too:
+    // _eliteMinibossPtr is a raw pointer INTO _enemies, so clearing the vector
+    // would leave it dangling and UpdateEliteMechanics would read freed memory.
+    for (auto& enemy : _enemies) { enemy->SetActive(false); enemy->Teleport({ -5000.f, -5000.f }); }
+    _enemies.clear();
+    _dungeonReinforcements.clear();
+    _roomClearPending = false;
+    _eliteMechanic = -1;
+    _eliteMinibossPtr = nullptr;
+    _eliteIsLeaping = false;
+    _eliteLeapCooldown = 0.f;
+    _eliteLeapTimer = 0.f;
+    _eliteEnrageWarningTimer = 0.f;
+    _eliteHazardSpawnTimer = 0.f;
+
+    if (enemiesOn)
+    {
+        roomState.cleared = false;
+        roomState.enemiesInitialized = false;
+        _dungeonEnemiesSpawned = false;
+        SpawnDungeonRoomEnemies();     // fresh wave → doors lock
+    }
+    else
+    {
+        roomState.cleared = true;      // treat as cleared → all doors open
+        _dungeonEnemiesSpawned = false;
+    }
+    ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+}
+
 void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonDoorSide entryDoorSide) const
 {
     const auto& rooms = _dungeonGen.GetRooms();
@@ -18781,10 +18969,14 @@ void Engine::UpdateDungeonRun(float dt)
         bool wantsSouth = canUseDoor && moveDir.y >  0.25f;
         bool wantsWest  = canUseDoor && moveDir.x < -0.25f;
         bool wantsEast  = canUseDoor && moveDir.x >  0.25f;
-        bool canPassNorth = cur.hasNorth && IsDungeonDoorOpen(DungeonDoorSide::North) && bodyInDoorX && wantsNorth;
-        bool canPassSouth = cur.hasSouth && IsDungeonDoorOpen(DungeonDoorSide::South) && bodyInDoorX && wantsSouth;
-        bool canPassWest  = cur.hasWest  && IsDungeonDoorOpen(DungeonDoorSide::West)  && bodyInDoorY && wantsWest;
-        bool canPassEast  = cur.hasEast  && IsDungeonDoorOpen(DungeonDoorSide::East)  && bodyInDoorY && wantsEast;
+        const bool hasNorthNeighbor = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx, -1,  0) >= 0;
+        const bool hasSouthNeighbor = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx,  1,  0) >= 0;
+        const bool hasWestNeighbor  = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx,  0, -1) >= 0;
+        const bool hasEastNeighbor  = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx,  0,  1) >= 0;
+        bool canPassNorth = cur.hasNorth && hasNorthNeighbor && IsDungeonDoorOpen(DungeonDoorSide::North) && bodyInDoorX && wantsNorth;
+        bool canPassSouth = cur.hasSouth && hasSouthNeighbor && IsDungeonDoorOpen(DungeonDoorSide::South) && bodyInDoorX && wantsSouth;
+        bool canPassWest  = cur.hasWest  && hasWestNeighbor  && IsDungeonDoorOpen(DungeonDoorSide::West)  && bodyInDoorY && wantsWest;
+        bool canPassEast  = cur.hasEast  && hasEastNeighbor  && IsDungeonDoorOpen(DungeonDoorSide::East)  && bodyInDoorY && wantsEast;
         // Helper: begin a Zelda-style scroll into an adjacent room.
         // scrollVec describes which direction the CURRENT room slides offscreen.
         auto startScroll = [&](int dr, int dc, Vector2 scrollVec, Vector2 spawnPos)

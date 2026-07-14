@@ -44,17 +44,41 @@ int main()
         "Caverns", RoomType::Standard, true, false, true, false);
     RoomBlueprint forest = MakeRoom("forest", "Forest Lane", Biome::Forest,
         "Forest", RoomType::Standard, true, true, false, false);
+    RoomBlueprint cavernFallback = MakeRoom("cavern-four-way", "Cavern Crossroads", Biome::Caverns,
+        "Caverns", RoomType::Standard, true, true, true, true);
+    RoomBlueprint forestFallback = MakeRoom("forest-four-way", "Forest Crossroads", Biome::Forest,
+        "Forest", RoomType::Standard, true, true, true, true);
 
     assert(library.SaveRoom(crossingA, false, error));
     assert(library.SaveRoom(crossingB, false, error));
     assert(library.SaveRoom(corner, false, error));
     assert(library.SaveRoom(forest, false, error));
+    assert(library.SaveRoom(cavernFallback, false, error));
+    assert(library.SaveRoom(forestFallback, false, error));
     library.Refresh(root);
-    assert(library.Rooms().size() == 4);
+    assert(library.Rooms().size() == 6);
     assert(library.NameExists("Narrow Crossing"));
     assert(!library.NameExists("Narrow Crossing", "crossing-a"));
     assert(library.FindById("crossing-a") != nullptr);
     assert(library.FindById("missing") == nullptr);
+
+    // Editor playtest ignores room type/stem, stays inside the requested biome,
+    // prefers exact door masks, and uses four-way rooms only as its safety net.
+    auto exactCandidates = library.PlaytestCandidates(
+        Biome::Caverns, RoomDoorMask(true, true, false, false));
+    assert(exactCandidates.size() == 2);
+    for (const RoomBlueprint* room : exactCandidates)
+        assert(room->biome == Biome::Caverns &&
+               room->DoorMask() == RoomDoorMask(true, true, false, false));
+
+    auto fallbackCandidates = library.PlaytestCandidates(
+        Biome::Caverns, RoomDoorMask(false, false, true, true));
+    assert(fallbackCandidates.size() == 1);
+    assert(fallbackCandidates[0]->id == "cavern-four-way");
+
+    auto otherBiomeCandidates = library.PlaytestCandidates(
+        Biome::Jungle, RoomDoorMask(false, false, true, true));
+    assert(otherBiomeCandidates.empty());
 
     RoomRequest request;
     request.biome = Biome::Caverns;

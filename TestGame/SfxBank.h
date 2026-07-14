@@ -31,7 +31,7 @@ enum class SfxId
 {
     None = 0,
     // Player basics
-    BasicStaff, BasicBow, BasicDagger, BasicHoly, BasicShadow, BasicSword,
+    BasicFireBolt, BasicStaff, BasicBow, BasicDagger, BasicHoly, BasicShadow, BasicSword,
     // Element cast / impact / ultimate
     CastFire, CastIce, CastElectric, CastHoly, CastShadow, CastEarth, CastArcane,
     ImpactFire, ImpactIce, ImpactElectric, ImpactHoly, ImpactShadow, ImpactPhysical, ImpactPoison,

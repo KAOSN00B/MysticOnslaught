@@ -75,7 +75,8 @@ int main()
     assert(loaded->visualTiles[0].sourceTileset == "Forest");
     assert(!loaded->visualTiles[0].ground);
     assert(loaded->visualTiles[1].ground);
-    assert(loaded->doorZones[(int)RoomWallSide::Top].tiles.width == 6.f);
+    assert(loaded->doorZones[(int)RoomWallSide::Top].tiles.width ==
+           PredeterminedDoorZone(RoomWallSide::Top).width);
     assert(loaded->placements.size() == 1);
     assert(loaded->placements[0].kind == RoomAssetKind::AnimProp);
     assert(loaded->placements[0].assetId == "water_center_01");
@@ -109,13 +110,20 @@ int main()
     assert(layout->fall[6][8]);
     assert(layout->solid[4][5]);
     assert(layout->visualTiles.size() == 2);
-    assert(layout->doorZones[(int)RoomWallSide::Top].tiles.height == 1.5f);
+    assert(layout->doorZones[(int)RoomWallSide::Top].tiles.height ==
+           PredeterminedDoorZone(RoomWallSide::Top).height);
     assert(layout->props.size() == 1);
     assert(layout->props[0].defIdx == 0);
     assert(layout->props[0].col == 3 && layout->props[0].row == 4);
     assert(layout->animProps.size() == 1);
     assert(layout->animProps[0].defIdx == 0);
     assert(layout->decors.empty());
+
+    ApplyActiveRoomDoorMask(*layout, RoomDoorMask(false, true, true, false));
+    assert(!layout->doorZones[(int)RoomWallSide::Top].enabled);
+    assert(layout->doorZones[(int)RoomWallSide::Bottom].enabled);
+    assert(!layout->doorZones[(int)RoomWallSide::Left].enabled);
+    assert(layout->doorZones[(int)RoomWallSide::Right].enabled);
 
     RoomBlueprint noDoor = RoomBlueprint::CreateDefault();
     noDoor.id = "invalid-no-door";

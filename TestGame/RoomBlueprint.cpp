@@ -81,6 +81,30 @@ unsigned char RoomDoorMask(bool north, bool south, bool east, bool west)
                                       (west  ? 8 : 0));
 }
 
+Rectangle PredeterminedDoorZone(RoomWallSide side)
+{
+    const float startC = (float)RoomLayout::kDoorStartCol;
+    const float startR = (float)RoomLayout::kDoorStartRow;
+    const float spanC  = (float)RoomLayout::kDoorSpanCols;
+    const float spanR  = (float)RoomLayout::kDoorSpanRows;
+    switch (side)
+    {
+    case RoomWallSide::Top:    return { startC, 0.f, spanC, 1.f };
+    case RoomWallSide::Bottom: return { startC, (float)(RoomLayout::kRows - 1), spanC, 1.f };
+    case RoomWallSide::Left:   return { 0.f, startR, 1.f, spanR };
+    case RoomWallSide::Right:  return { (float)(RoomLayout::kCols - 1), startR, 1.f, spanR };
+    }
+    return {};
+}
+
+void ApplyActiveRoomDoorMask(RoomLayout& layout, unsigned char doorMask)
+{
+    layout.doorZones[(int)RoomWallSide::Top].enabled = (doorMask & 1) != 0;
+    layout.doorZones[(int)RoomWallSide::Bottom].enabled = (doorMask & 2) != 0;
+    layout.doorZones[(int)RoomWallSide::Left].enabled = (doorMask & 8) != 0;
+    layout.doorZones[(int)RoomWallSide::Right].enabled = (doorMask & 4) != 0;
+}
+
 RoomBlueprint RoomBlueprint::CreateDefault()
 {
     RoomBlueprint room;
@@ -96,10 +120,11 @@ RoomBlueprint RoomBlueprint::CreateDefault()
             room.solid[row][col] = border;
         }
     }
-    room.doorZones[(int)RoomWallSide::Top] = { false, { 12.f, 0.f, 5.f, 1.f } };
-    room.doorZones[(int)RoomWallSide::Bottom] = { false, { 12.f, 15.f, 5.f, 1.f } };
-    room.doorZones[(int)RoomWallSide::Left] = { false, { 0.f, 6.f, 1.f, 3.f } };
-    room.doorZones[(int)RoomWallSide::Right] = { false, { 27.f, 6.f, 1.f, 3.f } };
+    // Door zones are predetermined and fixed for every room so they line up 1:1
+    // with the procedural dungeon door lanes — the designer only toggles them
+    // on/off, never repositions them.
+    for (int i = 0; i < 4; ++i)
+        room.doorZones[i] = { false, PredeterminedDoorZone((RoomWallSide)i) };
     return room;
 }
 
@@ -194,6 +219,16 @@ bool RoomBlueprint::Validate(std::string& error) const
             return false;
         }
     }
+    for (const Rectangle& c : colliders)
+    {
+        if (c.width <= 0.f || c.height <= 0.f ||
+            c.x < 0.f || c.y < 0.f ||
+            c.x + c.width > RoomLayout::kCols || c.y + c.height > RoomLayout::kRows)
+        {
+            error = "Room collider rectangle is outside the room grid";
+            return false;
+        }
+    }
     for (const RoomDoorZone& zone : doorZones)
     {
         if (!zone.enabled) continue;
@@ -255,7 +290,8 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
     {
         out << AssetKindTag(placement.kind) << ' ' << std::quoted(placement.assetId)
             << ' ' << std::quoted(placement.sourceTileset)
-            << ' ' << placement.col << ' ' << placement.row << '\n';
+            << ' ' << placement.col << ' ' << placement.row
+            << ' ' << (int)placement.band << '\n';
     }
     out << "PLACEMENTS_END\nFALL_BEGIN\n";
     for (int row = 0; row < RoomLayout::kRows; ++row)
@@ -288,6 +324,8 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
             << zone.tiles.x << ' ' << zone.tiles.y << ' '
             << zone.tiles.width << ' ' << zone.tiles.height << '\n';
     }
+    for (const Rectangle& c : colliders)
+        out << "COLLIDER " << c.x << ' ' << c.y << ' ' << c.width << ' ' << c.height << '\n';
     out.flush();
     if (!out)
     {
@@ -408,6 +446,11 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
                         error = "Room placement source record is invalid";
                         return std::nullopt;
                     }
+                    // Optional trailing band (added later within v2) — absent in
+                    // older v2 files, which default to the Decor band.
+                    int bandValue = 0;
+                    if (values >> bandValue && bandValue >= 0 && bandValue <= 2)
+                        placement.band = (RoomDrawBand)bandValue;
                 }
                 else if (!(values >> placement.col >> placement.row))
                 {
@@ -577,6 +620,17 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
             zone.enabled = enabled != 0;
             room.doorZones[index] = zone;
         }
+        else if (tag == "COLLIDER")
+        {
+            Rectangle c{};
+            if (!(values >> c.x >> c.y >> c.width >> c.height) ||
+                c.width <= 0.f || c.height <= 0.f)
+            {
+                error = "Invalid room collider rectangle";
+                return std::nullopt;
+            }
+            room.colliders.push_back(c);
+        }
         // Unknown metadata tags are ignored for forward compatibility.
     }
 
@@ -590,11 +644,13 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
         for (int row = 0; row < RoomLayout::kRows; ++row)
             for (int col = 0; col < RoomLayout::kCols; ++col)
                 room.solid[row][col] = IsSolidRoomTile(room.tiles[row][col]);
-        room.doorZones[(int)RoomWallSide::Top].enabled = room.hasNorth;
-        room.doorZones[(int)RoomWallSide::Bottom].enabled = room.hasSouth;
-        room.doorZones[(int)RoomWallSide::Left].enabled = room.hasWest;
-        room.doorZones[(int)RoomWallSide::Right].enabled = room.hasEast;
     }
+    // Doors are predetermined now: snap every door zone to its fixed lane and key
+    // its enabled state off the room's door flags. Any old free-placed/misaligned
+    // zone is replaced, so handcrafted rooms always line up with the dungeon.
+    const bool doorEnabled[4] = { room.hasNorth, room.hasSouth, room.hasWest, room.hasEast };
+    for (int i = 0; i < 4; ++i)
+        room.doorZones[i] = { doorEnabled[i], PredeterminedDoorZone((RoomWallSide)i) };
     if (!room.Validate(error)) return std::nullopt;
     error.clear();
     return room;
@@ -621,6 +677,7 @@ std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
     layout.wallLeftDepth = blueprint.wallLeftDepth;
     layout.wallRightDepth = blueprint.wallRightDepth;
     for (int i = 0; i < 4; ++i) layout.doorZones[i] = blueprint.doorZones[i];
+    layout.colliders = blueprint.colliders;
     layout.visualTiles = blueprint.visualTiles;
     for (int row = 0; row < RoomLayout::kRows; ++row)
     {
@@ -656,7 +713,7 @@ std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
         if (!sourceStored)
             layout.assetSources.push_back({ sourceStem, *sourceDefinitions });
         const SpritePlacement runtimePlacement{
-            definitionIndex, placement.col, placement.row, sourceStem
+            definitionIndex, placement.col, placement.row, sourceStem, placement.band
         };
         switch (placement.kind)
         {

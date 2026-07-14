@@ -32,5 +32,33 @@ int main()
     assert(prologue[1].row == prologue[2].row);
     assert(prologue[0].col + 1 == prologue[1].col);
     assert(prologue[1].col + 1 == prologue[2].col);
+
+    generator.GenerateEditorPlaytest();
+    const auto& editorRooms = generator.GetRooms();
+    for (int i = 0; i < (int)editorRooms.size(); ++i)
+    {
+        const DungeonRoom& authoredSlot = editorRooms[(std::size_t)i];
+        if (authoredSlot.hasNorth)
+        {
+            const int neighbor = generator.GetNeighborIndex(i, -1, 0);
+            assert(neighbor >= 0 && editorRooms[(std::size_t)neighbor].hasSouth);
+        }
+        if (authoredSlot.hasSouth)
+        {
+            const int neighbor = generator.GetNeighborIndex(i, 1, 0);
+            assert(neighbor >= 0 && editorRooms[(std::size_t)neighbor].hasNorth);
+        }
+        if (authoredSlot.hasEast)
+        {
+            const int neighbor = generator.GetNeighborIndex(i, 0, 1);
+            assert(neighbor >= 0 && editorRooms[(std::size_t)neighbor].hasWest);
+        }
+        if (authoredSlot.hasWest)
+        {
+            const int neighbor = generator.GetNeighborIndex(i, 0, -1);
+            assert(neighbor >= 0 && editorRooms[(std::size_t)neighbor].hasEast);
+        }
+    }
+
     return 0;
 }

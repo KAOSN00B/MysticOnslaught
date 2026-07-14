@@ -67,6 +67,25 @@ const RoomBlueprint* RoomLibrary::Choose(const RoomRequest& request,
     return candidates[pick(generator)];
 }
 
+std::vector<const RoomBlueprint*> RoomLibrary::PlaytestCandidates(
+    Biome biome, unsigned char requiredDoorMask) const
+{
+    std::vector<const RoomBlueprint*> exact;
+    std::vector<const RoomBlueprint*> fourDoorFallback;
+    constexpr unsigned char kFourDoors = 1 | 2 | 4 | 8;
+
+    for (const RoomBlueprint& room : _rooms)
+    {
+        if (room.biome != biome) continue;
+        const unsigned char mask = room.DoorMask();
+        if (mask == requiredDoorMask)
+            exact.push_back(&room);
+        else if (mask == kFourDoors)
+            fourDoorFallback.push_back(&room);
+    }
+    return exact.empty() ? fourDoorFallback : exact;
+}
+
 std::optional<RoomLayout> RoomLibrary::Resolve(const RoomRequest& request,
                                                 const TileDefSet& definitions,
                                                 const RoomAssetCatalog* catalog,

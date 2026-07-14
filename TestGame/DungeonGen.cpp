@@ -17,6 +17,14 @@ void DungeonGen::Generate()
     AssignSpecialRooms();
 }
 
+void DungeonGen::GenerateEditorPlaytest()
+{
+    Generate();
+    // Generate() applies campaign-only one-way entrance and boss restrictions.
+    // The editor tests room connectivity, so restore every real grid adjacency.
+    BuildConnections();
+}
+
 void DungeonGen::GeneratePrologue()
 {
     _rooms.clear();

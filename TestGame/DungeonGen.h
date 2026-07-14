@@ -26,7 +26,9 @@ public:
 
     void Generate();
     void GeneratePrologue();
-
+    // Same full-size abstract graph as Generate(), but every grid adjacency is
+    // reciprocal so a room-library playtest can traverse the whole layout.
+    void GenerateEditorPlaytest();
     const std::vector<DungeonRoom>& GetRooms() const { return _rooms; }
     int GetStartIndex() const { return _startIdx; }
     bool IsEntranceRoom(int roomIdx) const { return roomIdx >= 0 && roomIdx == _startIdx; }

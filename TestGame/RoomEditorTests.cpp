@@ -15,6 +15,7 @@ int main()
     defs.assigned[(int)TileType::FloorVariant] = true;
     defs.props.push_back({ { 0.f, 0.f, 16.f, 16.f },
                            { 0.f, 0.f, 16.f, 16.f }, "rock", "Rock" });
+    defs.decors.push_back({ { 16.f, 0.f, 16.f, 16.f }, {}, "flower", "Flower" });
 
     RoomEditor editor;
     editor.BindForTesting("Caverns", Biome::Caverns, defs, root);
@@ -51,6 +52,35 @@ int main()
     assert(editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 13, 1 })); // prop in the north lane
     assert(!editor.PlaceAsset({ RoomAssetKind::Prop, "rock", -1, 4 }));
     assert(!editor.PlaceAsset({ RoomAssetKind::Prop, "missing", 3, 4 }));
+
+    // The explicit eraser affects only the active layer at one cell.
+    assert(editor.SetVisual(25, 9, true, "Caverns", { 0.f, 0.f, 16.f, 16.f }));
+    assert(editor.SetVisual(25, 9, false, "Caverns", { 16.f, 0.f, 16.f, 16.f }));
+    assert(editor.SetSolid(25, 9, true));
+    assert(editor.SetFall(25, 9, true));
+    editor.SelectLayer(RoomEditor::Layer::Visual);
+    assert(editor.EraseAt(25, 9));
+    assert(editor.Blueprint().solid[9][25]);
+    assert(editor.Blueprint().fall[9][25]);
+    int groundAtCell = 0;
+    int visualAtCell = 0;
+    for (const RoomTilePlacement& visual : editor.Blueprint().visualTiles)
+    {
+        if (visual.col != 25 || visual.row != 9) continue;
+        if (visual.ground) ++groundAtCell; else ++visualAtCell;
+    }
+    assert(groundAtCell == 1);
+    assert(visualAtCell == 0);
+
+    assert(editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 26, 9 }));
+    assert(editor.PlaceAsset({ RoomAssetKind::Decor, "flower", 26, 9 }));
+    editor.SelectLayer(RoomEditor::Layer::Props);
+    assert(editor.EraseAt(26, 9));
+    assert(editor.Blueprint().placements.size() >= 1);
+    bool decorRemains = false;
+    for (const RoomAssetPlacement& placement : editor.Blueprint().placements)
+        decorRemains = decorRemains || (placement.assetId == "flower");
+    assert(decorRemains);
 
     // Requirement 1: toggling an exit must not touch any authored layer, only the
     // connection flag and its Door Zone — and must never insert doorway art.

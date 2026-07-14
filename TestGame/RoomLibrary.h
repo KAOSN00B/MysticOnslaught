@@ -24,6 +24,11 @@ public:
     const RoomBlueprint* FindById(std::string_view id) const;
     const RoomBlueprint* Choose(const RoomRequest& request,
                                 std::string_view avoidId = {}) const;
+    // Geometry selection for editor playtests. Room type and tileset variant are
+    // gameplay/art concerns here: biome + exact doors decide first, with a
+    // same-biome four-door room as the only fallback.
+    std::vector<const RoomBlueprint*> PlaytestCandidates(
+        Biome biome, unsigned char requiredDoorMask) const;
     std::optional<RoomLayout> Resolve(const RoomRequest& request,
                                       const TileDefSet& definitions,
                                       const RoomAssetCatalog* catalog,

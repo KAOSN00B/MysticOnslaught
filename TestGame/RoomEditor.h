@@ -46,7 +46,7 @@ public:
     bool CanRedo() const { return !_redo.empty(); }
 
     // Paint tool + authoring operations (all headless-testable — no rendering).
-    enum class PaintTool { Brush, Rectangle, Bucket };
+    enum class PaintTool { Brush, Rectangle, Bucket, Eraser };
     void SelectLayer(Layer layer) { _layer = layer; }
     Layer ActiveLayer() const { return _layer; }
     void SetPaintTool(PaintTool tool) { _paintTool = tool; }
@@ -56,6 +56,7 @@ public:
     // Fill/flood/clear operate on the active layer and record ONE undo entry.
     bool FillRect(int col0, int row0, int col1, int row1, bool add = true);
     bool FloodFillFrom(int col, int row, bool add = true);
+    bool EraseAt(int col, int row);
     bool ClearActiveLayer();
     // Eyedropper: sample the tile/asset under a cell into the current selection.
     void PickAt(int col, int row);
@@ -69,6 +70,14 @@ private:
     const RoomAssetSource* SelectedSource() const;
     bool PaintCell(int col, int row, bool add);   // one cell of the active paint layer
     bool EraseVisual(int col, int row, bool ground);
+    // Ground/Visual layers can also paint Decor/AnimDecor assets tagged to that
+    // band (animated water/lava as ground). These helpers back that "decor mode".
+    bool DecorModeOnTileLayer() const;             // Ground/Visual + decor-mode on
+    bool ShowingAssetPalette() const;              // props/decor cards are visible
+    bool PaletteShowsProps() const;                // cards are props (vs decors)
+    RoomDrawBand CurrentTileBand() const;          // band for the active tile layer
+    bool PaintBandedDecor(int col, int row);       // place selected decor at a cell
+    bool EraseBandedDecorAt(int col, int row);     // remove decor of the active band
     void SelectSourceByStem(const std::string& stem);
     static bool LayerOwnsKind(Layer layer, RoomAssetKind kind);
     const TileDefSet& SelectedDefinitions() const;
@@ -81,7 +90,8 @@ private:
     void OpenRoom(const RoomBlueprint& room);
     void UpdateLibrary();
     void UpdateCanvas();
-    void UpdateDoorZoneDrag(Vector2 mouse, Rectangle canvas);
+    // Collision layer, Rectangle tool: draw/move/resize free-size collider rects.
+    void UpdateColliderRects(Vector2 mouse, Rectangle canvas);
     void DrawToolbar() const;
     void DrawCanvas() const;
     void DrawPlacementPreview() const;
@@ -115,7 +125,12 @@ private:
     int _selectedSource = 0;
     Rectangle _selectedRawTile{ 0.f, 0.f, 16.f, 16.f };
     int _selectedDoorZone = 0;
+    int _selectedCollider = -1;      // index into _room.colliders, -1 = none
+    int _colliderDragMode = 0;       // 0 none, 1 move, 2 resize, 3 creating
+    Vector2 _colliderGrab{};         // grab offset within a collider, tile space
+    Vector2 _colliderAnchor{};       // creation anchor corner, tile space
     PaintTool _paintTool = PaintTool::Brush;
+    bool _tileLayerDecorMode = false; // Ground/Visual: paint banded Decor assets
     bool _suppressUndo = false;      // true mid-stroke/fill so a multi-cell op = 1 undo
     bool _stroking = false;          // a left/right paint drag is in progress
     bool _strokeAdd = true;          // stroke paints (left) vs erases (right)

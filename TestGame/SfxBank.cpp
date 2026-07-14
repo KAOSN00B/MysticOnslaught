@@ -16,6 +16,7 @@ namespace
     // wav and ogg natively on desktop and web); BasicSword reuses the existing
     // ogg. A missing file just leaves that id unloaded (silent no-op).
     const SfxEntry kSfxTable[] = {
+        { SfxId::BasicFireBolt,   "Sounds/GS1_Spell_Fire.ogg" },
         { SfxId::BasicStaff,      "Sounds/Basic_Staff.wav" },
         { SfxId::BasicBow,        "Sounds/Basic_Bow.wav" },
         { SfxId::BasicDagger,     "Sounds/Basic_Dagger.wav" },
@@ -128,8 +129,8 @@ void SfxBank::PlayBasicAttack(PlayerClass cls)
 {
     switch (cls)
     {
-    case PlayerClass::Mage:    Play(SfxId::BasicStaff,  0.5f); break;
-    case PlayerClass::Warlock: Play(SfxId::BasicShadow, 0.5f); break;
+    case PlayerClass::Mage:    Play(SfxId::BasicFireBolt, 0.5f); break;
+    case PlayerClass::Warlock: Play(SfxId::BasicFireBolt, 0.5f); break;
     case PlayerClass::Hunter:  Play(SfxId::BasicBow,    0.6f); break;
     case PlayerClass::Rogue:   Play(SfxId::BasicDagger, 0.55f); break;
     case PlayerClass::Paladin: Play(SfxId::BasicHoly,   0.5f); break;
