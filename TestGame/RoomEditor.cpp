@@ -3,6 +3,7 @@
 #include "VirtualCanvas.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -10,10 +11,6 @@
 
 namespace
 {
-    constexpr int kDoorSpanCols = 5;
-    constexpr int kDoorSpanRows = 3;
-    constexpr int kDoorStartCol = RoomLayout::kCols / 2 - kDoorSpanCols / 2;
-    constexpr int kDoorStartRow = RoomLayout::kRows / 2 - kDoorSpanRows / 2;
     constexpr std::size_t kHistoryLimit = 128;
 
     int TilesFor(float sourcePixels)
@@ -72,24 +69,219 @@ const TileDefSet* RoomEditor::DefinitionsFor(const std::string& stem) const
     return source != nullptr ? &source->definitions : nullptr;
 }
 
-bool RoomEditor::IsProtectedDoorCell(int col, int row) const
-{
-    const bool inVerticalLane = col >= kDoorStartCol - 1 &&
-                                col < kDoorStartCol + kDoorSpanCols + 1;
-    const bool inHorizontalLane = row >= kDoorStartRow - 1 &&
-                                  row < kDoorStartRow + kDoorSpanRows + 1;
-    if (_room.hasNorth && inVerticalLane && row <= 1) return true;
-    if (_room.hasSouth && inVerticalLane && row >= RoomLayout::kRows - 2) return true;
-    if (_room.hasWest && inHorizontalLane && col <= 1) return true;
-    if (_room.hasEast && inHorizontalLane && col >= RoomLayout::kCols - 2) return true;
-    return false;
-}
-
 void RoomEditor::PushUndo()
 {
+    // While a stroke / fill is in progress the first PushUndo already snapshotted
+    // the room, so the rest of the operation collapses into that one undo entry.
+    if (_suppressUndo) return;
     if (_undo.size() >= kHistoryLimit) _undo.erase(_undo.begin());
     _undo.push_back(_room);
     _redo.clear();
+}
+
+bool RoomEditor::LayerOwnsKind(Layer layer, RoomAssetKind kind)
+{
+    if (layer == Layer::Props)
+        return kind == RoomAssetKind::Prop || kind == RoomAssetKind::AnimProp;
+    if (layer == Layer::Decor)
+        return kind == RoomAssetKind::Decor || kind == RoomAssetKind::AnimDecor;
+    return false;
+}
+
+bool RoomEditor::EraseVisual(int col, int row, bool ground)
+{
+    auto found = std::find_if(_room.visualTiles.rbegin(), _room.visualTiles.rend(),
+        [=](const RoomTilePlacement& visual)
+        { return visual.col == col && visual.row == row && visual.ground == ground; });
+    if (found == _room.visualTiles.rend()) return false;
+    PushUndo();
+    _room.visualTiles.erase(std::next(found).base());
+    return true;
+}
+
+// Paint a single cell of the active layer. add=true paints/places, add=false
+// erases/clears. Shared by the brush drag, rectangle fill and bucket fill so the
+// three tools stay in lockstep.
+bool RoomEditor::PaintCell(int col, int row, bool add)
+{
+    switch (_layer)
+    {
+    case Layer::Ground:
+    case Layer::Visual:
+    {
+        const bool ground = _layer == Layer::Ground;
+        if (!add) return EraseVisual(col, row, ground);
+        const RoomAssetSource* source = SelectedSource();
+        if (source == nullptr) return false;
+        return SetVisual(col, row, ground, source->stem, _selectedRawTile);
+    }
+    case Layer::Collision: return SetSolid(col, row, add);
+    case Layer::FallZones: return SetFall(col, row, add);
+    default: return false;   // Props/Decor/DoorZones are not brush-painted
+    }
+}
+
+bool RoomEditor::FillRect(int col0, int row0, int col1, int row1, bool add)
+{
+    int c0 = std::max(0, std::min(col0, col1));
+    int r0 = std::max(0, std::min(row0, row1));
+    int c1 = std::min(RoomLayout::kCols - 1, std::max(col0, col1));
+    int r1 = std::min(RoomLayout::kRows - 1, std::max(row0, row1));
+    if (c1 < c0 || r1 < r0) return false;
+
+    const bool nested = _suppressUndo;
+    if (!nested) { PushUndo(); _suppressUndo = true; }
+    bool changed = false;
+    for (int r = r0; r <= r1; ++r)
+        for (int c = c0; c <= c1; ++c)
+            changed = PaintCell(c, r, add) || changed;
+    if (!nested)
+    {
+        _suppressUndo = false;
+        if (!changed && !_undo.empty()) _undo.pop_back(); // drop the no-op snapshot
+    }
+    return changed;
+}
+
+bool RoomEditor::FloodFillFrom(int col, int row, bool add)
+{
+    if (!IsCellValid(col, row)) return false;
+
+    // Region membership is decided against the ORIGINAL grid: two cells match
+    // when they carry the same value on the active layer as the seed cell.
+    auto sig = [&](int c, int r) -> std::string
+    {
+        switch (_layer)
+        {
+        case Layer::Collision: return _room.solid[r][c] ? "1" : "0";
+        case Layer::FallZones: return _room.fall[r][c] ? "1" : "0";
+        case Layer::Ground:
+        case Layer::Visual:
+        {
+            const bool ground = _layer == Layer::Ground;
+            for (auto it = _room.visualTiles.rbegin(); it != _room.visualTiles.rend(); ++it)
+                if (it->col == c && it->row == r && it->ground == ground)
+                    return it->sourceTileset + "@" + std::to_string((int)it->src.x) + "," +
+                           std::to_string((int)it->src.y);
+            return {}; // empty cell
+        }
+        default: return {};
+        }
+    };
+    const std::string seed = sig(col, row);
+
+    std::vector<std::pair<int, int>> region;
+    std::vector<char> seen((std::size_t)(RoomLayout::kCols * RoomLayout::kRows), 0);
+    std::vector<std::pair<int, int>> stack{ { col, row } };
+    auto mark = [&](int c, int r) -> char& { return seen[(std::size_t)(r * RoomLayout::kCols + c)]; };
+    mark(col, row) = 1;
+    while (!stack.empty())
+    {
+        auto [c, r] = stack.back(); stack.pop_back();
+        if (sig(c, r) != seed) continue;
+        region.push_back({ c, r });
+        const int dc[4] = { 1, -1, 0, 0 };
+        const int dr[4] = { 0, 0, 1, -1 };
+        for (int k = 0; k < 4; ++k)
+        {
+            int nc = c + dc[k], nr = r + dr[k];
+            if (!IsCellValid(nc, nr) || mark(nc, nr)) continue;
+            mark(nc, nr) = 1;
+            stack.push_back({ nc, nr });
+        }
+    }
+
+    const bool nested = _suppressUndo;
+    if (!nested) { PushUndo(); _suppressUndo = true; }
+    bool changed = false;
+    for (const auto& cell : region)
+        changed = PaintCell(cell.first, cell.second, add) || changed;
+    if (!nested)
+    {
+        _suppressUndo = false;
+        if (!changed && !_undo.empty()) _undo.pop_back();
+    }
+    return changed;
+}
+
+bool RoomEditor::ClearActiveLayer()
+{
+    PushUndo();
+    bool changed = false;
+    switch (_layer)
+    {
+    case Layer::Ground:
+    case Layer::Visual:
+    {
+        const bool ground = _layer == Layer::Ground;
+        const std::size_t before = _room.visualTiles.size();
+        _room.visualTiles.erase(std::remove_if(_room.visualTiles.begin(), _room.visualTiles.end(),
+            [=](const RoomTilePlacement& v) { return v.ground == ground; }), _room.visualTiles.end());
+        changed = _room.visualTiles.size() != before;
+        break;
+    }
+    case Layer::Collision:
+        for (auto& rowArr : _room.solid) for (bool& s : rowArr) { changed = changed || s; s = false; }
+        break;
+    case Layer::FallZones:
+        for (auto& rowArr : _room.fall) for (bool& f : rowArr) { changed = changed || f; f = false; }
+        break;
+    case Layer::Props:
+    case Layer::Decor:
+    {
+        const std::size_t before = _room.placements.size();
+        const Layer layer = _layer;
+        _room.placements.erase(std::remove_if(_room.placements.begin(), _room.placements.end(),
+            [=](const RoomAssetPlacement& p) { return LayerOwnsKind(layer, p.kind); }), _room.placements.end());
+        changed = _room.placements.size() != before;
+        break;
+    }
+    default: break;
+    }
+    if (!changed && !_undo.empty()) _undo.pop_back();
+    return changed;
+}
+
+void RoomEditor::SelectSourceByStem(const std::string& stem)
+{
+    const auto& sources = _catalog.Sources();
+    for (int i = 0; i < (int)sources.size(); ++i)
+        if (sources[(std::size_t)i].stem == stem) { _selectedSource = i; return; }
+}
+
+void RoomEditor::PickAt(int col, int row)
+{
+    if (!IsCellValid(col, row)) return;
+    if (_layer == Layer::Ground || _layer == Layer::Visual)
+    {
+        const bool ground = _layer == Layer::Ground;
+        for (auto it = _room.visualTiles.rbegin(); it != _room.visualTiles.rend(); ++it)
+            if (it->col == col && it->row == row && it->ground == ground)
+            {
+                _selectedRawTile = it->src;
+                SelectSourceByStem(it->sourceTileset);
+                return;
+            }
+    }
+    else if (_layer == Layer::Props || _layer == Layer::Decor)
+    {
+        for (auto it = _room.placements.rbegin(); it != _room.placements.rend(); ++it)
+            if (it->col == col && it->row == row && LayerOwnsKind(_layer, it->kind))
+            {
+                _selectedAssetKind = it->kind;
+                _selectedAssetId = it->assetId;
+                SelectSourceByStem(it->sourceTileset);
+                return;
+            }
+    }
+}
+
+RoomBlueprint RoomEditor::Duplicate(const RoomBlueprint& source)
+{
+    RoomBlueprint copy = source;
+    copy.id = MakeRoomId(source.tilesetStem);
+    copy.name = source.name + " copy";
+    return copy;
 }
 
 bool RoomEditor::SetTerrain(int col, int row, TileType tile)
@@ -99,7 +291,6 @@ bool RoomEditor::SetTerrain(int col, int row, TileType tile)
     if (_room.tiles[row][col] == tile) return false;
     PushUndo();
     _room.tiles[row][col] = tile;
-    UpdateDoorTiles();
     return true;
 }
 
@@ -138,7 +329,7 @@ bool RoomEditor::SetSolid(int col, int row, bool enabled)
 
 bool RoomEditor::SetFall(int col, int row, bool enabled)
 {
-    if (!IsCellValid(col, row) || IsProtectedDoorCell(col, row)) return false;
+    if (!IsCellValid(col, row)) return false;
     if (_room.fall[row][col] == enabled) return false;
     PushUndo();
     _room.fall[row][col] = enabled;
@@ -169,9 +360,6 @@ bool RoomEditor::PlacementFits(const RoomAssetPlacement& placement) const
     if (placement.col + width > RoomLayout::kCols ||
         placement.row + height > RoomLayout::kRows)
         return false;
-    for (int row = placement.row; row < placement.row + height; ++row)
-        for (int col = placement.col; col < placement.col + width; ++col)
-            if (IsProtectedDoorCell(col, row)) return false;
 
     for (const RoomAssetPlacement& existing : _room.placements)
     {
@@ -213,11 +401,14 @@ void RoomEditor::SetDoors(bool north, bool south, bool east, bool west)
     _room.hasSouth = south;
     _room.hasEast = east;
     _room.hasWest = west;
+    // Toggling an exit only flips the connection and its Door Zone. The
+    // designer's Ground, Visual, Collision, Prop, Decor and Fall layers are never
+    // touched — no automatic doorway or wall art is inserted, so a continuous
+    // authored wall survives right through a future opening.
     _room.doorZones[(int)RoomWallSide::Top].enabled = north;
     _room.doorZones[(int)RoomWallSide::Bottom].enabled = south;
     _room.doorZones[(int)RoomWallSide::Left].enabled = west;
     _room.doorZones[(int)RoomWallSide::Right].enabled = east;
-    UpdateDoorTiles();
 }
 
 bool RoomEditor::SetWallDepth(RoomWallSide side, float depth)
@@ -235,24 +426,6 @@ bool RoomEditor::SetWallDepth(RoomWallSide side, float depth)
     PushUndo();
     *value = depth;
     return true;
-}
-
-void RoomEditor::UpdateDoorTiles()
-{
-    for (int offset = 0; offset < kDoorSpanCols; ++offset)
-    {
-        const int col = kDoorStartCol + offset;
-        _room.tiles[0][col] = _room.hasNorth ? TileType::DoorOpen : TileType::WallTopFace;
-        _room.tiles[RoomLayout::kRows - 1][col] =
-            _room.hasSouth ? TileType::DoorOpen : TileType::WallBottom;
-    }
-    for (int offset = 0; offset < kDoorSpanRows; ++offset)
-    {
-        const int row = kDoorStartRow + offset;
-        _room.tiles[row][0] = _room.hasWest ? TileType::DoorOpen : TileType::WallLeft;
-        _room.tiles[row][RoomLayout::kCols - 1] =
-            _room.hasEast ? TileType::DoorOpen : TileType::WallRight;
-    }
 }
 
 bool RoomEditor::Undo()
@@ -572,88 +745,246 @@ RoomAssetKind RoomEditor::AssetKindAtPaletteIndex(int index, int& definitionInde
     return RoomAssetKind::AnimDecor;
 }
 
+std::vector<int> RoomEditor::MatchingAssetIndices() const
+{
+    auto lower = [](std::string s)
+    {
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+        return s;
+    };
+    const std::string query = lower(_paletteSearch);
+    std::vector<int> matches;
+    for (int i = 0; i < AssetCountForLayer(); ++i)
+    {
+        if (query.empty()) { matches.push_back(i); continue; }
+        int definitionIndex = 0;
+        const RoomAssetKind kind = AssetKindAtPaletteIndex(i, definitionIndex);
+        if (lower(AssetName(kind, definitionIndex)).find(query) != std::string::npos)
+            matches.push_back(i);
+    }
+    return matches;
+}
+
 void RoomEditor::UpdateLibrary()
 {
     Vector2 mouse = GetVirtualMousePos();
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
         CheckCollisionPointRec(mouse, {1500,82,120,38}))
     {
+        _pendingDeleteId.clear();
         _showLibrary = false;
         return;
     }
-    _libraryScroll = std::max(0.f, _libraryScroll - GetMouseWheelMove() * 65.f);
+    const float libMax = std::max(0.f, (float)_library.Rooms().size() * 62.f - 760.f);
+    _libraryScroll = std::clamp(_libraryScroll - GetMouseWheelMove() * 65.f, 0.f, libMax);
     const auto& rooms = _library.Rooms();
     for (int i = 0; i < (int)rooms.size(); ++i)
     {
         float y = 180.f + i * 62.f - _libraryScroll;
         Rectangle row{ 240.f, y, 1360.f, 52.f };
+        Rectangle copy{ 1470.f, y + 7.f, 60.f, 38.f };
         Rectangle remove{ 1535.f, y + 7.f, 50.f, 38.f };
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, copy))
+        {
+            RoomBlueprint dup = Duplicate(rooms[(std::size_t)i]);
+            std::string error;
+            const bool ok = _library.SaveRoom(dup, false, error);
+            _library.Refresh(_roomRoot);
+            _pendingDeleteId.clear();
+            _status = ok ? "Duplicated room" : error;
+            _statusTimer = 3.f;
+            return;
+        }
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, remove))
         {
+            // First click arms this room, second click on the same one confirms —
+            // guards against accidentally deleting authored rooms.
+            const std::string& id = rooms[(std::size_t)i].id;
+            if (_pendingDeleteId != id)
+            {
+                _pendingDeleteId = id;
+                _status = "Click X again to delete \"" + rooms[(std::size_t)i].name + "\"";
+                _statusTimer = 3.f;
+                return;
+            }
             std::string error;
-            _library.DeleteRoom(rooms[(std::size_t)i].id, error);
+            _library.DeleteRoom(id, error);
+            _pendingDeleteId.clear();
             _status = error.empty() ? "Room deleted" : error;
             _statusTimer = 3.f;
             return;
         }
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, row))
         {
+            _pendingDeleteId.clear();
             OpenRoom(rooms[(std::size_t)i]);
             return;
         }
     }
-    if (IsKeyPressed(KEY_ESCAPE)) _showLibrary = false;
+    if (IsKeyPressed(KEY_ESCAPE)) { _pendingDeleteId.clear(); _showLibrary = false; }
 }
 
 void RoomEditor::UpdateCanvas()
 {
-    Vector2 mouse = GetVirtualMousePos();
-    int col = 0, row = 0;
-    if (!ScreenToCell(mouse, col, row)) return;
+    const Vector2 mouse = GetVirtualMousePos();
+    const Rectangle canvas = CanvasRect();
+    const bool overCanvas = CheckCollisionPointRec(mouse, canvas);
 
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+    // ── Door Zones: drag the gold box directly on the canvas ─────────────────
+    if (_layer == Layer::DoorZones)
     {
-        const RoomAssetSource* source = SelectedSource();
-        if ((_layer == Layer::Ground || _layer == Layer::Visual) && source != nullptr)
-            SetVisual(col, row, _layer == Layer::Ground, source->stem, _selectedRawTile);
-        else if (_layer == Layer::Collision) SetSolid(col, row, true);
-        else if (_layer == Layer::FallZones) SetFall(col, row, true);
+        UpdateDoorZoneDrag(mouse, canvas);
+        return;
     }
-    if ((_layer == Layer::Props || _layer == Layer::Decor) &&
-        IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !_selectedAssetId.empty())
+
+    int col = 0, row = 0;
+    const bool onCell = ScreenToCell(mouse, col, row);
+
+    // ── Eyedropper (Alt+left-click) samples the cell into the selection ──────
+    const bool altHeld = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
+    if (altHeld && onCell && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
-        const RoomAssetSource* source = SelectedSource();
-        PlaceAsset({ _selectedAssetKind, _selectedAssetId, col, row,
-                     source != nullptr ? source->stem : _room.tilesetStem });
+        PickAt(col, row);
+        return;
     }
-    if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+
+    // ── Props / Decor: single click place / remove (not a stroke) ────────────
+    if (_layer == Layer::Props || _layer == Layer::Decor)
     {
-        if (_layer == Layer::Ground || _layer == Layer::Visual)
+        if (onCell && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !_selectedAssetId.empty())
         {
-            const bool ground = _layer == Layer::Ground;
-            auto found = std::find_if(_room.visualTiles.rbegin(), _room.visualTiles.rend(),
-                [=](const RoomTilePlacement& visual)
-                { return visual.col == col && visual.row == row && visual.ground == ground; });
-            if (found != _room.visualTiles.rend())
-            {
-                PushUndo();
-                _room.visualTiles.erase(std::next(found).base());
-            }
+            const RoomAssetSource* source = SelectedSource();
+            PlaceAsset({ _selectedAssetKind, _selectedAssetId, col, row,
+                         source != nullptr ? source->stem : _room.tilesetStem });
         }
-        else if (_layer == Layer::Collision) SetSolid(col, row, false);
-        else if (_layer == Layer::FallZones) SetFall(col, row, false);
-        else if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
+        else if (onCell && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
             RemoveAssetAt(col, row, _selectedAssetKind);
+        return;
+    }
+
+    // ── Brush / Rectangle / Bucket painting on Ground/Visual/Collision/Fall ──
+    const bool leftPressed  = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    const bool rightPressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+    if (!_stroking && onCell && (leftPressed || rightPressed))
+    {
+        // One undo entry covers the whole stroke/fill.
+        PushUndo();
+        _suppressUndo = true;
+        _stroking = true;
+        _strokeAdd = leftPressed;
+        _strokeChanged = false;
+        _dragStartCol = col;
+        _dragStartRow = row;
+        // Shift forces a rectangle regardless of the selected tool.
+        _strokeTool = (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+            ? PaintTool::Rectangle : _paintTool;
+        if (_strokeTool == PaintTool::Bucket)
+            _strokeChanged = FloodFillFrom(col, row, _strokeAdd);
+        else if (_strokeTool == PaintTool::Brush)
+            _strokeChanged = PaintCell(col, row, _strokeAdd);
+        // Rectangle waits for release to fill.
+    }
+    else if (_stroking && _strokeTool == PaintTool::Brush && onCell &&
+             IsMouseButtonDown(_strokeAdd ? MOUSE_BUTTON_LEFT : MOUSE_BUTTON_RIGHT))
+    {
+        _strokeChanged = PaintCell(col, row, _strokeAdd) || _strokeChanged;
+    }
+
+    const bool released = _strokeAdd ? IsMouseButtonReleased(MOUSE_BUTTON_LEFT)
+                                     : IsMouseButtonReleased(MOUSE_BUTTON_RIGHT);
+    if (_stroking && (released || (!onCell && !overCanvas &&
+                                   !IsMouseButtonDown(_strokeAdd ? MOUSE_BUTTON_LEFT
+                                                                 : MOUSE_BUTTON_RIGHT))))
+    {
+        if (_strokeTool == PaintTool::Rectangle && onCell)
+            _strokeChanged = FillRect(_dragStartCol, _dragStartRow, col, row, _strokeAdd)
+                             || _strokeChanged;
+        _suppressUndo = false;
+        _stroking = false;
+        if (!_strokeChanged && !_undo.empty()) _undo.pop_back();
+    }
+}
+
+// Drag the selected/enabled Door Zone box directly on the canvas. Grabbing the
+// interior moves it; grabbing an edge or corner resizes it. Snaps to 0.25 tiles
+// and stays inside the grid. The whole drag is one undo entry.
+void RoomEditor::UpdateDoorZoneDrag(Vector2 mouse, Rectangle canvas)
+{
+    const float tx = (mouse.x - canvas.x) / kCell;
+    const float ty = (mouse.y - canvas.y) / kCell;
+    const float edge = 0.35f;   // tiles from a border that count as a resize grab
+    auto snap = [](float v) { return std::round(v / 0.25f) * 0.25f; };
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            const RoomDoorZone& z = _room.doorZones[i];
+            if (!z.enabled) continue;
+            const Rectangle grab{ z.tiles.x - edge, z.tiles.y - edge,
+                                  z.tiles.width + edge * 2.f, z.tiles.height + edge * 2.f };
+            if (!CheckCollisionPointRec({ tx, ty }, grab)) continue;
+            _selectedDoorZone = i;
+            const bool nearRight  = tx > z.tiles.x + z.tiles.width - edge;
+            const bool nearBottom = ty > z.tiles.y + z.tiles.height - edge;
+            _zoneDragMode = (nearRight || nearBottom) ? 2 : 1;   // 2 resize, 1 move
+            _zoneDragGrab = { tx - z.tiles.x, ty - z.tiles.y };
+            PushUndo();
+            _suppressUndo = true;
+            break;
+        }
+    }
+
+    if (_zoneDragMode != 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+    {
+        RoomDoorZone& z = _room.doorZones[_selectedDoorZone];
+        if (_zoneDragMode == 1)   // move
+        {
+            z.tiles.x = std::clamp(snap(tx - _zoneDragGrab.x), 0.f,
+                                   (float)RoomLayout::kCols - z.tiles.width);
+            z.tiles.y = std::clamp(snap(ty - _zoneDragGrab.y), 0.f,
+                                   (float)RoomLayout::kRows - z.tiles.height);
+        }
+        else                      // resize (right/bottom edges)
+        {
+            z.tiles.width  = std::clamp(snap(tx - z.tiles.x), 0.25f,
+                                        (float)RoomLayout::kCols - z.tiles.x);
+            z.tiles.height = std::clamp(snap(ty - z.tiles.y), 0.25f,
+                                        (float)RoomLayout::kRows - z.tiles.y);
+        }
+    }
+
+    if (_zoneDragMode != 0 && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+    {
+        _zoneDragMode = 0;
+        _suppressUndo = false;
     }
 }
 
 void RoomEditor::Update()
 {
     if (_statusTimer > 0.f) _statusTimer -= GetFrameTime();
-    if (IsKeyPressed(KEY_TAB)) _paletteVisible = !_paletteVisible;
-    if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Z)) Undo();
-    if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_Y)) Redo();
-    if (!_editingName && IsKeyPressed(KEY_S)) SaveRoom();
+    const bool ctrl  = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+    const bool shift = IsKeyDown(KEY_LEFT_SHIFT)   || IsKeyDown(KEY_RIGHT_SHIFT);
+    const bool typing = _editingName || _editingSearch;
+    if (!typing && IsKeyPressed(KEY_TAB)) _paletteVisible = !_paletteVisible;
+    if (ctrl && IsKeyPressed(KEY_Z)) { if (shift) Redo(); else Undo(); }
+    if (ctrl && IsKeyPressed(KEY_Y)) Redo();
+    if (ctrl && IsKeyPressed(KEY_S)) SaveRoom();
+    if (!typing && !ctrl && IsKeyPressed(KEY_S)) SaveRoom();
+    if (!typing && !ctrl)
+    {
+        // 1-7 select a layer (matches the toolbar order); B toggles the bucket.
+        if (IsKeyPressed(KEY_ONE))   _layer = Layer::Ground;
+        if (IsKeyPressed(KEY_TWO))   _layer = Layer::Visual;
+        if (IsKeyPressed(KEY_THREE)) _layer = Layer::Collision;
+        if (IsKeyPressed(KEY_FOUR))  _layer = Layer::Props;
+        if (IsKeyPressed(KEY_FIVE))  _layer = Layer::Decor;
+        if (IsKeyPressed(KEY_SIX))   _layer = Layer::FallZones;
+        if (IsKeyPressed(KEY_SEVEN)) _layer = Layer::DoorZones;
+        if (IsKeyPressed(KEY_B))
+            _paintTool = _paintTool == PaintTool::Bucket ? PaintTool::Brush : PaintTool::Bucket;
+    }
 
     if (_showLibrary) { UpdateLibrary(); return; }
 
@@ -681,8 +1012,13 @@ void RoomEditor::Update()
     }
 
     Rectangle nameBox{ 130.f, 70.f, 360.f, 38.f };
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
-        _editingName = CheckCollisionPointRec(mouse, nameBox);
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, nameBox))
+    {
+        _editingName = true;
+        _editingSearch = false;
+    }
+    else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !CheckCollisionPointRec(mouse, nameBox))
+        _editingName = false;
     if (_editingName)
     {
         int key = GetCharPressed();
@@ -693,6 +1029,18 @@ void RoomEditor::Update()
         }
         if (IsKeyPressed(KEY_BACKSPACE) && !_room.name.empty()) _room.name.pop_back();
         if (IsKeyPressed(KEY_ENTER)) _editingName = false;
+    }
+    if (_editingSearch)
+    {
+        int key = GetCharPressed();
+        while (key > 0)
+        {
+            if (key >= 32 && key <= 126 && _paletteSearch.size() < 32)
+                _paletteSearch.push_back((char)key);
+            key = GetCharPressed();
+        }
+        if (IsKeyPressed(KEY_BACKSPACE) && !_paletteSearch.empty()) _paletteSearch.pop_back();
+        if (IsKeyPressed(KEY_ENTER)) _editingSearch = false;
     }
 
     const Rectangle doorButtons[] = { {760,70,52,38}, {818,70,52,38}, {876,70,52,38}, {934,70,52,38} };
@@ -724,6 +1072,16 @@ void RoomEditor::Update()
         }
     }
 
+    // Mouse-wheel over a wall-depth field nudges it ±0.25 — no more +/- grind.
+    {
+        const float wheel = GetMouseWheelMove();
+        if (wheel != 0.f)
+            for (int i = 0; i < 4; ++i)
+                if (CheckCollisionPointRec(mouse, WallValueRect(i)))
+                    SetWallDepth(WallSideAt(i),
+                                 WallDepthAt(_room, i) + (wheel > 0.f ? 0.25f : -0.25f));
+    }
+
     const Rectangle layerButtons[] = {
         {30,112,100,34}, {136,112,100,34}, {242,112,100,34},
         {348,112,100,34}, {454,112,100,34}, {560,112,110,34},
@@ -733,11 +1091,45 @@ void RoomEditor::Update()
         for (int i = 0; i < 7; ++i)
             if (CheckCollisionPointRec(mouse, layerButtons[i])) _layer = (Layer)i;
 
+    // Paint-tool selector + Clear Layer (right of the layer row).
+    struct ToolButton { Rectangle rect; PaintTool tool; };
+    const ToolButton toolButtons[] = {
+        {{810,112,72,34}, PaintTool::Brush},
+        {{886,112,72,34}, PaintTool::Rectangle},
+        {{962,112,72,34}, PaintTool::Bucket},
+    };
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+    {
+        for (const auto& t : toolButtons)
+            if (CheckCollisionPointRec(mouse, t.rect)) _paintTool = t.tool;
+        if (CheckCollisionPointRec(mouse, {1042,112,116,34}) && ClearActiveLayer())
+        { _status = "Layer cleared"; _statusTimer = 2.f; }
+    }
+
     if (_paletteVisible && mouse.x >= 1180.f)
     {
-        _paletteScroll = std::max(0.f, _paletteScroll - GetMouseWheelMove() * 90.f);
+        float maxScroll = 0.f;
+        if (_layer == Layer::Ground || _layer == Layer::Visual)
+        {
+            if (const RoomAssetSource* s = SelectedSource(); s && s->tileColumns > 0)
+            {
+                const float cellPx = 660.f / (float)s->tileColumns;
+                maxScroll = std::max(0.f, s->tileRows * cellPx - 700.f);
+            }
+        }
+        else if (_layer == Layer::Props || _layer == Layer::Decor)
+        {
+            const int rows = ((int)MatchingAssetIndices().size() + 4) / 5;
+            maxScroll = std::max(0.f, rows * 108.f - 700.f);
+        }
+        _paletteScroll = std::clamp(_paletteScroll - GetMouseWheelMove() * 90.f, 0.f, maxScroll);
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
         {
+            // Focus the props/decor search box; clicking elsewhere defocuses it.
+            const bool propsLayer = (_layer == Layer::Props || _layer == Layer::Decor);
+            _editingSearch = propsLayer &&
+                CheckCollisionPointRec(mouse, {1210.f, 255.f, 660.f, 26.f});
+            if (_editingSearch) _editingName = false;
             const int sourceCount = (int)_catalog.Sources().size();
             if (sourceCount > 0 && CheckCollisionPointRec(mouse, {1210,230,42,34}))
             {
@@ -756,29 +1148,32 @@ void RoomEditor::Update()
             else if (_layer == Layer::Ground || _layer == Layer::Visual)
             {
                 const RoomAssetSource* source = SelectedSource();
-                if (source != nullptr)
+                if (source != nullptr && source->tileColumns > 0 && source->tileRows > 0)
                 {
-                    const int count = source->tileColumns * source->tileRows;
-                    for (int i = 0; i < count; ++i)
+                    // Map the click onto the contiguous sheet (matches DrawPalette).
+                    const int cols = source->tileColumns, rows = source->tileRows;
+                    const float cellPx = 660.f / (float)cols;
+                    const float ox = 1210.f, oy = 285.f - _paletteScroll;
+                    if (mouse.x >= ox && mouse.x < ox + cols * cellPx &&
+                        mouse.y >= oy && mouse.y < oy + rows * cellPx)
                     {
-                        Rectangle item{1210.f+(i%10)*64.f,285.f+(i/10)*64.f-_paletteScroll,58,58};
-                        if (!CheckCollisionPointRec(mouse, item)) continue;
-                        _selectedRawTile = { (float)((i % source->tileColumns) * 16),
-                            (float)((i / source->tileColumns) * 16), 16.f, 16.f };
-                        break;
+                        const int gc = std::clamp((int)((mouse.x - ox) / cellPx), 0, cols - 1);
+                        const int gr = std::clamp((int)((mouse.y - oy) / cellPx), 0, rows - 1);
+                        _selectedRawTile = { (float)(gc * 16), (float)(gr * 16), 16.f, 16.f };
                     }
                 }
             }
-            else if (_layer == Layer::Props || _layer == Layer::Decor)
+            else if (propsLayer)
             {
                 const TileDefSet& definitions = SelectedDefinitions();
-                for (int i = 0; i < AssetCountForLayer(); ++i)
+                const std::vector<int> matches = MatchingAssetIndices();
+                for (int slot = 0; slot < (int)matches.size(); ++slot)
                 {
-                    Rectangle item{ 1210.f + (i % 5) * 128.f,
-                                    285.f + (i / 5) * 108.f - _paletteScroll, 116.f, 96.f };
+                    Rectangle item{ 1210.f + (slot % 5) * 128.f,
+                                    285.f + (slot / 5) * 108.f - _paletteScroll, 116.f, 96.f };
                     if (!CheckCollisionPointRec(mouse, item)) continue;
                     int definitionIndex = 0;
-                    _selectedAssetKind = AssetKindAtPaletteIndex(i, definitionIndex);
+                    _selectedAssetKind = AssetKindAtPaletteIndex(matches[slot], definitionIndex);
                     switch (_selectedAssetKind)
                     {
                     case RoomAssetKind::Prop: _selectedAssetId = definitions.props[(std::size_t)definitionIndex].id; break;
@@ -804,6 +1199,8 @@ void RoomEditor::Update()
             }
         }
     }
+    // The search box only exists on Props/Decor — never leave it focused elsewhere.
+    if (_layer != Layer::Props && _layer != Layer::Decor) _editingSearch = false;
     UpdateCanvas();
 }
 
@@ -849,7 +1246,13 @@ void RoomEditor::DrawToolbar() const
         DrawButton({x,112,widths[i],34}, names[i], (int)_layer == i);
         x += widths[i] + 6.f;
     }
-    DrawText("TAB hides palette   Ctrl+Z/Y undo/redo", 820, 120, 15, Fade(WHITE,.55f));
+    // Paint-tool selector + Clear Layer (must match the hit-rects in Update()).
+    DrawButton({810,112,72,34}, "Brush",  _paintTool == PaintTool::Brush);
+    DrawButton({886,112,72,34}, "Rect",   _paintTool == PaintTool::Rectangle);
+    DrawButton({962,112,72,34}, "Bucket", _paintTool == PaintTool::Bucket);
+    DrawButton({1042,112,116,34}, "Clear Layer");
+    DrawText("1-7 layer  |  Shift-drag = rectangle  |  B = bucket  |  Alt-click = pick  |  Ctrl+S save  |  Ctrl+Z/Y undo",
+             30, 805, 15, Fade(WHITE,.55f));
 }
 
 void RoomEditor::DrawCanvas() const
@@ -863,7 +1266,13 @@ void RoomEditor::DrawCanvas() const
             TileType tile = _room.tiles[row][col];
             int index = (int)tile;
             Rectangle dst{ canvas.x + col*kCell, canvas.y + row*kCell, kCell, kCell };
-            if (index >= 0 && index < (int)TileType::Count && _definitions.assigned[index])
+            // No default ground: the biome floor base is drawn as an empty cell so
+            // the designer paints the ground themselves (bucket-fill the Ground
+            // layer). The Floor still lives in the data for collision + in-game
+            // fallback — this only blanks the EDITOR's display. Walls/specials show.
+            if (tile == TileType::Floor || tile == TileType::FloorVariant)
+                DrawRectangleRec(dst, Color{16,18,24,255});
+            else if (index >= 0 && index < (int)TileType::Count && _definitions.assigned[index])
             {
                 Texture2D texture = _definitions.fromGround[index] ? _groundSheet : _sheet;
                 if (texture.id != 0) DrawTexturePro(texture, _definitions.rects[index], dst, {}, 0.f, WHITE);
@@ -950,14 +1359,22 @@ void RoomEditor::DrawCanvas() const
                 DrawRectangleRec(cell,Color{30,130,255,28});
                 DrawRectangleLinesEx(cell,1.f,Color{70,170,255,175});
             }
-    for (int i=0;i<4;++i)
-        if (_room.doorZones[i].enabled)
-        {
-            const Rectangle& z=_room.doorZones[i].tiles;
-            Rectangle dst{canvas.x+z.x*kCell,canvas.y+z.y*kCell,z.width*kCell,z.height*kCell};
-            DrawRectangleRec(dst,i==_selectedDoorZone?Color{255,190,30,48}:Color{255,190,30,24});
-            DrawRectangleLinesEx(dst,2.f,i==_selectedDoorZone?GOLD:Fade(GOLD,.55f));
-        }
+    // Door Zones are an editor guide only — shown while their layer is selected,
+    // never baked into the room's art and never drawn during gameplay.
+    if (_layer == Layer::DoorZones)
+    {
+        static const char* const kSideLabels[4] = { "Top", "Bottom", "Left", "Right" };
+        for (int i=0;i<4;++i)
+            if (_room.doorZones[i].enabled)
+            {
+                const Rectangle& z=_room.doorZones[i].tiles;
+                Rectangle dst{canvas.x+z.x*kCell,canvas.y+z.y*kCell,z.width*kCell,z.height*kCell};
+                DrawRectangleRec(dst,i==_selectedDoorZone?Color{255,190,30,48}:Color{255,190,30,24});
+                DrawRectangleLinesEx(dst,2.f,i==_selectedDoorZone?GOLD:Fade(GOLD,.55f));
+                DrawText(kSideLabels[i],(int)dst.x+4,(int)dst.y+4,18,
+                         i==_selectedDoorZone?GOLD:Fade(GOLD,.7f));
+            }
+    }
     DrawWallColliderOverlay();
     DrawPlacementPreview();
     for (int col = 0; col <= RoomLayout::kCols; ++col)
@@ -965,6 +1382,33 @@ void RoomEditor::DrawCanvas() const
     for (int row = 0; row <= RoomLayout::kRows; ++row)
         DrawLine((int)canvas.x,(int)(canvas.y+row*kCell),(int)(canvas.x+canvas.width),(int)(canvas.y+row*kCell),Fade(WHITE,.10f));
     DrawRectangleLinesEx(canvas, 2.f, Fade(WHITE,.5f));
+
+    // Live rectangle-fill preview while dragging the Rectangle tool.
+    int hoverCol = 0, hoverRow = 0;
+    const bool onCell = ScreenToCell(GetVirtualMousePos(), hoverCol, hoverRow);
+    if (_stroking && _strokeTool == PaintTool::Rectangle && onCell)
+    {
+        int c0 = std::min(_dragStartCol, hoverCol), c1 = std::max(_dragStartCol, hoverCol);
+        int r0 = std::min(_dragStartRow, hoverRow), r1 = std::max(_dragStartRow, hoverRow);
+        Rectangle preview{ canvas.x + c0 * kCell, canvas.y + r0 * kCell,
+                           (c1 - c0 + 1) * kCell, (r1 - r0 + 1) * kCell };
+        DrawRectangleRec(preview, Fade(_strokeAdd ? LIME : RED, .18f));
+        DrawRectangleLinesEx(preview, 2.f, _strokeAdd ? LIME : RED);
+    }
+
+    // Coordinate readout under the cursor.
+    if (onCell)
+        DrawText(TextFormat("%d, %d", hoverCol, hoverRow),
+                 (int)canvas.x + 6, (int)(canvas.y + canvas.height) - 22, 16, Fade(WHITE, .8f));
+
+    // Live validation nudge: a room needs at least one exit before it can save.
+    if (_room.DoorMask() == 0)
+    {
+        Rectangle warn{ canvas.x + canvas.width * .5f - 190.f, canvas.y + 8.f, 380.f, 30.f };
+        DrawRectangleRec(warn, Fade(Color{ 160, 40, 40, 255 }, .9f));
+        DrawText("Enable at least one exit (N/S/W/E)",
+                 (int)warn.x + 20, (int)warn.y + 7, 17, RAYWHITE);
+    }
 }
 
 void RoomEditor::DrawWallColliderOverlay() const
@@ -1089,32 +1533,54 @@ void RoomEditor::DrawPalette() const
     DrawButton({1828,230,42,34},">",false,selectedSource!=nullptr);
     DrawRectangleRec({1260,230,560,34},Color{28,32,39,255});
     DrawRectangleLinesEx({1260,230,560,34},1.f,Fade(WHITE,.22f));
-    const std::string sourceName=selectedSource!=nullptr?selectedSource->stem:"No source sheets found";
+    std::string sourceName=selectedSource!=nullptr?selectedSource->stem:"No source sheets found";
+    if (selectedSource != nullptr)
+        sourceName += TextFormat("   (%d/%d)", _selectedSource + 1, (int)_catalog.Sources().size());
     DrawText(sourceName.c_str(),1272,238,17,RAYWHITE);
 
-    BeginScissorMode(1190,275,690,713);
+    // Search box (props/decor) — filters the cards below (hit-rect matches Update).
+    if (_layer == Layer::Props || _layer == Layer::Decor)
+    {
+        Rectangle searchBox{1210,255,660,26};
+        DrawRectangleRec(searchBox, _editingSearch?Color{45,70,100,255}:Color{28,32,39,255});
+        DrawRectangleLinesEx(searchBox,1.f,_editingSearch?SKYBLUE:Fade(WHITE,.22f));
+        const bool empty=_paletteSearch.empty();
+        DrawText(empty?"Search props / decor...":_paletteSearch.c_str(),
+                 1218,260,16,empty?Fade(WHITE,.4f):RAYWHITE);
+    }
+
+    BeginScissorMode(1190,283,690,705);
     if ((_layer == Layer::Ground || _layer == Layer::Visual) && selectedSource!=nullptr)
     {
+        // Draw the whole tilesheet as one contiguous, aligned image (like the
+        // TileMapper), fit to the panel width, with a grid overlay and a
+        // highlight on the selected tile — instead of separate padded cells.
         Texture2D texture=TextureFor(selectedSource->stem);
-        const int count=selectedSource->tileColumns*selectedSource->tileRows;
-        for(int i=0;i<count;++i)
-        {
-            Rectangle src{(float)((i%selectedSource->tileColumns)*16),
-                          (float)((i/selectedSource->tileColumns)*16),16,16};
-            Rectangle item{1210.f+(i%10)*64.f,285.f+(i/10)*64.f-_paletteScroll,58,58};
-            const bool active=src.x==_selectedRawTile.x&&src.y==_selectedRawTile.y;
-            DrawRectangleRec(item,active?Color{35,95,145,255}:Color{35,38,45,255});
-            if(texture.id) DrawTexturePro(texture,src,{item.x+7,item.y+7,44,44},{},0,WHITE);
-            DrawRectangleLinesEx(item,1.f,active?SKYBLUE:Fade(WHITE,.16f));
-        }
+        const int cols=std::max(1,selectedSource->tileColumns);
+        const int rows=std::max(1,selectedSource->tileRows);
+        const float cellPx=660.f/(float)cols;
+        const float ox=1210.f, oy=285.f-_paletteScroll;
+        if(texture.id)
+            DrawTexturePro(texture,{0,0,(float)(cols*16),(float)(rows*16)},
+                           {ox,oy,cols*cellPx,rows*cellPx},{},0.f,WHITE);
+        else
+            DrawRectangleRec({ox,oy,cols*cellPx,rows*cellPx},Color{20,22,28,255});
+        for(int c=0;c<=cols;++c)
+            DrawLineV({ox+c*cellPx,oy},{ox+c*cellPx,oy+rows*cellPx},Fade(WHITE,.14f));
+        for(int r=0;r<=rows;++r)
+            DrawLineV({ox,oy+r*cellPx},{ox+cols*cellPx,oy+r*cellPx},Fade(WHITE,.14f));
+        const int selC=(int)(_selectedRawTile.x/16.f), selR=(int)(_selectedRawTile.y/16.f);
+        DrawRectangleRec({ox+selC*cellPx,oy+selR*cellPx,cellPx,cellPx},Fade(SKYBLUE,.25f));
+        DrawRectangleLinesEx({ox+selC*cellPx,oy+selR*cellPx,cellPx,cellPx},2.5f,SKYBLUE);
     }
     else if (_layer == Layer::Props || _layer == Layer::Decor)
     {
         const TileDefSet& definitions=SelectedDefinitions();
-        for (int i=0;i<AssetCountForLayer();++i)
+        const std::vector<int> matches=MatchingAssetIndices();
+        for (int slot=0;slot<(int)matches.size();++slot)
         {
-            int definitionIndex=0; RoomAssetKind kind=AssetKindAtPaletteIndex(i,definitionIndex);
-            Rectangle item{1210.f+(i%5)*128.f,285.f+(i/5)*108.f-_paletteScroll,116,96};
+            int definitionIndex=0; RoomAssetKind kind=AssetKindAtPaletteIndex(matches[slot],definitionIndex);
+            Rectangle item{1210.f+(slot%5)*128.f,285.f+(slot/5)*108.f-_paletteScroll,116,96};
             std::string id;
             std::string textureStem=selectedSource!=nullptr?selectedSource->stem:_room.tilesetStem;
             if (kind==RoomAssetKind::Prop) { const auto& d=definitions.props[(std::size_t)definitionIndex]; id=d.id; if(!d.sourceSheet.empty())textureStem=d.sourceSheet; }
@@ -1178,9 +1644,12 @@ void RoomEditor::DrawLibrary() const
         DrawText(rooms[(std::size_t)i].name.c_str(),260,(int)y+14,20,RAYWHITE);
         DrawText(RoomTypeLabel(rooms[(std::size_t)i].roomType),700,(int)y+15,18,SKYBLUE);
         DrawText(TextFormat("Doors %s%s%s%s",rooms[(std::size_t)i].hasNorth?"N":"",rooms[(std::size_t)i].hasSouth?"S":"",rooms[(std::size_t)i].hasWest?"W":"",rooms[(std::size_t)i].hasEast?"E":""),900,(int)y+15,18,Fade(WHITE,.7f));
-        DrawButton({1535,y+7,50,38},"X");
+        DrawButton({1470,y+7,60,38},"Copy");
+        const bool armed = !_pendingDeleteId.empty() && _pendingDeleteId == rooms[(std::size_t)i].id;
+        DrawButton({1535,y+7,armed?90.f:50.f,38},armed?"Sure?":"X",armed);
     }
     EndScissorMode();
+    DrawText("Copy = duplicate a room   |   X = delete (click twice to confirm)",240,960,18,Fade(WHITE,.5f));
 }
 
 void RoomEditor::Draw() const

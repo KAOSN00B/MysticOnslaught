@@ -1683,6 +1683,25 @@ void Engine::UpdateInputPromptMode()
 }
 void Engine::Update(float dt)
 {
+    // A real run always launches from the menu, so clear the playtest flag there —
+    // guarantees the Back-to-Editor overlay can never leak into a normal game.
+    if (_gameState == GameState::Menu) _editorPlaytestActive = false;
+
+    // While playtesting a room from the map editor, a "Back to Editor" button
+    // (top-centre) or F1 returns to the editor with the room still open.
+    if (_editorPlaytestActive)
+    {
+        const Rectangle backBtn{ (float)kVirtualWidth * 0.5f - 130.f, 12.f, 260.f, 42.f };
+        const bool clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) &&
+                             CheckCollisionPointRec(GetVirtualMousePos(), backBtn);
+        if (clicked || IsKeyPressed(KEY_F1))
+        {
+            _editorPlaytestActive = false;
+            _gameState = GameState::TileMapper;
+            return;
+        }
+    }
+
     // Juice timers tick in real time (slow-mo only scales the gameplay sim).
     if (_critFocusTimer   > 0.f) _critFocusTimer   -= dt;
     if (_screenFlashTimer > 0.f) _screenFlashTimer -= dt;
@@ -1912,7 +1931,9 @@ void Engine::Update(float dt)
         if (_tileMapper.ConsumeRoomPlaytestRequest())
         {
             const RoomBlueprint playtestRoom = _tileMapper.EditedRoom();
-            _tileMapper.Unload();
+            // Keep the map editor loaded so "Back to Editor" can return to it with
+            // the room still open (see the _editorPlaytestActive handling below).
+            _editorPlaytestActive = true;
 
             _isMainGameRun = false;
             _useHandcraftedDungeonRooms = true;
@@ -4480,6 +4501,18 @@ void Engine::Draw()
     }
 
     DrawScreenFx();   // crit spotlight + level-up/ultimate flash, over the whole canvas
+
+    // Playtest overlay: a clear way back to the map editor (input handled in Update).
+    if (_editorPlaytestActive)
+    {
+        const Rectangle backBtn{ (float)kVirtualWidth * 0.5f - 130.f, 12.f, 260.f, 42.f };
+        const bool hov = CheckCollisionPointRec(GetVirtualMousePos(), backBtn);
+        DrawRectangleRounded(backBtn, 0.3f, 6, hov ? Color{60,120,190,235} : Color{28,40,70,225});
+        DrawRectangleRoundedLines(backBtn, 0.3f, 6, hov ? WHITE : Fade(SKYBLUE, .7f));
+        const char* label = "< Back to Editor  (F1)";
+        DrawText(label, (int)(backBtn.x + backBtn.width * 0.5f - MeasureText(label, 22) * 0.5f),
+                 (int)(backBtn.y + 10.f), 22, RAYWHITE);
+    }
 }
 
 void Engine::HandleCollisions()
@@ -15815,23 +15848,13 @@ void Engine::SpawnDungeonRoomEnemies()
                     _player.GetWorldPos()        // entry position
                 };
                 // Lava belongs where the ground already feels dangerous —
-                // hot/underground/evil sets. Never Forest, Jungle, or Graveyard.
-                bool lavaBiome = _currentBiome == Biome::Caverns ||
-                                 _currentBiome == Biome::DemonsInsides ||
-                                 _currentBiome == Biome::Wastelands ||
-                                 _currentBiome == Biome::AncientCastle;
-                // Weighted type pick: in lava-eligible biomes the pool is the
-                // STAR (half the rolls), so it actually shows up in a zone
-                // instead of losing a flat 1-in-3 to the turret types.
+                // Lava pools are authored by hand now (Fall zones + an animated
+                // lava decor you can fall into), so the procedural hazard director
+                // only rolls the two turret types. RoomHazardType::LavaPool support
+                // is kept intact for the debug preview and any hand-placed use.
                 int typeRoll = GetRandomValue(1, 100);
-                RoomHazardType hazardType;
-                if (lavaBiome)
-                    hazardType = (typeRoll <= 50) ? RoomHazardType::LavaPool
-                               : (typeRoll <= 80) ? RoomHazardType::FireTotem
-                                                  : RoomHazardType::FireballTorch;
-                else
-                    hazardType = (typeRoll <= 60) ? RoomHazardType::FireTotem
-                                                  : RoomHazardType::FireballTorch;
+                RoomHazardType hazardType = (typeRoll <= 60) ? RoomHazardType::FireTotem
+                                                             : RoomHazardType::FireballTorch;
 
                 bool placed = false;
                 if (hazardType == RoomHazardType::FireballTorch)
@@ -16076,6 +16099,20 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
     layout.doorZoneOpen[(int)RoomWallSide::Left] = shouldOpen(DungeonDoorSide::West);
     layout.doorZoneOpen[(int)RoomWallSide::Right] = shouldOpen(DungeonDoorSide::East);
 
+    // Handcrafted rooms express doors entirely through their authored Door Zones
+    // plus the doorZoneOpen state above: the renderer hides the wall inside an
+    // open zone and collision clears it, revealing the authored ground beneath.
+    // Never rewrite their border tile art — the designer's continuous wall stays.
+    if (layout.handcrafted)
+    {
+        if (room.type == RoomType::Boss)
+        {
+            layout.roomCleared = cleared;
+            for (bool& open : layout.doorZoneOpen) open = cleared;
+        }
+        return;
+    }
+
     auto setNorth = [&](bool open) {
         for (int dc = 0; dc < kDungeonDoorSpanCols; dc++)
             layout.tiles[0][doorStartC + dc] = open ? TileType::Floor : TileType::WallTopFace;
@@ -16112,6 +16149,20 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
 
 bool Engine::IsDungeonDoorOpen(DungeonDoorSide side) const
 {
+    // Handcrafted rooms carry no automatic door tile art, so their open state
+    // lives in the authored Door Zones rather than the border tiles.
+    if (_dungeonRoomLayout.handcrafted)
+    {
+        switch (side)
+        {
+        case DungeonDoorSide::North: return _dungeonRoomLayout.doorZoneOpen[(int)RoomWallSide::Top];
+        case DungeonDoorSide::South: return _dungeonRoomLayout.doorZoneOpen[(int)RoomWallSide::Bottom];
+        case DungeonDoorSide::West:  return _dungeonRoomLayout.doorZoneOpen[(int)RoomWallSide::Left];
+        case DungeonDoorSide::East:  return _dungeonRoomLayout.doorZoneOpen[(int)RoomWallSide::Right];
+        default: return false;
+        }
+    }
+
     int doorStartC = GetDungeonDoorStartCol();
     int doorStartR = GetDungeonDoorStartRow();
     TileType t = TileType::None;

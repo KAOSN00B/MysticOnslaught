@@ -143,6 +143,48 @@ int main()
     assert(!RoomBlueprint::Load(wrongVersionPath, error).has_value());
     assert(error.find("version") != std::string::npos);
 
+    // A complete version-1 room (walls/doors as tile art, no SOLID/DOORZONE
+    // sections) must migrate: collision derives from the tiles and Door Zones
+    // enable from the door flags, so legacy rooms keep loading and working.
+    {
+        const int doorCol = RoomLayout::kCols / 2;
+        std::string v1 =
+            "MROOM 1\n"
+            "ID \"legacy-1\"\n"
+            "NAME \"Legacy Room\"\n"
+            "BIOME 1\n"
+            "TILESET \"Caverns\"\n"
+            "ROOMTYPE 0\n"
+            "DOORS 1 0 0 0\n"
+            "TILES_BEGIN\n";
+        for (int r = 0; r < RoomLayout::kRows; ++r)
+        {
+            for (int c = 0; c < RoomLayout::kCols; ++c)
+            {
+                const bool border = r == 0 || c == 0 ||
+                    r == RoomLayout::kRows - 1 || c == RoomLayout::kCols - 1;
+                int tile = border ? 2 /*WallBody*/ : 0 /*Floor*/;
+                if (r == 0 && c == doorCol) tile = 9; /*DoorOpen (north opening)*/
+                v1 += std::to_string(tile);
+                v1 += (c + 1 < RoomLayout::kCols) ? ' ' : '\n';
+            }
+        }
+        v1 += "TILES_END\nPLACEMENTS_BEGIN\nPLACEMENTS_END\nFALL_BEGIN\n";
+        for (int r = 0; r < RoomLayout::kRows; ++r)
+            v1 += std::string(RoomLayout::kCols, '0') + "\n";
+        v1 += "FALL_END\n";
+
+        const std::filesystem::path v1Path = root / "legacy.mroom";
+        WriteText(v1Path, v1);
+        std::optional<RoomBlueprint> legacy = RoomBlueprint::Load(v1Path, error);
+        assert(legacy.has_value());
+        assert(legacy->hasNorth && !legacy->hasSouth);
+        assert(legacy->solid[0][0]);                                    // WallBody border → solid
+        assert(!legacy->solid[0][doorCol]);                             // DoorOpen cell → not solid
+        assert(legacy->doorZones[(int)RoomWallSide::Top].enabled);      // zone enabled from door flag
+        assert(!legacy->doorZones[(int)RoomWallSide::Bottom].enabled);
+    }
+
     std::filesystem::remove_all(root, ec);
     return 0;
 }

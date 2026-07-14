@@ -76,6 +76,19 @@ void SettingsManager::Save() const
 // ── ApplyWindow ───────────────────────────────────────────────────────────────
 void SettingsManager::ApplyWindow() const
 {
+    // The window operations below (state flags, ToggleFullscreen, SetWindowSize)
+    // rebuild the OS window / GL surface and can stall for a second or more on
+    // some drivers. ApplyWindow is called on every Settings exit and every
+    // display toggle, so re-applying an unchanged config was freezing the game
+    // for no reason. Skip entirely when nothing window-relevant changed; only a
+    // genuine display change now pays that cost (a brief, expected flicker).
+    if (_windowApplied
+        && _appliedWindowMode == _settings.windowMode
+        && _appliedWidth      == _settings.windowedWidth
+        && _appliedHeight     == _settings.windowedHeight
+        && _appliedVsync      == _settings.vsync)
+        return;
+
     // VSync
     if (_settings.vsync)
         SetWindowState(FLAG_VSYNC_HINT);
@@ -113,6 +126,13 @@ void SettingsManager::ApplyWindow() const
         }
         break;
     }
+
+    // Remember what we just applied so redundant calls become no-ops.
+    _windowApplied     = true;
+    _appliedWindowMode = _settings.windowMode;
+    _appliedWidth      = _settings.windowedWidth;
+    _appliedHeight     = _settings.windowedHeight;
+    _appliedVsync      = _settings.vsync;
 }
 
 // ── ApplyVolumes ──────────────────────────────────────────────────────────────

@@ -181,6 +181,9 @@ private:
     int SourceCols(const std::string& sourceSheet) const;
     int SourceRows(const std::string& sourceSheet) const;
     std::string SourceAtPoint(Vector2 point) const;
+    // One frame per cell of the current selection (row-major) — lets a multi-tile
+    // selection become an animation's frames in a single action.
+    std::vector<Rectangle> SelectionCellFrames() const;
 
     // ── State ─────────────────────────────────────────────────────────────────
     Screen   _screen    = Screen::FileSelect;

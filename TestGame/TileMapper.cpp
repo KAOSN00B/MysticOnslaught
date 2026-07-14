@@ -241,10 +241,26 @@ void TileMapper::UpdateFileSelect()
     _fileListScrollY -= wheel * (rowH + rowGap) * 2.f;
     _fileListScrollY  = std::max(_fileListScrollY, 0.f);
 
+    // Handle the "Open" button FIRST and consume the click. It sits over the
+    // bottom of the file list, so a click on it used to ALSO hit the row drawn
+    // behind it and silently re-select that row — opening the wrong tileset.
+    if (_selectedFileIdx >= 0 && _selectedFileIdx < (int)_files.size())
+    {
+        Rectangle openBtn{ sw * 0.5f - 130.f, sh - 72.f, 260.f, 52.f };
+        if (CheckCollisionPointRec(mouse, openBtn) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+        {
+            OpenSelectedFile();
+            return;
+        }
+    }
+
+    // Keep rows fully above the Open button so the two never overlap.
+    const float listBottom = sh - 84.f;
     for (int i = 0; i < (int)_files.size(); i++)
     {
         float ry = listY + i * (rowH + rowGap) - _fileListScrollY;
-        if (ry + rowH < listY || ry > sh - 60.f)
+        if (ry + rowH < listY || ry + rowH > listBottom)
             continue;
 
         Rectangle row{ listX, ry, listW, rowH };
@@ -272,17 +288,6 @@ void TileMapper::UpdateFileSelect()
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
         {
             _files[i].biomeIdx = (_files[i].biomeIdx + 1) % kBiomeCount;
-        }
-    }
-
-    // "Open" button at the bottom
-    if (_selectedFileIdx >= 0 && _selectedFileIdx < (int)_files.size())
-    {
-        Rectangle openBtn{ sw * 0.5f - 130.f, sh - 72.f, 260.f, 52.f };
-        if (CheckCollisionPointRec(mouse, openBtn) &&
-            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-        {
-            OpenSelectedFile();
         }
     }
 }
@@ -316,7 +321,7 @@ void TileMapper::DrawFileSelect() const
     for (int i = 0; i < (int)_files.size(); i++)
     {
         float ry = listY + i * (rowH + rowGap) - _fileListScrollY;
-        if (ry + rowH < listY || ry > sh - 60.f)
+        if (ry + rowH < listY || ry + rowH > sh - 84.f)   // stay above the Open button
             continue;
 
         bool selected = (i == _selectedFileIdx);
@@ -788,19 +793,45 @@ void TileMapper::HandleMouseMapping()
         }
 
         // ── Anim prop builder ─────────────────────────────────────────────────
-        float abY = kContentY + 44.f;   // "Add Frame" button Y — must match DrawPanel
+        float abY = kContentY + 44.f;   // builder button row Y — must match DrawPanel
+        const float halfW = (panelW - 24.f) * 0.5f;
+        Rectangle addFrameBtn{ _panelX+10.f,          abY, halfW, 24.f };
+        Rectangle animSelBtn { _panelX+14.f+halfW,    abY, halfW, 24.f };
 
-        // Add Frame button — appends current selection to pending list
-        if (CheckCollisionPointRec(mouse, { _panelX+10.f, abY, panelW-20.f, 24.f }) &&
+        // + Add Frame(s): each selected cell becomes its own frame (so a strip
+        // of tiles adds all its frames in one click), appended to the pending list.
+        if (CheckCollisionPointRec(mouse, addFrameBtn) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         {
             if (_pendingAnimPropFrames.empty()) _pendingAnimPropSource = _selSourceSheet;
             if (_pendingAnimPropSource == _selSourceSheet)
             {
-                _pendingAnimPropFrames.push_back(sel);
+                for (const Rectangle& f : SelectionCellFrames())
+                    _pendingAnimPropFrames.push_back(f);
                 _hasSelection = false;
             }
             else TraceLog(LOG_WARNING, "TileMapper: animation frames must use one source sheet");
+        }
+
+        // Animate Sel: one click turns the whole multi-tile selection into a
+        // finished animated prop (each cell a frame) — no add-then-finalize.
+        if (CheckCollisionPointRec(mouse, animSelBtn) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
+        {
+            AnimPropDef def;
+            def.frames    = SelectionCellFrames();
+            def.fps       = _animPropFps;
+            def.collision = { 0.f, 0.f, def.frames[0].width, def.frames[0].height };
+            def.id        = MakeTileAssetId("anim_prop");
+            def.name      = "Animated Prop " + std::to_string(_animPropDefs.size() + 1);
+            def.playback  = _animPropPlayback;
+            def.sourceSheet = _selSourceSheet;
+            _animPropDefs.push_back(std::move(def));
+            _hasSelection = false;
+            _editingAnimPropIdx = (int)_animPropDefs.size() - 1;
+            _editingPropIdx     = -1;
+            _collDragging = false;
+            _collHandle   = CollHandle::None;
         }
 
         // FPS stepper
@@ -906,6 +937,14 @@ void TileMapper::HandleMouseMapping()
                 break;
             }
 
+            // Per-row fps steppers — retune the animation after it's been made.
+            Rectangle fpsDn{ _panelX + panelW - 176.f, ry + 13.f, 18.f, 24.f };
+            Rectangle fpsUp{ _panelX + panelW - 132.f, ry + 13.f, 18.f, 24.f };
+            if (CheckCollisionPointRec(mouse, fpsDn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            { _animPropDefs[(std::size_t)i].fps = std::max(1.f, _animPropDefs[(std::size_t)i].fps - 1.f); break; }
+            if (CheckCollisionPointRec(mouse, fpsUp) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            { _animPropDefs[(std::size_t)i].fps = std::min(30.f, _animPropDefs[(std::size_t)i].fps + 1.f); break; }
+
             Rectangle rowRect{ _panelX + 6.f, ry, panelW - 46.f, kListRowH };
             if (CheckCollisionPointRec(mouse, rowRect) &&
                 IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -938,31 +977,53 @@ void TileMapper::HandleMouseMapping()
             _hasSelection = false;
         }
 
-        // ── Anim decor builder (mirrors anim prop builder in Props tab) ─────────
-        float abY = kContentY + 32.f;
-        if (CheckCollisionPointRec(mouse, { _panelX + 10.f, abY, panelW - 20.f, 24.f }) &&
+        // ── Anim decor builder (mirrors Props tab; offsets match DrawPanel) ────
+        float abY = kContentY + 44.f;
+        const float halfW = (panelW - 24.f) * 0.5f;
+        Rectangle addFrameBtn{ _panelX+10.f,       abY, halfW, 24.f };
+        Rectangle animSelBtn { _panelX+14.f+halfW, abY, halfW, 24.f };
+
+        // + Add Frame(s): each selected cell becomes its own frame.
+        if (CheckCollisionPointRec(mouse, addFrameBtn) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
         {
             if (_pendingAnimDecorFrames.empty()) _pendingAnimDecorSource = _selSourceSheet;
             if (_pendingAnimDecorSource == _selSourceSheet)
             {
-                _pendingAnimDecorFrames.push_back(src);
+                for (const Rectangle& f : SelectionCellFrames())
+                    _pendingAnimDecorFrames.push_back(f);
                 _hasSelection = false;
             }
             else TraceLog(LOG_WARNING, "TileMapper: animation frames must use one source sheet");
         }
 
-        // FPS stepper
-        float fpsY = kContentY + 60.f;
-        if (CheckCollisionPointRec(mouse, { _panelX + 50.f, fpsY, 20.f, 20.f }) &&
+        // Animate Sel: one click turns the whole selection into a finished anim
+        // (each cell a frame) — ideal for water/lava strips.
+        if (CheckCollisionPointRec(mouse, animSelBtn) &&
+            IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _hasSelection)
+        {
+            AnimDecorDef def;
+            def.frames = SelectionCellFrames();
+            def.fps    = _animDecorFps;
+            def.id     = MakeTileAssetId("anim_decor");
+            def.name   = "Animated Decor " + std::to_string(_animDecorDefs.size() + 1);
+            def.playback = _animDecorPlayback;
+            def.sourceSheet = _selSourceSheet;
+            _animDecorDefs.push_back(std::move(def));
+            _hasSelection = false;
+        }
+
+        // FPS stepper (default for the next build; matches DrawPanel at +72)
+        float fpsY = kContentY + 72.f;
+        if (CheckCollisionPointRec(mouse, { _panelX + 52.f, fpsY, 18.f, 18.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _animDecorFps = std::max(1.f, _animDecorFps - 1.f);
-        if (CheckCollisionPointRec(mouse, { _panelX + 90.f, fpsY, 20.f, 20.f }) &&
+        if (CheckCollisionPointRec(mouse, { _panelX + 88.f, fpsY, 18.f, 18.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             _animDecorFps = std::min(30.f, _animDecorFps + 1.f);
 
-        // Per-frame X buttons on the pending thumbnail strip
-        float thumbY    = kContentY + 84.f;
+        // Per-frame X buttons on the pending thumbnail strip (matches draw +96)
+        float thumbY    = kContentY + 96.f;
         float thumbSlot = 36.f;
         for (int i = 0; i < (int)_pendingAnimDecorFrames.size(); i++)
         {
@@ -976,8 +1037,8 @@ void TileMapper::HandleMouseMapping()
             }
         }
 
-        // Finalize button — commits pending frames as a new AnimDecorDef
-        float finalY = kContentY + 122.f;
+        // Finalize the pending frames (matches draw +134)
+        float finalY = kContentY + 134.f;
         bool hasPendingDecor = !_pendingAnimDecorFrames.empty();
         if (CheckCollisionPointRec(mouse, { _panelX + 10.f, finalY, panelW - 20.f, 24.f }) &&
             IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && hasPendingDecor)
@@ -994,13 +1055,12 @@ void TileMapper::HandleMouseMapping()
             _pendingAnimDecorSource.clear();
         }
 
-        // List area: static decors then animated decors
-        float listY = kContentY + 150.f;
-        int totalEntries = (int)_decorDefs.size() + (int)_animDecorDefs.size();
+        // List: static decors then animated decors (matches draw +166)
+        float listY = kContentY + 166.f;
         for (int i = 0; i < (int)_decorDefs.size(); i++)
         {
             float ry = listY + i * kListRowH - _decorScrollY;
-            if (ry + kListRowH < kContentY || ry > sh) continue;
+            if (ry + kListRowH < listY || ry > sh) continue;
             Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
             if (CheckCollisionPointRec(mouse, removeBtn) &&
                 IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -1009,7 +1069,7 @@ void TileMapper::HandleMouseMapping()
         for (int i = 0; i < (int)_animDecorDefs.size(); i++)
         {
             float ry = listY + ((int)_decorDefs.size() + i) * kListRowH - _decorScrollY;
-            if (ry + kListRowH < kContentY || ry > sh) continue;
+            if (ry + kListRowH < listY || ry > sh) continue;
             Rectangle playbackBtn{ _panelX + panelW - 104.f, ry + 13.f, 64.f, 24.f };
             if (CheckCollisionPointRec(mouse, playbackBtn) &&
                 IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
@@ -1018,12 +1078,18 @@ void TileMapper::HandleMouseMapping()
                     NextPlayback(_animDecorDefs[(std::size_t)i].playback);
                 break;
             }
+            // Per-row fps steppers — retune after the tile is made.
+            Rectangle fpsDn{ _panelX + panelW - 176.f, ry + 13.f, 18.f, 24.f };
+            Rectangle fpsUp{ _panelX + panelW - 132.f, ry + 13.f, 18.f, 24.f };
+            if (CheckCollisionPointRec(mouse, fpsDn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            { _animDecorDefs[(std::size_t)i].fps = std::max(1.f, _animDecorDefs[(std::size_t)i].fps - 1.f); break; }
+            if (CheckCollisionPointRec(mouse, fpsUp) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            { _animDecorDefs[(std::size_t)i].fps = std::min(30.f, _animDecorDefs[(std::size_t)i].fps + 1.f); break; }
             Rectangle removeBtn{ _panelX + panelW - 36.f, ry + 13.f, 26.f, 24.f };
             if (CheckCollisionPointRec(mouse, removeBtn) &&
                 IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
             { _animDecorDefs.erase(_animDecorDefs.begin() + i); break; }
         }
-        (void)totalEntries;
     }
 }
 
@@ -1612,18 +1678,23 @@ void TileMapper::DrawPanel() const
             10, Fade(ORANGE, 0.7f));
 
         float abY = kContentY + 44.f;
-        bool frameHov = CheckCollisionPointRec(mouse2,
-            { _panelX+10.f, abY, panelW-20.f, 24.f }) && _hasSelection;
-        DrawRectangleRec({ _panelX+10.f, abY, panelW-20.f, 24.f },
-            frameHov ? Color{160,80,40,230} : Color{100,50,20,180});
-        DrawRectangleLinesEx({ _panelX+10.f, abY, panelW-20.f, 24.f }, 1.f,
-            frameHov ? WHITE : Fade(WHITE, 0.25f));
-        const char* frameLbl = "+ Add Frame";
-        DrawText(frameLbl,
-            (int)(_panelX+10.f+(panelW-20.f)*0.5f-MeasureText(frameLbl,13)*0.5f),
-            (int)(abY+5.f), 13, _hasSelection ? ORANGE : Fade(ORANGE, 0.4f));
+        const float halfW = (panelW - 24.f) * 0.5f;
+        Rectangle addFrameBtn{ _panelX+10.f,       abY, halfW, 24.f };
+        Rectangle animSelBtn { _panelX+14.f+halfW, abY, halfW, 24.f };
+        bool frameHov = CheckCollisionPointRec(mouse2, addFrameBtn) && _hasSelection;
+        bool animHov  = CheckCollisionPointRec(mouse2, animSelBtn)  && _hasSelection;
+        DrawRectangleRec(addFrameBtn, frameHov ? Color{160,80,40,230} : Color{100,50,20,180});
+        DrawRectangleLinesEx(addFrameBtn, 1.f, frameHov ? WHITE : Fade(WHITE, 0.25f));
+        DrawText("+ Add Frame(s)",
+            (int)(addFrameBtn.x+addFrameBtn.width*0.5f-MeasureText("+ Add Frame(s)",11)*0.5f),
+            (int)(abY+6.f), 11, _hasSelection ? ORANGE : Fade(ORANGE, 0.4f));
+        DrawRectangleRec(animSelBtn, animHov ? Color{50,170,60,235} : Color{30,100,30,180});
+        DrawRectangleLinesEx(animSelBtn, 1.f, animHov ? WHITE : Fade(WHITE, 0.25f));
+        DrawText("Animate Sel",
+            (int)(animSelBtn.x+animSelBtn.width*0.5f-MeasureText("Animate Sel",11)*0.5f),
+            (int)(abY+6.f), 11, _hasSelection ? Color{170,255,170,255} : Fade(GREEN, 0.4f));
 
-        // FPS stepper
+        // FPS stepper (default for the next build)
         float fpsY = kContentY + 72.f;
         DrawText("FPS:", (int)(_panelX+12.f), (int)(fpsY+2.f), 11, Fade(WHITE, 0.7f));
         DrawRectangleRounded({ _panelX+52.f, fpsY, 18.f, 18.f }, 0.3f, 4, Fade(WHITE,0.12f));
@@ -1760,6 +1831,14 @@ void TileMapper::DrawPanel() const
             const char* playback = PlaybackName(_animPropDefs[i].playback);
             DrawText(playback, (int)(pb.x + pb.width * 0.5f - MeasureText(playback, 9) * 0.5f),
                 (int)(pb.y + 7.f), 9, ORANGE);
+            // Per-row fps steppers (click handled in HandleMouseMapping).
+            Rectangle fdn{ _panelX+panelW-176.f, ry+13.f, 18.f, 24.f };
+            Rectangle fup{ _panelX+panelW-132.f, ry+13.f, 18.f, 24.f };
+            DrawRectangleRec(fdn, Fade(ORANGE,0.20f)); DrawRectangleLinesEx(fdn,1.f,Fade(ORANGE,0.5f));
+            DrawText("-", (int)(fdn.x+6.f), (int)(fdn.y+5.f), 14, ORANGE);
+            DrawRectangleRec(fup, Fade(ORANGE,0.20f)); DrawRectangleLinesEx(fup,1.f,Fade(ORANGE,0.5f));
+            DrawText("+", (int)(fup.x+5.f), (int)(fup.y+5.f), 14, ORANGE);
+            DrawText(TextFormat("%.0f", _animPropDefs[i].fps), (int)(fdn.x+22.f), (int)(fdn.y+7.f), 11, GOLD);
             Rectangle rb{ _panelX+panelW-36.f, ry+13.f, 26.f, 24.f };
             bool rh = CheckCollisionPointRec(mouse2, rb);
             DrawRectangleRec(rb, rh ? Fade(RED,0.85f) : Fade(RED,0.45f));
@@ -1795,16 +1874,21 @@ void TileMapper::DrawPanel() const
             10, Fade(ORANGE, 0.7f));
 
         float abY = kContentY + 44.f;
-        bool frameHov = CheckCollisionPointRec(GetVirtualMousePos(),
-            { _panelX+10.f, abY, panelW-20.f, 24.f }) && _hasSelection;
-        DrawRectangleRec({ _panelX+10.f, abY, panelW-20.f, 24.f },
-            frameHov ? Color{160,80,40,230} : Color{100,50,20,180});
-        DrawRectangleLinesEx({ _panelX+10.f, abY, panelW-20.f, 24.f }, 1.f,
-            frameHov ? WHITE : Fade(WHITE, 0.25f));
-        const char* frameLbl = "+ Add Frame";
-        DrawText(frameLbl,
-            (int)(_panelX+10.f+(panelW-20.f)*0.5f-MeasureText(frameLbl,13)*0.5f),
-            (int)(abY+5.f), 13, _hasSelection ? ORANGE : Fade(ORANGE, 0.4f));
+        const float dHalfW = (panelW - 24.f) * 0.5f;
+        Rectangle dAddBtn { _panelX+10.f,        abY, dHalfW, 24.f };
+        Rectangle dAnimBtn{ _panelX+14.f+dHalfW, abY, dHalfW, 24.f };
+        bool frameHov = CheckCollisionPointRec(GetVirtualMousePos(), dAddBtn) && _hasSelection;
+        bool dAnimHov = CheckCollisionPointRec(GetVirtualMousePos(), dAnimBtn) && _hasSelection;
+        DrawRectangleRec(dAddBtn, frameHov ? Color{160,80,40,230} : Color{100,50,20,180});
+        DrawRectangleLinesEx(dAddBtn, 1.f, frameHov ? WHITE : Fade(WHITE, 0.25f));
+        DrawText("+ Add Frame(s)",
+            (int)(dAddBtn.x+dAddBtn.width*0.5f-MeasureText("+ Add Frame(s)",11)*0.5f),
+            (int)(abY+6.f), 11, _hasSelection ? ORANGE : Fade(ORANGE, 0.4f));
+        DrawRectangleRec(dAnimBtn, dAnimHov ? Color{50,170,60,235} : Color{30,100,30,180});
+        DrawRectangleLinesEx(dAnimBtn, 1.f, dAnimHov ? WHITE : Fade(WHITE, 0.25f));
+        DrawText("Animate Sel",
+            (int)(dAnimBtn.x+dAnimBtn.width*0.5f-MeasureText("Animate Sel",11)*0.5f),
+            (int)(abY+6.f), 11, _hasSelection ? Color{170,255,170,255} : Fade(GREEN, 0.4f));
 
         // FPS stepper
         float fpsY = kContentY + 72.f;
@@ -1920,6 +2004,14 @@ void TileMapper::DrawPanel() const
             const char* playback = PlaybackName(_animDecorDefs[i].playback);
             DrawText(playback, (int)(pb.x + pb.width * 0.5f - MeasureText(playback, 9) * 0.5f),
                 (int)(pb.y + 7.f), 9, ORANGE);
+            // Per-row fps steppers (click handled in HandleMouseMapping).
+            Rectangle fdn{ _panelX+panelW-176.f, ry+13.f, 18.f, 24.f };
+            Rectangle fup{ _panelX+panelW-132.f, ry+13.f, 18.f, 24.f };
+            DrawRectangleRec(fdn, Fade(ORANGE,0.20f)); DrawRectangleLinesEx(fdn,1.f,Fade(ORANGE,0.5f));
+            DrawText("-", (int)(fdn.x+6.f), (int)(fdn.y+5.f), 14, ORANGE);
+            DrawRectangleRec(fup, Fade(ORANGE,0.20f)); DrawRectangleLinesEx(fup,1.f,Fade(ORANGE,0.5f));
+            DrawText("+", (int)(fup.x+5.f), (int)(fup.y+5.f), 14, ORANGE);
+            DrawText(TextFormat("%.0f", _animDecorDefs[i].fps), (int)(fdn.x+22.f), (int)(fdn.y+7.f), 11, GOLD);
             Rectangle rb{ _panelX+panelW-36.f, ry+13.f, 26.f, 24.f };
             DrawRectangleRec(rb, Fade(RED, 0.45f));
             DrawText("X", (int)(rb.x+rb.width*0.5f-MeasureText("X",13)*0.5f),
@@ -2476,4 +2568,14 @@ std::string TileMapper::SourceAtPoint(Vector2 point) const
         if (CheckCollisionPointRec(point,bounds)) return source;
     }
     return "#none";
+}
+
+std::vector<Rectangle> TileMapper::SelectionCellFrames() const
+{
+    std::vector<Rectangle> frames;
+    for (int r = _selR0; r <= _selR1; ++r)
+        for (int c = _selC0; c <= _selC1; ++c)
+            frames.push_back({ (float)(c * kTileSize), (float)(r * kTileSize),
+                               (float)kTileSize, (float)kTileSize });
+    return frames;
 }

@@ -43,9 +43,75 @@ int main()
     editor.Redo();
     assert(editor.Blueprint().placements.size() == 1);
 
-    assert(!editor.SetFall(14, 1, true)); // protected north entry lane
+    // Painting through the door/wall lanes is now allowed — doors are authored
+    // Door Zones, not protected cells, so a continuous wall can cross an opening.
+    assert(editor.SetFall(14, 1, true));                 // was blocked as a "door lane"
+    assert(editor.Blueprint().fall[1][14]);
+    assert(editor.SetVisual(14, 0, false, "Forest", { 16.f, 32.f, 16.f, 16.f })); // wall art on the edge
+    assert(editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 13, 1 })); // prop in the north lane
     assert(!editor.PlaceAsset({ RoomAssetKind::Prop, "rock", -1, 4 }));
     assert(!editor.PlaceAsset({ RoomAssetKind::Prop, "missing", 3, 4 }));
+
+    // Requirement 1: toggling an exit must not touch any authored layer, only the
+    // connection flag and its Door Zone — and must never insert doorway art.
+    const RoomBlueprint before = editor.Blueprint();
+    editor.SetDoors(before.hasNorth, before.hasSouth, /*east*/true, before.hasWest);
+    const RoomBlueprint& after = editor.Blueprint();
+    assert(after.hasEast);
+    assert(after.doorZones[(int)RoomWallSide::Right].enabled);
+    bool tilesSame = true, fallSame = true, solidSame = true;
+    for (int r = 0; r < RoomLayout::kRows; ++r)
+        for (int c = 0; c < RoomLayout::kCols; ++c)
+        {
+            tilesSame = tilesSame && after.tiles[r][c] == before.tiles[r][c];
+            fallSame  = fallSame  && after.fall[r][c]  == before.fall[r][c];
+            solidSame = solidSame && after.solid[r][c] == before.solid[r][c];
+        }
+    assert(tilesSame && fallSame && solidSame);
+    assert(after.visualTiles.size() == before.visualTiles.size());
+    assert(after.placements.size() == before.placements.size());
+
+    // ── New authoring ops: fill / flood / clear / eyedropper / duplicate ─────
+    // Rectangle fill records ONE undo entry for the whole area.
+    editor.SelectLayer(RoomEditor::Layer::Collision);
+    assert(editor.FillRect(18, 10, 20, 12, true));
+    for (int r = 10; r <= 12; ++r) for (int c = 18; c <= 20; ++c)
+        assert(editor.Blueprint().solid[r][c]);
+    assert(editor.Undo());
+    for (int r = 10; r <= 12; ++r) for (int c = 18; c <= 20; ++c)
+        assert(!editor.Blueprint().solid[r][c]);
+
+    // Flood fill covers a contiguous region; one undo restores it.
+    editor.SelectLayer(RoomEditor::Layer::FallZones);
+    assert(editor.FillRect(22, 10, 24, 12, true));   // isolated 3x3 block of fall
+    assert(editor.FloodFillFrom(23, 11, false));      // clear the contiguous block
+    for (int r = 10; r <= 12; ++r) for (int c = 22; c <= 24; ++c)
+        assert(!editor.Blueprint().fall[r][c]);
+    assert(editor.Undo());
+    for (int r = 10; r <= 12; ++r) for (int c = 22; c <= 24; ++c)
+        assert(editor.Blueprint().fall[r][c]);
+
+    // Clear layer wipes only the active layer, one undo.
+    assert(editor.ClearActiveLayer());
+    for (int r = 0; r < RoomLayout::kRows; ++r) for (int c = 0; c < RoomLayout::kCols; ++c)
+        assert(!editor.Blueprint().fall[r][c]);
+    assert(editor.Undo());
+    assert(editor.Blueprint().fall[10][22]);          // block restored
+
+    // Eyedropper picks a placed prop into the selection.
+    editor.SelectLayer(RoomEditor::Layer::Props);
+    assert(editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 9, 9 }));
+    editor.PickAt(9, 9);
+    assert(editor.SelectedAssetId() == "rock");
+
+    // Duplicate forks a room: fresh id, "<name> copy", identical layers.
+    RoomBlueprint original = editor.Blueprint();
+    original.name = "Original";
+    RoomBlueprint dup = RoomEditor::Duplicate(original);
+    assert(dup.id != original.id);
+    assert(dup.name == "Original copy");
+    assert(dup.visualTiles.size() == original.visualTiles.size());
+    assert(dup.solid[10][22] == original.solid[10][22]);
 
     std::filesystem::remove_all(root, ec);
     return 0;

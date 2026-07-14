@@ -160,6 +160,12 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
                 type == TileType::DoorOpen  || type == TileType::DoorLocked)
                 continue;
 
+            // A terrain wall tile inside an open Door Zone is hidden so the floor
+            // base drawn in Pass 1 shows through the opening — same rule the
+            // authored visual wall layer follows below.
+            if (RoomPlacementClearsAtDoor({ (float)c, (float)r, 1.f, 1.f }, layout))
+                continue;
+
             float sx = screenOffset.x + c * cellW;
             float sy = screenOffset.y + r * cellH;
             DrawTile(type, sx, sy, scaleX, scaleY);
@@ -171,9 +177,7 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
     for (const RoomTilePlacement& visual : layout.visualTiles)
     {
         if (visual.ground) continue;
-        Rectangle occupied{ (float)visual.col, (float)visual.row,
-            visual.src.width / 16.f, visual.src.height / 16.f };
-        if (RoomPlacementClearsAtDoor(occupied, layout)) continue;
+        if (RoomVisualClearedByOpenDoor(visual, layout)) continue;
         const Texture2D* texture = FindRoomSourceTexture(visual.sourceTileset);
         if (texture == nullptr) continue;
         DrawSpriteScaled(visual.src,

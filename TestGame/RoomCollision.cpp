@@ -12,6 +12,15 @@ namespace
                a.y < b.y + b.height && a.y + a.height > b.y;
     }
 
+    // A border cell is a wall if the designer painted collision there OR the
+    // terrain tile is inherently solid. This lets an authored wall (trees, rocks,
+    // any tileset) block on the room edge without relying on the legacy wall
+    // TileTypes — collision is what the designer painted, not automatic art.
+    bool RoomEdgeCellSolid(const RoomLayout& room, int col, int row)
+    {
+        return room.solid[row][col] || IsSolidRoomTile(room.tiles[row][col]);
+    }
+
     bool HitsAdjustedRoomEdge(const RoomLayout& room, Rectangle body,
                               float cellWidth, float cellHeight)
     {
@@ -21,11 +30,16 @@ namespace
         for (int col = 0; col < RoomLayout::kCols; ++col)
         {
             const float x = col * cellWidth;
-            if (IsSolidRoomTile(room.tiles[0][col]) &&
+            // An open Door Zone punches a passable hole through the edge wall so
+            // the authored opening becomes walkable without deleting any art.
+            if (RoomEdgeCellSolid(room, col, 0) &&
+                !RoomPlacementClearsAtDoor({ (float)col, 0.f, 1.f, 1.f }, room) &&
                 RectanglesOverlap(body, { x, 0.f, cellWidth,
                                           room.wallTopDepth * cellHeight }))
                 return true;
-            if (IsSolidRoomTile(room.tiles[RoomLayout::kRows - 1][col]) &&
+            if (RoomEdgeCellSolid(room, col, RoomLayout::kRows - 1) &&
+                !RoomPlacementClearsAtDoor({ (float)col, (float)(RoomLayout::kRows - 1),
+                                            1.f, 1.f }, room) &&
                 RectanglesOverlap(body, { x, roomHeight - room.wallBottomDepth * cellHeight,
                                           cellWidth, room.wallBottomDepth * cellHeight }))
                 return true;
@@ -34,11 +48,14 @@ namespace
         for (int row = 0; row < RoomLayout::kRows; ++row)
         {
             const float y = row * cellHeight;
-            if (IsSolidRoomTile(room.tiles[row][0]) &&
+            if (RoomEdgeCellSolid(room, 0, row) &&
+                !RoomPlacementClearsAtDoor({ 0.f, (float)row, 1.f, 1.f }, room) &&
                 RectanglesOverlap(body, { 0.f, y,
                                           room.wallLeftDepth * cellWidth, cellHeight }))
                 return true;
-            if (IsSolidRoomTile(room.tiles[row][RoomLayout::kCols - 1]) &&
+            if (RoomEdgeCellSolid(room, RoomLayout::kCols - 1, row) &&
+                !RoomPlacementClearsAtDoor({ (float)(RoomLayout::kCols - 1), (float)row,
+                                            1.f, 1.f }, room) &&
                 RectanglesOverlap(body, { roomWidth - room.wallRightDepth * cellWidth, y,
                                           room.wallRightDepth * cellWidth, cellHeight }))
                 return true;
@@ -95,6 +112,18 @@ bool RoomPlacementClearsAtDoor(Rectangle occupiedTiles, const RoomLayout& room)
     return false;
 }
 
+bool RoomVisualClearedByOpenDoor(const RoomTilePlacement& visual, const RoomLayout& room)
+{
+    // Ground stays no matter what — an opened door reveals the floor beneath the
+    // wall, it never removes the floor itself.
+    if (visual.ground) return false;
+    // Whole-placement rectangle test: a multi-tile wall piece that overlaps an
+    // open Door Zone is hidden as one unit (no pixel-level clipping in this phase).
+    const Rectangle occupied{ (float)visual.col, (float)visual.row,
+                              visual.src.width / 16.f, visual.src.height / 16.f };
+    return RoomPlacementClearsAtDoor(occupied, room);
+}
+
 Vector2 ResolveHandcraftedTileMovement(const RoomLayout& room,
                                        Vector2 previousWorldPos,
                                        Vector2 desiredWorldPos,
@@ -113,14 +142,11 @@ Vector2 ResolveHandcraftedTileMovement(const RoomLayout& room,
                           collisionAtDesiredPos.width, collisionAtDesiredPos.height };
     };
     auto hitsSolid = [&](Rectangle body) {
-        for (int i = 0; i < 4; ++i)
-        {
-            const RoomDoorZone& zone = room.doorZones[i];
-            if (!zone.enabled || room.roomCleared || room.doorZoneOpen[i]) continue;
-            Rectangle zoneWorld{zone.tiles.x*cellWidth,zone.tiles.y*cellHeight,
-                                zone.tiles.width*cellWidth,zone.tiles.height*cellHeight};
-            if (RectanglesOverlap(body,zoneWorld)) return true;
-        }
+        // Door state is expressed entirely through authored collision plus the
+        // open-Door-Zone clearing below (and in HitsAdjustedRoomEdge). A closed
+        // zone adds no automatic collision of its own — the wall the designer
+        // painted through it is what keeps it solid, so movement, projectiles,
+        // spawns and navigation all read the same authored data.
         if (HitsAdjustedRoomEdge(room, body, cellWidth, cellHeight)) return true;
         const int minCol = std::max(0, (int)std::floor(body.x / cellWidth));
         const int maxCol = std::min(RoomLayout::kCols - 1,

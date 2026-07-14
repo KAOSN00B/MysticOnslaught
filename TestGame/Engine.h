@@ -1354,6 +1354,7 @@ private:
     RoomLibrary  _roomLibrary;
     RoomAssetCatalog _roomAssetCatalog;
     bool         _useHandcraftedDungeonRooms = false;
+    bool         _editorPlaytestActive = false; // playtesting a room from the map editor
     std::string  _lastHandcraftedRoomId;
     std::string  _forcedHandcraftedRoomId;
     TileDefSet   _dungeonScrollTileDefs;

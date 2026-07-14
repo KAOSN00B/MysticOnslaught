@@ -36,4 +36,16 @@ public:
 
 private:
     GameSettings _settings;
+
+    // Cache of the window-relevant settings from the last time ApplyWindow()
+    // actually touched the OS window. Window recreation (SetWindowSize /
+    // ToggleFullscreen / window-state flags) stalls for a second or more on some
+    // drivers, so ApplyWindow early-outs when none of these changed — that's why
+    // exiting Settings or toggling an unrelated option no longer freezes. These
+    // are mutable because ApplyWindow() is const.
+    mutable bool                     _windowApplied     = false;
+    mutable GameSettings::WindowMode _appliedWindowMode = GameSettings::WindowMode::Windowed;
+    mutable int                      _appliedWidth      = 0;
+    mutable int                      _appliedHeight     = 0;
+    mutable bool                     _appliedVsync      = true;
 };
