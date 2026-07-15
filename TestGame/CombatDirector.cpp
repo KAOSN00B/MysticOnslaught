@@ -550,6 +550,14 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
         if (!enemy->IsActive())
             continue;
 
+        // Pit falls own movement and scale until the sink animation completes.
+        // Running normal AI here would let an enemy attack while dropping away.
+        if (enemy->IsPitFalling())
+        {
+            enemy->UpdatePitFall(dt);
+            continue;
+        }
+
         Vector2 navigationTarget = playerFeet;
         bool hasNavigationTarget = false;
 

@@ -526,6 +526,8 @@ private:
     void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
     void DrawWaveIntro();
     void HandlePlayerMeleeDamage();
+    Vector2 GetTreasureChestWorldPos() const;
+    void SetTreasureChestTile(TileType type);
     Rectangle GetTreasureChestRect() const;
     void OpenTreasureChest();
     void HandlePlayerCastRequest();
@@ -696,6 +698,9 @@ private:
     RoomLayout BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definitions,
                                       int visualVariant, int propDensityBonus = 0);
     void RefreshHandcraftedRooms();
+    bool GenerateHandcraftedDungeon(Biome biome,
+                                    std::vector<std::string>& roomIds,
+                                    int maxAttempts = 600);
     Vector2 GetDungeonBottomSpawnPos() const;
     void EnterDungeonShopIfNeeded(const DungeonRoom& room);
     void UpdateSpreadProjectiles(float dt);
@@ -1358,6 +1363,7 @@ private:
     RoomBlueprint _editorPlaytestBlueprint{};   // exact in-memory room; never procgen fallback
     int          _editorPlaytestStartRoomIdx = -1;
     std::vector<std::string> _editorPlaytestRoomIds; // stable library assignment per graph node
+    std::vector<std::string> _handcraftedDungeonRoomIds; // stable authored room per main-run node
     bool         _editorPlaytestEnemiesOn = true; // live enemy/door toggle in playtest
     void SetPlaytestEnemies(bool enemiesOn);      // respawn/clear enemies + doors live
     std::string  _lastHandcraftedRoomId;
@@ -1435,6 +1441,13 @@ private:
     RoomLayout _dungeonRoomLayout{};
     Vector2   _dungeonRoomEntrySpawnPos{};
     float     _dungeonFallRecoveryCooldown = 0.f;
+    Vector2   _dungeonLastSafePos{};        // last player pos off any pit (edge respawn)
+    float     _pitDragTimer = 0.f;          // time feet have hovered a pit (escape window)
+    // Direction that drags the player deeper into the nearby pit (0 if none).
+    Vector2 PitPullDirection(Vector2 feet, float cellW, float cellH) const;
+    void SpawnFallSurfaceFx(Vector2 worldPos);
+    // Basic enemies over a pit die instantly (bosses/elites immune).
+    void UpdateEnemyPitfalls(float cellW, float cellH);
 
     enum class DungeonDoorSide { None = -1, North, South, West, East };
     DungeonDoorSide _dungeonEntryDoorSide = DungeonDoorSide::None;
@@ -1586,6 +1599,16 @@ private:
 
     // Dungeon run combat helpers
     Vector2   GetDungeonSpawnPos(float cellW, float cellH) const;
+    std::vector<Rectangle> GetDungeonSpawnBlockers(float cellW, float cellH) const;
+    Rectangle GetDungeonEnemySpawnBody(const Enemy* enemy, Vector2 worldPos,
+                                       float cellW, float cellH) const;
+    bool IsDungeonEnemySpawnPositionValid(const Enemy* enemy, Vector2 worldPos,
+                                          float cellW, float cellH,
+                                          const std::vector<Rectangle>& blockers) const;
+    bool TryFindDungeonEnemySpawnPosition(const Enemy* enemy, Vector2 desiredPos,
+                                          float cellW, float cellH,
+                                          float minPlayerDistance,
+                                          Vector2& result) const;
     // Role-aware placement: picks a valid spawn biased for the enemy's role
     // (ranged in back, tanks mid, assassins off-angle). See EnemyRole.
     Vector2   GetDungeonSpawnPosForRole(EnemyRole role, float cellW, float cellH) const;

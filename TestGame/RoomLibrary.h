@@ -4,6 +4,7 @@
 #include "RoomAssetCatalog.h"
 
 #include <filesystem>
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,11 +25,13 @@ public:
     const RoomBlueprint* FindById(std::string_view id) const;
     const RoomBlueprint* Choose(const RoomRequest& request,
                                 std::string_view avoidId = {}) const;
-    // Geometry selection for editor playtests. Room type and tileset variant are
-    // gameplay/art concerns here: biome + exact doors decide first, with a
-    // same-biome four-door room as the only fallback.
+    // Editor playtests preserve gameplay identity as well as geometry. Prefer an
+    // exact door mask; a four-door blueprint of the same biome and room type is
+    // the only fallback and has its unused exits sealed by the runtime graph.
     std::vector<const RoomBlueprint*> PlaytestCandidates(
-        Biome biome, unsigned char requiredDoorMask) const;
+        Biome biome, RoomType roomType, unsigned char requiredDoorMask) const;
+    std::array<int, 16> DoorMaskCounts(Biome biome,
+                                       std::string_view tilesetStem) const;
     std::optional<RoomLayout> Resolve(const RoomRequest& request,
                                       const TileDefSet& definitions,
                                       const RoomAssetCatalog* catalog,
@@ -41,9 +44,9 @@ public:
     bool NameExists(std::string_view name, std::string_view exceptId = {}) const;
 
     static std::string Slugify(std::string_view name);
+    static std::string BiomeFolderName(Biome biome);
 
 private:
-    static std::string BiomeFolderName(Biome biome);
     std::filesystem::path PathFor(const RoomBlueprint& room) const;
     bool IsInsideRoot(const std::filesystem::path& path) const;
 

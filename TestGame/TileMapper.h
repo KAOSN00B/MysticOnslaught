@@ -32,6 +32,8 @@ public:
     bool WantsToExit() const { return _wantsToExit; }
     bool ConsumeRoomPlaytestRequest() { return _roomEditor.ConsumePlaytestRequest(); }
     const RoomBlueprint& EditedRoom() const { return _roomEditor.Blueprint(); }
+    void SetRoomPlaytestError(const std::string& message)
+    { _roomEditor.SetStatusMessage(message, 5.f); }
 
     // ── Tile types ────────────────────────────────────────────────────────────
     static constexpr const char* kTypeNames[] = {

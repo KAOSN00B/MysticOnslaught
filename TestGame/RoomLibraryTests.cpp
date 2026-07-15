@@ -48,6 +48,10 @@ int main()
         "Caverns", RoomType::Standard, true, true, true, true);
     RoomBlueprint forestFallback = MakeRoom("forest-four-way", "Forest Crossroads", Biome::Forest,
         "Forest", RoomType::Standard, true, true, true, true);
+    RoomBlueprint treasureCrossing = MakeRoom("treasure-crossing", "Treasure Crossing", Biome::Caverns,
+        "Caverns", RoomType::Treasure, true, true, false, false);
+    RoomBlueprint treasureFallback = MakeRoom("treasure-four-way", "Treasure Crossroads", Biome::Caverns,
+        "Caverns", RoomType::Treasure, true, true, true, true);
 
     assert(library.SaveRoom(crossingA, false, error));
     assert(library.SaveRoom(crossingB, false, error));
@@ -55,30 +59,59 @@ int main()
     assert(library.SaveRoom(forest, false, error));
     assert(library.SaveRoom(cavernFallback, false, error));
     assert(library.SaveRoom(forestFallback, false, error));
+    assert(library.SaveRoom(treasureCrossing, false, error));
+    assert(library.SaveRoom(treasureFallback, false, error));
     library.Refresh(root);
-    assert(library.Rooms().size() == 6);
+    assert(library.Rooms().size() == 8);
     assert(library.NameExists("Narrow Crossing"));
     assert(!library.NameExists("Narrow Crossing", "crossing-a"));
     assert(library.FindById("crossing-a") != nullptr);
     assert(library.FindById("missing") == nullptr);
 
-    // Editor playtest ignores room type/stem, stays inside the requested biome,
-    // prefers exact door masks, and uses four-way rooms only as its safety net.
+    // Editor playtest respects authored room type, prefers exact door masks, and
+    // uses only a same-type four-way room as its safety net.
     auto exactCandidates = library.PlaytestCandidates(
-        Biome::Caverns, RoomDoorMask(true, true, false, false));
+        Biome::Caverns, RoomType::Standard,
+        RoomDoorMask(true, true, false, false));
     assert(exactCandidates.size() == 2);
     for (const RoomBlueprint* room : exactCandidates)
         assert(room->biome == Biome::Caverns &&
                room->DoorMask() == RoomDoorMask(true, true, false, false));
 
     auto fallbackCandidates = library.PlaytestCandidates(
-        Biome::Caverns, RoomDoorMask(false, false, true, true));
+        Biome::Caverns, RoomType::Standard,
+        RoomDoorMask(false, false, true, true));
     assert(fallbackCandidates.size() == 1);
     assert(fallbackCandidates[0]->id == "cavern-four-way");
 
     auto otherBiomeCandidates = library.PlaytestCandidates(
-        Biome::Jungle, RoomDoorMask(false, false, true, true));
+        Biome::Jungle, RoomType::Standard,
+        RoomDoorMask(false, false, true, true));
     assert(otherBiomeCandidates.empty());
+
+    auto treasureCandidates = library.PlaytestCandidates(
+        Biome::Caverns, RoomType::Treasure,
+        RoomDoorMask(true, true, false, false));
+    assert(treasureCandidates.size() == 1);
+    assert(treasureCandidates[0]->id == "treasure-crossing");
+    auto treasureFourWayFallback = library.PlaytestCandidates(
+        Biome::Caverns, RoomType::Treasure,
+        RoomDoorMask(false, false, true, true));
+    assert(treasureFourWayFallback.size() == 1);
+    assert(treasureFourWayFallback[0]->id == "treasure-four-way");
+
+    // Encounter-only Elite rooms do not require a second copy of every authored
+    // room shape. When no Elite-specific art exists, use Standard room art with
+    // the requested doors; the graph still owns the Elite encounter behavior.
+    auto eliteGeometryFallback = library.PlaytestCandidates(
+        Biome::Caverns, RoomType::Elite,
+        RoomDoorMask(true, true, false, false));
+    assert(eliteGeometryFallback.size() == 2);
+    for (const RoomBlueprint* room : eliteGeometryFallback)
+    {
+        assert(room->roomType == RoomType::Standard);
+        assert(room->DoorMask() == RoomDoorMask(true, true, false, false));
+    }
 
     RoomRequest request;
     request.biome = Biome::Caverns;
@@ -118,6 +151,19 @@ int main()
     request.roomType = RoomType::Standard;
     request.doorMask = RoomDoorMask(false, false, true, true);
     assert(library.Choose(request) == nullptr);
+
+    // Coverage counts actual masks for only the requested biome + tileset.
+    RoomBlueprint wrongStem = MakeRoom("wrong-stem", "Wrong Stem", Biome::Caverns,
+        "Forest", RoomType::Standard, true, true, false, false);
+    RoomBlueprint wrongBiome = MakeRoom("wrong-biome", "Wrong Biome", Biome::Forest,
+        "Caverns", RoomType::Standard, true, true, false, false);
+    assert(library.SaveRoom(wrongStem, false, error));
+    assert(library.SaveRoom(wrongBiome, false, error));
+    const auto coverage = library.DoorMaskCounts(Biome::Caverns, "Caverns");
+    assert(coverage[0] == 0);
+    assert(coverage[RoomDoorMask(true, true, false, false)] == 3);
+    assert(coverage[RoomDoorMask(true, false, true, false)] == 1);
+    assert(coverage[RoomDoorMask(true, true, true, true)] == 2);
 
     assert(!library.SaveRoom(crossingA, false, error));
     assert(!error.empty());

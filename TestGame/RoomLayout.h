@@ -10,6 +10,10 @@
 // This lets animated water/lava authored as Decor be painted "as ground".
 enum class RoomDrawBand : unsigned char { Decor = 0, Ground = 1, Visual = 2 };
 
+// One room-level material drives the feedback for every authored fall zone.
+// Existing handcrafted rooms default to Void when they have no saved metadata.
+enum class FallSurface : unsigned char { Void = 0, Water = 1, Lava = 2 };
+
 // A placed prop or decoration instance inside a room.
 struct SpritePlacement
 {
@@ -27,7 +31,26 @@ struct RoomTilePlacement
     Rectangle src{};
     int col = 0;
     int row = 0;
+    // Door art is kept as a separate editor layer for organization. At runtime,
+    // all non-ground art overlapping an open exit hides to reveal Ground.
+    bool door = false;
+    // Source-pixel distance from the selected sprite's top-left to the logical
+    // 16x16 room cell anchor. This lets wall tips extend above/left of their
+    // cell without stretching the sprite or changing collision coordinates.
+    Vector2 anchorOffset{};
 };
+
+inline Rectangle RoomTileDestination(const RoomTilePlacement& placement,
+                                     float cellX, float cellY,
+                                     float scaleX, float scaleY)
+{
+    return {
+        cellX - placement.anchorOffset.x * scaleX,
+        cellY - placement.anchorOffset.y * scaleY,
+        placement.src.width * scaleX,
+        placement.src.height * scaleY
+    };
+}
 
 struct RoomSourceDefinitions
 {
@@ -68,6 +91,11 @@ struct RoomLayout
     float wallBottomDepth = 1.0f;
     float wallLeftDepth = 1.0f;
     float wallRightDepth = 1.0f;
+    FallSurface fallSurface = FallSurface::Void;
+    // Optional authored treasure chest tile. Negative values preserve the
+    // legacy centre-of-room fallback for rooms saved before marker support.
+    int treasureChestCol = -1;
+    int treasureChestRow = -1;
 
     TileType tiles[kRows][kCols]{};
     bool fall[kRows][kCols]{};
@@ -76,6 +104,7 @@ struct RoomLayout
     std::vector<Rectangle> colliders; // free-size collision rects, tile space
     bool doorZoneOpen[4]{};
     bool roomCleared = false;
+    std::vector<Rectangle> fallRects; // precise fall triggers in tile space
     std::vector<RoomTilePlacement> visualTiles;
     std::vector<RoomSourceDefinitions> assetSources;
     std::vector<SpritePlacement> props;       // solid objects with collision

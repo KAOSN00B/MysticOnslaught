@@ -202,7 +202,8 @@ void VFXManager::SpawnCastEffect(Character::CastType castType,
 }
 
 void VFXManager::SpawnHitEffect(Character::CastType castType,
-                                 Vector2 worldPos, Vector2 direction)
+                                 Vector2 worldPos, Vector2 direction,
+                                 float scaleMultiplier)
 {
     AnimatedEffect effect{};
     effect.followPlayer = false;
@@ -258,7 +259,10 @@ void VFXManager::SpawnHitEffect(Character::CastType castType,
     }
 
     if (effect.active)
+    {
+        effect.scale *= std::max(0.1f, scaleMultiplier);
         _effects.push_back(effect);
+    }
 }
 
 void VFXManager::SpawnHealEffect()

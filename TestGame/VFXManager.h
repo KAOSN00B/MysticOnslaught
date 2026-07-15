@@ -41,7 +41,8 @@ public:
     void SpawnCastEffect(Character::CastType castType, Vector2 castOrigin, Vector2 facingDir);
 
     // Impact animation at a fixed world position.
-    void SpawnHitEffect(Character::CastType castType, Vector2 worldPos, Vector2 direction);
+    void SpawnHitEffect(Character::CastType castType, Vector2 worldPos,
+                        Vector2 direction, float scaleMultiplier = 1.f);
 
     // Heal animation that follows the player's center.
     void SpawnHealEffect();

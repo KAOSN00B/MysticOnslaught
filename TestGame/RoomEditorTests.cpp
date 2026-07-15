@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 
 int main()
 {
@@ -32,23 +33,134 @@ int main()
     assert(!editor.SetVisual(5, 5, false, "Forest", { 16.f, 32.f, 16.f, 16.f }));
     assert(editor.SetSolid(5, 5, true));
     assert(editor.SetFall(8, 6, true));
+    assert(editor.Blueprint().fallSurface == FallSurface::Void);
+    assert(editor.SetFallSurface(FallSurface::Water));
+    assert(editor.Blueprint().fallSurface == FallSurface::Water);
+    assert(!editor.SetFallSurface(FallSurface::Water));
+    assert(editor.SetFallSurface(FallSurface::Lava));
+    assert(editor.Blueprint().fallSurface == FallSurface::Lava);
+    assert(editor.Undo());
+    assert(editor.Blueprint().fallSurface == FallSurface::Water);
+    assert(editor.Redo());
+    assert(editor.Blueprint().fallSurface == FallSurface::Lava);
     assert(editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 3, 4 }));
     assert(editor.Blueprint().tiles[5][4] == TileType::FloorVariant);
     assert(editor.Blueprint().fall[6][8]);
     assert(editor.Blueprint().solid[5][5]);
     assert(editor.Blueprint().visualTiles.size() == 1);
     assert(editor.Blueprint().placements.size() == 1);
-
     editor.Undo();
     assert(editor.Blueprint().placements.empty());
     editor.Redo();
     assert(editor.Blueprint().placements.size() == 1);
+
+    // Treasure rooms author one chest marker. It participates in undo/redo and
+    // rejects authored blockers instead of silently spawning inside terrain.
+    editor.Blueprint().roomType = RoomType::Treasure;
+    assert(editor.TreasureChestSpawnFits(10, 10));
+    assert(editor.SetTreasureChestSpawn(10, 10));
+    assert(editor.Blueprint().treasureChestCol == 10);
+    assert(editor.Blueprint().treasureChestRow == 10);
+    assert(!editor.SetTreasureChestSpawn(10, 10));
+    assert(editor.Undo());
+    assert(editor.Blueprint().treasureChestCol == -1);
+    assert(editor.Redo());
+    assert(editor.Blueprint().treasureChestCol == 10);
+    assert(!editor.TreasureChestSpawnFits(5, 5));  // painted solid cell
+    assert(!editor.TreasureChestSpawnFits(8, 6));  // painted fall cell
+    assert(!editor.TreasureChestSpawnFits(3, 4));  // blocking rock prop
+    assert(!editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 10, 10 }));
+    assert(editor.ClearTreasureChestSpawn());
+    assert(editor.Blueprint().treasureChestCol == -1);
+    editor.Blueprint().roomType = RoomType::Standard;
+
+    // Ground random brushes choose authored variants once and store the result as
+    // an ordinary visual tile. Other editor layers and the runtime room format do
+    // not need to understand random brushes.
+    editor.SelectLayer(RoomEditor::Layer::Ground);
+    assert(editor.AddGroundBrushTile("Caverns", { 0.f, 0.f, 16.f, 16.f }, 8));
+    assert(!editor.RandomGroundBrushEnabled());
+    assert(editor.AddGroundBrushTile("Forest", { 16.f, 32.f, 16.f, 16.f }, 2));
+    // Once a mix has two members it must become active immediately. Otherwise
+    // PaintCell falls back to _selectedRawTile and the last selected tile appears
+    // to ignore all weights.
+    assert(editor.RandomGroundBrushEnabled());
+    assert(!editor.AddGroundBrushTile("Forest", { 16.f, 32.f, 16.f, 16.f }, 2));
+    assert(editor.GroundBrushTiles().size() == 2);
+    assert(editor.SetGroundBrushWeight(1, 3));
+    assert(editor.GroundBrushTiles()[1].weight == 3);
+    assert(editor.ChooseGroundBrushIndex(0) == 0);
+    assert(editor.ChooseGroundBrushIndex(7) == 0);
+    assert(editor.ChooseGroundBrushIndex(8) == 1);
+    assert(editor.ChooseGroundBrushIndex(10) == 1);
+    assert(editor.PaintActiveCell(10, 10));
+    bool storedRandomGround = false;
+    for (const RoomTilePlacement& visual : editor.Blueprint().visualTiles)
+        if (visual.col == 10 && visual.row == 10 && visual.ground)
+            storedRandomGround = visual.sourceTileset == "Caverns" ||
+                                 visual.sourceTileset == "Forest";
+    assert(storedRandomGround);
+
+    std::string presetError;
+    assert(editor.SaveGroundBrushPreset("Mossy Floor", presetError));
+    editor.ClearGroundBrush();
+    assert(editor.GroundBrushTiles().empty());
+    assert(editor.LoadGroundBrushPreset("Mossy Floor", presetError));
+    assert(editor.GroundBrushTiles().size() == 2);
+    assert(editor.GroundBrushTiles()[0].weight == 8);
+    assert(editor.GroundBrushTiles()[1].weight == 3);
+
+    // A malformed preset must fail safely and leave the current brush untouched.
+    const std::filesystem::path badPreset = root / "_GroundBrushes" / "Caverns" /
+        "caverns" / "broken.gbrush";
+    std::filesystem::create_directories(badPreset.parent_path(), ec);
+    {
+        std::ofstream bad(badPreset);
+        bad << "MYSTIC_GROUND_BRUSH 1\n"
+               "name \"Broken\"\n"
+               "tile \"Caverns\" 0 0 -16 16 1\n";
+    }
+    assert(!editor.LoadGroundBrushPreset("broken", presetError));
+    assert(editor.GroundBrushTiles().size() == 2);
+    assert(editor.RemoveGroundBrushTile(1));
+    assert(editor.GroundBrushTiles().size() == 1);
+    assert(!editor.RandomGroundBrushEnabled());
+
+    // Selection order never overrides weights: the third/most recently added
+    // tile remains rare, and the same ratio reaches the real paint path.
+    RoomEditor orderedBrush;
+    orderedBrush.BindForTesting("Caverns", Biome::Caverns, defs, root);
+    orderedBrush.SelectLayer(RoomEditor::Layer::Ground);
+    assert(orderedBrush.AddGroundBrushTile("Base", { 0.f, 0.f, 16.f, 16.f }, 8));
+    assert(orderedBrush.AddGroundBrushTile("RareA", { 16.f, 0.f, 16.f, 16.f }, 1));
+    assert(orderedBrush.AddGroundBrushTile("RareB", { 32.f, 0.f, 16.f, 16.f }, 1));
+    int weightedPicks[3]{};
+    for (std::uint32_t sample = 0; sample < 100; ++sample)
+        ++weightedPicks[orderedBrush.ChooseGroundBrushIndex(sample)];
+    assert(weightedPicks[0] == 80 && weightedPicks[1] == 10 && weightedPicks[2] == 10);
+
+    for (int row = 0; row < RoomLayout::kRows; ++row)
+        for (int col = 0; col < RoomLayout::kCols; ++col)
+            assert(orderedBrush.PaintActiveCell(col, row));
+    int paintedBase = 0, paintedRareA = 0, paintedRareB = 0;
+    for (const RoomTilePlacement& tile : orderedBrush.Blueprint().visualTiles)
+    {
+        paintedBase += tile.sourceTileset == "Base";
+        paintedRareA += tile.sourceTileset == "RareA";
+        paintedRareB += tile.sourceTileset == "RareB";
+    }
+    assert(paintedRareA > 0 && paintedRareB > 0);
+    assert(paintedBase > paintedRareA * 4);
+    assert(paintedBase > paintedRareB * 4);
 
     // Painting through the door/wall lanes is now allowed — doors are authored
     // Door Zones, not protected cells, so a continuous wall can cross an opening.
     assert(editor.SetFall(14, 1, true));                 // was blocked as a "door lane"
     assert(editor.Blueprint().fall[1][14]);
     assert(editor.SetVisual(14, 0, false, "Forest", { 16.f, 32.f, 16.f, 16.f })); // wall art on the edge
+    assert(editor.SetDoorVisual(13, 0, "Forest", { 32.f, 32.f, 16.f, 16.f }));
+    assert(!editor.SetDoorVisual(5, 5, "Forest", { 32.f, 32.f, 16.f, 16.f }));
+    assert(editor.Blueprint().visualTiles.back().door);
     assert(editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 13, 1 })); // prop in the north lane
     assert(!editor.PlaceAsset({ RoomAssetKind::Prop, "rock", -1, 4 }));
     assert(!editor.PlaceAsset({ RoomAssetKind::Prop, "missing", 3, 4 }));
@@ -71,6 +183,12 @@ int main()
     }
     assert(groundAtCell == 1);
     assert(visualAtCell == 0);
+
+    editor.SelectLayer(RoomEditor::Layer::Door);
+    assert(editor.EraseAt(13, 0));
+    for (const RoomTilePlacement& visual : editor.Blueprint().visualTiles)
+        assert(!(visual.col == 13 && visual.row == 0 && visual.door));
+    assert(editor.SetDoorVisual(13, 0, "Forest", { 32.f, 32.f, 16.f, 16.f }));
 
     assert(editor.PlaceAsset({ RoomAssetKind::Prop, "rock", 26, 9 }));
     assert(editor.PlaceAsset({ RoomAssetKind::Decor, "flower", 26, 9 }));
@@ -122,11 +240,14 @@ int main()
         assert(editor.Blueprint().fall[r][c]);
 
     // Clear layer wipes only the active layer, one undo.
+    editor.Blueprint().fallRects.push_back({ 3.25f, 4.50f, 2.25f, 1.25f });
     assert(editor.ClearActiveLayer());
     for (int r = 0; r < RoomLayout::kRows; ++r) for (int c = 0; c < RoomLayout::kCols; ++c)
         assert(!editor.Blueprint().fall[r][c]);
+    assert(editor.Blueprint().fallRects.empty());
     assert(editor.Undo());
     assert(editor.Blueprint().fall[10][22]);          // block restored
+    assert(editor.Blueprint().fallRects.size() == 1);
 
     // Eyedropper picks a placed prop into the selection.
     editor.SelectLayer(RoomEditor::Layer::Props);
@@ -142,6 +263,18 @@ int main()
     assert(dup.name == "Original copy");
     assert(dup.visualTiles.size() == original.visualTiles.size());
     assert(dup.solid[10][22] == original.solid[10][22]);
+
+    // A missing coverage chip prepares a fresh unsaved room with that exact mask.
+    assert(!editor.CreateRoomForDoorMask(0));
+    assert(!editor.CreateRoomForDoorMask(16));
+    const unsigned char nsw = RoomDoorMask(true, true, false, true);
+    assert(editor.CreateRoomForDoorMask(nsw));
+    assert(editor.Blueprint().DoorMask() == nsw);
+    assert(editor.Blueprint().hasNorth && editor.Blueprint().hasSouth);
+    assert(!editor.Blueprint().hasEast && editor.Blueprint().hasWest);
+    assert(editor.Blueprint().name == "NSW Room");
+    assert(editor.Blueprint().visualTiles.empty());
+    assert(editor.Blueprint().placements.empty());
 
     std::filesystem::remove_all(root, ec);
     return 0;

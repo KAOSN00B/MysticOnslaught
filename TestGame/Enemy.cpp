@@ -7,6 +7,7 @@
 #include "raymath.h"
 #include "VirtualCanvas.h"
 #include <algorithm>
+#include <climits>
 #include <cmath>
 
 Texture2D Enemy::_sharedIdleAnim{};
@@ -27,6 +28,70 @@ Enemy::Enemy(Vector2 pos)
 
 Enemy::~Enemy()
 {
+}
+
+void Enemy::SetActive(bool active)
+{
+    _isActive = active;
+    if (active) return;
+
+    // A pooled enemy can be removed while its fall is still playing (room
+    // transition/debug clear). Restore its authored scale before reuse.
+    if (_pitStartScale > 0.f)
+        _scale = _pitStartScale;
+    _pitFalling = false;
+    _pitFallTimer = 0.f;
+    _pitStartScale = 0.f;
+    _pitFallTint = WHITE;
+}
+
+void Enemy::BeginPitFall(Vector2 pullTarget, Color tint)
+{
+    if (_pitFalling || _dying || !_isActive) return;
+    _pitFalling = true;
+    _pitFallTimer = 0.f;
+    _pitStartScale = _scale;
+    _pitStartPos = _worldPos;
+    _pitTargetPos = pullTarget;
+    _pitFallTint = tint;
+    _velocity = Vector2Zero();
+    _attacking = false;
+    _takingDamage = false;
+    _forcedPushActive = false;
+    _forcedPushSpeed = 0.f;
+    _forcedPushDirection = Vector2Zero();
+}
+
+void Enemy::UpdatePitFall(float dt)
+{
+    if (!_pitFalling) return;
+    _pitFallTimer = std::min(kPitFallDuration, _pitFallTimer + std::max(0.f, dt));
+    const float p = PitFallProgress();
+    const float eased = 1.f - (1.f - p) * (1.f - p);
+    _worldPos = Vector2Lerp(_pitStartPos, _pitTargetPos, eased * 0.9f);
+    _worldPosLastFrame = _worldPos;
+    _scale = _pitStartScale;
+}
+
+bool Enemy::PitFallComplete() const
+{
+    return _pitFalling && _pitFallTimer >= kPitFallDuration;
+}
+
+float Enemy::PitFallProgress() const
+{
+    if (!_pitFalling) return 0.f;
+    return std::clamp(_pitFallTimer / kPitFallDuration, 0.f, 1.f);
+}
+
+void Enemy::FinishPitFall()
+{
+    if (!_pitFalling) return;
+    _pitFalling = false;
+    _pitFallTimer = kPitFallDuration;
+    // Environmental death bypasses shields/revive but otherwise enters the
+    // standard death timer consumed by CombatDirector::UpdateEnemyDeaths.
+    BaseCharacter::TakeDamage(INT_MAX, _pitTargetPos);
 }
 
 void Enemy::Init()
@@ -79,6 +144,10 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _homePos = pos;
     _velocity = Vector2Zero();
     _isActive         = true;
+    _pitFalling       = false;
+    _pitFallTimer     = 0.f;
+    _pitStartScale    = 0.f;
+    _pitFallTint      = WHITE;
     _bestiaryRecorded = false;
     _isEliteMiniboss  = false;
     _isInvulnerable   = false;
@@ -1292,6 +1361,20 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
 
     Rectangle dest{ screenPos.x - w / 2.f + visualOffsetX, screenPos.y - h / 2.f + visualOffsetY, w, h };
 
+    if (_pitFalling)
+    {
+        const float p = PitFallProgress();
+        const float visible = std::max(0.02f, 1.f - p);
+        source.height = _height * visible;
+        dest.x += w * 0.04f;
+        dest.y += p * h * 0.42f;
+        dest.width = w * 0.92f;
+        dest.height = h * visible;
+        DrawTexturePro(_texture, source, dest, {}, 0.f,
+                       Fade(_pitFallTint, 1.f - p * 0.72f));
+        return;
+    }
+
     bool burning       = !_pendingBurns.empty();
     bool frozen        = IsFrozen();
     bool electroStunned = IsElectroStunned();
@@ -1488,6 +1571,14 @@ void Enemy::TakeDamage(int damage, Vector2 attackerPos)
 {
     // Fresh hit — clear any stale block reason from a previous damage source.
     _hitBlock = HitBlockReason::None;
+
+    // The environment owns this death once the fall starts. Overlapping attacks
+    // cannot interrupt it or display damage that was not actually applied.
+    if (_pitFalling)
+    {
+        _hitBlock = HitBlockReason::Immune;
+        return;
+    }
 
     // If the revive one-shot invul window is active, deny the hit visibly so it
     // reads as protection instead of a broken/missing damage number.

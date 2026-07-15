@@ -71,6 +71,28 @@ namespace
         std::string tag;
         return (in >> tag >> std::quoted(value)) && tag == expectedTag;
     }
+
+    Rectangle TilePlacementBounds(const RoomTilePlacement& placement)
+    {
+        return { (float)placement.col - placement.anchorOffset.x / 16.f,
+                 (float)placement.row - placement.anchorOffset.y / 16.f,
+                 placement.src.width / 16.f, placement.src.height / 16.f };
+    }
+
+    bool OverlapsDoorZone(const RoomTilePlacement& placement,
+                          const RoomDoorZone* zones, bool enabledOnly)
+    {
+        const Rectangle occupied = TilePlacementBounds(placement);
+        for (int i = 0; i < 4; ++i)
+        {
+            if (enabledOnly && !zones[i].enabled) continue;
+            const Rectangle zone = zones[i].tiles;
+            if (occupied.x < zone.x + zone.width && occupied.x + occupied.width > zone.x &&
+                occupied.y < zone.y + zone.height && occupied.y + occupied.height > zone.y)
+                return true;
+        }
+        return false;
+    }
 }
 
 unsigned char RoomDoorMask(bool north, bool south, bool east, bool west)
@@ -79,6 +101,81 @@ unsigned char RoomDoorMask(bool north, bool south, bool east, bool west)
                                       (south ? 2 : 0) |
                                       (east  ? 4 : 0) |
                                       (west  ? 8 : 0));
+}
+
+bool AdjustTileSelectionOverhang(Rectangle& source, Vector2& anchorOffset,
+                                 RoomWallSide side, int delta,
+                                 float sheetWidth, float sheetHeight)
+{
+    if (delta == 0 || source.width <= 0.f || source.height <= 0.f ||
+        sheetWidth <= 0.f || sheetHeight <= 0.f)
+        return false;
+
+    bool changed = false;
+    const int direction = delta > 0 ? 1 : -1;
+    for (int step = 0; step < std::abs(delta); ++step)
+    {
+        switch (side)
+        {
+        case RoomWallSide::Top:
+            if (direction > 0 && source.y >= 1.f)
+            {
+                source.y -= 1.f;
+                source.height += 1.f;
+                anchorOffset.y += 1.f;
+                changed = true;
+            }
+            else if (direction < 0 && anchorOffset.y >= 1.f)
+            {
+                source.y += 1.f;
+                source.height -= 1.f;
+                anchorOffset.y -= 1.f;
+                changed = true;
+            }
+            break;
+        case RoomWallSide::Bottom:
+            if (direction > 0 && source.y + source.height < sheetHeight)
+            {
+                source.height += 1.f;
+                changed = true;
+            }
+            else if (direction < 0 && source.height - anchorOffset.y > 16.f)
+            {
+                source.height -= 1.f;
+                changed = true;
+            }
+            break;
+        case RoomWallSide::Left:
+            if (direction > 0 && source.x >= 1.f)
+            {
+                source.x -= 1.f;
+                source.width += 1.f;
+                anchorOffset.x += 1.f;
+                changed = true;
+            }
+            else if (direction < 0 && anchorOffset.x >= 1.f)
+            {
+                source.x += 1.f;
+                source.width -= 1.f;
+                anchorOffset.x -= 1.f;
+                changed = true;
+            }
+            break;
+        case RoomWallSide::Right:
+            if (direction > 0 && source.x + source.width < sheetWidth)
+            {
+                source.width += 1.f;
+                changed = true;
+            }
+            else if (direction < 0 && source.width - anchorOffset.x > 16.f)
+            {
+                source.width -= 1.f;
+                changed = true;
+            }
+            break;
+        }
+    }
+    return changed;
 }
 
 Rectangle PredeterminedDoorZone(RoomWallSide side)
@@ -173,6 +270,64 @@ bool RoomBlueprint::Validate(std::string& error) const
         return false;
     }
 
+    const int fallSurfaceValue = static_cast<int>(fallSurface);
+    if (fallSurfaceValue < static_cast<int>(FallSurface::Void) ||
+        fallSurfaceValue > static_cast<int>(FallSurface::Lava))
+    {
+        error = "Room fall surface value is invalid";
+        return false;
+    }
+
+    const bool chestColSet = treasureChestCol >= 0;
+    const bool chestRowSet = treasureChestRow >= 0;
+    if (chestColSet != chestRowSet)
+    {
+        error = "Treasure chest marker is incomplete";
+        return false;
+    }
+    if (chestColSet)
+    {
+        if (treasureChestCol >= RoomLayout::kCols || treasureChestRow >= RoomLayout::kRows)
+        {
+            error = "Treasure chest marker is outside the room grid";
+            return false;
+        }
+        const TileType chestTile = tiles[treasureChestRow][treasureChestCol];
+        if (solid[treasureChestRow][treasureChestCol] ||
+            fall[treasureChestRow][treasureChestCol] ||
+            (chestTile != TileType::Floor && chestTile != TileType::FloorVariant))
+        {
+            error = "Treasure chest marker must be on clear floor";
+            return false;
+        }
+        const Rectangle chestCell{ (float)treasureChestCol, (float)treasureChestRow, 1.f, 1.f };
+        auto overlaps = [&](Rectangle rect)
+        {
+            return chestCell.x < rect.x + rect.width &&
+                   chestCell.x + chestCell.width > rect.x &&
+                   chestCell.y < rect.y + rect.height &&
+                   chestCell.y + chestCell.height > rect.y;
+        };
+        for (const Rectangle& collider : colliders)
+            if (overlaps(collider))
+            {
+                error = "Treasure chest marker overlaps a collider";
+                return false;
+            }
+        for (const Rectangle& fallRect : fallRects)
+            if (overlaps(fallRect))
+            {
+                error = "Treasure chest marker overlaps a fall zone";
+                return false;
+            }
+        for (const RoomDoorZone& zone : doorZones)
+            if (zone.enabled && overlaps(zone.tiles))
+            {
+                error = "Treasure chest marker overlaps a door";
+                return false;
+            }
+    }
+
     for (int row = 0; row < RoomLayout::kRows; ++row)
     {
         for (int col = 0; col < RoomLayout::kCols; ++col)
@@ -202,6 +357,11 @@ bool RoomBlueprint::Validate(std::string& error) const
     }
     for (const RoomTilePlacement& placement : visualTiles)
     {
+        if (placement.ground && placement.door)
+        {
+            error = "Room tile cannot belong to both Ground and Door layers";
+            return false;
+        }
         if (placement.sourceTileset.empty())
         {
             error = "Room visual tile has an empty source tileset";
@@ -212,10 +372,22 @@ bool RoomBlueprint::Validate(std::string& error) const
             error = "Room visual tile has an empty source rectangle";
             return false;
         }
+        if (placement.anchorOffset.x < 0.f || placement.anchorOffset.y < 0.f ||
+            placement.anchorOffset.x > placement.src.width - 1.f ||
+            placement.anchorOffset.y > placement.src.height - 1.f)
+        {
+            error = "Room visual tile has an invalid anchor offset";
+            return false;
+        }
         if (placement.col < 0 || placement.col >= RoomLayout::kCols ||
             placement.row < 0 || placement.row >= RoomLayout::kRows)
         {
             error = "Room visual tile is outside the room grid";
+            return false;
+        }
+        if (placement.door && !OverlapsDoorZone(placement, doorZones, false))
+        {
+            error = "Room Door tile must overlap a fixed door zone";
             return false;
         }
     }
@@ -226,6 +398,17 @@ bool RoomBlueprint::Validate(std::string& error) const
             c.x + c.width > RoomLayout::kCols || c.y + c.height > RoomLayout::kRows)
         {
             error = "Room collider rectangle is outside the room grid";
+            return false;
+        }
+    }
+    for (const Rectangle& rect : fallRects)
+    {
+        if (rect.width <= 0.f || rect.height <= 0.f ||
+            rect.x < 0.f || rect.y < 0.f ||
+            rect.x + rect.width > RoomLayout::kCols ||
+            rect.y + rect.height > RoomLayout::kRows)
+        {
+            error = "Room fall rectangle is outside the room grid";
             return false;
         }
     }
@@ -271,6 +454,9 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
     out << "BIOME " << static_cast<int>(biome) << '\n';
     out << "TILESET " << std::quoted(tilesetStem) << '\n';
     out << "ROOMTYPE " << static_cast<int>(roomType) << '\n';
+    out << "FALLSURFACE " << static_cast<int>(fallSurface) << '\n';
+    if (HasTreasureChestSpawn())
+        out << "TREASURE_CHEST " << treasureChestCol << ' ' << treasureChestRow << '\n';
     out << "DOORS " << (hasNorth ? 1 : 0) << ' ' << (hasSouth ? 1 : 0) << ' '
         << (hasEast ? 1 : 0) << ' ' << (hasWest ? 1 : 0) << '\n';
     out << "WALL_DEPTHS " << wallTopDepth << ' ' << wallBottomDepth << ' '
@@ -310,12 +496,13 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
     }
     out << "SOLID_END\nVISUALS_BEGIN\n";
     for (const RoomTilePlacement& placement : visualTiles)
-        out << (placement.ground ? "GROUND " : "VISUAL ")
+        out << (placement.ground ? "GROUND " : placement.door ? "DOOR " : "VISUAL ")
             << std::quoted(placement.sourceTileset) << ' '
             << (int)placement.type << ' '
             << placement.src.x << ' ' << placement.src.y << ' '
             << placement.src.width << ' ' << placement.src.height << ' '
-            << placement.col << ' ' << placement.row << '\n';
+            << placement.col << ' ' << placement.row << ' '
+            << placement.anchorOffset.x << ' ' << placement.anchorOffset.y << '\n';
     out << "VISUALS_END\n";
     for (int i = 0; i < 4; ++i)
     {
@@ -326,6 +513,9 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
     }
     for (const Rectangle& c : colliders)
         out << "COLLIDER " << c.x << ' ' << c.y << ' ' << c.width << ' ' << c.height << '\n';
+    for (const Rectangle& rect : fallRects)
+        out << "FALLRECT " << rect.x << ' ' << rect.y << ' '
+            << rect.width << ' ' << rect.height << '\n';
     out.flush();
     if (!out)
     {
@@ -371,7 +561,7 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
             error = "Room file header is invalid";
             return std::nullopt;
         }
-        if (fileVersion != 1 && fileVersion != kVersion)
+        if (fileVersion < 1 || fileVersion > kVersion)
         {
             error = "Unsupported room file version";
             return std::nullopt;
@@ -541,13 +731,21 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
                              >> type >> placement.src.x >> placement.src.y
                              >> placement.src.width >> placement.src.height
                              >> placement.col >> placement.row) ||
-                    (tag != "GROUND" && tag != "VISUAL") ||
+                    (tag != "GROUND" && tag != "VISUAL" &&
+                     !(fileVersion >= 3 && tag == "DOOR")) ||
                     type < 0 || type >= (int)TileType::Count)
                 {
                     error = "Room visual tile record is invalid";
                     return std::nullopt;
                 }
+                if (fileVersion >= 7 &&
+                    !(values >> placement.anchorOffset.x >> placement.anchorOffset.y))
+                {
+                    error = "Room visual tile anchor is invalid";
+                    return std::nullopt;
+                }
                 placement.ground = tag == "GROUND";
+                placement.door = tag == "DOOR";
                 placement.type = (TileType)type;
                 room.visualTiles.push_back(std::move(placement));
             }
@@ -581,6 +779,25 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
             int value = -1;
             if (!(values >> value)) { error = "Invalid room type"; return std::nullopt; }
             room.roomType = static_cast<RoomType>(value);
+        }
+        else if (tag == "FALLSURFACE")
+        {
+            int value = -1;
+            if (!(values >> value) || value < static_cast<int>(FallSurface::Void) ||
+                value > static_cast<int>(FallSurface::Lava))
+            {
+                error = "Invalid room fall surface";
+                return std::nullopt;
+            }
+            room.fallSurface = static_cast<FallSurface>(value);
+        }
+        else if (tag == "TREASURE_CHEST")
+        {
+            if (!(values >> room.treasureChestCol >> room.treasureChestRow))
+            {
+                error = "Invalid treasure chest marker";
+                return std::nullopt;
+            }
         }
         else if (tag == "DOORS")
         {
@@ -631,6 +848,17 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
             }
             room.colliders.push_back(c);
         }
+        else if (tag == "FALLRECT")
+        {
+            Rectangle rect{};
+            if (!(values >> rect.x >> rect.y >> rect.width >> rect.height) ||
+                rect.width <= 0.f || rect.height <= 0.f)
+            {
+                error = "Invalid room fall rectangle";
+                return std::nullopt;
+            }
+            room.fallRects.push_back(rect);
+        }
         // Unknown metadata tags are ignored for forward compatibility.
     }
 
@@ -651,6 +879,12 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
     const bool doorEnabled[4] = { room.hasNorth, room.hasSouth, room.hasWest, room.hasEast };
     for (int i = 0; i < 4; ++i)
         room.doorZones[i] = { doorEnabled[i], PredeterminedDoorZone((RoomWallSide)i) };
+    // Versions 1 and 2 implicitly destroyed every non-ground visual crossing an
+    // enabled door lane. Preserve that authored intent once; version 3 stores it.
+    if (fileVersion < 3)
+        for (RoomTilePlacement& placement : room.visualTiles)
+            if (!placement.ground && OverlapsDoorZone(placement, room.doorZones, true))
+                placement.door = true;
     if (!room.Validate(error)) return std::nullopt;
     error.clear();
     return room;
@@ -676,8 +910,12 @@ std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
     layout.wallBottomDepth = blueprint.wallBottomDepth;
     layout.wallLeftDepth = blueprint.wallLeftDepth;
     layout.wallRightDepth = blueprint.wallRightDepth;
+    layout.fallSurface = blueprint.fallSurface;
+    layout.treasureChestCol = blueprint.treasureChestCol;
+    layout.treasureChestRow = blueprint.treasureChestRow;
     for (int i = 0; i < 4; ++i) layout.doorZones[i] = blueprint.doorZones[i];
     layout.colliders = blueprint.colliders;
+    layout.fallRects = blueprint.fallRects;
     layout.visualTiles = blueprint.visualTiles;
     for (int row = 0; row < RoomLayout::kRows; ++row)
     {

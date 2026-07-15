@@ -189,9 +189,18 @@ public:
     // i-frames it never expires and does not flicker the sprite.
     void SetInvulnerableLock(bool locked) { _invulnerableLock = locked; }
     bool IsInvulnerableLocked() const { return _invulnerableLock; }
+
+    // Fast upright pit sink that freezes input, after
+    // which the engine applies the penalty and respawns the player at the edge.
+    void BeginPitFall(Color tint = WHITE);
+    void EndPitFall();
+    bool IsPitFalling() const { return _isPitFalling; }
+    bool PitFallComplete() const;
+    float PitFallProgress() const;   // 0..1
     bool IsBeingForcedPushed() const { return _forcedPushActive; }
     bool IsForceLocked() const { return _forcedPushActive || _forcedPushStunTimer > 0.f; }
     bool IsDashing() const { return _isDashing; }
+    void CancelDash();
     void SetCombatLocked(bool locked)    { _combatLocked = locked; }
     void SetDashAllowedWhileCombatLocked(bool allowed) { _dashAllowedWhileCombatLocked = allowed; }
     void SetManaRegenPaused(bool paused) { _manaRegenPaused = paused; }
@@ -615,6 +624,10 @@ private:
     float _abilityAimMoveScale = 1.f;
     bool _castingAbility = false;
     bool _invulnerableLock = false;  // editor-playtest god mode; never expires
+    bool _isPitFalling = false;      // playing the pit-fall sink animation
+    float _pitFallTimer = 0.f;
+    Color _pitFallTint = WHITE;
+    static constexpr float kPitFallDuration = 0.22f;
     bool _isDashing = false;
     bool _dashAnimPlaying = false;
     bool _playDashParticles = false;

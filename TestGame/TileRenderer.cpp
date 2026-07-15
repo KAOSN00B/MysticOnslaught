@@ -89,6 +89,10 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
     {
         for (int c = 0; c < RoomLayout::kCols; c++)
         {
+            // Handcrafted rooms use only the designer-painted Ground layer as
+            // their base; logical terrain remains available to collision.
+            if (!ShouldDrawGeneratedRoomFloor(c, r, layout)) continue;
+
             TileType type = layout.tiles[r][c];
             float sx = screenOffset.x + c * cellW;
             float sy = screenOffset.y + r * cellH;
@@ -147,10 +151,12 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         if (!visual.ground) continue;
         const Texture2D* texture = FindRoomSourceTexture(visual.sourceTileset);
         if (texture == nullptr) continue;
-        DrawSpriteScaled(visual.src,
-            screenOffset.x + visual.col * cellW,
-            screenOffset.y + visual.row * cellH,
-            scaleX, scaleY, texture);
+        const Rectangle destination = RoomTileDestination(
+            visual, screenOffset.x + visual.col * cellW,
+            screenOffset.y + visual.row * cellH, scaleX, scaleY);
+        const Rectangle snapped = SnapTileDest(
+            destination.x, destination.y, destination.width, destination.height);
+        DrawTexturePro(*texture, visual.src, snapped, {}, 0.f, WHITE);
     }
     for (const SpritePlacement& d : layout.decors)
         if (d.band == RoomDrawBand::Ground) drawDecor(d, false);
@@ -168,6 +174,10 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
                 type == TileType::DoorOpen  || type == TileType::DoorLocked)
                 continue;
 
+            // Logical walls in handcrafted rooms provide collision only. Keep
+            // runtime reward sprites visible over the designer-painted Ground.
+            if (!ShouldDrawGeneratedRoomTile(type, layout)) continue;
+
             // A terrain wall tile inside an open Door Zone is hidden so the floor
             // base drawn in Pass 1 shows through the opening — same rule the
             // authored visual wall layer follows below.
@@ -180,18 +190,20 @@ void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY
         }
     }
 
-    // Non-ground art is the destructible visual wall layer. Door clear zones
-    // remove only this pass, never the floor underneath it.
+    // Any non-ground authored tile overlapping an open door lane is hidden.
+    // Ground was drawn earlier and remains visible beneath the opening.
     for (const RoomTilePlacement& visual : layout.visualTiles)
     {
         if (visual.ground) continue;
         if (RoomVisualClearedByOpenDoor(visual, layout)) continue;
         const Texture2D* texture = FindRoomSourceTexture(visual.sourceTileset);
         if (texture == nullptr) continue;
-        DrawSpriteScaled(visual.src,
-            screenOffset.x + visual.col * cellW,
-            screenOffset.y + visual.row * cellH,
-            scaleX, scaleY, texture);
+        const Rectangle destination = RoomTileDestination(
+            visual, screenOffset.x + visual.col * cellW,
+            screenOffset.y + visual.row * cellH, scaleX, scaleY);
+        const Rectangle snapped = SnapTileDest(
+            destination.x, destination.y, destination.width, destination.height);
+        DrawTexturePro(*texture, visual.src, snapped, {}, 0.f, WHITE);
     }
     for (const SpritePlacement& d : layout.decors)
         if (d.band == RoomDrawBand::Visual) drawDecor(d, false);

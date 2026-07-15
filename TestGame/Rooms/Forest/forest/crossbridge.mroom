@@ -1,0 +1,1142 @@
+MROOM 7
+ID "forest_31232389093700_3"
+NAME "CrossBridge"
+BIOME 4
+TILESET "Forest"
+ROOMTYPE 0
+FALLSURFACE 0
+DOORS 1 1 1 1
+WALL_DEPTHS 1 1 1 1
+TILES_BEGIN
+2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2
+2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+TILES_END
+PLACEMENTS_BEGIN
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 2 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 0 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 8 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 10 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 12 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 14 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 16 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 18 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 20 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 22 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 24 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 26 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 27 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 25 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 23 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 21 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 19 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 17 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 15 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 13 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 11 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 9 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 7 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 6 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 15 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 14 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 13 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 12 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 11 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 10 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 9 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 8 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 7 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 6 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 1 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 1 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 0 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 2 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 3 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 4 5 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 3 4 1
+ANIMDECOR "anim_decor_169184488769900_28" "Village_Animations" 5 4 1
+PLACEMENTS_END
+FALL_BEGIN
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+0000000000000000000000000000
+FALL_END
+SOLID_BEGIN
+1111111111111111111111111111
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1000000000000000000000000001
+1111111111111111111111111111
+SOLID_END
+VISUALS_BEGIN
+GROUND "Forest" 0 96 32 16 16 12 0 0 0
+GROUND "Forest" 0 64 32 16 16 12 1 0 0
+GROUND "Forest" 0 64 32 16 16 12 2 0 0
+GROUND "Forest" 0 64 32 16 16 12 3 0 0
+GROUND "Forest" 0 64 32 16 16 12 4 0 0
+GROUND "Forest" 0 64 32 16 16 12 5 0 0
+GROUND "Forest" 0 64 32 16 16 12 6 0 0
+GROUND "Forest" 0 64 32 16 16 12 7 0 0
+GROUND "Forest" 0 64 32 16 16 12 8 0 0
+GROUND "Forest" 0 64 32 16 16 12 9 0 0
+GROUND "Forest" 0 64 32 16 16 12 10 0 0
+GROUND "Forest" 0 64 32 16 16 12 11 0 0
+GROUND "Forest" 0 64 32 16 16 12 12 0 0
+GROUND "Forest" 0 64 32 16 16 12 13 0 0
+GROUND "Forest" 0 64 32 16 16 12 14 0 0
+GROUND "Forest" 0 64 32 16 16 12 15 0 0
+GROUND "Forest" 0 96 32 16 16 11 15 0 0
+GROUND "Forest" 0 64 32 16 16 10 15 0 0
+GROUND "Forest" 0 64 32 16 16 10 14 0 0
+GROUND "Forest" 0 64 32 16 16 10 13 0 0
+GROUND "Forest" 0 64 32 16 16 10 12 0 0
+GROUND "Forest" 0 64 32 16 16 10 11 0 0
+GROUND "Forest" 0 64 32 16 16 10 10 0 0
+GROUND "Forest" 0 64 32 16 16 10 9 0 0
+GROUND "Forest" 0 64 32 16 16 10 8 0 0
+GROUND "Forest" 0 64 32 16 16 10 7 0 0
+GROUND "Forest" 0 64 32 16 16 10 6 0 0
+GROUND "Forest" 0 64 32 16 16 10 5 0 0
+GROUND "Forest" 0 64 32 16 16 10 4 0 0
+GROUND "Forest" 0 96 32 16 16 10 3 0 0
+GROUND "Forest" 0 80 32 16 16 10 2 0 0
+GROUND "Forest" 0 64 32 16 16 10 1 0 0
+GROUND "Forest" 0 64 32 16 16 10 0 0 0
+GROUND "Forest" 0 64 32 16 16 9 0 0 0
+GROUND "Forest" 0 64 32 16 16 8 0 0 0
+GROUND "Forest" 0 64 32 16 16 8 1 0 0
+GROUND "Forest" 0 80 32 16 16 8 2 0 0
+GROUND "Forest" 0 96 32 16 16 8 3 0 0
+GROUND "Forest" 0 64 32 16 16 8 4 0 0
+GROUND "Forest" 0 64 32 16 16 8 5 0 0
+GROUND "Forest" 0 64 32 16 16 8 6 0 0
+GROUND "Forest" 0 64 32 16 16 8 7 0 0
+GROUND "Forest" 0 64 32 16 16 8 8 0 0
+GROUND "Forest" 0 64 32 16 16 8 9 0 0
+GROUND "Forest" 0 64 32 16 16 8 10 0 0
+GROUND "Forest" 0 64 32 16 16 8 11 0 0
+GROUND "Forest" 0 80 32 16 16 8 12 0 0
+GROUND "Forest" 0 96 32 16 16 8 13 0 0
+GROUND "Forest" 0 64 32 16 16 8 14 0 0
+GROUND "Forest" 0 64 32 16 16 8 15 0 0
+GROUND "Forest" 0 64 32 16 16 7 15 0 0
+GROUND "Forest" 0 64 32 16 16 6 15 0 0
+GROUND "Forest" 0 64 32 16 16 6 14 0 0
+GROUND "Forest" 0 64 32 16 16 6 13 0 0
+GROUND "Forest" 0 64 32 16 16 6 12 0 0
+GROUND "Forest" 0 64 32 16 16 6 11 0 0
+GROUND "Forest" 0 96 32 16 16 6 10 0 0
+GROUND "Forest" 0 80 32 16 16 6 9 0 0
+GROUND "Forest" 0 64 32 16 16 6 8 0 0
+GROUND "Forest" 0 64 32 16 16 6 7 0 0
+GROUND "Forest" 0 64 32 16 16 6 6 0 0
+GROUND "Forest" 0 64 32 16 16 6 5 0 0
+GROUND "Forest" 0 64 32 16 16 6 4 0 0
+GROUND "Forest" 0 64 32 16 16 6 3 0 0
+GROUND "Forest" 0 64 32 16 16 6 2 0 0
+GROUND "Forest" 0 64 32 16 16 6 1 0 0
+GROUND "Forest" 0 64 32 16 16 6 0 0 0
+GROUND "Forest" 0 64 32 16 16 5 0 0 0
+GROUND "Forest" 0 64 32 16 16 4 0 0 0
+GROUND "Forest" 0 80 32 16 16 4 1 0 0
+GROUND "Forest" 0 96 32 16 16 4 2 0 0
+GROUND "Forest" 0 64 32 16 16 4 3 0 0
+GROUND "Forest" 0 64 32 16 16 4 4 0 0
+GROUND "Forest" 0 64 32 16 16 4 5 0 0
+GROUND "Forest" 0 64 32 16 16 4 6 0 0
+GROUND "Forest" 0 64 32 16 16 4 7 0 0
+GROUND "Forest" 0 64 32 16 16 4 8 0 0
+GROUND "Forest" 0 64 32 16 16 4 9 0 0
+GROUND "Forest" 0 64 32 16 16 4 10 0 0
+GROUND "Forest" 0 64 32 16 16 4 11 0 0
+GROUND "Forest" 0 64 32 16 16 4 12 0 0
+GROUND "Forest" 0 80 32 16 16 4 13 0 0
+GROUND "Forest" 0 96 32 16 16 4 14 0 0
+GROUND "Forest" 0 64 32 16 16 4 15 0 0
+GROUND "Forest" 0 64 32 16 16 3 15 0 0
+GROUND "Forest" 0 64 32 16 16 2 15 0 0
+GROUND "Forest" 0 64 32 16 16 2 14 0 0
+GROUND "Forest" 0 96 32 16 16 2 13 0 0
+GROUND "Forest" 0 80 32 16 16 2 12 0 0
+GROUND "Forest" 0 64 32 16 16 2 11 0 0
+GROUND "Forest" 0 64 32 16 16 2 10 0 0
+GROUND "Forest" 0 64 32 16 16 2 9 0 0
+GROUND "Forest" 0 64 32 16 16 2 8 0 0
+GROUND "Forest" 0 64 32 16 16 2 7 0 0
+GROUND "Forest" 0 64 32 16 16 2 6 0 0
+GROUND "Forest" 0 64 32 16 16 2 5 0 0
+GROUND "Forest" 0 64 32 16 16 2 4 0 0
+GROUND "Forest" 0 96 32 16 16 2 3 0 0
+GROUND "Forest" 0 80 32 16 16 2 2 0 0
+GROUND "Forest" 0 96 32 16 16 2 1 0 0
+GROUND "Forest" 0 80 32 16 16 2 0 0 0
+GROUND "Forest" 0 64 32 16 16 1 0 0 0
+GROUND "Forest" 0 80 32 16 16 0 0 0 0
+GROUND "Forest" 0 96 32 16 16 0 1 0 0
+GROUND "Forest" 0 64 32 16 16 0 2 0 0
+GROUND "Forest" 0 64 32 16 16 0 3 0 0
+GROUND "Forest" 0 64 32 16 16 0 4 0 0
+GROUND "Forest" 0 64 32 16 16 0 5 0 0
+GROUND "Forest" 0 64 32 16 16 0 6 0 0
+GROUND "Forest" 0 64 32 16 16 0 7 0 0
+GROUND "Forest" 0 64 32 16 16 0 8 0 0
+GROUND "Forest" 0 64 32 16 16 0 9 0 0
+GROUND "Forest" 0 64 32 16 16 0 10 0 0
+GROUND "Forest" 0 64 32 16 16 0 11 0 0
+GROUND "Forest" 0 80 32 16 16 0 12 0 0
+GROUND "Forest" 0 96 32 16 16 0 13 0 0
+GROUND "Forest" 0 64 32 16 16 0 14 0 0
+GROUND "Forest" 0 64 32 16 16 0 15 0 0
+GROUND "Forest" 0 64 32 16 16 1 1 0 0
+GROUND "Forest" 0 64 32 16 16 1 2 0 0
+GROUND "Forest" 0 64 32 16 16 1 3 0 0
+GROUND "Forest" 0 64 32 16 16 1 4 0 0
+GROUND "Forest" 0 64 32 16 16 1 5 0 0
+GROUND "Forest" 0 64 32 16 16 1 6 0 0
+GROUND "Forest" 0 64 32 16 16 1 7 0 0
+GROUND "Forest" 0 96 32 16 16 1 8 0 0
+GROUND "Forest" 0 80 32 16 16 1 9 0 0
+GROUND "Forest" 0 64 32 16 16 1 10 0 0
+GROUND "Forest" 0 64 32 16 16 1 11 0 0
+GROUND "Forest" 0 64 32 16 16 1 12 0 0
+GROUND "Forest" 0 64 32 16 16 1 13 0 0
+GROUND "Forest" 0 64 32 16 16 1 14 0 0
+GROUND "Forest" 0 64 32 16 16 1 15 0 0
+GROUND "Forest" 0 64 32 16 16 3 14 0 0
+GROUND "Forest" 0 64 32 16 16 3 13 0 0
+GROUND "Forest" 0 64 32 16 16 3 12 0 0
+GROUND "Forest" 0 64 32 16 16 3 11 0 0
+GROUND "Forest" 0 64 32 16 16 3 10 0 0
+GROUND "Forest" 0 64 32 16 16 3 9 0 0
+GROUND "Forest" 0 64 32 16 16 3 8 0 0
+GROUND "Forest" 0 64 32 16 16 3 7 0 0
+GROUND "Forest" 0 80 32 16 16 3 6 0 0
+GROUND "Forest" 0 96 32 16 16 3 5 0 0
+GROUND "Forest" 0 64 32 16 16 3 4 0 0
+GROUND "Forest" 0 64 32 16 16 3 3 0 0
+GROUND "Forest" 0 64 32 16 16 3 2 0 0
+GROUND "Forest" 0 64 32 16 16 3 1 0 0
+GROUND "Forest" 0 64 32 16 16 3 0 0 0
+GROUND "Forest" 0 96 32 16 16 5 1 0 0
+GROUND "Forest" 0 80 32 16 16 5 2 0 0
+GROUND "Forest" 0 64 32 16 16 5 3 0 0
+GROUND "Forest" 0 64 32 16 16 5 4 0 0
+GROUND "Forest" 0 64 32 16 16 5 5 0 0
+GROUND "Forest" 0 64 32 16 16 5 6 0 0
+GROUND "Forest" 0 64 32 16 16 5 7 0 0
+GROUND "Forest" 0 64 32 16 16 5 8 0 0
+GROUND "Forest" 0 64 32 16 16 5 9 0 0
+GROUND "Forest" 0 64 32 16 16 5 10 0 0
+GROUND "Forest" 0 64 32 16 16 5 11 0 0
+GROUND "Forest" 0 64 32 16 16 5 12 0 0
+GROUND "Forest" 0 96 32 16 16 5 13 0 0
+GROUND "Forest" 0 80 32 16 16 5 14 0 0
+GROUND "Forest" 0 64 32 16 16 5 15 0 0
+GROUND "Forest" 0 64 32 16 16 7 14 0 0
+GROUND "Forest" 0 64 32 16 16 7 13 0 0
+GROUND "Forest" 0 64 32 16 16 7 12 0 0
+GROUND "Forest" 0 64 32 16 16 7 11 0 0
+GROUND "Forest" 0 64 32 16 16 7 10 0 0
+GROUND "Forest" 0 80 32 16 16 7 9 0 0
+GROUND "Forest" 0 96 32 16 16 7 8 0 0
+GROUND "Forest" 0 64 32 16 16 7 7 0 0
+GROUND "Forest" 0 64 32 16 16 7 6 0 0
+GROUND "Forest" 0 80 32 16 16 7 5 0 0
+GROUND "Forest" 0 96 32 16 16 7 4 0 0
+GROUND "Forest" 0 64 32 16 16 7 3 0 0
+GROUND "Forest" 0 64 32 16 16 7 2 0 0
+GROUND "Forest" 0 64 32 16 16 7 1 0 0
+GROUND "Forest" 0 64 32 16 16 7 0 0 0
+GROUND "Forest" 0 64 32 16 16 9 1 0 0
+GROUND "Forest" 0 64 32 16 16 9 2 0 0
+GROUND "Forest" 0 64 32 16 16 9 3 0 0
+GROUND "Forest" 0 64 32 16 16 9 4 0 0
+GROUND "Forest" 0 64 32 16 16 9 5 0 0
+GROUND "Forest" 0 64 32 16 16 9 6 0 0
+GROUND "Forest" 0 64 32 16 16 9 7 0 0
+GROUND "Forest" 0 64 32 16 16 9 8 0 0
+GROUND "Forest" 0 64 32 16 16 9 9 0 0
+GROUND "Forest" 0 64 32 16 16 9 10 0 0
+GROUND "Forest" 0 64 32 16 16 9 11 0 0
+GROUND "Forest" 0 96 32 16 16 9 12 0 0
+GROUND "Forest" 0 80 32 16 16 9 13 0 0
+GROUND "Forest" 0 64 32 16 16 9 14 0 0
+GROUND "Forest" 0 64 32 16 16 9 15 0 0
+GROUND "Forest" 0 64 32 16 16 13 15 0 0
+GROUND "Forest" 0 64 32 16 16 14 15 0 0
+GROUND "Forest" 0 64 32 16 16 14 14 0 0
+GROUND "Forest" 0 64 32 16 16 14 13 0 0
+GROUND "Forest" 0 96 32 16 16 14 12 0 0
+GROUND "Forest" 0 80 32 16 16 14 11 0 0
+GROUND "Forest" 0 64 32 16 16 14 10 0 0
+GROUND "Forest" 0 64 32 16 16 14 9 0 0
+GROUND "Forest" 0 64 32 16 16 14 8 0 0
+GROUND "Forest" 0 64 32 16 16 14 7 0 0
+GROUND "Forest" 0 64 32 16 16 14 6 0 0
+GROUND "Forest" 0 64 32 16 16 14 5 0 0
+GROUND "Forest" 0 64 32 16 16 14 4 0 0
+GROUND "Forest" 0 64 32 16 16 14 3 0 0
+GROUND "Forest" 0 64 32 16 16 14 2 0 0
+GROUND "Forest" 0 64 32 16 16 14 1 0 0
+GROUND "Forest" 0 64 32 16 16 14 0 0 0
+GROUND "Forest" 0 64 32 16 16 15 0 0 0
+GROUND "Forest" 0 80 32 16 16 16 0 0 0
+GROUND "Forest" 0 96 32 16 16 16 1 0 0
+GROUND "Forest" 0 64 32 16 16 16 2 0 0
+GROUND "Forest" 0 64 32 16 16 16 3 0 0
+GROUND "Forest" 0 64 32 16 16 16 4 0 0
+GROUND "Forest" 0 64 32 16 16 16 5 0 0
+GROUND "Forest" 0 80 32 16 16 16 6 0 0
+GROUND "Forest" 0 96 32 16 16 16 7 0 0
+GROUND "Forest" 0 64 32 16 16 16 8 0 0
+GROUND "Forest" 0 64 32 16 16 16 9 0 0
+GROUND "Forest" 0 64 32 16 16 16 10 0 0
+GROUND "Forest" 0 64 32 16 16 16 11 0 0
+GROUND "Forest" 0 64 32 16 16 16 12 0 0
+GROUND "Forest" 0 64 32 16 16 16 13 0 0
+GROUND "Forest" 0 64 32 16 16 16 14 0 0
+GROUND "Forest" 0 64 32 16 16 16 15 0 0
+GROUND "Forest" 0 64 32 16 16 17 15 0 0
+GROUND "Forest" 0 64 32 16 16 18 15 0 0
+GROUND "Forest" 0 64 32 16 16 18 14 0 0
+GROUND "Forest" 0 64 32 16 16 18 13 0 0
+GROUND "Forest" 0 64 32 16 16 18 12 0 0
+GROUND "Forest" 0 96 32 16 16 18 11 0 0
+GROUND "Forest" 0 80 32 16 16 18 10 0 0
+GROUND "Forest" 0 64 32 16 16 18 9 0 0
+GROUND "Forest" 0 64 32 16 16 18 8 0 0
+GROUND "Forest" 0 64 32 16 16 18 7 0 0
+GROUND "Forest" 0 64 32 16 16 18 6 0 0
+GROUND "Forest" 0 64 32 16 16 18 5 0 0
+GROUND "Forest" 0 64 32 16 16 18 4 0 0
+GROUND "Forest" 0 64 32 16 16 18 3 0 0
+GROUND "Forest" 0 64 32 16 16 18 2 0 0
+GROUND "Forest" 0 96 32 16 16 18 1 0 0
+GROUND "Forest" 0 80 32 16 16 18 0 0 0
+GROUND "Forest" 0 80 32 16 16 19 0 0 0
+GROUND "Forest" 0 64 32 16 16 20 0 0 0
+GROUND "Forest" 0 64 32 16 16 20 1 0 0
+GROUND "Forest" 0 64 32 16 16 20 2 0 0
+GROUND "Forest" 0 64 32 16 16 20 3 0 0
+GROUND "Forest" 0 64 32 16 16 20 4 0 0
+GROUND "Forest" 0 80 32 16 16 20 5 0 0
+GROUND "Forest" 0 96 32 16 16 20 6 0 0
+GROUND "Forest" 0 64 32 16 16 20 7 0 0
+GROUND "Forest" 0 64 32 16 16 20 8 0 0
+GROUND "Forest" 0 64 32 16 16 20 9 0 0
+GROUND "Forest" 0 64 32 16 16 20 10 0 0
+GROUND "Forest" 0 64 32 16 16 20 11 0 0
+GROUND "Forest" 0 64 32 16 16 20 12 0 0
+GROUND "Forest" 0 64 32 16 16 20 13 0 0
+GROUND "Forest" 0 64 32 16 16 20 14 0 0
+GROUND "Forest" 0 80 32 16 16 20 15 0 0
+GROUND "Forest" 0 64 32 16 16 21 15 0 0
+GROUND "Forest" 0 80 32 16 16 22 15 0 0
+GROUND "Forest" 0 64 32 16 16 22 14 0 0
+GROUND "Forest" 0 64 32 16 16 22 13 0 0
+GROUND "Forest" 0 64 32 16 16 22 12 0 0
+GROUND "Forest" 0 64 32 16 16 22 11 0 0
+GROUND "Forest" 0 64 32 16 16 22 10 0 0
+GROUND "Forest" 0 64 32 16 16 22 9 0 0
+GROUND "Forest" 0 64 32 16 16 22 8 0 0
+GROUND "Forest" 0 64 32 16 16 22 7 0 0
+GROUND "Forest" 0 64 32 16 16 22 6 0 0
+GROUND "Forest" 0 64 32 16 16 22 5 0 0
+GROUND "Forest" 0 64 32 16 16 22 4 0 0
+GROUND "Forest" 0 64 32 16 16 22 3 0 0
+GROUND "Forest" 0 96 32 16 16 22 2 0 0
+GROUND "Forest" 0 80 32 16 16 22 1 0 0
+GROUND "Forest" 0 64 32 16 16 22 0 0 0
+GROUND "Forest" 0 64 32 16 16 23 0 0 0
+GROUND "Forest" 0 64 32 16 16 24 0 0 0
+GROUND "Forest" 0 64 32 16 16 24 1 0 0
+GROUND "Forest" 0 64 32 16 16 24 2 0 0
+GROUND "Forest" 0 64 32 16 16 24 3 0 0
+GROUND "Forest" 0 64 32 16 16 24 4 0 0
+GROUND "Forest" 0 64 32 16 16 24 5 0 0
+GROUND "Forest" 0 80 32 16 16 24 6 0 0
+GROUND "Forest" 0 96 32 16 16 24 7 0 0
+GROUND "Forest" 0 64 32 16 16 24 8 0 0
+GROUND "Forest" 0 64 32 16 16 24 9 0 0
+GROUND "Forest" 0 64 32 16 16 24 10 0 0
+GROUND "Forest" 0 64 32 16 16 24 11 0 0
+GROUND "Forest" 0 64 32 16 16 24 12 0 0
+GROUND "Forest" 0 64 32 16 16 24 13 0 0
+GROUND "Forest" 0 64 32 16 16 24 14 0 0
+GROUND "Forest" 0 64 32 16 16 24 15 0 0
+GROUND "Forest" 0 64 32 16 16 25 15 0 0
+GROUND "Forest" 0 64 32 16 16 26 15 0 0
+GROUND "Forest" 0 64 32 16 16 26 14 0 0
+GROUND "Forest" 0 96 32 16 16 26 13 0 0
+GROUND "Forest" 0 80 32 16 16 26 12 0 0
+GROUND "Forest" 0 64 32 16 16 26 11 0 0
+GROUND "Forest" 0 64 32 16 16 26 10 0 0
+GROUND "Forest" 0 64 32 16 16 26 9 0 0
+GROUND "Forest" 0 64 32 16 16 26 8 0 0
+GROUND "Forest" 0 96 32 16 16 26 7 0 0
+GROUND "Forest" 0 80 32 16 16 26 6 0 0
+GROUND "Forest" 0 64 32 16 16 26 5 0 0
+GROUND "Forest" 0 64 32 16 16 26 4 0 0
+GROUND "Forest" 0 64 32 16 16 26 3 0 0
+GROUND "Forest" 0 64 32 16 16 26 2 0 0
+GROUND "Forest" 0 96 32 16 16 26 1 0 0
+GROUND "Forest" 0 80 32 16 16 26 0 0 0
+GROUND "Forest" 0 64 32 16 16 27 0 0 0
+GROUND "Forest" 0 64 32 16 16 27 1 0 0
+GROUND "Forest" 0 64 32 16 16 27 2 0 0
+GROUND "Forest" 0 64 32 16 16 27 3 0 0
+GROUND "Forest" 0 64 32 16 16 27 4 0 0
+GROUND "Forest" 0 64 32 16 16 27 5 0 0
+GROUND "Forest" 0 64 32 16 16 27 6 0 0
+GROUND "Forest" 0 64 32 16 16 27 7 0 0
+GROUND "Forest" 0 64 32 16 16 27 8 0 0
+GROUND "Forest" 0 96 32 16 16 27 9 0 0
+GROUND "Forest" 0 80 32 16 16 27 10 0 0
+GROUND "Forest" 0 64 32 16 16 27 11 0 0
+GROUND "Forest" 0 64 32 16 16 27 12 0 0
+GROUND "Forest" 0 96 32 16 16 27 13 0 0
+GROUND "Forest" 0 80 32 16 16 27 14 0 0
+GROUND "Forest" 0 64 32 16 16 27 15 0 0
+GROUND "Forest" 0 64 32 16 16 25 14 0 0
+GROUND "Forest" 0 64 32 16 16 25 13 0 0
+GROUND "Forest" 0 64 32 16 16 25 12 0 0
+GROUND "Forest" 0 80 32 16 16 25 11 0 0
+GROUND "Forest" 0 96 32 16 16 25 10 0 0
+GROUND "Forest" 0 64 32 16 16 25 9 0 0
+GROUND "Forest" 0 64 32 16 16 25 8 0 0
+GROUND "Forest" 0 64 32 16 16 25 7 0 0
+GROUND "Forest" 0 64 32 16 16 25 6 0 0
+GROUND "Forest" 0 64 32 16 16 25 5 0 0
+GROUND "Forest" 0 64 32 16 16 25 4 0 0
+GROUND "Forest" 0 64 32 16 16 25 3 0 0
+GROUND "Forest" 0 64 32 16 16 25 2 0 0
+GROUND "Forest" 0 64 32 16 16 25 1 0 0
+GROUND "Forest" 0 64 32 16 16 25 0 0 0
+GROUND "Forest" 0 64 32 16 16 23 1 0 0
+GROUND "Forest" 0 64 32 16 16 23 2 0 0
+GROUND "Forest" 0 64 32 16 16 23 3 0 0
+GROUND "Forest" 0 64 32 16 16 23 4 0 0
+GROUND "Forest" 0 64 32 16 16 23 5 0 0
+GROUND "Forest" 0 64 32 16 16 23 6 0 0
+GROUND "Forest" 0 64 32 16 16 23 7 0 0
+GROUND "Forest" 0 96 32 16 16 23 8 0 0
+GROUND "Forest" 0 80 32 16 16 23 9 0 0
+GROUND "Forest" 0 64 32 16 16 23 10 0 0
+GROUND "Forest" 0 64 32 16 16 23 11 0 0
+GROUND "Forest" 0 64 32 16 16 23 12 0 0
+GROUND "Forest" 0 64 32 16 16 23 13 0 0
+GROUND "Forest" 0 64 32 16 16 23 14 0 0
+GROUND "Forest" 0 64 32 16 16 23 15 0 0
+GROUND "Forest" 0 64 32 16 16 21 14 0 0
+GROUND "Forest" 0 64 32 16 16 21 13 0 0
+GROUND "Forest" 0 64 32 16 16 21 12 0 0
+GROUND "Forest" 0 64 32 16 16 21 11 0 0
+GROUND "Forest" 0 64 32 16 16 21 10 0 0
+GROUND "Forest" 0 64 32 16 16 21 9 0 0
+GROUND "Forest" 0 64 32 16 16 21 8 0 0
+GROUND "Forest" 0 64 32 16 16 21 7 0 0
+GROUND "Forest" 0 80 32 16 16 21 6 0 0
+GROUND "Forest" 0 96 32 16 16 21 5 0 0
+GROUND "Forest" 0 64 32 16 16 21 4 0 0
+GROUND "Forest" 0 64 32 16 16 21 3 0 0
+GROUND "Forest" 0 64 32 16 16 21 2 0 0
+GROUND "Forest" 0 64 32 16 16 21 1 0 0
+GROUND "Forest" 0 80 32 16 16 21 0 0 0
+GROUND "Forest" 0 64 32 16 16 19 1 0 0
+GROUND "Forest" 0 64 32 16 16 19 2 0 0
+GROUND "Forest" 0 64 32 16 16 19 3 0 0
+GROUND "Forest" 0 64 32 16 16 19 4 0 0
+GROUND "Forest" 0 64 32 16 16 19 5 0 0
+GROUND "Forest" 0 64 32 16 16 19 6 0 0
+GROUND "Forest" 0 64 32 16 16 19 7 0 0
+GROUND "Forest" 0 64 32 16 16 19 8 0 0
+GROUND "Forest" 0 96 32 16 16 19 9 0 0
+GROUND "Forest" 0 80 32 16 16 19 10 0 0
+GROUND "Forest" 0 64 32 16 16 19 11 0 0
+GROUND "Forest" 0 64 32 16 16 19 12 0 0
+GROUND "Forest" 0 64 32 16 16 19 13 0 0
+GROUND "Forest" 0 64 32 16 16 19 14 0 0
+GROUND "Forest" 0 64 32 16 16 19 15 0 0
+GROUND "Forest" 0 64 32 16 16 17 14 0 0
+GROUND "Forest" 0 64 32 16 16 17 13 0 0
+GROUND "Forest" 0 64 32 16 16 17 12 0 0
+GROUND "Forest" 0 64 32 16 16 17 11 0 0
+GROUND "Forest" 0 64 32 16 16 17 10 0 0
+GROUND "Forest" 0 64 32 16 16 17 9 0 0
+GROUND "Forest" 0 64 32 16 16 17 8 0 0
+GROUND "Forest" 0 80 32 16 16 17 7 0 0
+GROUND "Forest" 0 96 32 16 16 17 6 0 0
+GROUND "Forest" 0 64 32 16 16 17 5 0 0
+GROUND "Forest" 0 64 32 16 16 17 4 0 0
+GROUND "Forest" 0 64 32 16 16 17 3 0 0
+GROUND "Forest" 0 64 32 16 16 17 2 0 0
+GROUND "Forest" 0 64 32 16 16 17 1 0 0
+GROUND "Forest" 0 64 32 16 16 17 0 0 0
+GROUND "Forest" 0 64 32 16 16 15 1 0 0
+GROUND "Forest" 0 96 32 16 16 15 2 0 0
+GROUND "Forest" 0 80 32 16 16 15 3 0 0
+GROUND "Forest" 0 64 32 16 16 15 4 0 0
+GROUND "Forest" 0 64 32 16 16 15 5 0 0
+GROUND "Forest" 0 64 32 16 16 15 6 0 0
+GROUND "Forest" 0 64 32 16 16 15 7 0 0
+GROUND "Forest" 0 64 32 16 16 15 8 0 0
+GROUND "Forest" 0 64 32 16 16 15 9 0 0
+GROUND "Forest" 0 64 32 16 16 15 10 0 0
+GROUND "Forest" 0 64 32 16 16 15 11 0 0
+GROUND "Forest" 0 64 32 16 16 15 12 0 0
+GROUND "Forest" 0 64 32 16 16 15 13 0 0
+GROUND "Forest" 0 64 32 16 16 15 14 0 0
+GROUND "Forest" 0 64 32 16 16 15 15 0 0
+GROUND "Forest" 0 64 32 16 16 11 14 0 0
+GROUND "Forest" 0 64 32 16 16 13 14 0 0
+GROUND "Forest" 0 64 32 16 16 11 13 0 0
+GROUND "Forest" 0 64 32 16 16 13 13 0 0
+GROUND "Forest" 0 64 32 16 16 11 12 0 0
+GROUND "Forest" 0 64 32 16 16 13 12 0 0
+GROUND "Forest" 0 64 32 16 16 11 11 0 0
+GROUND "Forest" 0 64 32 16 16 13 11 0 0
+GROUND "Forest" 0 80 32 16 16 11 10 0 0
+GROUND "Forest" 0 80 32 16 16 13 10 0 0
+GROUND "Forest" 0 96 32 16 16 11 9 0 0
+GROUND "Forest" 0 96 32 16 16 13 9 0 0
+GROUND "Forest" 0 64 32 16 16 11 8 0 0
+GROUND "Forest" 0 64 32 16 16 13 8 0 0
+GROUND "Forest" 0 64 32 16 16 11 7 0 0
+GROUND "Forest" 0 64 32 16 16 13 7 0 0
+GROUND "Forest" 0 64 32 16 16 11 6 0 0
+GROUND "Forest" 0 64 32 16 16 13 6 0 0
+GROUND "Forest" 0 64 32 16 16 11 5 0 0
+GROUND "Forest" 0 64 32 16 16 13 5 0 0
+GROUND "Forest" 0 80 32 16 16 11 4 0 0
+GROUND "Forest" 0 64 32 16 16 13 4 0 0
+GROUND "Forest" 0 96 32 16 16 11 3 0 0
+GROUND "Forest" 0 64 32 16 16 13 3 0 0
+GROUND "Forest" 0 64 32 16 16 11 2 0 0
+GROUND "Forest" 0 64 32 16 16 13 2 0 0
+GROUND "Forest" 0 64 32 16 16 11 1 0 0
+GROUND "Forest" 0 64 32 16 16 13 1 0 0
+GROUND "Forest" 0 64 32 16 16 11 0 0 0
+GROUND "Forest" 0 80 32 16 16 13 0 0 0
+VISUAL "Forest" 0 64 432 16 16 12 1 0 0
+VISUAL "Forest" 0 64 432 16 16 12 2 0 0
+VISUAL "Forest" 0 64 432 16 16 12 3 0 0
+VISUAL "Forest" 0 64 432 16 16 12 4 0 0
+VISUAL "Forest" 0 64 432 16 16 12 5 0 0
+VISUAL "Forest" 0 64 432 16 16 12 6 0 0
+VISUAL "Forest" 0 64 432 16 16 12 11 0 0
+VISUAL "Forest" 0 64 432 16 16 12 12 0 0
+VISUAL "Forest" 0 64 432 16 16 12 13 0 0
+VISUAL "Forest" 0 64 432 16 16 12 14 0 0
+VISUAL "Forest" 0 96 432 16 16 16 1 0 0
+VISUAL "Forest" 0 96 432 16 16 16 2 0 0
+VISUAL "Forest" 0 96 432 16 16 16 3 0 0
+VISUAL "Forest" 0 96 432 16 16 16 4 0 0
+VISUAL "Forest" 0 96 432 16 16 16 5 0 0
+VISUAL "Forest" 0 96 432 16 16 16 6 0 0
+VISUAL "Forest" 0 96 432 16 16 16 11 0 0
+VISUAL "Forest" 0 96 432 16 16 16 12 0 0
+VISUAL "Forest" 0 96 432 16 16 16 13 0 0
+VISUAL "Forest" 0 96 432 16 16 16 14 0 0
+VISUAL "Forest" 0 80 432 16 16 13 0 0 0
+VISUAL "Forest" 0 80 432 16 16 14 0 0 0
+VISUAL "Forest" 0 80 432 16 16 15 0 0 0
+VISUAL "Forest" 0 64 432 16 16 12 0 0 0
+VISUAL "Forest" 0 96 432 16 16 16 0 0 0
+VISUAL "Forest" 0 80 432 16 16 13 1 0 0
+VISUAL "Forest" 0 80 432 16 16 14 1 0 0
+VISUAL "Forest" 0 80 432 16 16 15 1 0 0
+VISUAL "Forest" 0 80 432 16 16 13 2 0 0
+VISUAL "Forest" 0 80 432 16 16 14 2 0 0
+VISUAL "Forest" 0 80 432 16 16 15 2 0 0
+VISUAL "Forest" 0 80 432 16 16 13 3 0 0
+VISUAL "Forest" 0 80 432 16 16 14 3 0 0
+VISUAL "Forest" 0 80 432 16 16 15 3 0 0
+VISUAL "Forest" 0 80 432 16 16 13 4 0 0
+VISUAL "Forest" 0 80 432 16 16 14 4 0 0
+VISUAL "Forest" 0 80 432 16 16 15 4 0 0
+VISUAL "Forest" 0 80 432 16 16 13 5 0 0
+VISUAL "Forest" 0 80 432 16 16 14 5 0 0
+VISUAL "Forest" 0 80 432 16 16 15 5 0 0
+VISUAL "Forest" 0 80 432 16 16 13 6 0 0
+VISUAL "Forest" 0 80 432 16 16 14 6 0 0
+VISUAL "Forest" 0 80 432 16 16 15 6 0 0
+VISUAL "Forest" 0 80 432 16 16 13 11 0 0
+VISUAL "Forest" 0 80 432 16 16 14 11 0 0
+VISUAL "Forest" 0 80 432 16 16 15 11 0 0
+VISUAL "Forest" 0 80 432 16 16 13 12 0 0
+VISUAL "Forest" 0 80 432 16 16 14 12 0 0
+VISUAL "Forest" 0 80 432 16 16 15 12 0 0
+VISUAL "Forest" 0 80 432 16 16 13 13 0 0
+VISUAL "Forest" 0 80 432 16 16 14 13 0 0
+VISUAL "Forest" 0 80 432 16 16 15 13 0 0
+VISUAL "Forest" 0 80 432 16 16 13 14 0 0
+VISUAL "Forest" 0 80 432 16 16 14 14 0 0
+VISUAL "Forest" 0 80 432 16 16 15 14 0 0
+VISUAL "Forest" 0 64 432 16 16 12 15 0 0
+VISUAL "Forest" 0 96 432 16 16 16 15 0 0
+VISUAL "Forest" 0 80 432 16 16 13 15 0 0
+VISUAL "Forest" 0 80 432 16 16 14 15 0 0
+VISUAL "Forest" 0 80 432 16 16 15 15 0 0
+VISUAL "Forest" 0 80 496 16 16 0 8 0 0
+VISUAL "Forest" 0 80 496 16 16 1 8 0 0
+VISUAL "Forest" 0 80 496 16 16 2 8 0 0
+VISUAL "Forest" 0 80 496 16 16 3 8 0 0
+VISUAL "Forest" 0 80 496 16 16 4 8 0 0
+VISUAL "Forest" 0 80 496 16 16 5 8 0 0
+VISUAL "Forest" 0 80 496 16 16 6 8 0 0
+VISUAL "Forest" 0 80 496 16 16 7 8 0 0
+VISUAL "Forest" 0 80 496 16 16 8 8 0 0
+VISUAL "Forest" 0 80 496 16 16 9 8 0 0
+VISUAL "Forest" 0 80 496 16 16 10 8 0 0
+VISUAL "Forest" 0 80 496 16 16 11 8 0 0
+VISUAL "Forest" 0 80 496 16 16 12 8 0 0
+VISUAL "Forest" 0 80 496 16 16 13 8 0 0
+VISUAL "Forest" 0 80 496 16 16 14 8 0 0
+VISUAL "Forest" 0 80 496 16 16 15 8 0 0
+VISUAL "Forest" 0 80 496 16 16 16 8 0 0
+VISUAL "Forest" 0 80 496 16 16 17 8 0 0
+VISUAL "Forest" 0 80 496 16 16 18 8 0 0
+VISUAL "Forest" 0 80 496 16 16 19 8 0 0
+VISUAL "Forest" 0 80 496 16 16 20 8 0 0
+VISUAL "Forest" 0 80 496 16 16 21 8 0 0
+VISUAL "Forest" 0 80 496 16 16 22 8 0 0
+VISUAL "Forest" 0 80 496 16 16 23 8 0 0
+VISUAL "Forest" 0 80 496 16 16 24 8 0 0
+VISUAL "Forest" 0 80 496 16 16 25 8 0 0
+VISUAL "Forest" 0 80 496 16 16 26 8 0 0
+VISUAL "Forest" 0 80 496 16 16 27 8 0 0
+VISUAL "Forest" 0 80 464 16 16 0 7 0 0
+VISUAL "Forest" 0 80 464 16 16 1 7 0 0
+VISUAL "Forest" 0 80 464 16 16 2 7 0 0
+VISUAL "Forest" 0 80 464 16 16 3 7 0 0
+VISUAL "Forest" 0 80 464 16 16 4 7 0 0
+VISUAL "Forest" 0 80 464 16 16 5 7 0 0
+VISUAL "Forest" 0 80 464 16 16 6 7 0 0
+VISUAL "Forest" 0 80 464 16 16 7 7 0 0
+VISUAL "Forest" 0 80 464 16 16 8 7 0 0
+VISUAL "Forest" 0 80 464 16 16 9 7 0 0
+VISUAL "Forest" 0 80 464 16 16 10 7 0 0
+VISUAL "Forest" 0 80 464 16 16 11 7 0 0
+VISUAL "Forest" 0 80 464 16 16 17 7 0 0
+VISUAL "Forest" 0 80 464 16 16 18 7 0 0
+VISUAL "Forest" 0 80 464 16 16 19 7 0 0
+VISUAL "Forest" 0 80 464 16 16 20 7 0 0
+VISUAL "Forest" 0 80 464 16 16 21 7 0 0
+VISUAL "Forest" 0 80 464 16 16 22 7 0 0
+VISUAL "Forest" 0 80 464 16 16 23 7 0 0
+VISUAL "Forest" 0 80 464 16 16 24 7 0 0
+VISUAL "Forest" 0 80 464 16 16 25 7 0 0
+VISUAL "Forest" 0 80 464 16 16 26 7 0 0
+VISUAL "Forest" 0 80 464 16 16 27 7 0 0
+VISUAL "Forest" 0 64 432 16 16 12 7 0 0
+VISUAL "Forest" 0 80 432 16 16 13 7 0 0
+VISUAL "Forest" 0 80 432 16 16 14 7 0 0
+VISUAL "Forest" 0 80 432 16 16 15 7 0 0
+VISUAL "Forest" 0 96 432 16 16 16 7 0 0
+VISUAL "Forest" 0 80 512 16 16 0 10 0 0
+VISUAL "Forest" 0 80 512 16 16 1 10 0 0
+VISUAL "Forest" 0 80 512 16 16 2 10 0 0
+VISUAL "Forest" 0 80 512 16 16 3 10 0 0
+VISUAL "Forest" 0 80 512 16 16 4 10 0 0
+VISUAL "Forest" 0 80 512 16 16 5 10 0 0
+VISUAL "Forest" 0 80 512 16 16 6 10 0 0
+VISUAL "Forest" 0 80 512 16 16 7 10 0 0
+VISUAL "Forest" 0 80 512 16 16 8 10 0 0
+VISUAL "Forest" 0 80 512 16 16 9 10 0 0
+VISUAL "Forest" 0 80 512 16 16 10 10 0 0
+VISUAL "Forest" 0 80 512 16 16 11 10 0 0
+VISUAL "Forest" 0 80 512 16 16 17 10 0 0
+VISUAL "Forest" 0 80 512 16 16 18 10 0 0
+VISUAL "Forest" 0 80 512 16 16 19 10 0 0
+VISUAL "Forest" 0 80 512 16 16 20 10 0 0
+VISUAL "Forest" 0 80 512 16 16 21 10 0 0
+VISUAL "Forest" 0 80 512 16 16 22 10 0 0
+VISUAL "Forest" 0 80 512 16 16 23 10 0 0
+VISUAL "Forest" 0 80 512 16 16 24 10 0 0
+VISUAL "Forest" 0 80 512 16 16 25 10 0 0
+VISUAL "Forest" 0 80 512 16 16 26 10 0 0
+VISUAL "Forest" 0 80 512 16 16 27 10 0 0
+VISUAL "Forest" 0 80 496 16 16 0 9 0 0
+VISUAL "Forest" 0 80 496 16 16 1 9 0 0
+VISUAL "Forest" 0 80 496 16 16 2 9 0 0
+VISUAL "Forest" 0 80 496 16 16 3 9 0 0
+VISUAL "Forest" 0 80 496 16 16 4 9 0 0
+VISUAL "Forest" 0 80 496 16 16 5 9 0 0
+VISUAL "Forest" 0 80 496 16 16 6 9 0 0
+VISUAL "Forest" 0 80 496 16 16 7 9 0 0
+VISUAL "Forest" 0 80 496 16 16 8 9 0 0
+VISUAL "Forest" 0 80 496 16 16 9 9 0 0
+VISUAL "Forest" 0 80 496 16 16 10 9 0 0
+VISUAL "Forest" 0 80 496 16 16 11 9 0 0
+VISUAL "Forest" 0 80 496 16 16 12 9 0 0
+VISUAL "Forest" 0 80 496 16 16 13 9 0 0
+VISUAL "Forest" 0 80 496 16 16 14 9 0 0
+VISUAL "Forest" 0 80 496 16 16 15 9 0 0
+VISUAL "Forest" 0 80 496 16 16 16 9 0 0
+VISUAL "Forest" 0 80 496 16 16 17 9 0 0
+VISUAL "Forest" 0 80 496 16 16 18 9 0 0
+VISUAL "Forest" 0 80 496 16 16 19 9 0 0
+VISUAL "Forest" 0 80 496 16 16 20 9 0 0
+VISUAL "Forest" 0 80 496 16 16 21 9 0 0
+VISUAL "Forest" 0 80 496 16 16 22 9 0 0
+VISUAL "Forest" 0 80 496 16 16 23 9 0 0
+VISUAL "Forest" 0 80 496 16 16 24 9 0 0
+VISUAL "Forest" 0 80 496 16 16 25 9 0 0
+VISUAL "Forest" 0 80 496 16 16 26 9 0 0
+VISUAL "Forest" 0 80 496 16 16 27 9 0 0
+VISUAL "Forest" 0 80 496 16 16 12 10 0 0
+VISUAL "Forest" 0 80 496 16 16 13 10 0 0
+VISUAL "Forest" 0 80 496 16 16 14 10 0 0
+VISUAL "Forest" 0 80 496 16 16 15 10 0 0
+VISUAL "Forest" 0 80 496 16 16 16 10 0 0
+VISUALS_END
+DOORZONE 0 1 12 0 5 1
+DOORZONE 1 1 12 15 5 1
+DOORZONE 2 1 0 7 1 3
+DOORZONE 3 1 27 7 1 3
+COLLIDER 0 0.05 12 7.45
+COLLIDER 0 11 11.925 5
+COLLIDER 17.075 11.05 10.925 4.9

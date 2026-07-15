@@ -38,6 +38,13 @@ enum class RoomWallSide : unsigned char
 
 unsigned char RoomDoorMask(bool north, bool south, bool east, bool west);
 
+// Expands or contracts an authored tile selection while keeping its original
+// 16x16 cell as the placement anchor. Positive delta includes source pixels;
+// negative delta removes previously included overhang pixels.
+bool AdjustTileSelectionOverhang(Rectangle& source, Vector2& anchorOffset,
+                                 RoomWallSide side, int delta,
+                                 float sheetWidth, float sheetHeight);
+
 // The fixed tile-space rectangle for a door on the given side. Predetermined and
 // identical for every room so handcrafted door openings always line up with the
 // procedural dungeon door lanes (no free placement, no misalignment).
@@ -46,7 +53,7 @@ void ApplyActiveRoomDoorMask(RoomLayout& layout, unsigned char doorMask);
 
 struct RoomBlueprint
 {
-    static constexpr int kVersion = 2;
+    static constexpr int kVersion = 7;
     static constexpr std::size_t kMaxPlacements = 4096;
 
     std::string id;
@@ -64,6 +71,9 @@ struct RoomBlueprint
     float wallBottomDepth = 1.0f;
     float wallLeftDepth = 1.0f;
     float wallRightDepth = 1.0f;
+    FallSurface fallSurface = FallSurface::Void;
+    int treasureChestCol = -1;
+    int treasureChestRow = -1;
     TileType tiles[RoomLayout::kRows][RoomLayout::kCols]{};
     bool fall[RoomLayout::kRows][RoomLayout::kCols]{};
     bool solid[RoomLayout::kRows][RoomLayout::kCols]{};
@@ -72,10 +82,15 @@ struct RoomBlueprint
     // These sit alongside the full-tile `solid[][]` grid — brush paints the grid,
     // the Rectangle tool draws these adjustable boxes (fences, thin walls, etc.).
     std::vector<Rectangle> colliders;
+    std::vector<Rectangle> fallRects; // precise fall triggers in tile space
     std::vector<RoomTilePlacement> visualTiles;
     std::vector<RoomAssetPlacement> placements;
 
     static RoomBlueprint CreateDefault();
+    bool HasTreasureChestSpawn() const
+    {
+        return treasureChestCol >= 0 && treasureChestRow >= 0;
+    }
     unsigned char DoorMask() const;
     bool Validate(std::string& error) const;
     bool Save(const std::filesystem::path& path, std::string& error) const;

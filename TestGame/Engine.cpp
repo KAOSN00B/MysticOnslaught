@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <climits>
 #include <cmath>
 #include <ctime>
@@ -64,6 +65,26 @@ namespace
         case PlayerClass::Paladin: return AbilityType::Smite;
         case PlayerClass::Warlock: return AbilityType::ShadowBolt;
         default:                   return AbilityType::FireBolt;
+        }
+    }
+
+    Color FallSurfaceTint(FallSurface surface)
+    {
+        switch (surface)
+        {
+        case FallSurface::Water: return Color{ 150, 215, 255, 255 };
+        case FallSurface::Lava:  return Color{ 255, 155, 75, 255 };
+        default:                 return Color{ 185, 160, 215, 255 };
+        }
+    }
+
+    const char* FallSurfaceMessage(FallSurface surface)
+    {
+        switch (surface)
+        {
+        case FallSurface::Water: return "You fell into the water";
+        case FallSurface::Lava:  return "The lava burned you";
+        default:                 return "You fell into the void";
         }
     }
 
@@ -778,6 +799,41 @@ void Engine::RefreshHandcraftedRooms()
     _lastHandcraftedRoomId.clear();
 }
 
+bool Engine::GenerateHandcraftedDungeon(Biome biome,
+                                        std::vector<std::string>& roomIds,
+                                        int maxAttempts)
+{
+    roomIds.clear();
+    for (int attempt = 0; attempt < maxAttempts; ++attempt)
+    {
+        _dungeonGen.Generate();
+        const auto& rooms = _dungeonGen.GetRooms();
+        std::vector<std::string> candidateIds(rooms.size());
+        bool complete = true;
+        for (int i = 0; i < (int)rooms.size(); ++i)
+        {
+            const DungeonRoom& room = rooms[(std::size_t)i];
+            const unsigned char mask = RoomDoorMask(
+                room.hasNorth, room.hasSouth, room.hasEast, room.hasWest);
+            std::vector<const RoomBlueprint*> candidates =
+                _roomLibrary.PlaytestCandidates(biome, room.type, mask);
+            if (candidates.empty())
+            {
+                complete = false;
+                break;
+            }
+            const int pick = GetRandomValue(0, (int)candidates.size() - 1);
+            candidateIds[(std::size_t)i] = candidates[(std::size_t)pick]->id;
+        }
+        if (complete)
+        {
+            roomIds = std::move(candidateIds);
+            return true;
+        }
+    }
+    return false;
+}
+
 RoomLayout Engine::BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definitions,
                                           int visualVariant, int propDensityBonus)
 {
@@ -823,6 +879,27 @@ RoomLayout Engine::BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definit
 
     if (_useHandcraftedDungeonRooms)
     {
+        if (roomIdx >= 0 && roomIdx < (int)_handcraftedDungeonRoomIds.size())
+        {
+            const RoomBlueprint* selected =
+                _roomLibrary.FindById(_handcraftedDungeonRoomIds[(std::size_t)roomIdx]);
+            if (selected != nullptr)
+            {
+                std::string warning;
+                std::optional<RoomLayout> authored = BuildRoomLayout(
+                    *selected, definitions, warning, &_roomAssetCatalog);
+                if (authored.has_value())
+                {
+                    ApplyActiveRoomDoorMask(*authored, RoomDoorMask(
+                        room.hasNorth, room.hasSouth, room.hasEast, room.hasWest));
+                    authored->visualVariant = visualVariant;
+                    if (!warning.empty())
+                        TraceLog(LOG_WARNING, "ROOM: %s", warning.c_str());
+                    return std::move(*authored);
+                }
+            }
+        }
+
         std::string mapperStem = GetBiomeName(_currentBiome);
         if (visualVariant >= 0 && visualVariant < (int)_dungeonVisualVariants.size())
             mapperStem = _dungeonVisualVariants[(std::size_t)visualVariant].mapperStem;
@@ -868,6 +945,12 @@ RoomLayout Engine::BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definit
                 TraceLog(LOG_WARNING, "ROOM: %s", warning.c_str());
             return std::move(*authored);
         }
+
+        // Authored mode never leaks back into generated floors, walls, props,
+        // or decor. Missing content remains obvious while a region is authored.
+        TraceLog(LOG_ERROR, "ROOM: no handcrafted layout for biome %d, node %d",
+                 (int)_currentBiome, roomIdx);
+        return {};
     }
 
     RoomLayout generated = RoomLayout::Generate(
@@ -955,6 +1038,9 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
                                       roomCellW, roomCellH)
         : playerSpawnPos;
     _dungeonFallRecoveryCooldown = 0.f;
+    _dungeonLastSafePos = _dungeonRoomEntrySpawnPos;   // edge-respawn seed
+    _pitDragTimer = 0.f;
+    _player.EndPitFall();   // never carry a fall between rooms
     _player.SetWorldPos(_dungeonRoomEntrySpawnPos);
     _player.SetCombatLocked(false);
     _player.SetDashAllowedWhileCombatLocked(false);
@@ -1881,16 +1967,24 @@ void Engine::Update(float dt)
         if (_menu.DungeonRunPressed())
         {
             _isMainGameRun = false;
-            _useHandcraftedDungeonRooms = true;
             _forcedHandcraftedRoomId.clear();
-            RefreshHandcraftedRooms();
-            _dungeonGen.Generate();
             _dungeonView          = DungeonView::Graph;
             _dungeonRoomIdx = -1;
 
             // Pick a random available biome and load its tileset.
             _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
             _pendingBiome = _currentBiome;
+            _useHandcraftedDungeonRooms = _currentBiome == Biome::Forest;
+            _handcraftedDungeonRoomIds.clear();
+            if (_useHandcraftedDungeonRooms)
+            {
+                RefreshHandcraftedRooms();
+                if (!GenerateHandcraftedDungeon(
+                        _currentBiome, _handcraftedDungeonRoomIds))
+                    _message = "Forest room library cannot form a complete dungeon yet";
+            }
+            else
+                _dungeonGen.Generate();
             LoadTilesetForBiome(_currentBiome);
 
             _gameState = GameState::DungeonRun;
@@ -1997,31 +2091,39 @@ void Engine::Update(float dt)
             // Which door layouts the designer has authored a room for (bit mask
             // N=1,S=2,E=4,W=8). A dungeon is "fully handmade" when every room's
             // door layout is one of these — then NO procgen room is ever used.
-            bool availableMask[16] = { false };
-            for (int mask = 1; mask < 16; ++mask)
-                availableMask[mask] = !_roomLibrary.PlaytestCandidates(
-                    playtestRoom.biome, (unsigned char)mask).empty();
-            availableMask[playtestRoom.DoorMask() & 15] = true;
-
+            auto candidatesFor = [&](const DungeonRoom& room)
+            {
+                return _roomLibrary.PlaytestCandidates(
+                    playtestRoom.biome, room.type,
+                    RoomDoorMask(room.hasNorth, room.hasSouth,
+                                 room.hasEast, room.hasWest));
+            };
             auto findEditedSlot = [&]() -> int {
                 const auto& rooms = _dungeonGen.GetRooms();
                 for (int i = 0; i < (int)rooms.size(); ++i)
                 {
                     const DungeonRoom& c = rooms[(std::size_t)i];
-                    if (RoomDoorMask(c.hasNorth, c.hasSouth, c.hasEast, c.hasWest) == playtestRoom.DoorMask())
+                    const unsigned char graphMask = RoomDoorMask(
+                        c.hasNorth, c.hasSouth, c.hasEast, c.hasWest);
+                    if (c.type == playtestRoom.roomType &&
+                        (graphMask == playtestRoom.DoorMask() ||
+                         playtestRoom.DoorMask() == 15))
                         return i;
                 }
                 return -1;
             };
             auto fullyHandcraftable = [&]() -> bool {
                 for (const DungeonRoom& c : _dungeonGen.GetRooms())
-                {
-                    const unsigned char m =
-                        RoomDoorMask(c.hasNorth, c.hasSouth, c.hasEast, c.hasWest) & 15;
-                    if (m != 0 && !availableMask[m]) return false;
-                }
+                    if (candidatesFor(c).empty()) return false;
                 return true;
             };
+
+            static unsigned int playtestSequence = 0;
+            const auto seedTicks = std::chrono::high_resolution_clock::now()
+                .time_since_epoch().count();
+            const unsigned int playtestSeed = (unsigned int)seedTicks ^
+                (++playtestSequence * 0x9e3779b9u);
+            SetRandomSeed(playtestSeed);
 
             int playtestRoomIdx = -1;
             // Phase 1: prefer a layout every room of which maps to an authored
@@ -2042,23 +2144,38 @@ void Engine::Update(float dt)
                     const int slot = findEditedSlot();
                     if (slot >= 0 && fullyHandcraftable()) playtestRoomIdx = slot;
                 }
-                if (playtestRoomIdx >= 0)
+                if (playtestRoomIdx < 0)
                 {
-                    bool missing[16] = { false };
+                    auto maskName = [](unsigned char mask)
+                    {
+                        std::string name;
+                        if (mask & 1) name += "N";
+                        if (mask & 2) name += "S";
+                        if (mask & 8) name += "W";
+                        if (mask & 4) name += "E";
+                        return name.empty() ? std::string("None") : name;
+                    };
+                    std::set<std::string> missing;
                     for (const DungeonRoom& c : _dungeonGen.GetRooms())
                     {
-                        const unsigned char m =
-                            RoomDoorMask(c.hasNorth, c.hasSouth, c.hasEast, c.hasWest) & 15;
-                        if (m != 0 && !availableMask[m]) missing[m] = true;
+                        if (!candidatesFor(c).empty()) continue;
+                        const unsigned char mask = RoomDoorMask(
+                            c.hasNorth, c.hasSouth, c.hasEast, c.hasWest);
+                        missing.insert(std::string(GetDebugRoomTypeName(c.type)) + " " +
+                                       maskName(mask));
                     }
-                    auto maskName = [](int m) { std::string s;
-                        if (m & 1) s += "N"; if (m & 2) s += "S";
-                        if (m & 8) s += "W"; if (m & 4) s += "E"; return s; };
                     std::string list;
-                    for (int m = 1; m < 16; ++m)
-                        if (missing[m]) { if (!list.empty()) list += ", "; list += maskName(m); }
+                    for (const std::string& item : missing)
+                    {
+                        if (!list.empty()) list += ", ";
+                        list += item;
+                    }
                     if (!list.empty())
-                        _message = "Missing handcrafted doors: " + list;
+                        _message = "Missing handcrafted rooms: " + list;
+                    else
+                        _message = "No matching " +
+                            std::string(GetDebugRoomTypeName(playtestRoom.roomType)) +
+                            " slot for this room's doors";
                 }
             }
 
@@ -2076,7 +2193,9 @@ void Engine::Update(float dt)
                         graphRoom.hasNorth, graphRoom.hasSouth,
                         graphRoom.hasEast, graphRoom.hasWest);
                     std::vector<const RoomBlueprint*> candidates =
-                        _roomLibrary.PlaytestCandidates(playtestRoom.biome, requiredMask);
+                        _roomLibrary.PlaytestCandidates(playtestRoom.biome,
+                                                        graphRoom.type,
+                                                        requiredMask);
                     if (candidates.empty())
                     {
                         playtestRoomIdx = -1;
@@ -2116,9 +2235,12 @@ void Engine::Update(float dt)
             else
             {
                 _forcedHandcraftedRoomId.clear();
-                _dungeonView = DungeonView::Graph;
-                _message = "No dungeon room matches this door layout yet";
-                _gameState = GameState::DungeonRun;
+                _editorPlaytestActive = false;
+                _player.SetInvulnerableLock(false);
+                if (_message.empty())
+                    _message = "No dungeon room matches this door layout yet";
+                _tileMapper.SetRoomPlaytestError(_message);
+                _gameState = GameState::TileMapper;
             }
             break;
         }
@@ -4702,7 +4824,7 @@ void Engine::HandleCollisions()
 
         for (auto& enemy : _enemies)
         {
-            if (!enemy->IsActive())
+            if (!enemy->IsActive() || enemy->IsPitFalling())
                 continue;
             if (enemy->IgnoresPropCollisions())
                 continue;
@@ -4747,7 +4869,7 @@ void Engine::HandleCollisions()
       // the lower boundary.
       for (auto& enemy : _enemies)
       {
-          if (!enemy->IsActive())
+          if (!enemy->IsActive() || enemy->IsPitFalling())
               continue;
           if (enemy->IsDying()) continue;
           Vector2 pos = enemy->GetWorldPos();
@@ -4784,7 +4906,7 @@ void Engine::HandleCollisions()
     {
         for (auto& enemy : _enemies)
         {
-            if (!enemy->IsActive() || !enemy->IsAlive())
+            if (!enemy->IsActive() || !enemy->IsAlive() || enemy->IsPitFalling())
                 continue;
 
             Vector2 peMtv{};
@@ -8085,20 +8207,45 @@ Rectangle Engine::GetTreasureChestRect() const
 {
     // Generous pickup zone (~2.5 tiles) — walking anywhere near the chest opens
     // it; paired with a body-overlap check instead of a single-point test.
-    float cx = (float)kVirtualWidth  * 0.5f;
-    float cy = (float)kVirtualHeight * 0.5f;
-    return { cx - 90.f, cy - 90.f, 180.f, 180.f };
+    const Vector2 chest = GetTreasureChestWorldPos();
+    return { chest.x - 90.f, chest.y - 90.f, 180.f, 180.f };
+}
+
+Vector2 Engine::GetTreasureChestWorldPos() const
+{
+    int col = _dungeonRoomLayout.treasureChestCol;
+    int row = _dungeonRoomLayout.treasureChestRow;
+    if (col < 0 || col >= RoomLayout::kCols ||
+        row < 0 || row >= RoomLayout::kRows)
+    {
+        col = RoomLayout::kCols / 2;
+        row = RoomLayout::kRows / 2;
+    }
+    const float cellW = (float)kVirtualWidth / (float)RoomLayout::kCols;
+    const float cellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
+    return { (col + 0.5f) * cellW, (row + 0.5f) * cellH };
+}
+
+void Engine::SetTreasureChestTile(TileType type)
+{
+    int col = _dungeonRoomLayout.treasureChestCol;
+    int row = _dungeonRoomLayout.treasureChestRow;
+    if (col < 0 || col >= RoomLayout::kCols ||
+        row < 0 || row >= RoomLayout::kRows)
+    {
+        col = RoomLayout::kCols / 2;
+        row = RoomLayout::kRows / 2;
+    }
+    _dungeonRoomLayout.tiles[row][col] = type;
 }
 
 void Engine::OpenTreasureChest()
 {
-    float sw = (float)kVirtualWidth;
-    float sh = (float)kVirtualHeight;
-
     // Switch tile sprite to open chest immediately.
-    _dungeonRoomLayout.tiles[RoomLayout::kRows / 2][RoomLayout::kCols / 2] = TileType::ChestOpen;
+    SetTreasureChestTile(TileType::ChestOpen);
 
-    _vfx.SpawnHitEffect(Character::CastType::None, { sw * 0.5f, sh * 0.5f }, _player.GetFacingDirection());
+    _vfx.SpawnHitEffect(Character::CastType::None, GetTreasureChestWorldPos(),
+                        _player.GetFacingDirection());
     TriggerScreenShake(5.f, 0.12f);
     StopSound(_pickupSound);
     PlaySound(_pickupSound);
@@ -9960,6 +10107,96 @@ void Engine::RebuildEnemyHazardZones()
     for (const WarriorVfx& v : _warriorVfx)
         if (v.tickDamage > 0 && !v.isTrap)
             _enemyHazardZones.push_back({ v.pos, v.radius });
+
+    // Pits read as hazard zones so enemies steer around them on their own — but
+    // they can still be knocked in (knockback ignores this avoidance steering).
+    if (_dungeonRoomLayout.handcrafted)
+    {
+        const float cellW = (float)kVirtualWidth  / (float)RoomLayout::kCols;
+        const float cellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
+        const float radius = std::min(cellW, cellH) * 0.62f;
+        for (int r = 0; r < RoomLayout::kRows; ++r)
+            for (int c = 0; c < RoomLayout::kCols; ++c)
+                if (_dungeonRoomLayout.fall[r][c])
+                    _enemyHazardZones.push_back({ { (c + 0.5f) * cellW, (r + 0.5f) * cellH }, radius });
+
+        // Fall Rects may be smaller or wider than one tile. Sample each one
+        // into cell-sized circles so steering follows the editor-authored shape.
+        for (const Rectangle& rect : _dungeonRoomLayout.fallRects)
+        {
+            const int cols = std::max(1, (int)std::ceil(rect.width));
+            const int rows = std::max(1, (int)std::ceil(rect.height));
+            const float stepW = rect.width / (float)cols;
+            const float stepH = rect.height / (float)rows;
+            const float sampleRadius = 0.62f * std::max(stepW * cellW, stepH * cellH);
+            for (int row = 0; row < rows; ++row)
+                for (int col = 0; col < cols; ++col)
+                {
+                    const Vector2 centre{
+                        (rect.x + (col + 0.5f) * stepW) * cellW,
+                        (rect.y + (row + 0.5f) * stepH) * cellH
+                    };
+                    _enemyHazardZones.push_back({ centre, sampleRadius });
+                }
+        }
+    }
+
+}
+
+Vector2 Engine::PitPullDirection(Vector2 feet, float cellW, float cellH) const
+{
+    return RoomFallPullDirection(_dungeonRoomLayout, feet, cellW, cellH);
+}
+
+void Engine::SpawnFallSurfaceFx(Vector2 worldPos)
+{
+    switch (_dungeonRoomLayout.fallSurface)
+    {
+    case FallSurface::Water:
+        // The blue animated impact reads as a compact splash without adding
+        // prototype circles back into environmental feedback.
+        _vfx.SpawnHitEffect(Character::CastType::IceSpread, worldPos,
+                            { 0.f, -1.f }, 1.25f);
+        break;
+    case FallSurface::Lava:
+        // Flame_Explosion is a 64px strip; its first eight frames contain the
+        // complete burst used elsewhere by the game.
+        _vfx.SpawnSpriteFx(&_roomClearExplosionTex, worldPos, 8, 2.85f,
+                           1.f / 28.f, Color{ 255, 185, 95, 255 });
+        break;
+    case FallSurface::Void:
+        break;
+    }
+}
+
+void Engine::UpdateEnemyPitfalls(float cellW, float cellH)
+{
+    if (!_dungeonRoomLayout.handcrafted) return;
+    for (auto& enemy : _enemies)
+    {
+        if (!enemy || !enemy->IsActive()) continue;
+        if (enemy->IsBoss() || enemy->IsEliteMiniboss()) continue;   // immune to pits
+
+        if (enemy->IsPitFalling())
+        {
+            if (enemy->PitFallComplete())
+                enemy->FinishPitFall();
+            continue;
+        }
+
+        if (enemy->IsDying()) continue;
+        const Rectangle b = enemy->GetCollisionRec();
+        const Vector2 feet{ b.x + b.width * 0.5f, b.y + b.height * 0.85f };
+        if (!IsRoomFallPoint(_dungeonRoomLayout, feet, cellW, cellH)) continue;
+
+        const Vector2 pull = PitPullDirection(feet, cellW, cellH);
+        const float sinkDistance = std::min(cellW, cellH) * 0.55f;
+        const Vector2 target = Vector2Length(pull) > 0.01f
+            ? Vector2Add(enemy->GetWorldPos(), Vector2Scale(pull, sinkDistance))
+            : enemy->GetWorldPos();
+        SpawnFallSurfaceFx(feet);
+        enemy->BeginPitFall(target, FallSurfaceTint(_dungeonRoomLayout.fallSurface));
+    }
 }
 
 void Engine::DrawWarriorEffects(Vector2 camRef)
@@ -13691,6 +13928,26 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
     // 2. ApplyEnemyPowerLevel - single global multiplier, advances every 10 rooms.
     // 3. SetTarget - restore player pointer so pooled enemies rejoin the run.
     // _wave = total rooms entered this run, used here for scaling only.
+    if (_gameState == GameState::DungeonRun)
+    {
+        const float cellW = (float)kVirtualWidth / (float)RoomLayout::kCols;
+        const float cellH = (float)kVirtualHeight / (float)RoomLayout::kRows;
+        Vector2 safePos{};
+        if (TryFindDungeonEnemySpawnPosition(
+                &enemy, enemy.GetWorldPos(), cellW, cellH, 0.f, safePos))
+        {
+            enemy.Teleport(safePos);
+        }
+        else
+        {
+            // Malformed rooms with no usable floor must not create an enemy
+            // inside a wall or pit. Leave the pooled object safely inactive.
+            enemy.SetActive(false);
+            enemy.Teleport({ -5000.f, -5000.f });
+            return;
+        }
+    }
+
     enemy.SetCombatId(_nextCombatTargetId++);
     enemy.SetWaveScale(_wave);
     enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
@@ -13955,9 +14212,10 @@ int Engine::ComputeDailySeed() const
 void Engine::StartMainRun()
 {
     _debug.Deactivate();
-    _useHandcraftedDungeonRooms = false;
+    _useHandcraftedDungeonRooms = true;
     _lastHandcraftedRoomId.clear();
     _forcedHandcraftedRoomId.clear();
+    _handcraftedDungeonRoomIds.clear();
     // One-wallet meta loop: gold persists from the village INTO the run (only a
     // death zeroes it, in HandlePlayerDeathMetaPenalty). Capture the village
     // wallet before ResetRunState reseeds it, then restore it afterwards so the
@@ -13976,9 +14234,16 @@ void Engine::StartMainRun()
     else
         SetRandomSeed((unsigned int)time(nullptr));
 
-    _dungeonGen.Generate();
     _currentBiome = Biome::Forest;
     _pendingBiome = _currentBiome;
+    RefreshHandcraftedRooms();
+    if (!GenerateHandcraftedDungeon(_currentBiome, _handcraftedDungeonRoomIds))
+    {
+        _message = "Forest room library cannot form a complete dungeon yet";
+        TraceLog(LOG_ERROR, "%s", _message.c_str());
+        EnterVillage();
+        return;
+    }
     LoadTilesetForBiome(_currentBiome);
 
     int startIdx = _dungeonGen.GetStartIndex();
@@ -15334,31 +15599,144 @@ bool Engine::HandleDebugToggleTabInput()
 
 // -- Dungeon run combat helpers ------------------------------------------------------
 
+std::vector<Rectangle> Engine::GetDungeonSpawnBlockers(float cellW, float cellH) const
+{
+    std::vector<Rectangle> blockers;
+    blockers.reserve(_dungeonRoomLayout.props.size() +
+                     _dungeonRoomLayout.animProps.size());
+    const float pxScaleX = cellW / 16.f;
+    const float pxScaleY = cellH / 16.f;
+
+    auto addBlocker = [&](const SpritePlacement& prop, const Rectangle& collision)
+    {
+        if (collision.width <= 0.f || collision.height <= 0.f) return;
+        blockers.push_back({
+            prop.col * cellW + collision.x * pxScaleX,
+            prop.row * cellH + collision.y * pxScaleY,
+            collision.width * pxScaleX,
+            collision.height * pxScaleY
+        });
+    };
+
+    for (const SpritePlacement& prop : _dungeonRoomLayout.props)
+    {
+        const TileDefSet* defs = ResolveRoomDefinitions(
+            _dungeonRoomLayout, prop, _tileDefs);
+        if (defs == nullptr || prop.defIdx < 0 ||
+            prop.defIdx >= (int)defs->props.size())
+            continue;
+        addBlocker(prop, defs->props[prop.defIdx].collision);
+    }
+    for (const SpritePlacement& prop : _dungeonRoomLayout.animProps)
+    {
+        const TileDefSet* defs = ResolveRoomDefinitions(
+            _dungeonRoomLayout, prop, _tileDefs);
+        if (defs == nullptr || prop.defIdx < 0 ||
+            prop.defIdx >= (int)defs->animProps.size())
+            continue;
+        addBlocker(prop, defs->animProps[prop.defIdx].collision);
+    }
+    return blockers;
+}
+
+Rectangle Engine::GetDungeonEnemySpawnBody(const Enemy* enemy, Vector2 worldPos,
+                                           float cellW, float cellH) const
+{
+    if (enemy != nullptr)
+    {
+        const Rectangle current = enemy->GetCollisionRec();
+        const Vector2 currentPos = enemy->GetWorldPos();
+        return {
+            worldPos.x + current.x - currentPos.x,
+            worldPos.y + current.y - currentPos.y,
+            current.width,
+            current.height
+        };
+    }
+
+    // Candidate generation happens before an enemy type exists. A conservative
+    // cell-sized footprint prevents the initial choice from hugging blockers;
+    // ConfigureSpawnedEnemy validates the concrete enemy body afterward.
+    const float width = cellW * 0.72f;
+    const float height = cellH * 0.72f;
+    return { worldPos.x - width * 0.5f, worldPos.y - height * 0.5f,
+             width, height };
+}
+
+bool Engine::IsDungeonEnemySpawnPositionValid(
+    const Enemy* enemy, Vector2 worldPos, float cellW, float cellH,
+    const std::vector<Rectangle>& blockers) const
+{
+    return IsRoomSpawnAreaValid(
+        _dungeonRoomLayout,
+        GetDungeonEnemySpawnBody(enemy, worldPos, cellW, cellH),
+        cellW, cellH, blockers);
+}
+
+bool Engine::TryFindDungeonEnemySpawnPosition(
+    const Enemy* enemy, Vector2 desiredPos, float cellW, float cellH,
+    float minPlayerDistance, Vector2& result) const
+{
+    const std::vector<Rectangle> blockers = GetDungeonSpawnBlockers(cellW, cellH);
+    const Vector2 playerPos = _player.GetWorldPos();
+    const float minDistanceSq = minPlayerDistance * minPlayerDistance;
+    auto valid = [&](Vector2 candidate)
+    {
+        const float dx = candidate.x - playerPos.x;
+        const float dy = candidate.y - playerPos.y;
+        return dx * dx + dy * dy >= minDistanceSq &&
+               IsDungeonEnemySpawnPositionValid(
+                   enemy, candidate, cellW, cellH, blockers);
+    };
+
+    if (valid(desiredPos))
+    {
+        result = desiredPos;
+        return true;
+    }
+
+    bool found = false;
+    float bestDistanceSq = std::numeric_limits<float>::max();
+    for (int row = 1; row < RoomLayout::kRows - 1; ++row)
+    {
+        for (int col = 1; col < RoomLayout::kCols - 1; ++col)
+        {
+            const Vector2 candidate{
+                (col + 0.5f) * cellW,
+                (row + 0.5f) * cellH
+            };
+            if (!valid(candidate)) continue;
+
+            const float dx = candidate.x - desiredPos.x;
+            const float dy = candidate.y - desiredPos.y;
+            const float distanceSq = dx * dx + dy * dy;
+            if (distanceSq < bestDistanceSq)
+            {
+                bestDistanceSq = distanceSq;
+                result = candidate;
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
 Vector2 Engine::GetDungeonSpawnPos(float cellW, float cellH) const
 {
     Vector2 playerPos = _player.GetWorldPos();
     float minDist = cellW * 4.f;   // stay at least 4 cells from the player
+    const std::vector<Rectangle> blockers = GetDungeonSpawnBlockers(cellW, cellH);
 
     for (int attempt = 0; attempt < 40; attempt++)
     {
         int col = GetRandomValue(2, RoomLayout::kCols - 3);
         int row = GetRandomValue(2, RoomLayout::kRows - 3);
 
-        TileType t = _dungeonRoomLayout.tiles[row][col];
-        if ((_dungeonRoomLayout.solid[row][col] && !RoomPlacementClearsAtDoor(
-                {(float)col,(float)row,1.f,1.f},_dungeonRoomLayout)) ||
-            _dungeonRoomLayout.fall[row][col] ||
-            (t != TileType::Floor && t != TileType::FloorVariant))
-            continue;
-
-        // Don't spawn on a prop cell.
-        bool onProp = false;
-        for (const SpritePlacement& p : _dungeonRoomLayout.props)
-            if (p.col == col && p.row == row) { onProp = true; break; }
-        if (onProp) continue;
-
         float x = (col + 0.5f) * cellW;
         float y = (row + 0.5f) * cellH;
+        if (!IsDungeonEnemySpawnPositionValid(
+                nullptr, { x, y }, cellW, cellH, blockers))
+            continue;
         float dx = x - playerPos.x;
         float dy = y - playerPos.y;
         if (dx * dx + dy * dy < minDist * minDist) continue;
@@ -15366,8 +15744,21 @@ Vector2 Engine::GetDungeonSpawnPos(float cellW, float cellH) const
         return { x, y };
     }
 
-    // Fallback: far corner of the room.
-    return { (float)kVirtualWidth * 0.75f, (float)kVirtualHeight * 0.5f };
+    // Exhaustively find a valid floor instead of returning an unchecked corner.
+    const Vector2 preferred{
+        (float)kVirtualWidth * 0.75f,
+        (float)kVirtualHeight * 0.5f
+    };
+    Vector2 result{};
+    if (TryFindDungeonEnemySpawnPosition(
+            nullptr, preferred, cellW, cellH, minDist, result) ||
+        TryFindDungeonEnemySpawnPosition(
+            nullptr, preferred, cellW, cellH, 0.f, result))
+        return result;
+
+    // A valid room always has floor. Keep this deterministic for malformed
+    // content; ConfigureSpawnedEnemy will reject the position and deactivate it.
+    return preferred;
 }
 
 Vector2 Engine::GetDungeonSpawnPosForRole(EnemyRole role, float cellW, float cellH) const
@@ -15806,7 +16197,13 @@ Enemy* Engine::SpawnDungeonGrunt(const EncounterSpawnEntry& entry, Vector2 pos, 
     {
         EnemyRole role = spawned->GetEncounterRole();
         if (role != EnemyRole::Grunt && role != EnemyRole::Charger)
-            spawned->Teleport(GetDungeonSpawnPosForRole(role, cellW, cellH));
+        {
+            const Vector2 rolePos = GetDungeonSpawnPosForRole(role, cellW, cellH);
+            Vector2 safeRolePos{};
+            if (TryFindDungeonEnemySpawnPosition(
+                    spawned, rolePos, cellW, cellH, 0.f, safeRolePos))
+                spawned->Teleport(safeRolePos);
+        }
         if (entry.swarmProfile)
             spawned->ApplyDifficultyScaling(0.75f, 0.85f);
     }
@@ -18034,6 +18431,8 @@ void Engine::OpenWorldMap()
     {
         _worldZone = 5;
         _currentBiome = Biome::DemonsInsides;
+        _useHandcraftedDungeonRooms = false;
+        _handcraftedDungeonRoomIds.clear();
         LoadTilesetForBiome(_currentBiome);
         _dungeonGen.Generate();
         int startIdx = _dungeonGen.GetStartIndex();
@@ -18101,9 +18500,25 @@ void Engine::UpdateWorldMap(float dt)
     _worldMapPreparedZone = -1;
 
     _currentBiome = selectedBiome;
+    // Forest is the first complete authored library. Other regions retain their
+    // existing rooms until their .mroom coverage is finished, then they can use
+    // the same assignment path without changing runtime rendering again.
+    _useHandcraftedDungeonRooms = _currentBiome == Biome::Forest;
+    _handcraftedDungeonRoomIds.clear();
     LoadTilesetForBiome(_currentBiome);
 
-    _dungeonGen.Generate();
+    if (_useHandcraftedDungeonRooms)
+    {
+        RefreshHandcraftedRooms();
+        if (!GenerateHandcraftedDungeon(_currentBiome, _handcraftedDungeonRoomIds))
+        {
+            _message = "This region's handcrafted room library is incomplete";
+            _gameState = GameState::WorldMap;
+            return;
+        }
+    }
+    else
+        _dungeonGen.Generate();
     int startIdx   = _dungeonGen.GetStartIndex();
     Vector2 spawnPos = GetDungeonBottomSpawnPos();
     EnterDungeonRoom(startIdx, DungeonDoorSide::None, spawnPos, true);
@@ -18763,7 +19178,7 @@ void Engine::UpdateDungeonRun(float dt)
                     {
                         _treasureChestSpawned = true;
                         _treasureChestBroken  = false;
-                        _dungeonRoomLayout.tiles[RoomLayout::kRows / 2][RoomLayout::kCols / 2] = TileType::ChestClosed;
+                        SetTreasureChestTile(TileType::ChestClosed);
                     }
                     break;
                 case DebugActionKind::RestartRoom:
@@ -19147,20 +19562,83 @@ void Engine::UpdateDungeonRun(float dt)
                     coll.width * pxScaleX, coll.height * pxScaleY });
             }
 
+            // ── Zelda-style pit fall ─────────────────────────────────────────
+            // A pit pulls you toward its centre, but you get a short window to
+            // scramble your feet back onto solid ground before it drags you down.
+            // Falling costs 1 HP and drops you back at the edge you fell from.
+            constexpr float kPitPullSpeed  = 235.f;   // px/s drag toward the pit
+            constexpr float kPitDragWindow = 0.42f;   // seconds before you go down
             _dungeonFallRecoveryCooldown = std::max(0.f, _dungeonFallRecoveryCooldown - dt);
-            if (_dungeonRoomLayout.handcrafted && _dungeonFallRecoveryCooldown <= 0.f)
+            if (_dungeonRoomLayout.handcrafted)
             {
-                const Rectangle body = _player.GetCollisionRec();
-                const Vector2 feet{ body.x + body.width * 0.5f,
-                                    body.y + body.height * 0.88f };
-                if (IsRoomFallPoint(_dungeonRoomLayout, feet, cellW, cellH))
+                if (_player.IsPitFalling())
                 {
-                    _player.TakePitfallDamage(1);
-                    _dungeonFallRecoveryCooldown = 0.8f;
-                    _message = "You fell";
-                    if (_player.GetHealthValue() > 0.f)
-                        _player.SetWorldPos(_dungeonRoomEntrySpawnPos);
+                    if (_player.PitFallComplete())
+                    {
+                        _player.EndPitFall();
+                        _player.TakePitfallDamage(1);
+                        if (_player.GetHealthValue() > 0.f)
+                        {
+                            _player.SetWorldPos(_dungeonLastSafePos);
+                            if (_dungeonRoomLayout.fallSurface == FallSurface::Lava)
+                                _player.ApplyBurnTicks(0.55f, 2, 0.25f,
+                                                       _dungeonLastSafePos);
+                        }
+                        _pitDragTimer = 0.f;
+                        _dungeonFallRecoveryCooldown = 0.6f;
+                        _message = FallSurfaceMessage(_dungeonRoomLayout.fallSurface);
+                    }
                 }
+                else if (_dungeonFallRecoveryCooldown <= 0.f)
+                {
+                    const Rectangle body = _player.GetCollisionRec();
+                    const Vector2 currentPos = _player.GetWorldPos();
+                    const Vector2 frameMove = Vector2Subtract(currentPos, playerPosBeforeUpdate);
+                    const Rectangle sweptBody{
+                        body.x - std::max(0.f, frameMove.x),
+                        body.y - std::max(0.f, frameMove.y),
+                        body.width + std::abs(frameMove.x),
+                        body.height + std::abs(frameMove.y)
+                    };
+
+                    // A dash cannot enter or tunnel through a fall zone. Ordinary
+                    // walking and forced enemy pushes intentionally skip this
+                    // branch, preserving the authored pit gameplay.
+                    if (_player.IsDashing() && RoomBodyIntersectsFall(
+                            _dungeonRoomLayout, sweptBody, cellW, cellH))
+                    {
+                        _player.SetWorldPos(playerPosBeforeUpdate);
+                        _player.CancelDash();
+                        _pitDragTimer = 0.f;
+                        _dungeonLastSafePos = playerPosBeforeUpdate;
+                    }
+                    else
+                    {
+                        const Rectangle currentBody = _player.GetCollisionRec();
+                        const Vector2 feet{ currentBody.x + currentBody.width * 0.5f,
+                                            currentBody.y + currentBody.height * 0.88f };
+                        if (IsRoomFallPoint(_dungeonRoomLayout, feet, cellW, cellH))
+                        {
+                            const Vector2 pull = PitPullDirection(feet, cellW, cellH);
+                            if (Vector2Length(pull) > 0.01f)
+                                _player.SetWorldPos(Vector2Add(_player.GetWorldPos(),
+                                    Vector2Scale(pull, kPitPullSpeed * dt)));
+                            _pitDragTimer += dt;
+                            if (_pitDragTimer >= kPitDragWindow)
+                            {
+                                SpawnFallSurfaceFx(feet);
+                                _player.BeginPitFall(
+                                    FallSurfaceTint(_dungeonRoomLayout.fallSurface));
+                            }
+                        }
+                        else
+                        {
+                            _pitDragTimer = 0.f;
+                            _dungeonLastSafePos = _player.GetWorldPos();
+                        }
+                    }
+                }
+                UpdateEnemyPitfalls(cellW, cellH);
             }
         }
 
@@ -19711,7 +20189,7 @@ void Engine::UpdateDungeonRun(float dt)
                 {
                     _treasureChestSpawned = true;
                     _treasureChestBroken  = false;
-                    _dungeonRoomLayout.tiles[RoomLayout::kRows / 2][RoomLayout::kCols / 2] = TileType::ChestClosed;
+                    SetTreasureChestTile(TileType::ChestClosed);
                 }
                 // Elite room: scatter gold and offer an upgrade card.
                 else if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
@@ -20033,8 +20511,9 @@ void Engine::DrawDungeonRun()
                 // Show a hint label above the chest while it is unopened.
                 if (_treasureChestSpawned && !_treasureChestBroken)
                 {
-                    float cx = sw * 0.5f + _shakeOffset.x;
-                    float cy = sh * 0.5f + _shakeOffset.y;
+                    const Vector2 chest = GetTreasureChestWorldPos();
+                    float cx = chest.x - _cameraPos.x + sw * 0.5f + _shakeOffset.x;
+                    float cy = chest.y - _cameraPos.y + sh * 0.5f + _shakeOffset.y;
                     float pulse = 0.65f + 0.35f * sinf((float)GetTime() * 3.f);
                     const char* hint = "Walk over to open!";
                     int hintSz = 22;

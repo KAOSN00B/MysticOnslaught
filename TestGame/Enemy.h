@@ -238,6 +238,16 @@ public:
     virtual void OnForcedPushCollision();
     bool IsBeingForcedPushed() const { return _forcedPushActive; }
 
+    // Shared pit fall for basic enemies. CombatDirector pauses normal AI while
+    // this shrinks and pulls the sprite inward; Engine finishes it as a normal
+    // death so rewards, bestiary credit, and pooled cleanup still run.
+    void BeginPitFall(Vector2 pullTarget, Color tint = WHITE);
+    void UpdatePitFall(float dt);
+    void FinishPitFall();
+    bool IsPitFalling() const { return _pitFalling; }
+    bool PitFallComplete() const;
+    float PitFallProgress() const;
+
     virtual bool IsFrozen()        const { return _freezeTimer > 0.f; }
     // Burning status for relic synergies (Ember Heart / Wildfire). Based on the
     // shared base burn queue — covers grunts, new enemies, and the new bosses.
@@ -274,7 +284,7 @@ public:
     virtual int  GetAttackPower() const { return (int)_attackPower; }
     bool IsDying()      const { return _dying; }
     virtual bool IsActive()     const { return _isActive; }
-    virtual void SetActive(bool active) { _isActive = active; }
+    virtual void SetActive(bool active);
     virtual void Teleport(Vector2 pos) { _worldPos = pos; _worldPosLastFrame = pos; _velocity = Vector2Zero(); }
     virtual Cyclops* AsCyclops() { return nullptr; }
     virtual Ogre* AsOgre() { return nullptr; }
@@ -477,6 +487,13 @@ protected:
     static constexpr float kPathRefreshMax = 0.70f;  // maximum refresh interval
     static constexpr int   kMaxWaypoints   = 14;     // path length cap
     bool _isActive        = true;
+    bool _pitFalling      = false;
+    float _pitFallTimer   = 0.f;
+    float _pitStartScale  = 0.f;
+    Vector2 _pitStartPos{};
+    Vector2 _pitTargetPos{};
+    Color _pitFallTint = WHITE;
+    static constexpr float kPitFallDuration = 0.20f;
     std::uint64_t _combatId = 0;
     bool _bestiaryRecorded = false;   // has this death been counted in the bestiary
     bool _isEliteMiniboss = false;

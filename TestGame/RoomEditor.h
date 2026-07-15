@@ -5,12 +5,14 @@
 #include "TileDefs.h"
 
 #include <filesystem>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 class RoomEditor
 {
 public:
-    enum class Layer { Ground, Visual, Collision, Props, Decor, FallZones, DoorZones };
+    enum class Layer { Ground, Visual, Door, Collision, Props, Decor, FallZones, DoorZones, ChestSpawn };
 
     void Bind(const std::string& tilesetStem, Biome biome,
               const TileDefSet& definitions, Texture2D sheet, Texture2D groundSheet,
@@ -26,6 +28,8 @@ public:
     bool WantsBack() const { return _wantsBack; }
     void ClearWantsBack() { _wantsBack = false; }
     bool ConsumePlaytestRequest();
+    void SetStatusMessage(const std::string& message, float seconds = 4.f)
+    { _status = message; _statusTimer = seconds; }
 
     const RoomBlueprint& Blueprint() const { return _room; }
     RoomBlueprint& Blueprint() { return _room; }
@@ -33,11 +37,18 @@ public:
 
     bool SetTerrain(int col, int row, TileType tile);
     bool SetVisual(int col, int row, bool ground, const std::string& source,
-                   Rectangle sourceRect);
+                   Rectangle sourceRect, Vector2 anchorOffset = {});
+    bool SetDoorVisual(int col, int row, const std::string& source,
+                       Rectangle sourceRect, Vector2 anchorOffset = {});
     bool SetSolid(int col, int row, bool enabled);
     bool SetFall(int col, int row, bool enabled);
+    bool SetFallSurface(FallSurface surface);
+    bool TreasureChestSpawnFits(int col, int row) const;
+    bool SetTreasureChestSpawn(int col, int row);
+    bool ClearTreasureChestSpawn();
     bool PlaceAsset(const RoomAssetPlacement& placement);
     bool RemoveAssetAt(int col, int row, RoomAssetKind kind);
+    bool CreateRoomForDoorMask(unsigned char mask);
     void SetDoors(bool north, bool south, bool east, bool west);
     bool SetWallDepth(RoomWallSide side, float depth);
     bool Undo();
@@ -47,17 +58,40 @@ public:
 
     // Paint tool + authoring operations (all headless-testable — no rendering).
     enum class PaintTool { Brush, Rectangle, Bucket, Eraser };
+    struct GroundBrushTile
+    {
+        std::string sourceTileset;
+        Rectangle source{};
+        int weight = 1;
+        Vector2 anchorOffset{};
+    };
     void SelectLayer(Layer layer) { _layer = layer; }
     Layer ActiveLayer() const { return _layer; }
     void SetPaintTool(PaintTool tool) { _paintTool = tool; }
     PaintTool ActivePaintTool() const { return _paintTool; }
     const std::string& SelectedAssetId() const { return _selectedAssetId; }
     Rectangle SelectedRawTile() const { return _selectedRawTile; }
+    Vector2 SelectedTileAnchorOffset() const { return _selectedTileAnchorOffset; }
+    bool AdjustSelectedTileOverhang(RoomWallSide side, int delta);
     // Fill/flood/clear operate on the active layer and record ONE undo entry.
     bool FillRect(int col0, int row0, int col1, int row1, bool add = true);
     bool FloodFillFrom(int col, int row, bool add = true);
     bool EraseAt(int col, int row);
     bool ClearActiveLayer();
+    // Optional weighted brush for Ground tiles. The chosen tile is written into
+    // the room like any normal visual tile; randomness never reaches runtime.
+    bool AddGroundBrushTile(const std::string& sourceTileset, Rectangle source,
+                            int weight = 1, Vector2 anchorOffset = {});
+    bool RemoveGroundBrushTile(std::size_t index);
+    bool SetGroundBrushWeight(std::size_t index, int weight);
+    void ClearGroundBrush();
+    const std::vector<GroundBrushTile>& GroundBrushTiles() const { return _groundBrushTiles; }
+    void SetRandomGroundBrushEnabled(bool enabled) { _randomGroundBrushEnabled = enabled; }
+    bool RandomGroundBrushEnabled() const { return _randomGroundBrushEnabled; }
+    std::size_t ChooseGroundBrushIndex(std::uint32_t sample) const;
+    bool PaintActiveCell(int col, int row, bool add = true) { return PaintCell(col, row, add); }
+    bool SaveGroundBrushPreset(const std::string& name, std::string& error);
+    bool LoadGroundBrushPreset(const std::string& name, std::string& error);
     // Eyedropper: sample the tile/asset under a cell into the current selection.
     void PickAt(int col, int row);
     // A room forked from source: fresh id + "<name> copy" (does not save).
@@ -69,7 +103,14 @@ private:
     bool PlacementFits(const RoomAssetPlacement& placement) const;
     const RoomAssetSource* SelectedSource() const;
     bool PaintCell(int col, int row, bool add);   // one cell of the active paint layer
-    bool EraseVisual(int col, int row, bool ground);
+    bool AddSelectedGroundBrushTile();
+    const GroundBrushTile* GroundBrushTileForCell(int col, int row) const;
+    std::filesystem::path GroundBrushPresetFolder() const;
+    bool LoadGroundBrushPresetPath(const std::filesystem::path& path, std::string& error);
+    void RefreshGroundBrushPresets();
+    bool EraseVisual(int col, int row, bool ground, bool door = false);
+    bool DoorVisualFitsEnabledZone(int col, int row, Rectangle sourceRect,
+                                   Vector2 anchorOffset = {}) const;
     // Ground/Visual layers can also paint Decor/AnimDecor assets tagged to that
     // band (animated water/lava as ground). These helpers back that "decor mode".
     bool DecorModeOnTileLayer() const;             // Ground/Visual + decor-mode on
@@ -91,7 +132,7 @@ private:
     void UpdateLibrary();
     void UpdateCanvas();
     // Collision layer, Rectangle tool: draw/move/resize free-size collider rects.
-    void UpdateColliderRects(Vector2 mouse, Rectangle canvas);
+    void UpdateLayerRects(Vector2 mouse, Rectangle canvas);
     void DrawToolbar() const;
     void DrawCanvas() const;
     void DrawPlacementPreview() const;
@@ -124,8 +165,15 @@ private:
     std::string _selectedAssetId;
     int _selectedSource = 0;
     Rectangle _selectedRawTile{ 0.f, 0.f, 16.f, 16.f };
+    Vector2 _selectedTileAnchorOffset{};
+    std::vector<GroundBrushTile> _groundBrushTiles;
+    std::vector<std::filesystem::path> _groundBrushPresetPaths;
+    std::string _groundBrushPresetName = "Ground Mix";
+    int _groundBrushPresetIndex = -1;
+    bool _randomGroundBrushEnabled = false;
+    bool _editingGroundBrushName = false;
     int _selectedDoorZone = 0;
-    int _selectedCollider = -1;      // index into _room.colliders, -1 = none
+    int _selectedCollider = -1;      // index in active collision/fall rect list
     int _colliderDragMode = 0;       // 0 none, 1 move, 2 resize, 3 creating
     Vector2 _colliderGrab{};         // grab offset within a collider, tile space
     Vector2 _colliderAnchor{};       // creation anchor corner, tile space
@@ -144,6 +192,7 @@ private:
     bool _editingSearch = false;
     bool _paletteVisible = true;
     bool _showLibrary = false;
+    bool _coverageExpanded = false;
     std::string _pendingDeleteId; // room armed for delete; second click confirms
     bool _editingName = false;
     bool _savedOnce = false;

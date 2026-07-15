@@ -485,9 +485,51 @@ void Character::ReloadSounds()
         _deathSound = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
 }
 
+void Character::BeginPitFall(Color tint)
+{
+    if (_isPitFalling || _dying) return;
+    _isPitFalling = true;
+    _pitFallTimer = 0.f;
+    _pitFallTint = tint;
+    _velocity = Vector2Zero();
+    _direction = Vector2Zero();
+    _isDashing = false;
+    _dashInvincible = false;
+    _playDashParticles = false;
+    _forcedPushActive = false;
+    _forcedPushSpeed = 0.f;
+    _forcedPushDirection = Vector2Zero();
+}
+
+void Character::EndPitFall()
+{
+    _isPitFalling = false;
+    _pitFallTimer = 0.f;
+    _pitFallTint = WHITE;
+}
+
+bool Character::PitFallComplete() const
+{
+    return _isPitFalling && _pitFallTimer >= kPitFallDuration;
+}
+
+float Character::PitFallProgress() const
+{
+    if (!_isPitFalling) return 0.f;
+    return std::clamp(_pitFallTimer / kPitFallDuration, 0.f, 1.f);
+}
+
 void Character::Update(float dt)
 {
     _worldPosLastFrame = _worldPos;
+
+    // While sinking into a pit the player is frozen — no movement, attacks or
+    // cooldown ticks; the engine finishes the fall when the timer completes.
+    if (_isPitFalling)
+    {
+        _pitFallTimer += dt;
+        return;
+    }
 
     // Tick down temporary self-buffs (War Cry damage, Rampage lifesteal, etc.).
     if (_damageBuffTimer > 0.f) _damageBuffTimer -= dt;
@@ -831,6 +873,20 @@ void Character::DrawPlayer(Vector2 cameraPos)
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
     Rectangle dest{ screenX, screenY, w, h };
 
+    // Pit fall: remain upright and disappear downward quickly. Cropping from the
+    // bottom makes this read as sinking below a surface instead of spinning away.
+    if (_isPitFalling)
+    {
+        const float p = PitFallProgress();
+        const float visible = std::max(0.02f, 1.f - p);
+        source.height = _height * visible;
+        Rectangle fdest{ dest.x + w * 0.04f, dest.y + p * h * 0.42f,
+                         w * 0.92f, h * visible };
+        DrawTexturePro(_texture, source, fdest, {}, 0.f,
+                       Fade(_pitFallTint, 1.f - p * 0.72f));
+        return;
+    }
+
     float shadowWidth  = w * 0.40f;
     float shadowHeight = h * 0.05f;
     float shadowOffsetX = -_rightLeft * 3.f;
@@ -974,6 +1030,21 @@ bool Character::Dashing(float dt)
     }
 
     return true;
+}
+
+void Character::CancelDash()
+{
+    if (!_isDashing) return;
+    _isDashing = false;
+    _dashInvincible = false;
+    _playDashParticles = false;
+    _dashTimer = 0.f;
+    _velocity = Vector2Zero();
+    _texture = _idleAnim;
+    _frame = 0;
+    _runningTime = 0.f;
+    _maxFrames = _texture.width / _width;
+    _updateTime = 3.0f / (float)std::max(1, _maxFrames);
 }
 
 void Character::Death()

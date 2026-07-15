@@ -68,22 +68,46 @@ const RoomBlueprint* RoomLibrary::Choose(const RoomRequest& request,
 }
 
 std::vector<const RoomBlueprint*> RoomLibrary::PlaytestCandidates(
-    Biome biome, unsigned char requiredDoorMask) const
+    Biome biome, RoomType roomType, unsigned char requiredDoorMask) const
 {
     std::vector<const RoomBlueprint*> exact;
     std::vector<const RoomBlueprint*> fourDoorFallback;
     constexpr unsigned char kFourDoors = 1 | 2 | 4 | 8;
 
+    auto collect = [&](RoomType desiredType)
+    {
+        for (const RoomBlueprint& room : _rooms)
+        {
+            if (room.biome != biome || room.roomType != desiredType) continue;
+            const unsigned char mask = room.DoorMask();
+            if (mask == requiredDoorMask)
+                exact.push_back(&room);
+            else if (mask == kFourDoors)
+                fourDoorFallback.push_back(&room);
+        }
+    };
+
+    collect(roomType);
+    // Elite is an encounter role layered onto ordinary room geometry. Requiring
+    // a full duplicate Elite art library made an otherwise complete biome
+    // impossible to playtest. Prefer authored Elite art when present, then use
+    // Standard geometry while preserving the graph node's Elite behavior.
+    if (exact.empty() && fourDoorFallback.empty() && roomType == RoomType::Elite)
+        collect(RoomType::Standard);
+    return exact.empty() ? fourDoorFallback : exact;
+}
+
+std::array<int, 16> RoomLibrary::DoorMaskCounts(
+    Biome biome, std::string_view tilesetStem) const
+{
+    std::array<int, 16> counts{};
     for (const RoomBlueprint& room : _rooms)
     {
-        if (room.biome != biome) continue;
+        if (room.biome != biome || room.tilesetStem != tilesetStem) continue;
         const unsigned char mask = room.DoorMask();
-        if (mask == requiredDoorMask)
-            exact.push_back(&room);
-        else if (mask == kFourDoors)
-            fourDoorFallback.push_back(&room);
+        if (mask > 0 && mask < counts.size()) ++counts[mask];
     }
-    return exact.empty() ? fourDoorFallback : exact;
+    return counts;
 }
 
 std::optional<RoomLayout> RoomLibrary::Resolve(const RoomRequest& request,
