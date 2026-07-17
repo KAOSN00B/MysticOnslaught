@@ -219,6 +219,7 @@ void Character::Init()
     _relicCount     = 0;
     _killsSinceHeal = 0;
     _pendingBurnTicks.clear();
+    _chillTimer = 0.f; _chillMult = 1.f;
 
     _maxMana             = classInfo.baseMana;
     // Runs start with a full mana pool — cooldowns (not an empty bar) are what
@@ -573,6 +574,12 @@ void Character::Update(float dt)
     UpdateDeath(dt);
     UpdatePendingBurns(dt);
 
+    if (_chillTimer > 0.f)
+    {
+        _chillTimer -= dt;
+        if (_chillTimer <= 0.f) { _chillTimer = 0.f; _chillMult = 1.f; }
+    }
+
     if (!_dying && !_takingDamage)
     {
         if (!HandleForcedPush(dt))
@@ -676,7 +683,7 @@ void Character::HandleMovement(float dt)
     if (Vector2Length(_direction) > 0.f)
     {
         _worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(_direction),
-            _speed * _biomeSlowFactor * _abilityAimMoveScale * dt));
+            _speed * _biomeSlowFactor * _abilityAimMoveScale * _chillMult * dt));
 
         if (_direction.x < 0) _rightLeft = -1;
         if (_direction.x > 0) _rightLeft = 1;
@@ -919,7 +926,10 @@ void Character::DrawPlayer(Vector2 cameraPos)
         dest.x += (_rightLeft > 0.f ? 1.f : -1.f) * swing;
     }
 
-    DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
+    // Chilled: icy blue tint so the slow reads on the sprite (matches how frozen
+    // enemies are tinted). Normal: plain white.
+    Color bodyTint = (_chillTimer > 0.f) ? Color{ 150, 205, 255, 255 } : WHITE;
+    DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, bodyTint);
     if (_damageBuffTimer > 0.f)
         DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, Fade(Color{ 255, 45, 35, 255 }, 0.38f));
 
@@ -1082,6 +1092,7 @@ void Character::Revive()
     _forcedPushSpeed     = 0.f;
     _forcedPushStunTimer = 0.f;
     _pendingBurnTicks.clear();
+    _chillTimer = 0.f; _chillMult = 1.f;
     // True respawns wipe ability cooldowns — a fresh attempt starts unlocked.
     for (int i = 0; i < _hardAbilityCap; i++)
     {
@@ -1107,6 +1118,7 @@ void Character::RefreshForRoomEntry()
     _forcedPushSpeed     = 0.f;
     _forcedPushStunTimer = 0.f;
     _pendingBurnTicks.clear();
+    _chillTimer = 0.f; _chillMult = 1.f;
     if (_health < 1.f) _health = 1.f;   // safety clamp — never enter a room dead
     GrantInvulnerability(1.5f);         // brief i-frames so entry isn't punished
 }
@@ -1290,6 +1302,29 @@ void Character::OnForcedPushCollision()
     _forcedPushDirection = Vector2Zero();
     _forcedPushStunTimer = _forcedPushImpactStunDuration;
     _velocity = Vector2Zero();
+}
+
+void Character::ApplyChill(float duration, float speedMult)
+{
+    if (_dying || duration <= 0.f)
+        return;
+    // Refresh rather than stack: the strongest (lowest) multiplier wins.
+    _chillTimer = std::max(_chillTimer, duration);
+    _chillMult  = std::min(_chillMult, std::clamp(speedMult, 0.2f, 1.f));
+}
+
+void Character::ApplyKnockbackImpulse(Vector2 direction, float speed)
+{
+    if (_dying || speed <= 0.f)
+        return;
+    float len = Vector2Length(direction);
+    if (len < 0.001f)
+        direction = Vector2{ -(float)_rightLeft, 0.f };   // fall back: away from facing
+    else
+        direction = Vector2Scale(direction, 1.f / len);
+    // Rides the normal decaying velocity channel (ApplyVelocity), so the shove
+    // tapers off on its own and keeps the player in control quickly.
+    _velocity = Vector2Add(_velocity, Vector2Scale(direction, speed));
 }
 
 void Character::ApplyBurnTicks(float tickDelay, int tickCount, float damagePerTick, Vector2 sourcePos)

@@ -184,6 +184,13 @@ public:
     void StartForcedPush(Vector2 direction, float speed);
     void OnForcedPushCollision();
     void ApplyBurnTicks(float tickDelay, int tickCount, float damagePerTick, Vector2 sourcePos);
+    // Icy hit: slow movement for a duration (Bonechill elite). Re-applying refreshes.
+    void ApplyChill(float duration, float speedMult);
+    bool IsChilled() const { return _chillTimer > 0.f; }
+    // Strong decaying shove away from a blow (Stormclub elite). Rides the normal
+    // velocity channel (ApplyVelocity decays it), so it ends on its own — unlike
+    // StartForcedPush, which locks the player until a wall stops it.
+    void ApplyKnockbackImpulse(Vector2 direction, float speed);
     void GrantInvulnerability(float duration);
     // Persistent damage immunity (map-editor playtest "invincible" mode). Unlike
     // i-frames it never expires and does not flicker the sprite.
@@ -779,6 +786,10 @@ private:
         Vector2 sourcePos{};
     };
     std::vector<PendingBurnTick> _pendingBurnTicks;
+
+    // Chill status (icy enemy hits) — movement multiplier while the timer runs.
+    float _chillTimer = 0.f;
+    float _chillMult  = 1.f;
 
     float _manaRegenAccum      = 0.f;    // fractional accumulator — avoids float drift on int mana
     float _manaRegenMultiplier = 1.0f;   // boosted by upgrades / future store purchases
