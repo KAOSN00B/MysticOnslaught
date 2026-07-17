@@ -10775,7 +10775,12 @@ int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
     // Sparks spray in a cone along the blow (a cut), except a kill bursts radially
     // for a satisfying "pop". Wider cone on crits so big hits feel splashier.
     if (killed)
+    {
         _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor, 12, 360.f);
+        // Extra fast white gibs so the kill flashes/pops (pairs with the death-pop
+        // scale in Enemy::DrawEnemy).
+        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), Color{ 255, 255, 255, 255 }, 8, 520.f);
+    }
     else
         _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor,
                               crit ? 9 : 4, 240.f, hitDir, crit ? 0.9f : 0.6f);

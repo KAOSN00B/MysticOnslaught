@@ -1359,6 +1359,21 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     w *= launchScale;
     h *= launchScale;
 
+    // Death pop (juice): a killed enemy punches up in scale for an instant, then
+    // deflates and fades over the death animation, so the kill reads as a payoff
+    // instead of a flat death frame that just blinks out. Alpha folds into the
+    // sprite tint below.
+    float deathAlpha = 1.f;
+    if (_dying)
+    {
+        float dp = 1.f - (_deathTimer / kDeathAnimDuration);   // 0 at death start -> 1 at end
+        if (dp < 0.f) dp = 0.f; else if (dp > 1.f) dp = 1.f;
+        float deathScale = 1.f + 0.30f * (1.f - dp) - 0.42f * dp;   // ~1.30 -> ~0.58
+        w *= deathScale;
+        h *= deathScale;
+        deathAlpha = 1.f - dp * dp * 0.9f;                     // hold, then fade out late
+    }
+
     Vector2 screenPos = Vector2Subtract(_worldPos, heroWorldPos);
     screenPos.x += kVirtualWidth / 2.f;
     screenPos.y += kVirtualHeight / 2.f - launchLift;
@@ -1416,7 +1431,7 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     float shadowY = screenPos.y + launchLift + baseH * 0.5f + visualOffsetY - 2.f;
     DrawEllipse((int)shadowX, (int)shadowY, baseW * 0.28f, baseH * 0.06f, Fade(BLACK, 0.28f));
 
-    DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, tint);
+    DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, _dying ? Fade(tint, deathAlpha) : tint);
 
     // Graveyard revive invincibility window — pulsing green ring so it's obvious when testing.
     if (_graveReviveInvulTimer > 0.f)
@@ -1461,9 +1476,10 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
                      Vector2{ cx - half, cy }, curseColor);
     }
 
-    if (_health != _maxHealth)
+    // No empty health bar / elite label flashing over the death pop.
+    if (_health != _maxHealth && !_dying)
         DrawHealthBar(screenPos, w, h);
-    if (_isEliteMiniboss)
+    if (_isEliteMiniboss && !_dying)
         DrawEliteLabel(screenPos, w, h);
 }
 

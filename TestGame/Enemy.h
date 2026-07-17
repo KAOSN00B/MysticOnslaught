@@ -622,6 +622,10 @@ protected:
     float _attackDelay = 1.0f;
     float _launchVisualTimer = 0.f;
     bool _launchHoldingHurtPose = false;
+    // Length of the death animation window (mirrors the _deathTimer set in
+    // BaseCharacter::TakeDamage / ResetForSpawn) — used by the death-pop juice in
+    // DrawEnemy to normalise progress. Keep in sync if the death timer changes.
+    static constexpr float kDeathAnimDuration = 0.4f;
     static constexpr float _launchVisualDuration = 0.22f;
     static constexpr float _launchVisualScaleBoost = 0.18f;
     static constexpr float _launchVisualLift = 18.f;
