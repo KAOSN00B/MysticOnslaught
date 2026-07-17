@@ -12,7 +12,6 @@ Texture2D Infernal::_sharedWalkAnim[Infernal::kVariantCount]{};
 Texture2D Infernal::_sharedAttackAnim[Infernal::kVariantCount]{};
 Texture2D Infernal::_sharedTakeDamageAnim[Infernal::kVariantCount]{};
 Texture2D Infernal::_sharedDeathAnim[Infernal::kVariantCount]{};
-Texture2D Infernal::_sharedFireTex{};
 Sound     Infernal::_sharedAttackSound{};
 Sound     Infernal::_sharedHurtSound{};
 Sound     Infernal::_sharedDeathSound{};
@@ -145,47 +144,6 @@ void Infernal::OnMeleeHitPlayer(Character* target)
 }
 
 // =============================================================================
-void Infernal::DrawEnemy(Vector2 heroWorldPos)
-{
-    // Draw the demon normally (sprite, shadow, swing-weight lean, health bar,
-    // elite label, hit flash, death pop — all handled by the base).
-    Enemy::DrawEnemy(heroWorldPos);
-
-    if (!_isActive || _dying || _sharedFireTex.id == 0)
-        return;
-
-    // Ambient fire aura — actual animated flame sprites (the shared 12-frame fire
-    // strip) licking up the demon's lower body, instead of drawn primitives.
-    Vector2 screen = Vector2Subtract(_worldPos, heroWorldPos);
-    screen.x += kVirtualWidth  / 2.f;
-    screen.y += kVirtualHeight / 2.f;
-
-    const float bodyW = _width  * _scale;
-    const float bodyH = _height * _scale;
-    const float footY = screen.y + bodyH * 0.42f;   // roughly the demon's feet
-
-    constexpr int   kFireFrames = 12;                // Hazard_FireTotem = 12x(16x32)
-    constexpr float kFireSrcW   = 16.f, kFireSrcH = 32.f;
-    const int baseFrame = (int)(GetTime() * 14.f);   // ~14 fps flicker
-
-    // Three flames across the base (kept at the sprite's 1:2 aspect so they don't
-    // stretch), each on an offset frame so the fire wall shimmers.
-    const float flameH = bodyH * 0.62f;
-    const float flameW = flameH * 0.5f;
-    const float xoff[3] = { -bodyW * 0.24f, 0.f, bodyW * 0.24f };
-    const float sc[3]   = { 0.8f, 1.05f, 0.8f };
-    for (int i = 0; i < 3; ++i)
-    {
-        int frame = (baseFrame + i * 4) % kFireFrames;
-        Rectangle src{ frame * kFireSrcW, 0.f, kFireSrcW, kFireSrcH };
-        float w = flameW * sc[i];
-        float h = flameH * sc[i];
-        Rectangle dst{ screen.x + xoff[i] - w * 0.5f, footY - h, w, h };
-        DrawTexturePro(_sharedFireTex, src, dst, Vector2{}, 0.f, Fade(WHITE, 0.85f));
-    }
-}
-
-// =============================================================================
 Rectangle Infernal::GetCollisionRec() const
 {
     Rectangle animBodyRect;
@@ -251,7 +209,6 @@ void Infernal::EnsureSharedResourcesLoaded()
         _sharedTakeDamageAnim[variant] = LoadTexture(AssetPath(TextFormat("Enemy/InfernalHurt%s.png",   suffix)).c_str());
         _sharedDeathAnim[variant]      = LoadTexture(AssetPath(TextFormat("Enemy/InfernalDeath%s.png",  suffix)).c_str());
     }
-    _sharedFireTex = LoadTexture(AssetPath("PowerUps/Hazard_FireTotem.png").c_str());
     _sharedAttackSound = LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
     _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
     _sharedDeathSound  = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
@@ -276,8 +233,6 @@ void Infernal::UnloadSharedResources()
         _sharedTakeDamageAnim[variant] = Texture2D{};
         _sharedDeathAnim[variant]      = Texture2D{};
     }
-    UnloadTexture(_sharedFireTex);
-    _sharedFireTex = Texture2D{};
     UnloadSound(_sharedAttackSound);
     UnloadSound(_sharedHurtSound);
     UnloadSound(_sharedDeathSound);

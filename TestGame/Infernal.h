@@ -24,7 +24,6 @@ public:
 
     void SetWaveScale(int wave) override;
     void SetVariantTier(int tier) override;
-    void DrawEnemy(Vector2 heroWorldPos) override;
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule()      const override;
 
@@ -60,7 +59,6 @@ private:
     static Texture2D _sharedAttackAnim[kVariantCount];
     static Texture2D _sharedTakeDamageAnim[kVariantCount];
     static Texture2D _sharedDeathAnim[kVariantCount];
-    static Texture2D _sharedFireTex;   // animated flame strip for the fire aura
     static Sound     _sharedAttackSound;
     static Sound     _sharedHurtSound;
     static Sound     _sharedDeathSound;
