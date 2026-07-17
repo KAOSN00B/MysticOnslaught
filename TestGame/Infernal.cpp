@@ -12,6 +12,7 @@ Texture2D Infernal::_sharedWalkAnim[Infernal::kVariantCount]{};
 Texture2D Infernal::_sharedAttackAnim[Infernal::kVariantCount]{};
 Texture2D Infernal::_sharedTakeDamageAnim[Infernal::kVariantCount]{};
 Texture2D Infernal::_sharedDeathAnim[Infernal::kVariantCount]{};
+Texture2D Infernal::_sharedFireTex{};
 Sound     Infernal::_sharedAttackSound{};
 Sound     Infernal::_sharedHurtSound{};
 Sound     Infernal::_sharedDeathSound{};
@@ -74,12 +75,12 @@ void Infernal::ResetForSpawn(Vector2 pos)
     _isActive          = true;
 
     SetIdleAnimation(false);
-    _scale = 3.4f;                 // hulking — bigger than the normal roster
+    _scale = 4.8f;                 // hulking — on par with the elite Ogre
 
     _health      = 12.f;
     _maxHealth   = 12.f;
     _attackPower = 3.f;
-    _speed       = 95.f;           // slow, heavy anchor
+    _speed       = 150.f;          // heavy, but no longer a crawl
     _expValue    = 8;
 
     _attackRange     = 120.f;
@@ -106,8 +107,6 @@ void Infernal::ResetForSpawn(Vector2 pos)
     _forcedPushDirection = Vector2Zero();
     _forcedPushSpeed     = 0.f;
 
-    _emberTimer = 0.f;
-
     _pendingBurns.clear();
     _waypoints.clear();
     _waypointIndex = 0;
@@ -132,7 +131,7 @@ void Infernal::SetWaveScale(int /*wave*/)
     _health      = 12.f;
     _maxHealth   = 12.f;
     _attackPower = 3.f;
-    _speed       = 95.f;
+    _speed       = 150.f;
     _expValue    = 8;
 }
 
@@ -152,32 +151,37 @@ void Infernal::DrawEnemy(Vector2 heroWorldPos)
     // elite label, hit flash, death pop — all handled by the base).
     Enemy::DrawEnemy(heroWorldPos);
 
-    if (!_isActive || _dying)
+    if (!_isActive || _dying || _sharedFireTex.id == 0)
         return;
 
-    // Ambient fire aura so the horned demon reads as "on fire" without altering
-    // the base draw. A warm glow pools at its feet; a few embers rise off it.
+    // Ambient fire aura — actual animated flame sprites (the shared 12-frame fire
+    // strip) licking up the demon's lower body, instead of drawn primitives.
     Vector2 screen = Vector2Subtract(_worldPos, heroWorldPos);
     screen.x += kVirtualWidth  / 2.f;
     screen.y += kVirtualHeight / 2.f;
 
-    const float drawH = _height * _scale;
-    const float t     = (float)GetTime();
-    const float pulse = sinf(t * 8.f) * 0.5f + 0.5f;
+    const float bodyW = _width  * _scale;
+    const float bodyH = _height * _scale;
+    const float footY = screen.y + bodyH * 0.42f;   // roughly the demon's feet
 
-    // Heat glow at the base.
-    DrawCircleV(Vector2{ screen.x, screen.y + drawH * 0.30f },
-                drawH * 0.30f, Fade(Color{ 255, 90, 25, 255 }, 0.09f + 0.06f * pulse));
-    DrawCircleV(Vector2{ screen.x, screen.y + drawH * 0.30f },
-                drawH * 0.16f, Fade(Color{ 255, 180, 60, 255 }, 0.10f + 0.06f * pulse));
+    constexpr int   kFireFrames = 12;                // Hazard_FireTotem = 12x(16x32)
+    constexpr float kFireSrcW   = 16.f, kFireSrcH = 32.f;
+    const int baseFrame = (int)(GetTime() * 14.f);   // ~14 fps flicker
 
-    // Rising embers.
+    // Three flames across the base (kept at the sprite's 1:2 aspect so they don't
+    // stretch), each on an offset frame so the fire wall shimmers.
+    const float flameH = bodyH * 0.62f;
+    const float flameW = flameH * 0.5f;
+    const float xoff[3] = { -bodyW * 0.24f, 0.f, bodyW * 0.24f };
+    const float sc[3]   = { 0.8f, 1.05f, 0.8f };
     for (int i = 0; i < 3; ++i)
     {
-        float ex = screen.x + (float)GetRandomValue(-18, 18);
-        float ey = screen.y + drawH * 0.20f - (float)GetRandomValue(0, (int)(drawH * 0.55f));
-        DrawCircleV(Vector2{ ex, ey }, (float)GetRandomValue(2, 4),
-                    Fade(Color{ 255, 140, 40, 255 }, 0.55f));
+        int frame = (baseFrame + i * 4) % kFireFrames;
+        Rectangle src{ frame * kFireSrcW, 0.f, kFireSrcW, kFireSrcH };
+        float w = flameW * sc[i];
+        float h = flameH * sc[i];
+        Rectangle dst{ screen.x + xoff[i] - w * 0.5f, footY - h, w, h };
+        DrawTexturePro(_sharedFireTex, src, dst, Vector2{}, 0.f, Fade(WHITE, 0.85f));
     }
 }
 
@@ -190,19 +194,16 @@ Rectangle Infernal::GetCollisionRec() const
     if (_hasTunedCollision)
         return GetTunedCollisionRec();
 
-    float stableHalfW = kInfFrameWidth * _scale * 0.5f;
-    float stableHalfH = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale * 0.5f;
-
-    if (_collisionSize.x == 0.f && stableHalfW > 0.f)
-    {
-        auto* s = const_cast<Infernal*>(this);
-        s->_collisionSize   = { 86.f, 104.f };
-        s->_collisionOffset = { stableHalfW - 43.f, stableHalfH - 52.f };
-    }
+    // Computed live from the current draw scale (not cached) so the body grows
+    // with the sprite — the elite buff / a bigger scale gets a bigger hitbox.
+    float halfW = kInfFrameWidth * _scale * 0.5f;
+    float halfH = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale * 0.5f;
+    float boxW  = halfW * 1.05f;                 // body ~52% of the sprite width
+    float boxH  = halfH * 1.20f;
     return Rectangle{
-        _worldPos.x - stableHalfW + _collisionOffset.x,
-        _worldPos.y - stableHalfH + _collisionOffset.y,
-        _collisionSize.x, _collisionSize.y
+        _worldPos.x - boxW * 0.5f,
+        _worldPos.y - boxH * 0.5f + halfH * 0.12f,   // sit on the body, not the head
+        boxW, boxH
     };
 }
 
@@ -212,17 +213,12 @@ Capsule2D Infernal::GetCapsule() const
     if (GetAnimBodyCapsuleWorld(animBodyCapsule))
         return animBodyCapsule;
 
-    if (_capsuleRadius == 0.f)
-    {
-        auto* s = const_cast<Infernal*>(this);
-        s->_capsuleRadius     = 40.f;
-        s->_capsuleHalfHeight = 18.f;
-        s->_capsuleOffset     = { 0.f, 10.f };
-    }
+    // Live from scale so separation matches the current size.
+    float radius = kInfFrameWidth * _scale * 0.22f;
     return Capsule2D{
-        { _worldPos.x + _capsuleOffset.x, _worldPos.y + _capsuleOffset.y },
-        _capsuleHalfHeight,
-        _capsuleRadius
+        { _worldPos.x, _worldPos.y + radius * 0.25f },
+        18.f,
+        radius
     };
 }
 
@@ -255,6 +251,7 @@ void Infernal::EnsureSharedResourcesLoaded()
         _sharedTakeDamageAnim[variant] = LoadTexture(AssetPath(TextFormat("Enemy/InfernalHurt%s.png",   suffix)).c_str());
         _sharedDeathAnim[variant]      = LoadTexture(AssetPath(TextFormat("Enemy/InfernalDeath%s.png",  suffix)).c_str());
     }
+    _sharedFireTex = LoadTexture(AssetPath("PowerUps/Hazard_FireTotem.png").c_str());
     _sharedAttackSound = LoadSound(AssetPath("Sounds/GS1_Spell_Fire.ogg").c_str());
     _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
     _sharedDeathSound  = LoadSound(AssetPath("Sounds/PlayerDeath.ogg").c_str());
@@ -279,6 +276,8 @@ void Infernal::UnloadSharedResources()
         _sharedTakeDamageAnim[variant] = Texture2D{};
         _sharedDeathAnim[variant]      = Texture2D{};
     }
+    UnloadTexture(_sharedFireTex);
+    _sharedFireTex = Texture2D{};
     UnloadSound(_sharedAttackSound);
     UnloadSound(_sharedHurtSound);
     UnloadSound(_sharedDeathSound);

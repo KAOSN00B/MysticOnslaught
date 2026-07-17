@@ -48,7 +48,6 @@ private:
     void SetIdleAnimation(bool resetFrame);
 
     int   _variantTier = 0;
-    float _emberTimer  = 0.f;   // drives the ambient fire glow flicker
 
     // Burn applied to the player on a fire strike (delay, ticks, dmg/tick).
     static constexpr float kBurnTickDelay   = 0.5f;
@@ -61,6 +60,7 @@ private:
     static Texture2D _sharedAttackAnim[kVariantCount];
     static Texture2D _sharedTakeDamageAnim[kVariantCount];
     static Texture2D _sharedDeathAnim[kVariantCount];
+    static Texture2D _sharedFireTex;   // animated flame strip for the fire aura
     static Sound     _sharedAttackSound;
     static Sound     _sharedHurtSound;
     static Sound     _sharedDeathSound;
