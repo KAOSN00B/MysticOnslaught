@@ -902,6 +902,23 @@ void Character::DrawPlayer(Vector2 cameraPos)
         DashParticles(h, playerScreenCenter);
     }
 
+    // Swing weight (juice): a melee strike leans back a hair (anticipation), then
+    // overshoots forward through the hit and settles. Sprite-only — the shadow
+    // above stays under the feet, and hitboxes / collision / world position are
+    // untouched — so this reads as follow-through without changing gameplay.
+    // Ranged basics (Hunter/Mage/Warlock) don't lunge.
+    if (_attacking && _maxFrames > 0 && _updateTime > 0.f &&
+        _class != PlayerClass::Hunter && _class != PlayerClass::Mage && _class != PlayerClass::Warlock)
+    {
+        float p = ((float)_frame + _runningTime / _updateTime) / (float)_maxFrames;
+        if (p < 0.f) p = 0.f; else if (p > 1.f) p = 1.f;
+        const float antic = 3.f;    // px pulled back during the windup
+        const float peak  = 11.f;   // px of forward overshoot at the strike
+        float swing = (p < 0.3f) ? -antic * (p / 0.3f)
+                                 :  peak  * sinf(((p - 0.3f) / 0.7f) * 3.14159265f);
+        dest.x += (_rightLeft > 0.f ? 1.f : -1.f) * swing;
+    }
+
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, WHITE);
     if (_damageBuffTimer > 0.f)
         DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, Fade(Color{ 255, 45, 35, 255 }, 0.38f));
