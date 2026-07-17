@@ -190,6 +190,7 @@
     <ClCompile Include="BomberImp.cpp" />
     <ClCompile Include="Warchief.cpp" />
     <ClCompile Include="LivingBlade.cpp" />
+    <ClCompile Include="Infernal.cpp" />
     <ClCompile Include="Werewolf.cpp" />
     <ClCompile Include="ChompBug.cpp" />
     <ClCompile Include="Osiris.cpp" />
@@ -282,6 +283,7 @@
     <ClInclude Include="Sporeling.h" />
     <ClInclude Include="Shieldbearer.h" />
     <ClInclude Include="Phantom.h" />
+    <ClInclude Include="Infernal.h" />
     <ClInclude Include="BomberImp.h" />
     <ClInclude Include="Warchief.h" />
     <ClInclude Include="LivingBlade.h" />

@@ -1228,6 +1228,7 @@ bool Enemy::UpdateEliteLunge(float dt)
         if (!_lungeDamageApplied && CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
         {
             _target->TakeDamage((int)_attackPower, _worldPos);
+            OnMeleeHitPlayer(_target);   // elite-lunge contact also applies on-hit status
             _lungeDamageApplied = true;
         }
         _lungeTimer += dt;
@@ -1322,6 +1323,7 @@ void Enemy::HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies)
         if (CheckCollisionRecs(GetAttackCollisionRec(), _target->GetCollisionRec()))
         {
             _target->TakeDamage((int)_attackPower, _worldPos);
+            OnMeleeHitPlayer(_target);   // fire/status enemies burn/etc. on contact
             _damageApplied = true;
             PickApproachOffset();
         }

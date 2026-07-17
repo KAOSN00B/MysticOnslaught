@@ -28,6 +28,7 @@
 #include "TitanGuard.h"
 #include "ToxicVermin.h"
 #include "AncientBear.h"
+#include "Infernal.h"
 #include "EnemyProjectile.h"
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
@@ -125,6 +126,9 @@ private:
     Enemy* SpawnBomberImp(Vector2 pos);
     Enemy* SpawnWarchief(Vector2 pos);
     Enemy* SpawnLivingBlade(Vector2 pos);
+    Enemy* SpawnInfernal(Vector2 pos);
+    // Elite miniboss factory: picks a curated bruiser type, marks it elite.
+    Enemy* SpawnEliteMiniboss(Vector2 pos);
     void SpawnBossForBiome(Vector2 pos);      // picks the boss class for _currentBiome
 
     // Class select + run start
@@ -712,7 +716,7 @@ private:
     bool GenerateHandcraftedDungeon(Biome biome,
                                     std::vector<std::string>& roomIds,
                                     int maxAttempts = 600);
-    Vector2 GetDungeonBottomSpawnPos() const;
+    Vector2 GetDungeonEntranceSpawnPos() const;
     void EnterDungeonShopIfNeeded(const DungeonRoom& room);
     void UpdateSpreadProjectiles(float dt);
     void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);

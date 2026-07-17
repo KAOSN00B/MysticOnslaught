@@ -254,6 +254,7 @@ Engine::~Engine()
     TitanGuard::UnloadSharedResources();
     ToxicVermin::UnloadSharedResources();
     AncientBear::UnloadSharedResources();
+    Infernal::UnloadSharedResources();
     HealPickup::UnloadSharedResources();
     GoldPickup::UnloadSharedResources();
     CellPickup::UnloadSharedResources();
@@ -745,18 +746,31 @@ void Engine::DebugStartRun()
     LoadTilesetForBiome(_currentBiome);
 
     int startIdx = _dungeonGen.GetStartIndex();
-    EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
+    EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonEntranceSpawnPos(), true);
 
     _fadeInTimer = 1.0f;
     _fadeInDuration = 1.0f;
 }
 
 
-Vector2 Engine::GetDungeonBottomSpawnPos() const
+Vector2 Engine::GetDungeonEntranceSpawnPos() const
 {
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
+    float cellW = sw / (float)RoomLayout::kCols;
     float cellH = sh / (float)RoomLayout::kRows;
+    const int startIdx = _dungeonGen.GetStartIndex();
+    const auto& rooms = _dungeonGen.GetRooms();
+    if (startIdx < 0 || startIdx >= (int)rooms.size())
+        return { sw * 0.5f, sh - cellH * 2.2f };
+
+    const DungeonRoom& entrance = rooms[(std::size_t)startIdx];
+    if (entrance.row == 0)
+        return { sw * 0.5f, cellH * 2.2f };
+    if (entrance.col == 0)
+        return { cellW * 2.2f, sh * 0.5f };
+    if (entrance.col == DungeonGen::kGridSize - 1)
+        return { sw - cellW * 2.2f, sh * 0.5f };
     return { sw * 0.5f, sh - cellH * 2.2f };
 }
 
@@ -1004,7 +1018,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _currentRoom = 1;
 
     // Roll this room's affix (Standard combat rooms only) before enemies spawn.
-    if (_prologueActive) _currentRoomAffix = RoomAffix::None;
+    if (_prologueActive || room.startsEmpty) _currentRoomAffix = RoomAffix::None;
     else RollRoomAffix(_dungeonRoomIdx, room.type);
 
     _dungeonEnemiesSpawned = false;
@@ -1021,14 +1035,14 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     // doors open. SpawnDungeonRoomEnemies() then skips them (it early-outs on cleared).
     RoomSpecialType roomSpecial = _dungeonRoomStates[_dungeonRoomIdx].special;
     if (room.type == RoomType::Rest || room.type == RoomType::Store ||
-        (_dungeonGen.IsEntranceRoom(roomIdx) && !_prologueActive) ||
+        (room.startsEmpty && !_prologueActive) ||
         roomSpecial != RoomSpecialType::None)
         _dungeonRoomStates[_dungeonRoomIdx].cleared = true;
 
     // Entering a fresh combat room arms any pending Risk Shrine contract onto the
     // enemies about to spawn; peaceful/cleared rooms clear the room levers instead.
     bool freshCombatRoom = roomSpecial == RoomSpecialType::None
-                        && !(_dungeonGen.IsEntranceRoom(roomIdx) && !_prologueActive)
+                        && !(room.startsEmpty && !_prologueActive)
                         && !_dungeonRoomStates[_dungeonRoomIdx].cleared
                         && (room.type == RoomType::Standard || room.type == RoomType::Elite
                          || room.type == RoomType::Treasure || room.type == RoomType::Boss);
@@ -1197,8 +1211,7 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     }
     else if (type == RoomType::Elite)
     {
-        Enemy* miniboss = SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
-        if (miniboss) miniboss->SetIsEliteMiniboss(true);
+        Enemy* miniboss = SpawnEliteMiniboss(GetDungeonSpawnPos(cellW, cellH));
         _eliteMinibossPtr = miniboss;
         _eliteMechanic    = GetEliteMechanicForRoom(_dungeonRoomIdx);
         _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
@@ -1371,9 +1384,9 @@ Biome Engine::GetBiomeForAct(int act) const
 // Row 0 = entry (Standard), rows 1-4 = branching, row 5 = Boss.
 //
 // Special room guarantee:
-//   All four specials appear exactly once per act across two special rows:
-//     Row 2 (early)  ? Elite + Treasure  (combat/reward, available from the start)
-//     Row 3 (late)   ? Shop  + Rest      (utility/recovery, only after 3 rows of combat)
+//   Combat/reward rooms appear early, with recovery available later:
+//     Row 2 (early)  - Elite + Treasure
+//     Row 3 (late)   - Standard + Rest (Zeph is no longer a dungeon room)
 //   Each row has 4 nodes: 2 specials + 2 Standard fillers.
 //   The 2 special positions are chosen independently per row (out of 4 slots)
 //   so the rewarded lanes shift each run and force different routing decisions.
@@ -1387,14 +1400,12 @@ void Engine::GenerateActMap()
     _mapOpenTimer = 0.f;
 
     // -- 1. Assign specials to rows by type -------------------------------
-    // Row 2 (early) always gets Elite + Treasure ? combat/reward specials.
-    // Row 3 (late, after 3 rows of combat) always gets Shop + Rest ?
-    //   utility/recovery specials that only make sense once the player has
-    //   earned gold and taken some damage.
+    // Row 2 keeps Elite + Treasure. Row 3 offers Rest beside another
+    // Standard route; Zeph is no longer generated inside dungeons.
     // Each pair is randomly swapped so which side of the row each appears on
     // is still unpredictable.
     RoomType row2Pair[2] = { RoomType::Elite,    RoomType::Treasure };
-    RoomType row3Pair[2] = { RoomType::Store,     RoomType::Rest     };
+    RoomType row3Pair[2] = { RoomType::Standard,  RoomType::Rest     };
     if (GetRandomValue(0, 1)) std::swap(row2Pair[0], row2Pair[1]);
     if (GetRandomValue(0, 1)) std::swap(row3Pair[0], row3Pair[1]);
 
@@ -14271,6 +14282,28 @@ Enemy* Engine::SpawnLivingBlade(Vector2 pos)
         [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
 }
 
+Enemy* Engine::SpawnInfernal(Vector2 pos)
+{
+    return SpawnPooledType<Infernal>(_enemies, pos, &Enemy::AsInfernal,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+// Curated elite-bruiser pool. The elite room used to hardcode an Ogre; it now
+// rolls a bruiser type and marks it elite (bigger + the room's elite mechanic).
+// As more pack bruisers are added, extend this table.
+Enemy* Engine::SpawnEliteMiniboss(Vector2 pos)
+{
+    enum { kOgre, kInfernal, kEliteTypeCount };
+    Enemy* miniboss = nullptr;
+    switch (GetRandomValue(0, kEliteTypeCount - 1))
+    {
+    case kInfernal: miniboss = SpawnInfernal(pos); break;
+    default:        miniboss = SpawnOgre(pos);     break;
+    }
+    if (miniboss) miniboss->SetIsEliteMiniboss(true);
+    return miniboss;
+}
+
 // =============================================================================
 // Boss selection per biome — every domain now has its own signature boss.
 // =============================================================================
@@ -14327,7 +14360,7 @@ void Engine::StartMainRun()
     LoadTilesetForBiome(_currentBiome);
 
     int startIdx = _dungeonGen.GetStartIndex();
-    EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
+    EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonEntranceSpawnPos(), true);
 
     _fadeInTimer = 1.0f;
     _fadeInDuration = 1.0f;
@@ -16186,7 +16219,7 @@ void Engine::DrawDungeonMiniMap(float originX, float originY, float cellPx, bool
                      (int)(ry + sq * 0.5f - qFs * 0.5f), qFs, Color{ 235, 220, 160, 200 });
         }
         else if (i == bossIdx)                          icon = &_mapIconBoss;
-        else if (i == startIdx)                         icon = &_mapIconShop;
+        else if (i == startIdx)                         icon = nullptr;
         else if (room.type == RoomType::Elite)          icon = &_mapIconElite;
         else if (room.type == RoomType::Treasure)       icon = &_mapIconTreasure;
         else if (room.type == RoomType::Rest)           icon = &_mapIconRest;
@@ -16376,8 +16409,8 @@ void Engine::SpawnDungeonRoomEnemies()
         return;
     }
 
-    // Non-combat start room - pre-clear so we never try to spawn here again.
-    if ((i == startIdx && !_prologueActive) || type == RoomType::Rest)
+    // An entrance that rolled empty is pre-cleared and remains peaceful.
+    if ((i == startIdx && rooms[i].startsEmpty && !_prologueActive) || type == RoomType::Rest)
     {
         roomState.cleared = true;
         roomState.enemiesInitialized = true;
@@ -16424,8 +16457,8 @@ void Engine::SpawnDungeonRoomEnemies()
     else if (type == RoomType::Elite)
     {
         // Spawn the miniboss and initialize the elite mechanic for this room.
-        Enemy* miniboss = SpawnOgre(GetDungeonSpawnPos(cellW, cellH));
-        if (miniboss) miniboss->SetIsEliteMiniboss(true);
+        // A curated bruiser is rolled (Ogre / Infernal / ...) and marked elite.
+        Enemy* miniboss = SpawnEliteMiniboss(GetDungeonSpawnPos(cellW, cellH));
         ResetEliteRoomRuntime();
         _eliteMinibossPtr = miniboss;
         _eliteMechanic = GetEliteMechanicForRoom(i);
@@ -16760,7 +16793,7 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
     bool alwaysOpen = (_editorPlaytestActive && !_editorPlaytestEnemiesOn)
         || cleared
         || hasSpecial
-        || (roomIdx == _dungeonGen.GetStartIndex() && !_prologueActive)
+        || (room.startsEmpty && !_prologueActive)
         || room.type == RoomType::Rest
         || room.type == RoomType::Treasure
         || room.type == RoomType::Store;
@@ -18534,7 +18567,7 @@ void Engine::OpenWorldMap()
         LoadTilesetForBiome(_currentBiome);
         _dungeonGen.Generate();
         int startIdx = _dungeonGen.GetStartIndex();
-        EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonBottomSpawnPos(), true);
+        EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonEntranceSpawnPos(), true);
         // FadingIn was already set by the fade handler - just reset the timer/alpha.
         _dungeonFadeState = DungeonFadeState::FadingIn;
         _dungeonFadeTimer = kDungeonFadeDuration;
@@ -18618,10 +18651,10 @@ void Engine::UpdateWorldMap(float dt)
     else
         _dungeonGen.Generate();
     int startIdx   = _dungeonGen.GetStartIndex();
-    Vector2 spawnPos = GetDungeonBottomSpawnPos();
+    Vector2 spawnPos = GetDungeonEntranceSpawnPos();
     EnterDungeonRoom(startIdx, DungeonDoorSide::None, spawnPos, true);
 
-    // Fade in to the quiet biome entrance.
+    // Fade in to the newly generated biome entrance.
     _dungeonFadeState = DungeonFadeState::FadingIn;
     _dungeonFadeTimer = kDungeonFadeDuration;
     _dungeonFadeAlpha = 255.f;
