@@ -10785,6 +10785,7 @@ int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
     {
         TriggerScreenShake(3.f, 0.09f);
         TriggerSlowMo(_juiceCritSlowDur, _juiceCritSlowScale);   // crit slowdown (instead of extra push)
+        RequestHitStop(_juiceHitStopMax);                        // crits get the full non-kill freeze too
         // Focus spotlight on the hit — screen pos via the same camera transform
         // the world objects use.
         _critFocusTimer     = _critFocusDur = 0.3f;
@@ -10792,6 +10793,17 @@ int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
         _critFocusScreenPos = Vector2{
             enemyPos.x - (_cameraPos.x - _shakeOffset.x) + kVirtualWidth  * 0.5f,
             enemyPos.y - (_cameraPos.y - _shakeOffset.y) + kVirtualHeight * 0.5f };
+    }
+    else
+    {
+        // Normal landed hit — a short, damage-scaled freeze so the strike bites.
+        // frac = fraction of the target's max HP this hit removed; a big chunk of a
+        // small enemy freezes near the cap, chip damage sits near the floor, and a
+        // huge-HP boss barely stutters (frac ~ 0).
+        const float maxHp = enemy.GetMaxHealthValue();
+        const float frac  = (maxHp > 0.f) ? std::min(1.f, (float)damage / maxHp) : 0.f;
+        const float hitStop = _juiceHitStopMin + frac * (_juiceHitStopMax - _juiceHitStopMin);
+        RequestHitStop(hitStop);
     }
     return damage;
 }

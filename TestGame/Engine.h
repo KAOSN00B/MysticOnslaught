@@ -497,6 +497,12 @@ private:
     float _juiceBossSlowDur    = 0.80f;
     float _juiceBossSlowScale  = 0.30f;
     float _juiceKillHitStop    = 0.07f;
+    // Every landed (non-kill) hit now gets a brief freeze so strikes "bite" instead
+    // of passing through. Scaled by the fraction of the target's max HP removed, so
+    // a chunky blow freezes longer than chip damage — and huge-HP bosses barely
+    // stutter. Clamped to [min, max].
+    float _juiceHitStopMin     = 0.022f;   // floor: even a tiny tick registers
+    float _juiceHitStopMax     = 0.060f;   // cap on a normal (non-kill) hit
     float _juiceShakeMult      = 1.00f;
     float _juiceCritFocus      = 0.55f;
     bool  _juiceForceCrit      = false;   // debug: every player hit crits
