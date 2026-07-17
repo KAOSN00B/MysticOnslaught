@@ -133,6 +133,7 @@ const char* Enemy::GetBestiaryName()
     if (AsToxicVermin())   return "Toxic Vermin";
     if (AsAncientBear())   return "Ancient Bear";
     if (AsWerewolf())      return "Werewolf";
+    if (AsInfernal())      return "Infernal Brute";
     const char* tn = GetTuningName();
     return tn ? tn : "Grunt";
 }

@@ -109,6 +109,7 @@ namespace
             { "Bomber Imp",  { DebugActionKind::SpawnNewEnemy, 6 } },
             { "Warchief",    { DebugActionKind::SpawnNewEnemy, 7 } },
             { "Living Blade",{ DebugActionKind::SpawnNewEnemy, 8 } },
+            { "Infernal",    { DebugActionKind::SpawnNewEnemy, 9 } },
         };
     }
 

@@ -14802,11 +14802,10 @@ bool Engine::RestoreDungeonRoomEnemyState(int roomIdx)
         if (spawned)
         {
             anySpawned = true;
-            if (snapshot.type == "EliteOgre")
-            {
-                spawned->SetIsEliteMiniboss(true);
+            // The elite buff is re-applied inside SpawnDungeonSnapshotEnemy for
+            // any "Elite_<base>" survivor; just re-point the room's elite handle.
+            if (spawned->IsEliteMiniboss())
                 _eliteMinibossPtr = spawned;
-            }
         }
         else if (snapshot.type == "Molarbeast")
         {
@@ -14865,7 +14864,9 @@ bool Engine::RestoreDungeonRoomEnemyState(int roomIdx)
 
 std::string Engine::GetDungeonSnapshotType(Enemy& enemy) const
 {
-    if (enemy.IsEliteMiniboss()) return "EliteOgre";
+    // Elites are stored as "Elite_<base>" so the real elite type (Ogre, Infernal,
+    // ...) survives a room re-entry instead of always restoring as an Ogre.
+    auto baseName = [&]() -> std::string {
     if (enemy.AsCyclops()) return "Cyclops";
     if (enemy.AsOgre()) return "Ogre";
     if (enemy.AsMolarbeast()) return "Molarbeast";
@@ -14888,13 +14889,29 @@ std::string Engine::GetDungeonSnapshotType(Enemy& enemy) const
     if (enemy.AsAbyssSlime()) return "AbyssSlime";
     if (enemy.AsPumpkinJack()) return "PumpkinJack";
     if (enemy.AsMinotaur()) return "Minotaur";
+    if (enemy.AsInfernal()) return "Infernal";
     return "Basic";
+    };
+    std::string base = baseName();
+    return enemy.IsEliteMiniboss() ? ("Elite_" + base) : base;
 }
 
 Enemy* Engine::SpawnDungeonSnapshotEnemy(const DungeonEnemySnapshot& snapshot)
 {
+    // Elites are stored as "Elite_<base>": spawn the base type, then re-apply the
+    // elite buff so the actual elite type is preserved across a room re-entry.
+    if (snapshot.type.rfind("Elite_", 0) == 0)
+    {
+        DungeonEnemySnapshot base = snapshot;
+        base.type = snapshot.type.substr(6);
+        Enemy* elite = SpawnDungeonSnapshotEnemy(base);
+        if (elite) elite->SetIsEliteMiniboss(true);
+        return elite;
+    }
+
     const Vector2 pos = snapshot.pos;
     if (snapshot.type == "Basic") return SpawnBasicEnemy(pos);
+    if (snapshot.type == "Infernal") return SpawnInfernal(pos);
     if (snapshot.type == "Cyclops") return SpawnCyclops(pos);
     if (snapshot.type == "Ogre") return SpawnOgre(pos);
     if (snapshot.type == "EliteOgre") return SpawnOgre(pos);
@@ -14960,6 +14977,7 @@ void Engine::DebugSpawnNewEnemy(int index, Vector2 pos)
     case 6: SpawnBomberImp(pos);             break;
     case 7: SpawnWarchief(pos);              break;
     case 8: SpawnLivingBlade(pos);           break;
+    case 9: SpawnInfernal(pos);              break;
     default: break;
     }
 }
