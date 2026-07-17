@@ -350,10 +350,33 @@ void VFXManager::SpawnHazardDecal(Texture2D* strip, Vector2 worldPos, int frameC
 
 void VFXManager::SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed)
 {
+    // Radial burst (kept for blocked-hit / non-directional callers).
+    SpawnImpactBurst(worldPos, color, count, speed, Vector2{ 0.f, 0.f }, 0.f);
+}
+
+void VFXManager::SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed,
+                                  Vector2 direction, float spreadRadians)
+{
+    const float dirLen = Vector2Length(direction);
+    const bool  directional = dirLen > 0.001f;
+    const float baseAng = directional ? atan2f(direction.y, direction.x) : 0.f;
+
     for (int i = 0; i < count; i++)
     {
-        float ang = (float)GetRandomValue(0, 628) / 100.f;
-        float spd = speed * (0.4f + (float)GetRandomValue(0, 100) / 100.f * 0.6f);
+        float ang;
+        float spd;
+        if (directional)
+        {
+            // Bias into a cone around the blow's travel — tighter, faster spray so
+            // it reads as a cut kicking debris off the hit.
+            ang = baseAng + ((float)GetRandomValue(-100, 100) / 100.f) * spreadRadians;
+            spd = speed * (0.6f + (float)GetRandomValue(0, 100) / 100.f * 0.7f);
+        }
+        else
+        {
+            ang = (float)GetRandomValue(0, 628) / 100.f;
+            spd = speed * (0.4f + (float)GetRandomValue(0, 100) / 100.f * 0.6f);
+        }
         Spark s;
         s.pos   = worldPos;
         s.vel   = Vector2{ cosf(ang) * spd, sinf(ang) * spd };

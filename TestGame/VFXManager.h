@@ -61,6 +61,11 @@ public:
 
     // A short burst of impact sparks flying out from a hit/kill.
     void SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed);
+    // Directional variant: sparks spray in a cone around `direction` (the way the
+    // blow travelled) instead of a full circle, so a hit reads as a cut/impact
+    // rather than an explosion. A near-zero direction falls back to radial.
+    void SpawnImpactBurst(Vector2 worldPos, Color color, int count, float speed,
+                          Vector2 direction, float spreadRadians);
 
     // Generic one-shot sprite FX from any 64px-cell horizontal strip (boss impacts,
     // ground bursts, etc.). Plays once and removes itself. The reusable path the FX

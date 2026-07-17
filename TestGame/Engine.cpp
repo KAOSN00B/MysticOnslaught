@@ -10766,14 +10766,19 @@ int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
     event.damageOverTime = damageOverTime;
     _damageNumbers.Submit(event);
 
+    // Hit direction — away from the player, so melee/ranged both shove the target
+    // outward. Reused for the directional sparks and the recoil below.
+    Vector2 hitDir = Vector2Subtract(enemy.GetWorldPos(), _player.GetWorldPos());
+
     const Color impactColor = crit ? Color{ 255, 205, 45, 255 }
                                    : Color{ 230, 45, 50, 255 };
-    _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor,
-                          killed ? 12 : (crit ? 9 : 4), killed ? 360.f : 240.f);
-
-    // Hit direction — away from the player, so melee/ranged both shove the target
-    // outward. Reused for the recoil below (and the directional sparks).
-    Vector2 hitDir = Vector2Subtract(enemy.GetWorldPos(), _player.GetWorldPos());
+    // Sparks spray in a cone along the blow (a cut), except a kill bursts radially
+    // for a satisfying "pop". Wider cone on crits so big hits feel splashier.
+    if (killed)
+        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor, 12, 360.f);
+    else
+        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor,
+                              crit ? 9 : 4, 240.f, hitDir, crit ? 0.9f : 0.6f);
 
     // Recoil: shove non-boss enemies away from the blow so hits have weight. Bosses
     // stay planted (a shovable boss feels wrong); elites take a reduced shove.
