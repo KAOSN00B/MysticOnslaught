@@ -29,6 +29,10 @@
 #include "ToxicVermin.h"
 #include "AncientBear.h"
 #include "Infernal.h"
+#include "Bonechill.h"
+#include "Stormclub.h"
+#include "Venomfang.h"
+#include "Ragebrute.h"
 #include "EnemyProjectile.h"
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
@@ -127,6 +131,10 @@ private:
     Enemy* SpawnWarchief(Vector2 pos);
     Enemy* SpawnLivingBlade(Vector2 pos);
     Enemy* SpawnInfernal(Vector2 pos);
+    Enemy* SpawnBonechill(Vector2 pos);
+    Enemy* SpawnStormclub(Vector2 pos);
+    Enemy* SpawnVenomfang(Vector2 pos);
+    Enemy* SpawnRagebrute(Vector2 pos);
     // Elite miniboss factory: picks a curated bruiser type, marks it elite.
     Enemy* SpawnEliteMiniboss(Vector2 pos);
     void SpawnBossForBiome(Vector2 pos);      // picks the boss class for _currentBiome
@@ -1425,6 +1433,7 @@ private:
         std::vector<DungeonEnemySnapshot> survivors;
         std::vector<DungeonHazardSnapshot> hazards;
         bool hazardsInitialized = false;  // first-visit roll already happened
+        float holdoutTimeRemaining = -1.f;
 
         // Room-events / decision-room state (rolled at generation time, seeded by
         // the dungeon seed, so it never rerolls on re-entry and dailies match).
@@ -1455,6 +1464,10 @@ private:
     DungeonView _dungeonView          = DungeonView::Graph;
     int        _dungeonRoomIdx = -1;
     RoomLayout _dungeonRoomLayout{};
+    RoomCombatCapacity _roomCombatCapacity{};
+    EncounterProfile _currentEncounterProfile = EncounterProfile::Skirmish;
+    float _roomObjectiveTimer = 0.f;
+    bool _roomObjectiveComplete = false;
     Vector2   _dungeonRoomEntrySpawnPos{};
     float     _dungeonFallRecoveryCooldown = 0.f;
     Vector2   _dungeonLastSafePos{};        // last player pos off any pit (edge respawn)

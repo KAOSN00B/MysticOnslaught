@@ -191,6 +191,10 @@
     <ClCompile Include="Warchief.cpp" />
     <ClCompile Include="LivingBlade.cpp" />
     <ClCompile Include="Infernal.cpp" />
+    <ClCompile Include="Bonechill.cpp" />
+    <ClCompile Include="Stormclub.cpp" />
+    <ClCompile Include="Venomfang.cpp" />
+    <ClCompile Include="Ragebrute.cpp" />
     <ClCompile Include="Werewolf.cpp" />
     <ClCompile Include="ChompBug.cpp" />
     <ClCompile Include="Osiris.cpp" />
@@ -284,6 +288,10 @@
     <ClInclude Include="Shieldbearer.h" />
     <ClInclude Include="Phantom.h" />
     <ClInclude Include="Infernal.h" />
+    <ClInclude Include="Bonechill.h" />
+    <ClInclude Include="Stormclub.h" />
+    <ClInclude Include="Venomfang.h" />
+    <ClInclude Include="Ragebrute.h" />
     <ClInclude Include="BomberImp.h" />
     <ClInclude Include="Warchief.h" />
     <ClInclude Include="LivingBlade.h" />

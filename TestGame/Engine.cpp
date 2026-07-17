@@ -255,6 +255,10 @@ Engine::~Engine()
     ToxicVermin::UnloadSharedResources();
     AncientBear::UnloadSharedResources();
     Infernal::UnloadSharedResources();
+    Bonechill::UnloadSharedResources();
+    Stormclub::UnloadSharedResources();
+    Venomfang::UnloadSharedResources();
+    Ragebrute::UnloadSharedResources();
     HealPickup::UnloadSharedResources();
     GoldPickup::UnloadSharedResources();
     CellPickup::UnloadSharedResources();
@@ -1013,6 +1017,17 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     }
 
     _currentRoomType = room.type;
+    _currentEncounterProfile = room.encounterProfile;
+    _roomObjectiveComplete = false;
+    _roomObjectiveTimer = 0.f;
+    if (_currentEncounterProfile == EncounterProfile::Holdout)
+    {
+        DungeonRoomState& objectiveState = _dungeonRoomStates[_dungeonRoomIdx];
+        if (objectiveState.holdoutTimeRemaining < 0.f)
+            objectiveState.holdoutTimeRemaining = 30.f;
+        _roomObjectiveTimer = objectiveState.holdoutTimeRemaining;
+        _roomObjectiveComplete = _roomObjectiveTimer <= 0.f;
+    }
     _currentRoom = (_currentRoomType == RoomType::Boss) ? 6 : std::max(1, _currentRoom + 1);
     if (resetRoomStates)
         _currentRoom = 1;
@@ -1031,6 +1046,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _waveIntroTimer = 0.f;
 
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+    _roomCombatCapacity = RoomCapacityAnalyzer::Analyze(_dungeonRoomLayout, _tileDefs);
     // Decision rooms (Risk Shrine, …) are peaceful like Rest/Store: no enemies,
     // doors open. SpawnDungeonRoomEnemies() then skips them (it early-outs on cleared).
     RoomSpecialType roomSpecial = _dungeonRoomStates[_dungeonRoomIdx].special;
@@ -14288,17 +14304,46 @@ Enemy* Engine::SpawnInfernal(Vector2 pos)
         [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
 }
 
+Enemy* Engine::SpawnBonechill(Vector2 pos)
+{
+    return SpawnPooledType<Bonechill>(_enemies, pos, &Enemy::AsBonechill,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnStormclub(Vector2 pos)
+{
+    return SpawnPooledType<Stormclub>(_enemies, pos, &Enemy::AsStormclub,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnVenomfang(Vector2 pos)
+{
+    return SpawnPooledType<Venomfang>(_enemies, pos, &Enemy::AsVenomfang,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
+Enemy* Engine::SpawnRagebrute(Vector2 pos)
+{
+    return SpawnPooledType<Ragebrute>(_enemies, pos, &Enemy::AsRagebrute,
+        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
+}
+
 // Curated elite-bruiser pool. The elite room used to hardcode an Ogre; it now
-// rolls a bruiser type and marks it elite (bigger + the room's elite mechanic).
-// As more pack bruisers are added, extend this table.
+// rolls one of six bruisers, each with its own identity — Ogre (throws), the
+// Infernal (fire/burn), Bonechill (ice/slow), Stormclub (storm/knockback),
+// Venomfang (poison DoT), and the Ragebrute (half-HP enrage).
 Enemy* Engine::SpawnEliteMiniboss(Vector2 pos)
 {
-    enum { kOgre, kInfernal, kEliteTypeCount };
+    enum { kOgre, kInfernal, kBonechill, kStormclub, kVenomfang, kRagebrute, kEliteTypeCount };
     Enemy* miniboss = nullptr;
     switch (GetRandomValue(0, kEliteTypeCount - 1))
     {
-    case kInfernal: miniboss = SpawnInfernal(pos); break;
-    default:        miniboss = SpawnOgre(pos);     break;
+    case kInfernal:  miniboss = SpawnInfernal(pos);  break;
+    case kBonechill: miniboss = SpawnBonechill(pos); break;
+    case kStormclub: miniboss = SpawnStormclub(pos); break;
+    case kVenomfang: miniboss = SpawnVenomfang(pos); break;
+    case kRagebrute: miniboss = SpawnRagebrute(pos); break;
+    default:         miniboss = SpawnOgre(pos);      break;
     }
     if (miniboss) miniboss->SetIsEliteMiniboss(true);
     return miniboss;
@@ -14890,6 +14935,10 @@ std::string Engine::GetDungeonSnapshotType(Enemy& enemy) const
     if (enemy.AsPumpkinJack()) return "PumpkinJack";
     if (enemy.AsMinotaur()) return "Minotaur";
     if (enemy.AsInfernal()) return "Infernal";
+    if (enemy.AsBonechill()) return "Bonechill";
+    if (enemy.AsStormclub()) return "Stormclub";
+    if (enemy.AsVenomfang()) return "Venomfang";
+    if (enemy.AsRagebrute()) return "Ragebrute";
     return "Basic";
     };
     std::string base = baseName();
@@ -14912,6 +14961,10 @@ Enemy* Engine::SpawnDungeonSnapshotEnemy(const DungeonEnemySnapshot& snapshot)
     const Vector2 pos = snapshot.pos;
     if (snapshot.type == "Basic") return SpawnBasicEnemy(pos);
     if (snapshot.type == "Infernal") return SpawnInfernal(pos);
+    if (snapshot.type == "Bonechill") return SpawnBonechill(pos);
+    if (snapshot.type == "Stormclub") return SpawnStormclub(pos);
+    if (snapshot.type == "Venomfang") return SpawnVenomfang(pos);
+    if (snapshot.type == "Ragebrute") return SpawnRagebrute(pos);
     if (snapshot.type == "Cyclops") return SpawnCyclops(pos);
     if (snapshot.type == "Ogre") return SpawnOgre(pos);
     if (snapshot.type == "EliteOgre") return SpawnOgre(pos);
@@ -14977,7 +15030,11 @@ void Engine::DebugSpawnNewEnemy(int index, Vector2 pos)
     case 6: SpawnBomberImp(pos);             break;
     case 7: SpawnWarchief(pos);              break;
     case 8: SpawnLivingBlade(pos);           break;
-    case 9: SpawnInfernal(pos);              break;
+    case 9:  SpawnInfernal(pos);             break;
+    case 10: SpawnBonechill(pos);            break;
+    case 11: SpawnStormclub(pos);            break;
+    case 12: SpawnVenomfang(pos);            break;
+    case 13: SpawnRagebrute(pos);            break;
     default: break;
     }
 }
@@ -16045,8 +16102,18 @@ void Engine::QueueRoomIntroBanner()
     case RoomType::Store:
         break;   // Zeph's shop has its own intro flow
     default:
-        // Standard room: silent — unless an affix makes it an exception.
-        if (_currentRoomAffix != RoomAffix::None)
+        if (room.encounterProfile == EncounterProfile::Holdout)
+        {
+            _roomIntroTitle = "HOLDOUT";
+            _roomIntroSub = "Survive until the enemy force withdraws";
+        }
+        else if (room.encounterProfile == EncounterProfile::Swarm)
+        {
+            _roomIntroTitle = "SWARM";
+            _roomIntroSub = "Fragile enemies will arrive in waves";
+        }
+        // Ordinary Standard rooms remain silent unless an affix makes them an exception.
+        else if (_currentRoomAffix != RoomAffix::None)
         {
             const RoomAffixDef& a = GetRoomAffixDef(_currentRoomAffix);
             _roomIntroTitle = a.name;
@@ -16392,6 +16459,14 @@ void Engine::SpawnDungeonRoomEnemies()
     int bossIdx  = _dungeonGen.GetBossIndex();
     RoomType type = rooms[i].type;
 
+    if (rooms[i].encounterProfile == EncounterProfile::Holdout)
+    {
+        if (roomState.holdoutTimeRemaining < 0.f)
+            roomState.holdoutTimeRemaining = 30.f;
+        _roomObjectiveTimer = roomState.holdoutTimeRemaining;
+        _roomObjectiveComplete = _roomObjectiveTimer <= 0.f;
+    }
+
     if (_prologueActive)
     {
         _roomHazards.ClearRoom();
@@ -16584,17 +16659,21 @@ void Engine::SpawnDungeonRoomEnemies()
         encounterRequest.seed = static_cast<std::uint32_t>(GetRandomValue(1, 0x7ffffffe));
         encounterRequest.hazardPressure = _roomHazards.TotalPressureCost();
         encounterRequest.populationBonus = zoneBonus + (_currentBiome == Biome::DemonsInsides ? 2 : 0);
-        encounterRequest.swarm = _currentRoomAffix == RoomAffix::Swarm;
+        encounterRequest.profile = rooms[i].encounterProfile;
+        encounterRequest.capacity = _roomCombatCapacity;
+        encounterRequest.learnedAbilityCount = _player.GetLearnedCount();
+        encounterRequest.swarm = _currentRoomAffix == RoomAffix::Swarm ||
+                                 rooms[i].encounterProfile == EncounterProfile::Swarm;
         EncounterPlan encounter = EncounterPlanner::Build(encounterRequest);
         _roomPressureSpent = encounter.debug.totalPressure;
-        _roomPressureCapDbg = Balance::Pressure::kDangerCap[tierIdx];
-        _dungeonOpeningCap = Balance::Pressure::kOpeningBodyCap[tierIdx];
+        _roomPressureCapDbg = encounter.debug.pressureCap;
+        _dungeonOpeningCap = encounter.debug.openingBodyCap;
         const int openingCount = static_cast<int>(encounter.opening.size());
         _dungeonReinforcements = encounter.reinforcements;
         _dungeonReinforcementTimer = Balance::Pressure::kReinforceInterval;
         if (_debug.IsActive())
             TraceLog(LOG_INFO, "ROOM PRESSURE tier %d: %d/%d (bodies %d, opening %d, reinforcements %d)",
-                     tierIdx, encounter.debug.totalPressure, Balance::Pressure::kDangerCap[tierIdx],
+                     tierIdx, encounter.debug.totalPressure, encounter.debug.pressureCap,
                      encounter.debug.plannedPopulation, openingCount, (int)_dungeonReinforcements.size());
 
         // Ancient Castle: spawn in a tight cluster so enemies charge together.
@@ -16620,10 +16699,8 @@ void Engine::SpawnDungeonRoomEnemies()
                                   GetDungeonSpawnPos(cellW, cellH), cellW, cellH);
         }
 
-        // Cyclops: rare early, moderate mid, common late.
-        int cyclopsRoll = tier == 0 ? 4 : (tier == 1 ? 2 : 1);   // 1-in-N chance
-        if (GetRandomValue(0, cyclopsRoll) == 0)
-            SpawnCyclops(GetDungeonSpawnPos(cellW, cellH));
+        // Heavy enemies are selected by EncounterPlanner. Spawning an extra
+        // Cyclops here bypassed the room's geometry and specialist caps.
     }
 
     // Graveyard: every non-boss enemy gets a one-time revive.
@@ -20163,6 +20240,45 @@ void Engine::UpdateDungeonRun(float dt)
             _gameState          = GameState::LevelUpChoice;
         }
 
+        // Holdout rooms are won by surviving the clock, not by exhausting a
+        // fixed body count. Refill only after the field is empty so the room
+        // remains pressuring without exceeding its geometry-derived active cap.
+        if (_dungeonEnemiesSpawned &&
+            _currentEncounterProfile == EncounterProfile::Holdout &&
+            !_dungeonScrolling && !_roomObjectiveComplete)
+        {
+            _roomObjectiveTimer = std::max(0.f, _roomObjectiveTimer - dt);
+            _dungeonRoomStates[_dungeonRoomIdx].holdoutTimeRemaining = _roomObjectiveTimer;
+            if (_roomObjectiveTimer <= 0.f)
+            {
+                _roomObjectiveComplete = true;
+                _dungeonReinforcements.clear();
+                for (auto& enemy : _enemies)
+                    if (enemy->IsActive()) enemy->SetActive(false);
+                _enemyProjectiles.clear();
+                _cyclopsLasers.clear();
+                _lavaBalls.clear();
+                _poisonClouds.clear();
+                _roomHazards.ClearRoom();
+                _vfx.SpawnFloatingLabel(
+                    { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.30f },
+                    "HOLDOUT COMPLETE", GOLD, 1.7f);
+            }
+            else if (GetActiveEnemyCount() == 0 && _dungeonReinforcements.empty())
+            {
+                const int refillCount = std::clamp(_dungeonOpeningCap / 2, 2, 4);
+                for (int n = 0; n < refillCount; ++n)
+                {
+                    EncounterSpawnEntry entry{};
+                    entry.kind = (n % 2 == 0) ? EnemySpawnKind::Shadow
+                                              : EnemySpawnKind::Sporeling;
+                    entry.role = EnemyRole::Grunt;
+                    _dungeonReinforcements.push_back(entry);
+                }
+                _dungeonReinforcementTimer = 0.f;
+            }
+        }
+
         // -- Reinforcement waves (see Balance::Pressure) --------------------------
         // Queued surplus bodies stream in when the field thins out or the wave
         // timer fires, so late-run populations pressure the player continuously
@@ -20175,7 +20291,6 @@ void Engine::UpdateDungeonRun(float dt)
                            (activeEnemies <= Balance::Pressure::kReinforceRefillActive);
             if (release)
             {
-                const int tierIdx = std::clamp(_roomEncounterTier, 0, 2);
                 auto rolePressure = [](EnemyRole role) {
                     switch (role)
                     {
@@ -20191,7 +20306,7 @@ void Engine::UpdateDungeonRun(float dt)
                         activePressure += rolePressure(enemy->GetEncounterRole());
 
                 const int bodySlots = std::max(0, _dungeonOpeningCap - activeEnemies);
-                int pressureSlots = std::max(0, Balance::Pressure::kDangerCap[tierIdx]
+                int pressureSlots = std::max(0, _roomPressureCapDbg
                                                 - _roomHazards.TotalPressureCost() - activePressure);
                 int waveSize = 0;
                 float waveCellW = (float)kVirtualWidth  / (float)RoomLayout::kCols;
@@ -20223,6 +20338,9 @@ void Engine::UpdateDungeonRun(float dt)
             bool allDead = _dungeonReinforcements.empty();   // waves still pending = not cleared
             for (const auto& e : _enemies)
                 if (e->IsActive()) { allDead = false; break; }
+            if (_currentEncounterProfile == EncounterProfile::Holdout &&
+                !_roomObjectiveComplete)
+                allDead = false;
             if (allDead)
             {
                 if (_prologueActive)
@@ -20607,6 +20725,25 @@ void Engine::DrawDungeonRun()
             DrawText(visualName.c_str(), (int)(sw * 0.5f - visualW * 0.5f), 44, 16,
                      Fade(RAYWHITE, 0.65f));
         }
+        if (_debug.IsActive())
+        {
+            const char* profile = "SKIRMISH";
+            switch (_currentEncounterProfile)
+            {
+            case EncounterProfile::Assault: profile = "ASSAULT"; break;
+            case EncounterProfile::Swarm: profile = "SWARM"; break;
+            case EncounterProfile::Holdout: profile = "HOLDOUT"; break;
+            default: break;
+            }
+            const char* capacity = TextFormat(
+                "%s | %s CAP | OPEN %d / TOTAL %d | WALK %d",
+                profile, RoomCapacityAnalyzer::BandName(_roomCombatCapacity.band),
+                _roomCombatCapacity.openingBodyCap, _roomCombatCapacity.totalBodyCap,
+                _roomCombatCapacity.connectedTiles);
+            const int capacityW = MeasureText(capacity, 15);
+            DrawText(capacity, (int)(sw * 0.5f - capacityW * 0.5f), 64, 15,
+                     Fade(Color{ 160, 220, 255, 255 }, 0.82f));
+        }
     };
 
     // -- Play view - tile room with live player --------------------------------
@@ -20946,6 +21083,23 @@ void Engine::DrawDungeonRun()
         if (!_dungeonScrolling)
         {
             DrawHUD();
+
+            if (_currentEncounterProfile == EncounterProfile::Holdout &&
+                _dungeonEnemiesSpawned && !_roomObjectiveComplete)
+            {
+                const char* objective = TextFormat("SURVIVE  %.1f", _roomObjectiveTimer);
+                const int objectiveFs = 30;
+                const int objectiveW = MeasureText(objective, objectiveFs);
+                Rectangle objectiveBox{
+                    sw * 0.5f - objectiveW * 0.5f - 18.f, 72.f,
+                    (float)objectiveW + 36.f, 46.f
+                };
+                DrawRectangleRounded(objectiveBox, 0.18f, 6, Fade(BLACK, 0.82f));
+                DrawRectangleRoundedLines(objectiveBox, 0.18f, 6,
+                                          Color{ 255, 180, 70, 230 });
+                DrawText(objective, (int)(sw * 0.5f - objectiveW * 0.5f), 80,
+                         objectiveFs, RAYWHITE);
+            }
 
             // Polished dungeon HUD: intro banner (temporary), badge (special
             // rooms only), modifier pills (top-right, nothing when empty),

@@ -110,6 +110,10 @@ namespace
             { "Warchief",    { DebugActionKind::SpawnNewEnemy, 7 } },
             { "Living Blade",{ DebugActionKind::SpawnNewEnemy, 8 } },
             { "Infernal",    { DebugActionKind::SpawnNewEnemy, 9 } },
+            { "Bonechill",   { DebugActionKind::SpawnNewEnemy, 10 } },
+            { "Stormclub",   { DebugActionKind::SpawnNewEnemy, 11 } },
+            { "Venomfang",   { DebugActionKind::SpawnNewEnemy, 12 } },
+            { "Ragebrute",   { DebugActionKind::SpawnNewEnemy, 13 } },
         };
     }
 

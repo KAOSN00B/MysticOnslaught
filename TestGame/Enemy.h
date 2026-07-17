@@ -31,6 +31,10 @@ class TitanGuard;
 class ToxicVermin;
 class AncientBear;
 class Infernal;
+class Bonechill;
+class Stormclub;
+class Venomfang;
+class Ragebrute;
 
 // ── Encounter roles ───────────────────────────────────────────────────────────
 // Lightweight tactical role used by the encounter director to compose fights and
@@ -318,6 +322,10 @@ public:
     virtual AncientBear* AsAncientBear() { return nullptr; }
     virtual Werewolf* AsWerewolf() { return nullptr; }
     virtual Infernal* AsInfernal() { return nullptr; }
+    virtual Bonechill* AsBonechill() { return nullptr; }
+    virtual Stormclub* AsStormclub() { return nullptr; }
+    virtual Venomfang* AsVenomfang() { return nullptr; }
+    virtual Ragebrute* AsRagebrute() { return nullptr; }
 
     // Called once per landed melee hit on the player, right after the damage is
     // dealt (see HandleAttack / the elite lunge). Default does nothing; fire/
