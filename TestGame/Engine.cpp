@@ -10771,6 +10771,19 @@ int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
     _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor,
                           killed ? 12 : (crit ? 9 : 4), killed ? 360.f : 240.f);
 
+    // Hit direction — away from the player, so melee/ranged both shove the target
+    // outward. Reused for the recoil below (and the directional sparks).
+    Vector2 hitDir = Vector2Subtract(enemy.GetWorldPos(), _player.GetWorldPos());
+
+    // Recoil: shove non-boss enemies away from the blow so hits have weight. Bosses
+    // stay planted (a shovable boss feels wrong); elites take a reduced shove.
+    if (!killed && !isBoss)
+    {
+        const float baseSpeed = crit ? 520.f : 340.f;
+        const float speed = baseSpeed * (enemy.IsEliteMiniboss() ? 0.45f : 1.f);
+        enemy.ApplyHitKnockback(hitDir, speed);
+    }
+
     if (killed)
     {
         TriggerScreenShake(isBoss ? 9.f : 6.5f, isBoss ? 0.35f : 0.18f);

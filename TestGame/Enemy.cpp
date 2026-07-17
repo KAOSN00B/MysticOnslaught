@@ -653,6 +653,20 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
 
         HandleMovement(dt, navigationTarget, hasNavigationTarget, enemies, propCenters);
         HandleAttack(enemies);
+
+        // Hit knockback — recoil from a landed player hit. Moves the body directly
+        // (Engine's collision pass still resolves walls/props afterwards) and
+        // suppresses nav pursuit for the brief stagger so the shove actually reads
+        // instead of the enemy walking straight back through it.
+        if (_hitKnockbackTimer > 0.f)
+        {
+            _hitKnockbackTimer -= dt;
+            _worldPos = Vector2Add(_worldPos, Vector2Scale(_hitKnockbackVel, dt));
+            float decay = 1.f - kHitKnockbackDecay * dt;
+            if (decay < 0.f) decay = 0.f;
+            _hitKnockbackVel = Vector2Scale(_hitKnockbackVel, decay);
+            _velocity = Vector2Zero();
+        }
     }
 
     HandleAnimation(dt);
@@ -1737,6 +1751,21 @@ void Enemy::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
     {
         _attacking = false;
     }
+}
+
+void Enemy::ApplyHitKnockback(Vector2 dir, float speed)
+{
+    // Don't shove something the environment already owns (a fall/throw) or that is
+    // already dead — that would fight those systems or move a corpse.
+    if (_dying || !IsAlive() || _pitFalling || _forcedPushActive)
+        return;
+
+    const float len = Vector2Length(dir);
+    if (len < 0.001f || speed <= 0.f)
+        return;
+
+    _hitKnockbackVel   = Vector2Scale(dir, speed / len);   // normalise * speed
+    _hitKnockbackTimer = kHitKnockbackDuration;
 }
 
 void Enemy::UpdateLaunchVisual(float dt)

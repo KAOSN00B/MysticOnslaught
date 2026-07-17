@@ -205,6 +205,15 @@ public:
     }
     virtual void ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation);
 
+    // ── Hit knockback (juice) ────────────────────────────────────────────────
+    // A short shove away from a landed player hit + a brief nav-stagger, so a
+    // struck enemy visibly recoils instead of standing planted. Rides its own
+    // timer (HandleMovement rewrites _velocity every frame, so an impulse into
+    // _velocity would be clobbered). Lighter than ApplyExternalImpulse, which is
+    // the heavy "launch/fling" used by ogre throws. `dir` need not be normalised.
+    void ApplyHitKnockback(Vector2 dir, float speed);
+    bool IsHitStaggered() const { return _hitKnockbackTimer > 0.f; }
+
     // ── Shared status effects (ARPG combat-identity pass) ───────────────────────
     // Any class can apply these via the same funcs; bosses take reduced durations
     // (resistance, not immunity — see kBossStatusDurMult) so control effects stay
@@ -585,6 +594,13 @@ protected:
     bool    _forcedPushActive    = false;
     Vector2 _forcedPushDirection = {};
     float   _forcedPushSpeed     = 0.f;
+
+    // Hit knockback (see ApplyHitKnockback). Independent of _velocity/nav so a
+    // struck enemy recoils cleanly; decays fast and pauses pursuit while active.
+    Vector2 _hitKnockbackVel   = {};
+    float   _hitKnockbackTimer = 0.f;
+    static constexpr float kHitKnockbackDuration = 0.14f; // how long the stagger lasts
+    static constexpr float kHitKnockbackDecay    = 11.f;  // higher = snappier settle
 
     float _attackRange = 110.f;
     float _attackUpdateTime = 1.f / 8.f;
