@@ -46,6 +46,18 @@ const RoomBlueprint* RoomLibrary::FindById(std::string_view id) const
     return nullptr;
 }
 
+std::vector<const RoomBlueprint*> RoomLibrary::RoomsFor(
+    Biome biome, std::string_view tilesetStem) const
+{
+    std::vector<const RoomBlueprint*> matches;
+    for (const RoomBlueprint& room : _rooms)
+    {
+        if (room.biome == biome && room.tilesetStem == tilesetStem)
+            matches.push_back(&room);
+    }
+    return matches;
+}
+
 const RoomBlueprint* RoomLibrary::Choose(const RoomRequest& request,
                                          std::string_view avoidId) const
 {
@@ -128,12 +140,16 @@ std::optional<RoomLayout> RoomLibrary::Resolve(const RoomRequest& request,
     return layout;
 }
 
-bool RoomLibrary::NameExists(std::string_view name, std::string_view exceptId) const
+bool RoomLibrary::NameExists(std::string_view name, Biome biome,
+                             std::string_view tilesetStem,
+                             std::string_view exceptId) const
 {
     const std::string folded = FoldAscii(name);
     for (const RoomBlueprint& room : _rooms)
     {
-        if (room.id != exceptId && FoldAscii(room.name) == folded) return true;
+        if (room.biome == biome && room.tilesetStem == tilesetStem &&
+            room.id != exceptId && FoldAscii(room.name) == folded)
+            return true;
     }
     return false;
 }
@@ -197,7 +213,8 @@ bool RoomLibrary::SaveRoom(const RoomBlueprint& room, bool overwrite, std::strin
 {
     error.clear();
     if (_root.empty()) { error = "Room library has no root directory"; return false; }
-    if (NameExists(room.name, overwrite ? room.id : std::string_view{}))
+    if (NameExists(room.name, room.biome, room.tilesetStem,
+                   overwrite ? room.id : std::string_view{}))
     {
         error = "A room with that name already exists";
         return false;

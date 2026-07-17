@@ -22,6 +22,8 @@ class RoomLibrary
 public:
     void Refresh(const std::filesystem::path& root);
     const std::vector<RoomBlueprint>& Rooms() const { return _rooms; }
+    std::vector<const RoomBlueprint*> RoomsFor(Biome biome,
+                                                std::string_view tilesetStem) const;
     const RoomBlueprint* FindById(std::string_view id) const;
     const RoomBlueprint* Choose(const RoomRequest& request,
                                 std::string_view avoidId = {}) const;
@@ -41,7 +43,9 @@ public:
 
     bool SaveRoom(const RoomBlueprint& room, bool overwrite, std::string& error);
     bool DeleteRoom(std::string_view id, std::string& error);
-    bool NameExists(std::string_view name, std::string_view exceptId = {}) const;
+    bool NameExists(std::string_view name, Biome biome,
+                    std::string_view tilesetStem,
+                    std::string_view exceptId = {}) const;
 
     static std::string Slugify(std::string_view name);
     static std::string BiomeFolderName(Biome biome);

@@ -63,8 +63,28 @@ int main()
     assert(library.SaveRoom(treasureFallback, false, error));
     library.Refresh(root);
     assert(library.Rooms().size() == 8);
-    assert(library.NameExists("Narrow Crossing"));
-    assert(!library.NameExists("Narrow Crossing", "crossing-a"));
+
+    const auto cavernRooms = library.RoomsFor(Biome::Caverns, "Caverns");
+    assert(cavernRooms.size() == 6);
+    for (const RoomBlueprint* room : cavernRooms)
+    {
+        assert(room->biome == Biome::Caverns);
+        assert(room->tilesetStem == "Caverns");
+    }
+    const auto forestRooms = library.RoomsFor(Biome::Forest, "Forest");
+    assert(forestRooms.size() == 2);
+    assert(library.RoomsFor(Biome::Caverns, "Forest").empty());
+
+    assert(library.NameExists("Narrow Crossing", Biome::Caverns, "Caverns"));
+    assert(!library.NameExists("Narrow Crossing", Biome::Forest, "Forest"));
+    assert(!library.NameExists("Narrow Crossing", Biome::Caverns, "Caverns", "crossing-a"));
+
+    // Names are unique inside one biome/tileset library, not across the whole
+    // game. Every biome can therefore use concise names such as N, EW, or Room 1.
+    RoomBlueprint forestSharedName = MakeRoom(
+        "forest-shared-name", "Narrow Crossing", Biome::Forest,
+        "Forest", RoomType::Standard, false, false, true, true);
+    assert(library.SaveRoom(forestSharedName, false, error));
     assert(library.FindById("crossing-a") != nullptr);
     assert(library.FindById("missing") == nullptr);
 
@@ -168,7 +188,8 @@ int main()
     assert(!library.SaveRoom(crossingA, false, error));
     assert(!error.empty());
     assert(library.DeleteRoom("crossing-a", error));
-    assert(!library.NameExists("Narrow Crossing"));
+    assert(!library.NameExists("Narrow Crossing", Biome::Caverns, "Caverns"));
+    assert(library.NameExists("Narrow Crossing", Biome::Forest, "Forest"));
     assert(!library.DeleteRoom("does-not-exist", error));
 
     std::filesystem::remove_all(root, ec);

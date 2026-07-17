@@ -1507,22 +1507,22 @@ void RoomEditor::UpdateLibrary()
         }
     }
 
-    const float libMax = std::max(0.f, (float)_library.Rooms().size() * 62.f - 760.f);
+    const auto rooms = _library.RoomsFor(_room.biome, _room.tilesetStem);
+    const float libMax = std::max(0.f, (float)rooms.size() * 62.f - 760.f);
     _libraryScroll = std::clamp(_libraryScroll - GetMouseWheelMove() * 65.f, 0.f, libMax);
-    const auto& rooms = _library.Rooms();
     for (int i = 0; i < (int)rooms.size(); ++i)
     {
         float y = 180.f + i * 62.f - _libraryScroll;
         Rectangle row{ 240.f, y, _coverageExpanded ? 1015.f : 1360.f, 52.f };
         const bool armed = !_pendingDeleteId.empty() &&
-                           _pendingDeleteId == rooms[(std::size_t)i].id;
+                           _pendingDeleteId == rooms[(std::size_t)i]->id;
         const float removeWidth = armed ? 90.f : 50.f;
         Rectangle remove{ row.x + row.width - removeWidth - 10.f,
                           y + 7.f, removeWidth, 38.f };
         Rectangle copy{ remove.x - 70.f, y + 7.f, 60.f, 38.f };
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, copy))
         {
-            RoomBlueprint dup = Duplicate(rooms[(std::size_t)i]);
+            RoomBlueprint dup = Duplicate(*rooms[(std::size_t)i]);
             std::string error;
             const bool ok = _library.SaveRoom(dup, false, error);
             _library.Refresh(_roomRoot);
@@ -1535,11 +1535,11 @@ void RoomEditor::UpdateLibrary()
         {
             // First click arms this room, second click on the same one confirms —
             // guards against accidentally deleting authored rooms.
-            const std::string& id = rooms[(std::size_t)i].id;
+            const std::string& id = rooms[(std::size_t)i]->id;
             if (_pendingDeleteId != id)
             {
                 _pendingDeleteId = id;
-                _status = "Click X again to delete \"" + rooms[(std::size_t)i].name + "\"";
+                _status = "Click X again to delete \"" + rooms[(std::size_t)i]->name + "\"";
                 _statusTimer = 3.f;
                 return;
             }
@@ -1553,7 +1553,7 @@ void RoomEditor::UpdateLibrary()
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, row))
         {
             _pendingDeleteId.clear();
-            OpenRoom(rooms[(std::size_t)i]);
+            OpenRoom(*rooms[(std::size_t)i]);
             return;
         }
     }
@@ -2933,20 +2933,20 @@ void RoomEditor::DrawLibrary() const
                _coverageExpanded);
     DrawButton({1500,82,120,38},"Close");
     BeginScissorMode(220,170,1400,780);
-    const auto& rooms=_library.Rooms();
+    const auto rooms=_library.RoomsFor(_room.biome, _room.tilesetStem);
     for(int i=0;i<(int)rooms.size();++i)
     {
         float y=180.f+i*62.f-_libraryScroll;
         Rectangle row{240,y,_coverageExpanded?1015.f:1360.f,52};
         DrawRectangleRec(row,Color{30,34,41,255});
         DrawRectangleLinesEx(row,1.f,Fade(WHITE,.2f));
-        DrawText(rooms[(std::size_t)i].name.c_str(),260,(int)y+14,20,RAYWHITE);
-        DrawText(RoomTypeLabel(rooms[(std::size_t)i].roomType),700,(int)y+15,18,SKYBLUE);
-        const bool armed = !_pendingDeleteId.empty() && _pendingDeleteId == rooms[(std::size_t)i].id;
+        DrawText(rooms[(std::size_t)i]->name.c_str(),260,(int)y+14,20,RAYWHITE);
+        DrawText(RoomTypeLabel(rooms[(std::size_t)i]->roomType),700,(int)y+15,18,SKYBLUE);
+        const bool armed = !_pendingDeleteId.empty() && _pendingDeleteId == rooms[(std::size_t)i]->id;
         const float removeWidth=armed?90.f:50.f;
         Rectangle remove{row.x+row.width-removeWidth-10.f,y+7,removeWidth,38};
         Rectangle copy{remove.x-70.f,y+7,60,38};
-        const std::string doors="Doors "+DoorMaskName(rooms[(std::size_t)i].DoorMask());
+        const std::string doors="Doors "+DoorMaskName(rooms[(std::size_t)i]->DoorMask());
         DrawText(doors.c_str(),900,(int)y+15,18,Fade(WHITE,.7f));
         DrawButton(copy,"Copy");
         DrawButton(remove,armed?"Sure?":"X",armed);

@@ -93,6 +93,11 @@ public:
     void RunFrame();
 
 private:
+    // Draws the custom sword mouse cursor on the real window, and hides the OS
+    // cursor, for all normal game screens. Editors (tile mapper, 9-slice, touch
+    // layout, HUD/map/hitbox/dialogue editors) keep the normal OS cursor.
+    void UpdateSwordCursor();
+
     enum class DungeonDoorSide;
 
     void Init();
@@ -1211,6 +1216,7 @@ private:
     Texture2D _htpBorderTex{};   // HowToPlayBorder.png - used for the How To Play content panel
     Texture2D _magicGemTex{};
     Texture2D _bossBarrierTex{};
+    Texture2D _swordCursorTex{}; // CursorSword.png - custom sword mouse cursor (game only, not editors)
 
     // Map node icons (TileSet/MapIcons/)
     Texture2D _mapIconNormal{};

@@ -323,6 +323,7 @@ Engine::~Engine()
     UnloadTexture(_htpBorderTex);
     UnloadTexture(_magicGemTex);
     UnloadTexture(_bossBarrierTex);
+    UnloadTexture(_swordCursorTex);
     _tileRenderer.Unload();
     _dungeonScrollTileRenderer.Unload();
     _pauseUI.Unload();
@@ -474,6 +475,9 @@ void Engine::Init()
     _htpBorderTex           = LoadTexture(AssetPath("UI/HowToPlayBorder.png").c_str());
     _magicGemTex            = LoadTexture(AssetPath("TileSet/Key.png").c_str());
     _bossBarrierTex         = LoadTexture(AssetPath("TileSet/Barrier.png").c_str());
+    _swordCursorTex         = LoadTexture(AssetPath("UI/CursorSword.png").c_str());
+    if (_swordCursorTex.id != 0)
+        SetTextureFilter(_swordCursorTex, TEXTURE_FILTER_POINT); // crisp pixels: the sprite is 32x32 pixel art scaled up
     _shop.Init(ShopTextures{
         &_shopBorderTex,
         &_shopZephTex,
@@ -1755,7 +1759,48 @@ void Engine::RunFrame()
             { lb.offsetX, lb.offsetY, (float)kVirtualWidth * lb.scale, (float)kVirtualHeight * lb.scale },
             { 0.f, 0.f }, 0.f, WHITE);
     }
+    UpdateSwordCursor(); // custom sword cursor over the letterboxed game (drawn in real window space)
     EndDrawing();
+}
+
+void Engine::UpdateSwordCursor()
+{
+    // Any editor/tool screen keeps the normal OS pointer so precise clicking and
+    // dragging feels right. Everything else (menus + gameplay) gets the sword.
+    bool inEditor =
+        _gameState == GameState::TileMapper ||
+        _gameState == GameState::NineSliceEditor ||
+        _gameState == GameState::TouchButtonMapping ||
+        _hudEditorActive || _mapEditorActive ||
+        _isHitboxEditorActive || _isDlgEditorActive;
+
+    // No cursor texture, an editor, or the mouse left the window -> normal cursor.
+    if (_swordCursorTex.id == 0 || inEditor || !IsCursorOnScreen())
+    {
+        ShowCursor();
+        return;
+    }
+
+    HideCursor(); // hide the OS arrow; we draw our own sword instead
+
+    Vector2 mouse = GetMousePosition();
+
+    // Cursor size tracks the window so it feels consistent on any resolution.
+    float cursorSize = GetScreenHeight() * 0.05f;
+    if (cursorSize < 24.f) cursorSize = 24.f;
+    if (cursorSize > 72.f) cursorSize = 72.f;
+
+    // The blade tip (the click hotspot) sits near the top-left of this 32x32 sprite (mirrored to point left).
+    const float hotspotX = 2.f / 32.f;
+    const float hotspotY = 2.f / 32.f;
+
+    Rectangle src = { 0.f, 0.f, (float)_swordCursorTex.width, (float)_swordCursorTex.height };
+    Rectangle dst = {
+        mouse.x - hotspotX * cursorSize,
+        mouse.y - hotspotY * cursorSize,
+        cursorSize, cursorSize };
+
+    DrawTexturePro(_swordCursorTex, src, dst, { 0.f, 0.f }, 0.f, WHITE);
 }
 
 InputPromptMode Engine::GetPromptModeForUi() const
@@ -16216,6 +16261,19 @@ void Engine::SpawnDungeonRoomEnemies()
 
     DungeonRoomState& roomState = _dungeonRoomStates[_dungeonRoomIdx];
 
+    // This is a map-editor playtest preference, not a room-clear action. Keep
+    // the guard at the shared spawn boundary so room transitions and delayed
+    // encounter setup cannot silently turn enemies back on. Normal runs never
+    // enter this branch because _editorPlaytestActive is false.
+    if (_editorPlaytestActive && !_editorPlaytestEnemiesOn)
+    {
+        _dungeonEnemiesSpawned = false;
+        _dungeonReinforcements.clear();
+        ApplyDungeonRoomDoorState(
+            _dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
+        return;
+    }
+
     // Rooms that have already been cleared don't respawn enemies — but lava
     // stays: terrain doesn't despawn just because the fight is over. Turret
     // hazards stay quiet in cleared rooms (backtracking shouldn't be shot at).
@@ -16645,7 +16703,8 @@ void Engine::SetPlaytestEnemies(bool enemiesOn)
     }
     else
     {
-        roomState.cleared = true;      // treat as cleared → all doors open
+        // Door state reads the editor-only suppression flag. Do not permanently
+        // clear the room, or switching enemies back on could not restore it.
         _dungeonEnemiesSpawned = false;
     }
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
@@ -16663,7 +16722,8 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
     // even on first entry (independent of when the cleared flag gets set).
     bool hasSpecial = (stateIt != _dungeonRoomStates.end() &&
                        stateIt->second.special != RoomSpecialType::None);
-    bool alwaysOpen = cleared
+    bool alwaysOpen = (_editorPlaytestActive && !_editorPlaytestEnemiesOn)
+        || cleared
         || hasSpecial
         || (roomIdx == _dungeonGen.GetStartIndex() && !_prologueActive)
         || room.type == RoomType::Rest
@@ -16692,8 +16752,10 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
     {
         if (room.type == RoomType::Boss)
         {
-            layout.roomCleared = cleared;
-            for (bool& open : layout.doorZoneOpen) open = cleared;
+            const bool bossOpen = cleared ||
+                (_editorPlaytestActive && !_editorPlaytestEnemiesOn);
+            layout.roomCleared = bossOpen;
+            for (bool& open : layout.doorZoneOpen) open = bossOpen;
         }
         return;
     }
@@ -16717,12 +16779,13 @@ void Engine::ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonD
 
     if (room.type == RoomType::Boss)
     {
-        layout.roomCleared = cleared;
-        for (bool& open : layout.doorZoneOpen) open = cleared;
-        if (room.hasNorth) setNorth(false);
-        if (room.hasSouth) setSouth(false);
-        if (room.hasWest)  setWest(false);
-        if (room.hasEast)  setEast(false);
+        const bool editorOpen = _editorPlaytestActive && !_editorPlaytestEnemiesOn;
+        layout.roomCleared = cleared || editorOpen;
+        for (bool& open : layout.doorZoneOpen) open = cleared || editorOpen;
+        if (room.hasNorth) setNorth(editorOpen);
+        if (room.hasSouth) setSouth(editorOpen);
+        if (room.hasWest)  setWest(editorOpen);
+        if (room.hasEast)  setEast(editorOpen);
         return;
     }
 
@@ -19621,8 +19684,14 @@ void Engine::UpdateDungeonRun(float dt)
                         {
                             const Vector2 pull = PitPullDirection(feet, cellW, cellH);
                             if (Vector2Length(pull) > 0.01f)
+                            {
+                                const float pullSpeed =
+                                    _dungeonRoomLayout.fallSurface == FallSurface::Water
+                                    ? kPitPullSpeed * 2.f
+                                    : kPitPullSpeed;
                                 _player.SetWorldPos(Vector2Add(_player.GetWorldPos(),
-                                    Vector2Scale(pull, kPitPullSpeed * dt)));
+                                    Vector2Scale(pull, pullSpeed * dt)));
+                            }
                             _pitDragTimer += dt;
                             if (_pitDragTimer >= kPitDragWindow)
                             {
