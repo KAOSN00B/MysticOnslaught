@@ -1390,6 +1390,23 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
 
     Rectangle dest{ screenPos.x - w / 2.f + visualOffsetX, screenPos.y - h / 2.f + visualOffsetY, w, h };
 
+    // Attack swing weight (juice): the same anticipation→overshoot lean the player
+    // has. Only while the shared attack sheet is playing and the enemy's role reads
+    // as melee (see UsesAttackLunge) — bosses with bespoke attack anims and ranged
+    // casters are left alone. Sprite-only (the shadow below stays planted); scaled
+    // by sprite height so bigger enemies lean more.
+    if (_attacking && !_dying && _texture.id == _attackAnim.id &&
+        _maxFrames > 0 && _updateTime > 0.f && UsesAttackLunge())
+    {
+        float p = ((float)_frame + _runningTime / _updateTime) / (float)_maxFrames;
+        if (p < 0.f) p = 0.f; else if (p > 1.f) p = 1.f;
+        const float antic = baseH * 0.04f;   // lean back during the windup
+        const float peak  = baseH * 0.14f;   // forward overshoot at the strike
+        float swing = (p < 0.3f) ? -antic * (p / 0.3f)
+                                 :  peak  * sinf(((p - 0.3f) / 0.7f) * 3.14159265f);
+        dest.x += GetFacingSign() * swing;
+    }
+
     if (_pitFalling)
     {
         const float p = PitFallProgress();

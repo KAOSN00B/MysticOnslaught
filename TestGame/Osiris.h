@@ -37,6 +37,7 @@ public:
 
     Osiris* AsOsiris() override { return this; }
     bool IsBoss() const override { return true; }
+    bool UsesAttackLunge() const override { return false; }  // kiting caster; melee uses its own anim
     bool UsesDirectPursuit() const override { return true; }
 
     // Projectile interface (read by CombatDirector after Update)

@@ -42,6 +42,7 @@ public:
 
     AbyssSlime* AsAbyssSlime() override { return this; }
     bool IsBoss() const override { return true; }
+    bool UsesAttackLunge() const override { return false; }  // hop/acid slime; no melee-swing lean
     bool UsesDirectPursuit() const override { return true; }
 
     // Character Animator support

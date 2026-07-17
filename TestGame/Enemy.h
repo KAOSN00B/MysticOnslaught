@@ -327,6 +327,28 @@ public:
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
+
+    // ── Attack swing weight (juice) ───────────────────────────────────────────
+    // True for enemies whose basic attack is a melee swing that reads well with
+    // the player's anticipation→overshoot lean (see Enemy::DrawEnemy). Ranged /
+    // caster roles return false so a bow-draw or spell-cast doesn't hop forward.
+    // Only fires while the SHARED attack sheet (_attackAnim) is playing, so bosses
+    // with bespoke attack animations are naturally left untouched; a projectile
+    // enemy that keeps a melee/Boss role overrides this to false to be explicit.
+    virtual bool UsesAttackLunge() const
+    {
+        switch (GetEncounterRole())
+        {
+            case EnemyRole::Ranged:
+            case EnemyRole::HeavyRanged:
+            case EnemyRole::Zoner:
+            case EnemyRole::Summoner:
+            case EnemyRole::Support:
+                return false;
+            default:
+                return true;   // Grunt / Charger / Tank / Assassin / melee Boss
+        }
+    }
     std::uint64_t GetCombatId() const { return _combatId; }
     void SetCombatId(std::uint64_t id) { _combatId = id; }
     bool IsEliteMiniboss() const { return _isEliteMiniboss; }

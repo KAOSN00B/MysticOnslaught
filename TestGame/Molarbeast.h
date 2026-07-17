@@ -36,6 +36,7 @@ public:
     Molarbeast* AsMolarbeast() override { return this; }
     bool IgnoresPropCollisions() const override { return false; }
     bool IsBoss() const override { return true; }
+    bool UsesAttackLunge() const override { return false; }  // ranged lava-ball thrower
     int GetExpValue() const override { return _expValue; }
 
     bool WantsToFireLavaBall() const { return _pendingLavaBallShot; }
