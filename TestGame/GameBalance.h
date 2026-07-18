@@ -96,6 +96,74 @@ namespace Balance::Elite
 {
     inline constexpr float kOgreHealth    = 10.f;
     inline constexpr float kCyclopsHealth = 7.f;
+
+    // ── Elite signature kits (shared) ────────────────────────────────────────
+    // Health stays on the existing 2.5x elite conversion — fight length comes
+    // from mechanics, not inflated HP. These knobs shape the mechanics.
+    inline constexpr float kPhaseThreshold       = 0.50f;  // one-time escalation at 50% max HP
+    inline constexpr float kGuardLinksDamageTaken = 0.40f; // linked elite takes 40% (visible reduction, never immune)
+    inline constexpr int   kSignatureZoneCapacity = 64;    // bounded attack-zone pool in CombatDirector
+
+    // Ogre — The Battering Ram
+    inline constexpr float kOgreWallStunMin      = 0.70f;  // wall punish window never falls below this
+    inline constexpr float kOgreRetargetPause    = 0.55f;  // visible pause between phase-two charges
+
+    // Infernal — The Living Furnace
+    inline constexpr float kInfernalMarchTelegraph = 0.55f;
+    inline constexpr float kInfernalMarchActive    = 1.60f;  // committed line walk
+    inline constexpr float kInfernalMarchRecovery  = 0.45f;
+    inline constexpr float kInfernalPatchSpacing   = 95.f;   // gap between flame patches (crossable)
+    inline constexpr float kInfernalPatchLifetime  = 2.4f;   // short-lived — room never stays divided
+    inline constexpr int   kInfernalPatchCap       = 6;
+    inline constexpr float kInfernalBurstTelegraph = 0.70f;
+    inline constexpr float kInfernalBurstActive    = 0.35f;
+    inline constexpr float kInfernalBurstRecovery  = 0.90f;
+    inline constexpr float kInfernalBurstRecoveryP2 = 1.35f; // longer exhausted window after OVERHEATED
+    inline constexpr float kInfernalFissureLength  = 420.f;
+    inline constexpr float kInfernalFissureWidth   = 58.f;   // half-width; gaps between the 3 fissures stay walkable
+    inline constexpr float kInfernalSignatureCooldown = 5.0f;
+    inline constexpr float kInfernalPhaseMeleeMult = 0.85f;  // slightly faster melee cadence in phase two
+
+    // Bonechill — The Frozen Wall
+    inline constexpr float kBonechillFrontDamageTaken = 0.55f; // frontal frost armour: 45% reduction, never zero
+    inline constexpr float kBonechillSlamTelegraph = 0.80f;
+    inline constexpr float kBonechillSlamActive    = 0.30f;
+    inline constexpr float kBonechillSlamRecovery  = 0.85f;
+    inline constexpr float kBonechillLaneLength    = 460.f;
+    inline constexpr float kBonechillLaneWidth     = 52.f;
+    inline constexpr float kBonechillSignatureCooldown = 5.5f;
+    inline constexpr float kBonechillPhaseSpeed    = 1.25f;  // ARMOUR SHATTERED movement bonus
+    inline constexpr float kBonechillPhaseCooldownMult = 0.80f;
+
+    // Stormclub — The Thunder Breaker
+    inline constexpr float kStormclubLeapTelegraph = 0.70f;
+    inline constexpr float kStormclubLeapSpeed     = 900.f;  // continuous travel — never a teleport
+    inline constexpr float kStormclubLeapRange     = 520.f;
+    inline constexpr float kStormclubLeapRangeP2   = 360.f;  // Tempest leaps are shorter
+    inline constexpr float kStormclubImpactRadius  = 120.f;
+    inline constexpr float kStormclubBranchLength  = 380.f;
+    inline constexpr float kStormclubBranchWidth   = 46.f;
+    inline constexpr float kStormclubHitRecovery   = 0.70f;
+    inline constexpr float kStormclubMissRecovery  = 1.30f;  // embedded-club punish window
+    inline constexpr float kStormclubSignatureCooldown = 5.0f;
+
+    // Venomfang — The Ambush Predator
+    inline constexpr float kVenomfangPounceTelegraph = 0.60f;
+    inline constexpr float kVenomfangPounceSpeed     = 980.f;
+    inline constexpr float kVenomfangPounceRange     = 460.f;
+    inline constexpr float kVenomfangPounceRecovery  = 0.80f;
+    inline constexpr float kVenomfangSignatureCooldown = 4.5f;
+    inline constexpr int   kPredatorMarkCap          = 3;
+    inline constexpr float kPredatorMarkDuration     = 6.f;   // expires without another bite
+    inline constexpr float kVenomfangTrailLifetime   = 2.0f;
+    inline constexpr float kVenomfangPhaseCircleSpeed = 1.30f; // BLOOD SCENT circling bonus
+    inline constexpr float kVenomfangSecondPounceDelay = 0.85f;
+
+    // Player poison (applied by Venomfang bites/trail; distinct from burn)
+    inline constexpr int   kPoisonStackCap   = 3;
+    inline constexpr float kPoisonDuration   = 4.0f;
+    inline constexpr float kPoisonTickInterval = 0.8f;
+    inline constexpr float kPoisonDamagePerTick = 0.5f;   // per stack, fractional accumulates
 }
 
 // ── Bosses — unified role model ──────────────────────────────────────────────

@@ -177,6 +177,9 @@
     <ClCompile Include="RoomCapacity.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="EliteSignature.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="RoomLibrary.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -429,6 +432,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RoomCapacity.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EliteSignature.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RoomLibrary.h">
