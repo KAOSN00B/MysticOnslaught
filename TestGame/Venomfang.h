@@ -51,6 +51,10 @@ private:
     static constexpr int   kVenomTickCount     = 5;
     static constexpr float kVenomDamagePerTick = 0.3f;
 
+    // Hit-and-run disengage dart after each landed bite.
+    static constexpr float kDisengageSpeed    = 1400.f;
+    static constexpr float kDisengageDuration = 0.35f;
+
     static constexpr int kVariantCount = 4;
     static Texture2D _sharedIdleAnim[kVariantCount];
     static Texture2D _sharedWalkAnim[kVariantCount];

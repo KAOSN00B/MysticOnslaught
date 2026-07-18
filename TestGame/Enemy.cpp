@@ -137,7 +137,6 @@ const char* Enemy::GetBestiaryName()
     if (AsBonechill())     return "Bonechill";
     if (AsStormclub())     return "Stormclub";
     if (AsVenomfang())     return "Venomfang";
-    if (AsRagebrute())     return "Ragebrute";
     const char* tn = GetTuningName();
     return tn ? tn : "Grunt";
 }
@@ -1167,7 +1166,9 @@ bool Enemy::CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies
 
 bool Enemy::UpdateEliteLunge(float dt)
 {
-    if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
+    // Runs for the elite-room miniboss, and always for types whose own kit is
+    // built around the lunge (see UsesPersonalLunge — Stormclub's leaping smash).
+    if ((!_isEliteMiniboss && !UsesPersonalLunge()) || _target == nullptr || _dying || !IsAlive())
         return false;
     if (IsFrozen() || _takingDamage || !_pendingBurns.empty() || _attacking)
     {

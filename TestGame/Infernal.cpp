@@ -74,7 +74,8 @@ void Infernal::ResetForSpawn(Vector2 pos)
     _isActive          = true;
 
     SetIdleAnimation(false);
-    _scale = 4.8f;                 // hulking — on par with the elite Ogre
+    _scale = 5.6f;                 // its body art is narrow, so a higher scale
+                                   // is needed to match the Ogre's on-screen mass
 
     _health      = 12.f;
     _maxHealth   = 12.f;

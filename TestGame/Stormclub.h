@@ -37,6 +37,11 @@ public:
     // Storm identity: every landed melee hit blasts the player backward.
     void OnMeleeHitPlayer(Character* target) override;
 
+    // Behavior identity: the windup->dash lunge is part of its own kit, not
+    // just an elite-room perk — it periodically leaps at the player, and lunge
+    // contact routes through OnMeleeHitPlayer, so the leap ALSO blasts you.
+    bool UsesPersonalLunge() const override { return true; }
+
     void PlayAttackSound() override;
     void PlayDeathSound() override;
 

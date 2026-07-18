@@ -32,7 +32,6 @@
 #include "Bonechill.h"
 #include "Stormclub.h"
 #include "Venomfang.h"
-#include "Ragebrute.h"
 #include "EnemyProjectile.h"
 #include "MainMenu.h"
 #include "PauseAndGameOver.h"
@@ -134,7 +133,6 @@ private:
     Enemy* SpawnBonechill(Vector2 pos);
     Enemy* SpawnStormclub(Vector2 pos);
     Enemy* SpawnVenomfang(Vector2 pos);
-    Enemy* SpawnRagebrute(Vector2 pos);
     // Elite miniboss factory: picks a curated bruiser type, marks it elite.
     Enemy* SpawnEliteMiniboss(Vector2 pos);
     void SpawnBossForBiome(Vector2 pos);      // picks the boss class for _currentBiome

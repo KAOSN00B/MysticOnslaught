@@ -73,7 +73,8 @@ void Bonechill::ResetForSpawn(Vector2 pos)
     _isActive          = true;
 
     SetIdleAnimation(false);
-    _scale = 4.8f;                 // elite-Ogre sized
+    _scale = 6.2f;                 // its body art is compact, so a higher scale
+                                   // is needed to match the Ogre's on-screen mass
 
     _health      = 14.f;           // tankiest of the bruisers
     _maxHealth   = 14.f;

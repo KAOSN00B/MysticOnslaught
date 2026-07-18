@@ -34,7 +34,6 @@ class Infernal;
 class Bonechill;
 class Stormclub;
 class Venomfang;
-class Ragebrute;
 
 // ── Encounter roles ───────────────────────────────────────────────────────────
 // Lightweight tactical role used by the encounter director to compose fights and
@@ -216,7 +215,8 @@ public:
     // timer (HandleMovement rewrites _velocity every frame, so an impulse into
     // _velocity would be clobbered). Lighter than ApplyExternalImpulse, which is
     // the heavy "launch/fling" used by ogre throws. `dir` need not be normalised.
-    void ApplyHitKnockback(Vector2 dir, float speed);
+    // Virtual so an immovable type (Bonechill) can refuse the shove entirely.
+    virtual void ApplyHitKnockback(Vector2 dir, float speed);
     bool IsHitStaggered() const { return _hitKnockbackTimer > 0.f; }
 
     // ── Shared status effects (ARPG combat-identity pass) ───────────────────────
@@ -325,7 +325,6 @@ public:
     virtual Bonechill* AsBonechill() { return nullptr; }
     virtual Stormclub* AsStormclub() { return nullptr; }
     virtual Venomfang* AsVenomfang() { return nullptr; }
-    virtual Ragebrute* AsRagebrute() { return nullptr; }
 
     // Called once per landed melee hit on the player, right after the damage is
     // dealt (see HandleAttack / the elite lunge). Default does nothing; fire/
@@ -342,6 +341,12 @@ public:
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
+
+    // ── Personal lunge ───────────────────────────────────────────────────────
+    // The windup→dash→recovery lunge (UpdateEliteLunge) normally only runs for
+    // the elite-room miniboss. A type that lunges as part of its own kit
+    // (Stormclub's leaping smash) overrides this to true so it lunges always.
+    virtual bool UsesPersonalLunge() const { return false; }
 
     // ── Attack swing weight (juice) ───────────────────────────────────────────
     // True for enemies whose basic attack is a melee swing that reads well with

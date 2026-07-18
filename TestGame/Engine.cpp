@@ -258,7 +258,6 @@ Engine::~Engine()
     Bonechill::UnloadSharedResources();
     Stormclub::UnloadSharedResources();
     Venomfang::UnloadSharedResources();
-    Ragebrute::UnloadSharedResources();
     HealPickup::UnloadSharedResources();
     GoldPickup::UnloadSharedResources();
     CellPickup::UnloadSharedResources();
@@ -14322,19 +14321,13 @@ Enemy* Engine::SpawnVenomfang(Vector2 pos)
         [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
 }
 
-Enemy* Engine::SpawnRagebrute(Vector2 pos)
-{
-    return SpawnPooledType<Ragebrute>(_enemies, pos, &Enemy::AsRagebrute,
-        [&](Enemy& e) { ConfigureSpawnedEnemy(e); });
-}
-
 // Curated elite-bruiser pool. The elite room used to hardcode an Ogre; it now
-// rolls one of six bruisers, each with its own identity — Ogre (throws), the
-// Infernal (fire/burn), Bonechill (ice/slow), Stormclub (storm/knockback),
-// Venomfang (poison DoT), and the Ragebrute (half-HP enrage).
+// rolls one of five bruisers, each with its own identity — Ogre (charge +
+// throws), Infernal (fire/burn), Bonechill (ice/slow, immovable), Stormclub
+// (storm/knockback, leaping smash), and Venomfang (poison, hit-and-run).
 Enemy* Engine::SpawnEliteMiniboss(Vector2 pos)
 {
-    enum { kOgre, kInfernal, kBonechill, kStormclub, kVenomfang, kRagebrute, kEliteTypeCount };
+    enum { kOgre, kInfernal, kBonechill, kStormclub, kVenomfang, kEliteTypeCount };
     Enemy* miniboss = nullptr;
     switch (GetRandomValue(0, kEliteTypeCount - 1))
     {
@@ -14342,7 +14335,6 @@ Enemy* Engine::SpawnEliteMiniboss(Vector2 pos)
     case kBonechill: miniboss = SpawnBonechill(pos); break;
     case kStormclub: miniboss = SpawnStormclub(pos); break;
     case kVenomfang: miniboss = SpawnVenomfang(pos); break;
-    case kRagebrute: miniboss = SpawnRagebrute(pos); break;
     default:         miniboss = SpawnOgre(pos);      break;
     }
     if (miniboss) miniboss->SetIsEliteMiniboss(true);
@@ -14938,7 +14930,6 @@ std::string Engine::GetDungeonSnapshotType(Enemy& enemy) const
     if (enemy.AsBonechill()) return "Bonechill";
     if (enemy.AsStormclub()) return "Stormclub";
     if (enemy.AsVenomfang()) return "Venomfang";
-    if (enemy.AsRagebrute()) return "Ragebrute";
     return "Basic";
     };
     std::string base = baseName();
@@ -14964,7 +14955,6 @@ Enemy* Engine::SpawnDungeonSnapshotEnemy(const DungeonEnemySnapshot& snapshot)
     if (snapshot.type == "Bonechill") return SpawnBonechill(pos);
     if (snapshot.type == "Stormclub") return SpawnStormclub(pos);
     if (snapshot.type == "Venomfang") return SpawnVenomfang(pos);
-    if (snapshot.type == "Ragebrute") return SpawnRagebrute(pos);
     if (snapshot.type == "Cyclops") return SpawnCyclops(pos);
     if (snapshot.type == "Ogre") return SpawnOgre(pos);
     if (snapshot.type == "EliteOgre") return SpawnOgre(pos);
@@ -15034,7 +15024,6 @@ void Engine::DebugSpawnNewEnemy(int index, Vector2 pos)
     case 10: SpawnBonechill(pos);            break;
     case 11: SpawnStormclub(pos);            break;
     case 12: SpawnVenomfang(pos);            break;
-    case 13: SpawnRagebrute(pos);            break;
     default: break;
     }
 }

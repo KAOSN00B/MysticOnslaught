@@ -37,6 +37,10 @@ public:
     // Ice identity: every landed melee hit chills (slows) the player.
     void OnMeleeHitPlayer(Character* target) override;
 
+    // Behavior identity: an IMMOVABLE wall — player hits never shove it. The
+    // fight is about kiting a relentless advance, not pushing it around.
+    void ApplyHitKnockback(Vector2 /*dir*/, float /*speed*/) override {}
+
     void PlayAttackSound() override;
     void PlayDeathSound() override;
 

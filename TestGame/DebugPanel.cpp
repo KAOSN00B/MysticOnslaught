@@ -113,7 +113,6 @@ namespace
             { "Bonechill",   { DebugActionKind::SpawnNewEnemy, 10 } },
             { "Stormclub",   { DebugActionKind::SpawnNewEnemy, 11 } },
             { "Venomfang",   { DebugActionKind::SpawnNewEnemy, 12 } },
-            { "Ragebrute",   { DebugActionKind::SpawnNewEnemy, 13 } },
         };
     }
 

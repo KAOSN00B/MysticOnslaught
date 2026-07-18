@@ -73,7 +73,8 @@ void Venomfang::ResetForSpawn(Vector2 pos)
     _isActive          = true;
 
     SetIdleAnimation(false);
-    _scale = 4.6f;                 // 32px art — still clearly bigger than grunts
+    _scale = 7.0f;                 // 32px art with a slim body — this high scale
+                                   // brings it up to the Ogre's on-screen mass
 
     _health      = 8.f;            // fragile for a bruiser; speed is its armour
     _maxHealth   = 8.f;
@@ -135,11 +136,21 @@ void Venomfang::SetWaveScale(int /*wave*/)
 
 // =============================================================================
 // Venomous bite: a long, weak damage-over-time that outlasts the fight beat.
+// Behavior identity: hit-and-run — after every landed bite it darts away from
+// the player (rides the hit-knockback channel on ITSELF, which also suppresses
+// its pursuit briefly), so it never stands still trading blows.
 void Venomfang::OnMeleeHitPlayer(Character* target)
 {
     if (target == nullptr)
         return;
     target->ApplyBurnTicks(kVenomTickDelay, kVenomTickCount, kVenomDamagePerTick, _worldPos);
+
+    Vector2 away = Vector2Subtract(_worldPos, target->GetWorldPos());
+    float len = Vector2Length(away);
+    if (len < 0.001f) away = Vector2{ -GetFacingSign(), 0.f };
+    else              away = Vector2Scale(away, 1.f / len);
+    _hitKnockbackVel   = Vector2Scale(away, kDisengageSpeed);
+    _hitKnockbackTimer = kDisengageDuration;
 }
 
 // =============================================================================
