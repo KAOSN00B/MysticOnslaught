@@ -128,6 +128,16 @@ static void TestEventQueueIsBoundedAndFIFO()
     assert(!queue.Pop(none));
 }
 
+static void TestOgreChargeSequencing()
+{
+    assert(NextOgreChargeCount(false) == 1);
+    assert(NextOgreChargeCount(true) == 2);
+    // A wall impact ends the sequence no matter how many charges remain.
+    assert(ShouldEndOgreChargeSequence(1, true));
+    assert(ShouldEndOgreChargeSequence(0, false));
+    assert(!ShouldEndOgreChargeSequence(1, false));   // second charge still owed
+}
+
 static void TestDistancePointToSegmentGeometry()
 {
     const float tolerance = 0.001f;
@@ -151,6 +161,7 @@ int main()
     TestModifierSelectionIsAlwaysCompatibleAndDeterministic();
     TestPhaseLatchFiresExactlyOnce();
     TestEventQueueIsBoundedAndFIFO();
+    TestOgreChargeSequencing();
     TestDistancePointToSegmentGeometry();
     std::puts("Elite signature tests passed");
     return 0;

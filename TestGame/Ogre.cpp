@@ -95,9 +95,12 @@ void Ogre::ResetForSpawn(Vector2 pos)
     _impactShakeRequested = false;
     _rushDirection = Vector2Zero();
     _rushedEnemies.clear();
+    _chargesRemaining = 0;
+    _retargetTimer    = 0.f;
     // Reset to design defaults; SetWaveScale will override these.
     _chargeDurationInst         = 3.0f;
     _chargeCooldownDurationInst = 6.0f;
+    _activeChargeDuration       = _chargeDurationInst;
 }
 
 void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
@@ -122,6 +125,22 @@ void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool
 
     if (!_dying && _target != nullptr)
     {
+        // SECOND WIND: one-time 50% escalation (shared elite phase latch).
+        // Cancel the current action safely; the next charge sequence doubles.
+        if (_isEliteMiniboss && ConsumePhaseChange() >= 1)
+        {
+            RequestBossCallout("SECOND WIND");
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::OgreCharge, 0, _worldPos });
+            if (_rushState == RushState::Charging || _rushState == RushState::Retargeting)
+            {
+                _rushState   = RushState::Repositioning;
+                _chargeTimer = 0.f;
+                SetIdleAnimation(true);
+            }
+            _rushCooldown = std::min(_rushCooldown, 1.2f);   // come back angry soon
+        }
+
         switch (_rushState)
         {
         case RushState::Repositioning:
@@ -133,6 +152,7 @@ void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool
             {
                 _rushState   = RushState::Repositioning;
                 _chargeTimer = 0.f;
+                _chargesRemaining = 0;   // freeze interrupts the whole sequence
                 SetIdleAnimation(true);
             }
             else
@@ -141,6 +161,35 @@ void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool
 
         case RushState::Rushing:
             HandleRush(dt, enemies);
+            break;
+
+        case RushState::Retargeting:
+            // Visible pause between SECOND WIND charges: stand still, face the
+            // player, then lock a NEW direction through a (shorter) telegraph.
+            // The second charge can never silently rotate mid-travel.
+            _velocity = Vector2Zero();
+            {
+                float dxToPlayer = _target->GetFeetWorldPos().x - _worldPos.x;
+                if      (dxToPlayer < -20.f) _rightLeft = -1.f;
+                else if (dxToPlayer >  20.f) _rightLeft =  1.f;
+            }
+            _retargetTimer -= dt;
+            if (IsFrozen() || _takingDamage)
+            {
+                _rushState = RushState::Repositioning;
+                _chargesRemaining = 0;
+                SetIdleAnimation(true);
+            }
+            else if (_retargetTimer <= 0.f)
+            {
+                _rushState = RushState::Charging;
+                _chargeTimer = 0.f;
+                _activeChargeDuration = _secondChargeTelegraph;
+                EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Ogre,
+                                 EliteMove::OgreCharge, 0, _worldPos,
+                                 _target->GetFeetWorldPos() });
+                SetIdleAnimation(true);
+            }
             break;
 
         case RushState::Stunned:
@@ -313,6 +362,14 @@ void Ogre::TakeDamage(int damage, Vector2 attackerPos)
         return;
     if (_isInvulnerable || _leapInvulnerable)
         return;
+
+    // Guard Links: visible reduction, never immunity (mirrors Enemy::TakeDamage
+    // because the Ogre owns its own damage path).
+    if (_eliteGuardLinked && damage > 0)
+    {
+        damage = ApplyGuardLinkReduction(damage);
+        _eliteGuardReducedHit = true;
+    }
 
     const bool stayCharging = (_rushState == RushState::Charging);
 
@@ -495,6 +552,12 @@ void Ogre::HandleRepositioning(float dt, Vector2 navigationTarget, bool hasNavig
     {
         _rushState = RushState::Charging;
         _chargeTimer = 0.f;
+        // A fresh sequence: one charge normally, two after SECOND WIND.
+        _chargesRemaining = NextOgreChargeCount(IsElitePhaseTwo());
+        _activeChargeDuration = _chargeDurationInst;
+        _eliteSignatureCasts++;
+        EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Ogre,
+                         EliteMove::OgreCharge, 0, _worldPos, _target->GetFeetWorldPos() });
         SetIdleAnimation(true);
         return;
     }
@@ -538,11 +601,12 @@ void Ogre::HandleCharging(float dt)
     else if (dx >  20.f) _rightLeft =  1.f;
 
     _chargeTimer += dt;
-    if (_chargeTimer >= _chargeDurationInst)
+    if (_chargeTimer >= _activeChargeDuration)
     {
         _rushState = RushState::Rushing;
         _chargeTimer = 0.f;
         _rushedEnemies.clear();
+        // LOCK: the direction is committed here and never rotates during travel.
         _rushDirection = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
         if (Vector2Length(_rushDirection) > 0.01f)
             _rushDirection = Vector2Normalize(_rushDirection);
@@ -552,6 +616,10 @@ void Ogre::HandleCharging(float dt)
         if (_rushDirection.x < -0.01f) _rightLeft = -1.f;
         if (_rushDirection.x >  0.01f) _rightLeft =  1.f;
 
+        EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Ogre,
+                         EliteMove::OgreCharge, 0, _worldPos, {}, _rushDirection });
+        EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Ogre,
+                         EliteMove::OgreCharge, 0, _worldPos, {}, _rushDirection });
         _attacking = true;
         SetRushAnimation(true);
     }
@@ -606,6 +674,7 @@ void Ogre::HandleRush(float dt, const std::vector<std::unique_ptr<Enemy>>& enemi
         PlayRushHitSound();
         _target->TakeDamage((int)_attackPower, _worldPos);
         _target->StartForcedPush(_rushDirection, _playerPushSpeed);
+        _eliteSignatureHits++;
         FinishRush(false);
     }
 }
@@ -701,6 +770,72 @@ bool Ogre::HasAlreadyRushedEnemy(const Enemy* enemy) const
     return std::find(_rushedEnemies.begin(), _rushedEnemies.end(), enemy) != _rushedEnemies.end();
 }
 
+void Ogre::DrawEliteTelegraph() const
+{
+    // Charge lane warning: drawn in world space by CombatDirector's world pass.
+    // While charging, the lane follows the player (that IS the telegraph); the
+    // direction locks the moment the rush starts, and the warning disappears.
+    if (_rushState != RushState::Charging && _rushState != RushState::Retargeting)
+        return;
+    if (_target == nullptr)
+        return;
+
+    Vector2 aim = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+    if (Vector2Length(aim) < 0.01f)
+        aim = Vector2{ (float)_rightLeft, 0.f };
+    aim = Vector2Normalize(aim);
+
+    const float laneLength = 900.f;
+    const float laneHalfWidth = 70.f;
+    Vector2 laneEnd = Vector2Add(_worldPos, Vector2Scale(aim, laneLength));
+    Vector2 side{ -aim.y, aim.x };
+
+    // Retargeting shows a fainter lane (the second lock has not happened yet).
+    const float chargeRatio = (_rushState == RushState::Charging && _activeChargeDuration > 0.f)
+        ? std::min(1.f, _chargeTimer / _activeChargeDuration) : 0.25f;
+    Color laneColor = Fade(Color{ 255, 80, 60, 255 }, 0.16f + 0.22f * chargeRatio);
+
+    Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  laneHalfWidth));
+    Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerC = Vector2Add(laneEnd,   Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerD = Vector2Add(laneEnd,   Vector2Scale(side,  laneHalfWidth));
+    DrawTriangle(cornerA, cornerB, cornerC, laneColor);
+    DrawTriangle(cornerA, cornerC, cornerD, laneColor);
+    DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 255, 120, 90, 255 }, 0.55f));
+    DrawLineEx(cornerB, cornerC, 2.f, Fade(Color{ 255, 120, 90, 255 }, 0.55f));
+}
+
+void Ogre::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _rushState != RushState::Repositioning)
+        return;
+    _rushCooldown = 0.f;
+    _rushState = RushState::Charging;
+    _chargeTimer = 0.f;
+    _chargesRemaining = NextOgreChargeCount(IsElitePhaseTwo());
+    _activeChargeDuration = _chargeDurationInst;
+    SetIdleAnimation(true);
+}
+
+void Ogre::DebugForceElitePhaseTwo()
+{
+    // Drop health to the threshold; the shared phase latch (UpdatePhaseLatch)
+    // fires the one-time SECOND WIND transition on the next frame.
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * 0.5f)));
+}
+
+const char* Ogre::GetEliteSignatureStateName() const
+{
+    switch (_rushState)
+    {
+    case RushState::Charging:     return "Charging";
+    case RushState::Rushing:      return "Rushing";
+    case RushState::Retargeting:  return "Retargeting";
+    case RushState::Stunned:      return "Stunned";
+    default:                      return "Repositioning";
+    }
+}
+
 void Ogre::FinishRush(bool stunnedOnImpact)
 {
     // The engine owns the camera, so the ogre exposes a one-frame request when
@@ -708,19 +843,36 @@ void Ogre::FinishRush(bool stunnedOnImpact)
     // of the screen-shake system.
     _impactShakeRequested = true;
     _attacking = false;
-    _rushCooldown = _chargeCooldownDurationInst;
     _rushedEnemies.clear();
     _velocity = Vector2Zero();
 
+    _chargesRemaining = std::max(0, _chargesRemaining - 1);
+
     if (stunnedOnImpact)
     {
+        // Wall impact: the PRIMARY punish window. Ends the whole sequence and
+        // must stay long enough for every class to land one meaningful ability.
+        _chargesRemaining = 0;
         _rushState = RushState::Stunned;
-        _stunTimer = _stunDuration;
+        _stunTimer = std::max(_stunDuration, Balance::Elite::kOgreWallStunMin);
+        _rushCooldown = _chargeCooldownDurationInst;
+        EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
+                         EliteMove::OgreCharge, 0, _worldPos });
+    }
+    else if (!ShouldEndOgreChargeSequence(_chargesRemaining, false))
+    {
+        // SECOND WIND: pause visibly, retarget, then commit the second charge.
+        _rushState = RushState::Retargeting;
+        _retargetTimer = Balance::Elite::kOgreRetargetPause;
+        _stunTimer = 0.f;
     }
     else
     {
         _rushState = RushState::Repositioning;
         _stunTimer = 0.f;
+        _rushCooldown = _chargeCooldownDurationInst;
+        EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
+                         EliteMove::OgreCharge, 0, _worldPos });
     }
 
     SetIdleAnimation(true);

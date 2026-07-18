@@ -167,6 +167,16 @@ bool ShouldEnterElitePhaseTwo(bool alreadyLatched, float health, float maxHealth
     return health <= maxHealth * Balance::Elite::kPhaseThreshold;
 }
 
+int NextOgreChargeCount(bool phaseTwo)
+{
+    return phaseTwo ? 2 : 1;
+}
+
+bool ShouldEndOgreChargeSequence(int remainingCharges, bool hitWall)
+{
+    return hitWall || remainingCharges <= 0;
+}
+
 float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end)
 {
     const float segmentX = end.x - start.x;

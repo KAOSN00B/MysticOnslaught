@@ -37,12 +37,22 @@ public:
     void OnRushBlocked();
     bool ConsumeImpactShakeRequest();
 
+    // ── Elite signature hooks (see Enemy) ────────────────────────────────────
+    // The Ogre's charge already lives in its own state machine, so the base
+    // signature update is unused; these hooks expose telegraph drawing, debug
+    // forcing and state names to the shared elite tooling.
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
 private:
     enum class RushState
     {
         Repositioning,
         Charging,
         Rushing,
+        Retargeting,   // SECOND WIND: visible pause between the two charges
         Stunned
     };
 
@@ -73,6 +83,12 @@ private:
     bool _impactShakeRequested = false;
     Vector2 _rushDirection{};
     std::vector<const Enemy*> _rushedEnemies;
+
+    // ── SECOND WIND double charge (phase two) ────────────────────────────────
+    int   _chargesRemaining = 0;     // charges left in the current sequence
+    float _retargetTimer    = 0.f;   // visible pause before the second lock
+    float _activeChargeDuration = 3.0f;  // telegraph length of the CURRENT charge
+    static constexpr float _secondChargeTelegraph = 0.9f;  // shorter, but still readable
 
     // Ogre sheets are authored as six columns across the texture.
     static constexpr int   _sheetFrameCount = 6;

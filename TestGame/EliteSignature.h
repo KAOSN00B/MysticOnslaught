@@ -180,3 +180,9 @@ bool ShouldEnterElitePhaseTwo(bool alreadyLatched, float health, float maxHealth
 
 // Distance from a point to a line segment (lane/trail hit tests and warnings).
 float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end);
+
+// ── Ogre charge sequencing (pure, testable) ─────────────────────────────────
+// SECOND WIND: phase two performs two charges; a wall impact always ends the
+// whole sequence immediately (into the stun punish window).
+int  NextOgreChargeCount(bool phaseTwo);
+bool ShouldEndOgreChargeSequence(int remainingCharges, bool hitWall);
