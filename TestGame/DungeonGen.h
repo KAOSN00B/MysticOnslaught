@@ -9,10 +9,13 @@ struct DungeonRoom
     int      col      = 0;
     int      row      = 0;
     RoomType type     = RoomType::Standard;
+    EncounterProfile encounterProfile = EncounterProfile::Skirmish;
+    int      depth    = 0; // shortest graph distance from the dungeon entrance
     bool     hasNorth = false;
     bool     hasSouth = false;
     bool     hasEast  = false;
     bool     hasWest  = false;
+    bool     startsEmpty = false; // generated room begins cleared, with no encounter
 };
 
 // Generates a branching dungeon layout on a small grid.

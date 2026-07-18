@@ -9439,6 +9439,18 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         float radius = aimProfile.radius > 0.f ? aimProfile.radius : fallbackRadius;
         return Rectangle{ castTarget.x - radius, castTarget.y - radius, radius * 2.f, radius * 2.f };
     };
+    // Animator hookups for the remaining Ability Lab rows: self-centred blast
+    // radius, zone/trap lifetime, and zone tick cadence. Untuned = the same
+    // hardcoded fallbacks as before.
+    auto tunedRadius = [&](float fallbackRadius) {
+        return aimProfile.radius > 0.f ? aimProfile.radius : fallbackRadius;
+    };
+    auto durationOr = [&](float fallbackDuration) {
+        return (atkTune && atkTune->hasAbility) ? atkTune->effectDuration : fallbackDuration;
+    };
+    auto tickOr = [&](float fallbackInterval) {
+        return (atkTune && atkTune->hasAbility) ? atkTune->tickInterval : fallbackInterval;
+    };
 
     // Whether this ability has a real owned FX sheet (FX_<Ability>.png). If so,
     // SpawnAbilityFx (called at the end) plays it and the prototype shape below is
@@ -9475,8 +9487,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Whirlwind:
     {
-        DamageEnemiesInRect(radialRect(170.f), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.6f));   // spinning blades bleed
-        pushVfx(WarriorVfxKind::Whirl, 0.35f, 170.f, Color{ 235, 235, 245, 255 });
+        float whirlRadius = tunedRadius(170.f);
+        DamageEnemiesInRect(radialRect(whirlRadius), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.6f));   // spinning blades bleed
+        pushVfx(WarriorVfxKind::Whirl, 0.35f, whirlRadius, Color{ 235, 235, 245, 255 });
         TriggerScreenShake(5.f, 0.12f);
         break;
     }
@@ -9524,7 +9537,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // full bar (the damage itself already scaled with Rage via `buff` above,
         // so the radius is the spend reward and avoids double-dipping).
         float rageFraction = _player.ConsumeAllRage();
-        float slamRadius   = 340.f * (1.f + 0.45f * rageFraction);
+        float slamRadius   = tunedRadius(340.f) * (1.f + 0.45f * rageFraction);
         DamageEnemiesInRect(radialRect(slamRadius), dmgVal(7.f + atk * 1.5f), 1.f, 1.5f, 0.f, 0);
         ApplyVulnInRect(_enemies, radialRect(slamRadius), 1.3f, 5.f);   // quake cracks armor
         pushVfx(WarriorVfxKind::Slam, 0.5f, slamRadius, Color{ 235, 200, 120, 255 });
@@ -9578,9 +9591,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // Lobbed to a spot ahead; leaves a pool that ticks enemies over time.
         Vector2 spot = castTarget;
         WarriorVfx pool; pool.kind = WarriorVfxKind::PoisonZone; pool.pos = spot; pool.dir = facing;
-        pool.lifetime = 3.5f; pool.radius = aimProfile.radius > 0.f ? aimProfile.radius : 130.f;
+        pool.lifetime = durationOr(3.5f); pool.radius = tunedRadius(130.f);
         pool.tint = Color{ 120, 210, 90, 255 };
-        pool.tickDamage = dmgVal(1.f + atk * 0.2f); pool.tickInterval = 0.4f;
+        pool.tickDamage = dmgVal(1.f + atk * 0.2f); pool.tickInterval = tickOr(0.4f);
         // Reuse the owned animated poison-pool decal for the complete hazard
         // lifetime. An fxStrip bypasses PoisonZone's prototype Raylib circles;
         // SpawnAbilityFx still supplies the separate vial-impact eruption.
@@ -9661,10 +9674,11 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::SmokeBomb:
     {
-        DamageEnemiesInRect(radialRect(240.f), 0, 0.f, 1.2f, 0.f, 0);   // slow nearby (stun≈hold)
-        ApplySlowInRect(_enemies, radialRect(240.f), 0.5f, 3.5f);       // lingering blinding smoke slows
+        float smokeRadius = tunedRadius(240.f);
+        DamageEnemiesInRect(radialRect(smokeRadius), 0, 0.f, 1.2f, 0.f, 0);   // slow nearby (stun≈hold)
+        ApplySlowInRect(_enemies, radialRect(smokeRadius), 0.5f, 3.5f);       // lingering blinding smoke slows
         _player.GrantDamageBuff(1.6f, 5.f);                            // ambush from the smoke
-        pushVfx(WarriorVfxKind::Smoke, 0.6f, 240.f, Color{ 150, 150, 160, 255 });
+        pushVfx(WarriorVfxKind::Smoke, 0.6f, smokeRadius, Color{ 150, 150, 160, 255 });
         break;
     }
     case AbilityType::Eviscerate:
@@ -9685,10 +9699,11 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::DeathMark:
     {
-        DamageEnemiesInRect(radialRect(1200.f), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
-        ApplyMarkInRect(_enemies, radialRect(1200.f), 6.f);   // marks the whole screen for execution
-        ApplyVulnInRect(_enemies, radialRect(1200.f), 1.3f, 6.f);
-        pushVfx(WarriorVfxKind::Marks, 0.6f, 1200.f, Color{ 255, 70, 70, 255 });
+        float markRadius = tunedRadius(1200.f);
+        DamageEnemiesInRect(radialRect(markRadius), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
+        ApplyMarkInRect(_enemies, radialRect(markRadius), 6.f);   // marks the whole screen for execution
+        ApplyVulnInRect(_enemies, radialRect(markRadius), 1.3f, 6.f);
+        pushVfx(WarriorVfxKind::Marks, 0.6f, markRadius, Color{ 255, 70, 70, 255 });
         StopSound(_explosionSound);
         PlaySound(_explosionSound);
         TriggerScreenShake(12.f, 0.35f);
@@ -9696,10 +9711,11 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::BladeDance:
     {
-        DamageEnemiesInRect(radialRect(230.f), dmgVal(6.f + atk * 1.2f), 1.f, 0.f, 0.f, 0);
+        float danceRadius = tunedRadius(230.f);
+        DamageEnemiesInRect(radialRect(danceRadius), dmgVal(6.f + atk * 1.2f), 1.f, 0.f, 0.f, 0);
         _player.GrantDamageBuff(1.8f, 6.f);
         _player.GrantLifesteal(0.3f, 6.f);
-        pushVfx(WarriorVfxKind::Whirl, 0.5f, 230.f, Color{ 255, 120, 120, 255 });
+        pushVfx(WarriorVfxKind::Whirl, 0.5f, danceRadius, Color{ 255, 120, 120, 255 });
         TriggerScreenShake(8.f, 0.25f);
         break;
     }
@@ -9736,8 +9752,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // Drop an armed trap at your feet. It arms after a beat, then snaps when a
         // foe steps on it: a light burst plus a hard freeze on everything nearby.
         WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = castTarget; trap.dir = facing;
-        trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = 15.f;   // sits armed up to 15s
-        trap.radius = aimProfile.radius > 0.f ? aimProfile.radius : 175.f;
+        trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = durationOr(15.f);   // sits armed up to 15s
+        trap.radius = tunedRadius(175.f);
         trap.triggerRadius = 72.f;      // enemy contact distance that trips it
         trap.trapDamage = dmgVal(2.f + atk * 0.3f);
         trap.trapFreeze = 2.2f;         // hard freeze duration on snap
@@ -9749,8 +9765,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         // Armed trap at your feet: when a foe trips it, a big blast + knockback.
         WarriorVfx trap; trap.kind = WarriorVfxKind::Trap; trap.pos = castTarget; trap.dir = facing;
-        trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = 15.f;
-        trap.radius = aimProfile.radius > 0.f ? aimProfile.radius : 195.f;
+        trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = durationOr(15.f);
+        trap.radius = tunedRadius(195.f);
         trap.triggerRadius = 72.f;
         trap.trapDamage = dmgVal(7.f + atk * 1.3f);
         trap.trapKnockback = 1.5f;
@@ -9819,9 +9835,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::Consecrate:
     {
         WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = castTarget; z.dir = facing;
-        z.lifetime = 4.f; z.radius = aimProfile.radius > 0.f ? aimProfile.radius : 170.f;
+        z.lifetime = durationOr(4.f); z.radius = tunedRadius(170.f);
         z.tint = Color{ 255, 225, 130, 255 };
-        z.tickDamage = dmgVal(1.f + atk * 0.2f); z.tickInterval = 0.45f;
+        z.tickDamage = dmgVal(1.f + atk * 0.2f); z.tickInterval = tickOr(0.45f);
         // The holy ring is the zone itself: loop it for the complete damage
         // duration instead of drawing a separate prototype circle beneath it.
         const int fxIdx = (int)AbilityType::Consecrate;
@@ -9874,7 +9890,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // radius is the spend reward and avoids double-dipping — same pattern
         // as the Warrior's Rage-fuelled Ground Slam).
         float faithFraction = _player.ConsumeAllFaith();
-        float novaRadius    = 320.f * (1.f + 0.45f * faithFraction);
+        float novaRadius    = tunedRadius(320.f) * (1.f + 0.45f * faithFraction);
         int hits = DamageEnemiesInRect(radialRect(novaRadius), dmgVal(7.f + atk * 1.4f), 1.f, 0.8f, 0.f, 0);   // holy stun
         _player.AddRetribution(hits);   // wrath builds per foe struck (no heal)
         ApplyMarkInRect(_enemies, radialRect(novaRadius), 5.f);
@@ -9935,9 +9951,9 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         Vector2 spot = castTarget;
         WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = spot; z.dir = facing;
-        z.lifetime = 4.f; z.radius = aimProfile.radius > 0.f ? aimProfile.radius : 150.f;
+        z.lifetime = durationOr(4.f); z.radius = tunedRadius(150.f);
         z.tint = Color{ 150, 70, 190, 255 };
-        z.tickDamage = dmgVal(1.f + atk * 0.25f); z.tickInterval = 0.4f;
+        z.tickDamage = dmgVal(1.f + atk * 0.25f); z.tickInterval = tickOr(0.4f);
         _warriorVfx.push_back(z);
         Rectangle area = targetArea(150.f);
         ApplyPoisonInRect(_enemies, area, poisonVal(1.f), 5.f);
@@ -9946,29 +9962,32 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Hellfire:
     {
-        DamageEnemiesInRect(radialRect(260.f), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 0.f, 0);
-        ApplyBurnInRect(_enemies, radialRect(260.f), dmgVal(1.f), 3, playerPos);   // hellish flames linger
-        pushVfx(WarriorVfxKind::Slam, 0.45f, 260.f, Color{ 200, 60, 160, 255 });
+        float hellRadius = tunedRadius(260.f);
+        DamageEnemiesInRect(radialRect(hellRadius), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 0.f, 0);
+        ApplyBurnInRect(_enemies, radialRect(hellRadius), dmgVal(1.f), 3, playerPos);   // hellish flames linger
+        pushVfx(WarriorVfxKind::Slam, 0.45f, hellRadius, Color{ 200, 60, 160, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(8.f, 0.2f);
         break;
     }
     case AbilityType::SoulSiphon:
     {
+        float siphonRadius = tunedRadius(230.f);
         _player.GrantLifesteal(0.4f, 0.3f);
-        DamageEnemiesInRect(radialRect(230.f), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
-        ApplySlowInRect(_enemies, radialRect(230.f), 0.6f, 3.f);   // siphoning dread slows them
+        DamageEnemiesInRect(radialRect(siphonRadius), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        ApplySlowInRect(_enemies, radialRect(siphonRadius), 0.6f, 3.f);   // siphoning dread slows them
         _player.GrantLifesteal(0.25f, 5.f);   // lingering siphon buff afterward
-        pushVfx(WarriorVfxKind::Whirl, 0.5f, 230.f, Color{ 170, 90, 210, 255 });
+        pushVfx(WarriorVfxKind::Whirl, 0.5f, siphonRadius, Color{ 170, 90, 210, 255 });
         break;
     }
     case AbilityType::Cataclysm:
     {
-        DamageEnemiesInRect(radialRect(1200.f), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
-        ApplyVulnInRect(_enemies, radialRect(1200.f), 1.35f, 6.f);                 // screen-wide curse
-        ApplyCurseInRect(_enemies, radialRect(1200.f), 6.f * curseDur);                       // everything on screen is primed
-        ApplyBurnInRect(_enemies, radialRect(1200.f), dmgVal(1.f), 3, playerPos);  // + dark fire
-        pushVfx(WarriorVfxKind::Marks, 0.6f, 1200.f, Color{ 180, 70, 210, 255 });
+        float cataclysmRadius = tunedRadius(1200.f);
+        DamageEnemiesInRect(radialRect(cataclysmRadius), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
+        ApplyVulnInRect(_enemies, radialRect(cataclysmRadius), 1.35f, 6.f);                 // screen-wide curse
+        ApplyCurseInRect(_enemies, radialRect(cataclysmRadius), 6.f * curseDur);                       // everything on screen is primed
+        ApplyBurnInRect(_enemies, radialRect(cataclysmRadius), dmgVal(1.f), 3, playerPos);  // + dark fire
+        pushVfx(WarriorVfxKind::Marks, 0.6f, cataclysmRadius, Color{ 180, 70, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(13.f, 0.4f);
         break;

@@ -270,6 +270,14 @@ bool RoomBlueprint::Validate(std::string& error) const
         return false;
     }
 
+    const int capacityValue = static_cast<int>(combatCapacityOverride);
+    if (capacityValue < static_cast<int>(RoomCapacityOverride::Auto) ||
+        capacityValue > static_cast<int>(RoomCapacityOverride::Arena))
+    {
+        error = "Room combat capacity override is invalid";
+        return false;
+    }
+
     const int fallSurfaceValue = static_cast<int>(fallSurface);
     if (fallSurfaceValue < static_cast<int>(FallSurface::Void) ||
         fallSurfaceValue > static_cast<int>(FallSurface::Lava))
@@ -454,6 +462,7 @@ bool RoomBlueprint::Save(const std::filesystem::path& path, std::string& error) 
     out << "BIOME " << static_cast<int>(biome) << '\n';
     out << "TILESET " << std::quoted(tilesetStem) << '\n';
     out << "ROOMTYPE " << static_cast<int>(roomType) << '\n';
+    out << "COMBAT_CAPACITY " << static_cast<int>(combatCapacityOverride) << '\n';
     out << "FALLSURFACE " << static_cast<int>(fallSurface) << '\n';
     if (HasTreasureChestSpawn())
         out << "TREASURE_CHEST " << treasureChestCol << ' ' << treasureChestRow << '\n';
@@ -780,6 +789,17 @@ std::optional<RoomBlueprint> RoomBlueprint::Load(const std::filesystem::path& pa
             if (!(values >> value)) { error = "Invalid room type"; return std::nullopt; }
             room.roomType = static_cast<RoomType>(value);
         }
+        else if (tag == "COMBAT_CAPACITY")
+        {
+            int value = static_cast<int>(RoomCapacityOverride::Auto);
+            if (!(values >> value) || value < static_cast<int>(RoomCapacityOverride::Auto) ||
+                value > static_cast<int>(RoomCapacityOverride::Arena))
+            {
+                error = "Invalid room combat capacity override";
+                return std::nullopt;
+            }
+            room.combatCapacityOverride = static_cast<RoomCapacityOverride>(value);
+        }
         else if (tag == "FALLSURFACE")
         {
             int value = -1;
@@ -913,6 +933,7 @@ std::optional<RoomLayout> BuildRoomLayout(const RoomBlueprint& blueprint,
     layout.fallSurface = blueprint.fallSurface;
     layout.treasureChestCol = blueprint.treasureChestCol;
     layout.treasureChestRow = blueprint.treasureChestRow;
+    layout.combatCapacityOverride = blueprint.combatCapacityOverride;
     for (int i = 0; i < 4; ++i) layout.doorZones[i] = blueprint.doorZones[i];
     layout.colliders = blueprint.colliders;
     layout.fallRects = blueprint.fallRects;

@@ -68,6 +68,66 @@ namespace
         case UpgradeType::BladeStorm:              return "Blade Storm";
         case UpgradeType::Juggernaut:              return "Juggernaut";
         case UpgradeType::ArcaneColossus:          return "Arc Colossus";
+
+        // Power Choice pool (names mirror the level-up cards in Engine.cpp).
+        case UpgradeType::ManaFlow:                return "Mana Flow";
+        case UpgradeType::ClassAttunement:         return "Class Attunement";
+        case UpgradeType::Overload:                return "Overload";
+
+        case UpgradeType::MagePyromancy:           return "Pyromancy";
+        case UpgradeType::MageInfernalMastery:     return "Infernal Mastery";
+        case UpgradeType::MageCryomancy:           return "Cryomancy";
+        case UpgradeType::MageGlacialMastery:      return "Glacial Mastery";
+        case UpgradeType::MageStormAttunement:     return "Storm Attunement";
+        case UpgradeType::MageTempestMastery:      return "Tempest Mastery";
+        case UpgradeType::MageComboResonance:      return "Combo Resonance";
+        case UpgradeType::MageArcaneHaste:         return "Arcane Haste";
+
+        case UpgradeType::WarriorSmolderingFury:   return "Smoldering Fury";
+        case UpgradeType::WarriorFuriousMight:     return "Furious Might";
+        case UpgradeType::WarriorBattleTrance:     return "Battle Trance";
+        case UpgradeType::WarriorUnbreakable:      return "Unbreakable";
+        case UpgradeType::WarriorColossus:         return "Colossus";
+        case UpgradeType::WarriorWarlordsReach:    return "Warlord's Reach";
+        case UpgradeType::WarriorBattleMeditation: return "Battle Meditation";
+        case UpgradeType::WarriorWeaponMaster:     return "Weapon Master";
+
+        case UpgradeType::HunterPredatorsRhythm:   return "Predator's Rhythm";
+        case UpgradeType::HunterQuarry:            return "Quarry";
+        case UpgradeType::HunterApexPredator:      return "Apex Predator";
+        case UpgradeType::HunterFletcher:          return "Fletcher";
+        case UpgradeType::HunterTrappersCunning:   return "Trapper's Cunning";
+        case UpgradeType::HunterSwiftQuiver:       return "Swift Quiver";
+        case UpgradeType::HunterSurvivalist:       return "Survivalist";
+        case UpgradeType::HunterFocusedBreathing:  return "Focused Breathing";
+
+        case UpgradeType::RogueDeepReserves:       return "Deep Reserves";
+        case UpgradeType::RogueRuthlessFinisher:   return "Ruthless Finisher";
+        case UpgradeType::RogueExsanguinate:       return "Exsanguinate";
+        case UpgradeType::RogueToxinExpert:        return "Toxin Expert";
+        case UpgradeType::RogueMasterPoisoner:     return "Master Poisoner";
+        case UpgradeType::RogueFleetFootwork:      return "Fleet Footwork";
+        case UpgradeType::RogueShadowConditioning: return "Shadow Conditioning";
+        case UpgradeType::RogueOpportunist:        return "Opportunist";
+
+        case UpgradeType::PaladinHolyMight:        return "Holy Might";
+        case UpgradeType::PaladinDivineWrath:      return "Divine Wrath";
+        case UpgradeType::PaladinZealotsFury:      return "Zealot's Fury";
+        case UpgradeType::PaladinMirroredAegis:    return "Mirrored Aegis";
+        case UpgradeType::PaladinDevotion:         return "Devotion";
+        case UpgradeType::PaladinCrusadersVitality:return "Crusader's Vitality";
+        case UpgradeType::PaladinSanctuary:        return "Sanctuary";
+        case UpgradeType::PaladinDivineConduit:    return "Divine Conduit";
+
+        case UpgradeType::WarlockGrimHarvest:      return "Grim Harvest";
+        case UpgradeType::WarlockDarkPact:         return "Dark Pact";
+        case UpgradeType::WarlockSoulBargain:      return "Soul Bargain";
+        case UpgradeType::WarlockLingeringMalice:  return "Lingering Malice";
+        case UpgradeType::WarlockVoidAttunement:   return "Void Attunement";
+        case UpgradeType::WarlockCorruptedVitality:return "Corrupted Vitality";
+        case UpgradeType::WarlockSoulConduit:      return "Soul Conduit";
+        case UpgradeType::WarlockOccultPower:      return "Occult Power";
+
         default:                                   return "Upgrade";
         }
     }

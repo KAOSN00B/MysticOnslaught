@@ -97,6 +97,12 @@ namespace
                 EncounterRequest request{};
                 request.tier = tier;
                 request.seed = seed;
+                request.profile = EncounterProfile::Assault;
+                request.capacity.band = (RoomCapacityBand)tier;
+                request.capacity.openingBodyCap = Balance::Pressure::kOpeningBodyCap[tier];
+                request.capacity.totalBodyCap = Balance::Pressure::kPopulationMax[tier];
+                request.capacity.specialistCap = Balance::Pressure::kExpensiveUnitCap[tier];
+                request.capacity.pressureCap = Balance::Pressure::kDangerCap[tier];
                 EncounterPlan plan = EncounterPlanner::Build(request);
                 assert(plan.debug.plannedPopulation >= Balance::Pressure::kPopulationMin[tier]);
                 assert(plan.debug.plannedPopulation <= Balance::Pressure::kPopulationMax[tier]);
@@ -119,6 +125,11 @@ namespace
             request.tier = 2;
             request.seed = seed;
             request.swarm = true;
+            request.capacity.band = RoomCapacityBand::Arena;
+            request.capacity.openingBodyCap = 10;
+            request.capacity.totalBodyCap = Balance::Pressure::kSwarmPeakMax;
+            request.capacity.specialistCap = 3;
+            request.capacity.pressureCap = 16;
             EncounterPlan plan = EncounterPlanner::Build(request);
             assert(plan.debug.plannedPopulation >= Balance::Pressure::kSwarmPeakMin);
             assert(plan.debug.plannedPopulation <= Balance::Pressure::kSwarmPeakMax);

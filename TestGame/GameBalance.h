@@ -222,30 +222,30 @@ namespace Balance::Pressure
     // threaten the player simultaneously. Keeping these separate lets a room
     // contain a large fragile crowd without also becoming a wall of tanks and
     // ranged fire.
-    inline constexpr int   kPopulationMin[3]    = { 8, 12, 18 };
-    inline constexpr int   kPopulationMax[3]    = { 12, 18, 26 };
-    inline constexpr int   kOpeningBodyCap[3]   = { 10, 14, 18 };
-    inline constexpr int   kDangerCap[3]        = { 12, 18, 24 };
-    inline constexpr int   kSwarmPeakMin        = 28;
-    inline constexpr int   kSwarmPeakMax        = 32;
+    inline constexpr int   kPopulationMin[3]    = { 5, 7, 9 };
+    inline constexpr int   kPopulationMax[3]    = { 7, 10, 13 };
+    inline constexpr int   kOpeningBodyCap[3]   = { 4, 6, 8 };
+    inline constexpr int   kDangerCap[3]        = { 7, 10, 13 };
+    inline constexpr int   kSwarmPeakMin        = 14;
+    inline constexpr int   kSwarmPeakMax        = 18;
 
-    inline constexpr int   kRangedCap[3]        = { 2, 3, 4 };
-    inline constexpr int   kTankCap[3]          = { 1, 2, 2 };
-    inline constexpr int   kSupportCap[3]       = { 0, 1, 2 };
-    inline constexpr int   kAssassinCap[3]      = { 1, 2, 3 };
-    inline constexpr int   kZonerCap[3]         = { 1, 2, 3 };
-    inline constexpr int   kExpensiveUnitCap[3] = { 3, 5, 7 };
+    inline constexpr int   kRangedCap[3]        = { 1, 2, 3 };
+    inline constexpr int   kTankCap[3]          = { 1, 1, 2 };
+    inline constexpr int   kSupportCap[3]       = { 0, 1, 1 };
+    inline constexpr int   kAssassinCap[3]      = { 1, 2, 2 };
+    inline constexpr int   kZonerCap[3]         = { 1, 2, 2 };
+    inline constexpr int   kExpensiveUnitCap[3] = { 1, 2, 3 };
     inline constexpr int   kEnemyProjectileCap[3]       = { 12, 16, 20 };
     inline constexpr int   kEnvironmentalProjectileCap[3] = { 8, 10, 12 };
 
     // Legacy names remain temporarily for non-standard encounters while the
     // standard-room planner uses the clearer population/danger vocabulary.
-    inline constexpr int   kRoomPressureCap[3]  = { 12, 18, 24 };
+    inline constexpr int   kRoomPressureCap[3]  = { 7, 10, 13 };
     // Max enemies alive when the fight OPENS; the surplus becomes waves.
-    inline constexpr int   kOpeningActiveCap[3] = { 10, 14, 18 };
+    inline constexpr int   kOpeningActiveCap[3] = { 4, 6, 8 };
     // Standard-room body counts rolled before the pressure clamp.
-    inline constexpr int   kMinBasics[3] = { 8, 12, 18 };
-    inline constexpr int   kMaxBasics[3] = { 12, 18, 26 };
+    inline constexpr int   kMinBasics[3] = { 5, 7, 9 };
+    inline constexpr int   kMaxBasics[3] = { 7, 10, 13 };
     // A reinforcement wave releases when live enemies drop to this count,
     // or on the interval timer — whichever comes first.
     inline constexpr int   kReinforceRefillActive = 4;

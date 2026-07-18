@@ -33,6 +33,7 @@ int main()
     source.biome = Biome::Caverns;
     source.tilesetStem = "Caverns";
     source.roomType = RoomType::Standard;
+    source.combatCapacityOverride = RoomCapacityOverride::Large;
     source.treasureChestCol = 10;
     source.treasureChestRow = 9;
     source.hasNorth = true;
@@ -72,6 +73,7 @@ int main()
     assert(loaded->biome == Biome::Caverns);
     assert(loaded->tilesetStem == "Caverns");
     assert(loaded->roomType == RoomType::Standard);
+    assert(loaded->combatCapacityOverride == RoomCapacityOverride::Large);
     assert(loaded->treasureChestCol == 10);
     assert(loaded->treasureChestRow == 9);
     assert(loaded->fallSurface == FallSurface::Water);
@@ -120,6 +122,7 @@ int main()
     std::optional<RoomLayout> layout = BuildRoomLayout(convertible, definitions, error);
     assert(layout.has_value());
     assert(layout->handcrafted);
+    assert(layout->combatCapacityOverride == RoomCapacityOverride::Large);
     assert(layout->treasureChestCol == 10);
     assert(layout->treasureChestRow == 9);
     assert(layout->fallSurface == FallSurface::Water);
@@ -231,7 +234,7 @@ int main()
         std::ifstream saved(roomPath, std::ios::binary);
         std::string v2((std::istreambuf_iterator<char>(saved)),
                        std::istreambuf_iterator<char>());
-        const std::size_t header = v2.find("MROOM 7");
+        const std::size_t header = v2.find("MROOM 8");
         assert(header != std::string::npos);
         v2.replace(header, 7, "MROOM 2");
         const std::size_t surfaceTag = v2.find("FALLSURFACE ");

@@ -234,6 +234,26 @@ bool CharacterAnimator::PlayerAttackEditorAvailable() const
     return _selectedIdx >= 0 && _selectedIdx < (int)_entries.size() && _entries[_selectedIdx].displayName == "Player";
 }
 
+// Pure self-buffs (damage/lifesteal/reflect/heal only): the game reads no
+// geometry, projectile, zone, or movement tuning for these, so listing them in
+// the attack editor would only offer dead sliders.
+static bool AbilityHasTunableAttack(AbilityType ability)
+{
+    switch (ability)
+    {
+    case AbilityType::WarCry:
+    case AbilityType::Rampage:
+    case AbilityType::Deadeye:
+    case AbilityType::ShieldOfFaith:
+    case AbilityType::LayOnHands:
+    case AbilityType::AvengingWrath:
+    case AbilityType::DemonForm:
+        return false;
+    default:
+        return true;
+    }
+}
+
 void CharacterAnimator::BuildAttackList()
 {
     _attackOptions.clear();
@@ -242,6 +262,8 @@ void CharacterAnimator::BuildAttackList()
         _attackOptions.push_back(AttackOption{ std::string(classNames[i]) + " Basic", AttackTuningKeyForBasic(i), true, AbilityType::None });
     for (AbilityType ability : kAllAbilities)
     {
+        if (!AbilityHasTunableAttack(ability))
+            continue;
         std::string label = std::string(AttackOwnerForAbility((int)ability)) + " " + GetAbilityName(ability);
         _attackOptions.push_back(AttackOption{ label, AttackTuningKeyForAbility(ability), false, ability });
     }
@@ -283,18 +305,34 @@ static void ApplyAbilityLabDefaults(AbilityType ability, AttackTuning& tuning)
         tuning.aimRange = range;
         tuning.areaRadius = radius;
     };
+    auto setZoneTiming = [&](float duration, float tick) {
+        tuning.effectDuration = duration;
+        tuning.tickInterval = tick;
+    };
 
     switch (ability)
     {
-    case AbilityType::FireSpread:       setGround(560.f, 45.f); tuning.effectLength = 420.f; tuning.effectWidth = 90.f; break;
+    case AbilityType::FireSpread:       setGround(560.f, 45.f); tuning.effectLength = 420.f; tuning.effectWidth = 90.f; setZoneTiming(5.f, 0.45f); break;
     case AbilityType::IceSpread:        tuning.areaRadius = 210.f; break;
     case AbilityType::ElectricSpread:   setDirection(430.f, 430.f, 100.f, 430.f); tuning.areaRadius = 95.f; break;
     case AbilityType::FireBolt:         setDirection(900.f, 900.f, 90.f); tuning.areaRadius = 135.f; break;
     case AbilityType::IceBolt:          setDirection(1050.f, 1050.f, 65.f); break;
-    case AbilityType::ElectricBolt:     setDirection(800.f, 800.f, 80.f); break;
-    case AbilityType::FireUltimate:     setGround(800.f, 250.f); break;
-    case AbilityType::IceUltimate:      setGround(720.f, 300.f); break;
-    case AbilityType::ElectricUltimate: setDirection(850.f, 850.f, 230.f); break;
+    case AbilityType::ElectricBolt:     setDirection(800.f, 800.f, 80.f); tuning.chainRange = 280.f; tuning.maxTargets = 5.f; break;
+    case AbilityType::FireUltimate:     setGround(800.f, 250.f); setZoneTiming(4.8f, 0.55f); break;
+    case AbilityType::IceUltimate:      setGround(720.f, 300.f); setZoneTiming(7.f, 0.55f); break;
+    case AbilityType::ElectricUltimate: setDirection(850.f, 850.f, 230.f); setZoneTiming(7.f, 0.42f); break;
+
+    // Self-centred blasts: the game reads only Area radius for these; defaults
+    // mirror the live hardcoded fallbacks so the preview matches the game.
+    case AbilityType::Whirlwind:       tuning.areaRadius = 170.f; break;
+    case AbilityType::GroundSlam:      tuning.areaRadius = 340.f; break;
+    case AbilityType::SmokeBomb:       tuning.areaRadius = 240.f; break;
+    case AbilityType::DeathMark:       tuning.areaRadius = 1200.f; break;
+    case AbilityType::BladeDance:      tuning.areaRadius = 230.f; break;
+    case AbilityType::DivineStorm:     tuning.areaRadius = 320.f; break;
+    case AbilityType::Hellfire:        tuning.areaRadius = 260.f; break;
+    case AbilityType::SoulSiphon:      tuning.areaRadius = 230.f; break;
+    case AbilityType::Cataclysm:       tuning.areaRadius = 1200.f; break;
 
     case AbilityType::WarCleave:       setDirection(210.f, 210.f, 200.f); break;
     case AbilityType::ThrowingAxe:     setDirection(520.f, 520.f, 90.f); break;
@@ -304,22 +342,22 @@ static void ApplyAbilityLabDefaults(AbilityType ability, AttackTuning& tuning)
 
     case AbilityType::FanOfKnives:     setDirection(360.f, 360.f, 240.f); break;
     case AbilityType::Shadowstep:      setDirection(300.f, 300.f, 110.f, 300.f); break;
-    case AbilityType::PoisonVial:      setGround(500.f, 130.f); break;
+    case AbilityType::PoisonVial:      setGround(500.f, 130.f); setZoneTiming(3.5f, 0.4f); break;
     case AbilityType::Backstab:        setDirection(150.f, 150.f, 120.f); break;
     case AbilityType::Eviscerate:      setDirection(210.f, 210.f, 130.f); break;
     case AbilityType::RainOfBlades:    setGround(680.f, 220.f); break;
 
     case AbilityType::PiercingShot:    setDirection(600.f, 600.f, 70.f); break;
     case AbilityType::Multishot:       setDirection(380.f, 380.f, 260.f); break;
-    case AbilityType::FrostTrap:       setGround(500.f, 175.f); break;
-    case AbilityType::ExplosiveArrow:  setGround(500.f, 195.f); break;
+    case AbilityType::FrostTrap:       setGround(500.f, 175.f); tuning.effectDuration = 15.f; break;   // armed lifetime
+    case AbilityType::ExplosiveArrow:  setGround(500.f, 195.f); tuning.effectDuration = 15.f; break;   // armed lifetime
     case AbilityType::Roll:            setDirection(240.f, 240.f, 100.f, 240.f); break;
     case AbilityType::Volley:          setDirection(660.f, 660.f, 84.f); break;
     case AbilityType::ArrowStorm:      setGround(700.f, 360.f); break;
     case AbilityType::PiercingBarrage: setDirection(900.f, 900.f, 150.f); break;
 
     case AbilityType::Smite:           setDirection(210.f, 210.f, 200.f); break;
-    case AbilityType::Consecrate:      setGround(420.f, 170.f); break;
+    case AbilityType::Consecrate:      setGround(420.f, 170.f); setZoneTiming(4.f, 0.45f); break;
     case AbilityType::HolyBolt:        setDirection(560.f, 560.f, 80.f); break;
     case AbilityType::HammerThrow:     setDirection(480.f, 480.f, 110.f); break;
     case AbilityType::HammerOfJustice: setDirection(660.f, 660.f, 150.f); break;
@@ -327,7 +365,7 @@ static void ApplyAbilityLabDefaults(AbilityType ability, AttackTuning& tuning)
     case AbilityType::ShadowBolt:     setDirection(560.f, 560.f, 80.f); break;
     case AbilityType::DrainLife:      setDirection(220.f, 220.f, 130.f); break;
     case AbilityType::Curse:          setDirection(260.f, 260.f, 200.f); break;
-    case AbilityType::CorruptionPool: setGround(500.f, 150.f); break;
+    case AbilityType::CorruptionPool: setGround(500.f, 150.f); setZoneTiming(4.f, 0.4f); break;
     case AbilityType::ShadowNova:     setDirection(680.f, 680.f, 200.f); break;
     default: break;
     }

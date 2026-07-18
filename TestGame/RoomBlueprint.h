@@ -53,7 +53,7 @@ void ApplyActiveRoomDoorMask(RoomLayout& layout, unsigned char doorMask);
 
 struct RoomBlueprint
 {
-    static constexpr int kVersion = 7;
+    static constexpr int kVersion = 8;
     static constexpr std::size_t kMaxPlacements = 4096;
 
     std::string id;
@@ -61,6 +61,7 @@ struct RoomBlueprint
     std::string tilesetStem;
     Biome biome = Biome::Caverns;
     RoomType roomType = RoomType::Standard;
+    RoomCapacityOverride combatCapacityOverride = RoomCapacityOverride::Auto;
     bool hasNorth = false;
     bool hasSouth = false;
     bool hasEast = false;

@@ -16,6 +16,29 @@ enum class RoomType
     Boss,
 };
 
+// Combat pacing is independent from the room reward type. A Standard room can
+// therefore be a quick skirmish, a heavier assault, a fragile swarm, or a
+// timed holdout without adding more special-room enum values.
+enum class EncounterProfile : unsigned char
+{
+    Skirmish,
+    Assault,
+    Swarm,
+    Holdout,
+};
+
+// Handcrafted rooms normally derive their combat capacity from walkable space.
+// Designers can override the result when unusual geometry reads differently
+// in play than it does to the automatic grid analysis.
+enum class RoomCapacityOverride : signed char
+{
+    Auto = -1,
+    Small = 0,
+    Medium = 1,
+    Large = 2,
+    Arena = 3,
+};
+
 // Decision-room "special" layered onto a Standard room (no new RoomType — the
 // generator tags a Standard room's DungeonRoomState with one of these). None =
 // an ordinary combat room. See ROOM_EVENTS_INTEGRATION_PLAN.txt.

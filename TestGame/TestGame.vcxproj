@@ -149,6 +149,7 @@
     <ClCompile Include="NavigationGrid.cpp" />
     <ClCompile Include="RoomLayout.cpp" />
     <ClCompile Include="RoomBlueprint.cpp" />
+    <ClCompile Include="RoomCapacity.cpp" />
     <ClCompile Include="RoomLibrary.cpp" />
     <ClCompile Include="RoomAssetCatalog.cpp" />
     <ClCompile Include="RoomEditor.cpp" />
@@ -247,6 +248,7 @@
     <ClInclude Include="VirtualCanvas.h" />
     <ClInclude Include="NavigationGrid.h" />
     <ClInclude Include="RoomBlueprint.h" />
+    <ClInclude Include="RoomCapacity.h" />
     <ClInclude Include="RoomLibrary.h" />
     <ClInclude Include="RoomAssetCatalog.h" />
     <ClInclude Include="RoomEditor.h" />

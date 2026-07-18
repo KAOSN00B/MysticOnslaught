@@ -6,6 +6,34 @@
 
 int main()
 {
+    // Zooming the palette is a view-only operation. The source tile beneath the
+    // cursor must remain stable so zoom never changes what a click selects.
+    RoomEditor::SheetPaletteView paletteView;
+    const Rectangle paletteViewport{ 1210.f, 350.f, 660.f, 394.f };
+    const Vector2 paletteCursor{ 1437.f, 511.f };
+    int tileBeforeCol = -1, tileBeforeRow = -1;
+    assert(paletteView.TileAt(paletteCursor, paletteViewport, 40, 30,
+                              tileBeforeCol, tileBeforeRow));
+    paletteView.ZoomAt(1.f, paletteCursor, paletteViewport, 40, 30);
+    assert(paletteView.zoom > 1.f);
+    int tileAfterCol = -1, tileAfterRow = -1;
+    assert(paletteView.TileAt(paletteCursor, paletteViewport, 40, 30,
+                              tileAfterCol, tileAfterRow));
+    assert(tileAfterCol == tileBeforeCol);
+    assert(tileAfterRow == tileBeforeRow);
+
+    // Drag direction must not matter: both paths select the same 16 px-aligned
+    // source rectangle, which remains suitable for repeated room stamping.
+    const Rectangle forwardStamp = RoomEditor::SheetPaletteView::SourceRectBetween(
+        2, 3, 5, 4);
+    const Rectangle reverseStamp = RoomEditor::SheetPaletteView::SourceRectBetween(
+        5, 4, 2, 3);
+    assert(forwardStamp.x == 32.f && forwardStamp.y == 48.f);
+    assert(forwardStamp.width == 64.f && forwardStamp.height == 32.f);
+    assert(reverseStamp.x == forwardStamp.x && reverseStamp.y == forwardStamp.y);
+    assert(reverseStamp.width == forwardStamp.width &&
+           reverseStamp.height == forwardStamp.height);
+
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() / "mystic_onslaught_room_editor_tests";
     std::error_code ec;
@@ -21,6 +49,12 @@ int main()
     RoomEditor editor;
     editor.BindForTesting("Caverns", Biome::Caverns, defs, root);
     editor.SetDoors(true, true, false, false);
+    RoomEditor stampEditor;
+    stampEditor.BindForTesting("Caverns", Biome::Caverns, defs, root);
+    assert(stampEditor.SetVisual(12, 12, true, "Caverns", forwardStamp));
+    assert(stampEditor.SetVisual(18, 12, true, "Caverns", forwardStamp));
+    assert(stampEditor.Blueprint().visualTiles[0].src.width == 64.f);
+    assert(stampEditor.Blueprint().visualTiles[1].src.width == 64.f);
     assert(editor.SetWallDepth(RoomWallSide::Top, 1.75f));
     assert(editor.Blueprint().wallTopDepth == 1.75f);
     assert(editor.Blueprint().wallBottomDepth == 1.00f);
@@ -28,6 +62,12 @@ int main()
     assert(editor.Blueprint().wallTopDepth == 1.00f);
     assert(editor.Redo());
     assert(editor.Blueprint().wallTopDepth == 1.75f);
+    assert(editor.SetCombatCapacityOverride(RoomCapacityOverride::Small));
+    assert(editor.Blueprint().combatCapacityOverride == RoomCapacityOverride::Small);
+    assert(editor.Undo());
+    assert(editor.Blueprint().combatCapacityOverride == RoomCapacityOverride::Auto);
+    assert(editor.Redo());
+    assert(editor.Blueprint().combatCapacityOverride == RoomCapacityOverride::Small);
     assert(editor.SetTerrain(4, 5, TileType::FloorVariant));
     assert(editor.SetVisual(5, 5, false, "Forest", { 16.f, 32.f, 16.f, 16.f }));
     assert(!editor.SetVisual(5, 5, false, "Forest", { 16.f, 32.f, 16.f, 16.f }));

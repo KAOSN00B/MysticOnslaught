@@ -53,22 +53,44 @@ void DungeonGen::GeneratePrologue()
 
 void DungeonGen::GrowRooms()
 {
-    // Every biome begins in a quiet, empty entrance on the bottom edge. The
-    // first combat room is directly north, so "up" is always forward.
-    int startRow = kGridSize - 1;
-    int startCol = kGridSize / 2;
+    // Enter from a random outer edge. Corners stay free so both the entrance
+    // and its first inward connection have a readable, predictable direction.
+    const int entranceEdge = GetRandomValue(0, 3); // bottom, left, right, top
+    const int edgePosition = GetRandomValue(1, kGridSize - 2);
+    int startRow = 0, startCol = 0;
+    int firstRow = 0, firstCol = 0;
+    switch (entranceEdge)
+    {
+    case 0: // bottom -> north
+        startRow = kGridSize - 1; startCol = edgePosition;
+        firstRow = startRow - 1;  firstCol = startCol;
+        break;
+    case 1: // left -> east
+        startRow = edgePosition; startCol = 0;
+        firstRow = startRow;     firstCol = startCol + 1;
+        break;
+    case 2: // right -> west
+        startRow = edgePosition; startCol = kGridSize - 1;
+        firstRow = startRow;     firstCol = startCol - 1;
+        break;
+    default: // top -> south
+        startRow = 0;            startCol = edgePosition;
+        firstRow = startRow + 1; firstCol = startCol;
+        break;
+    }
 
     DungeonRoom start;
     start.col  = startCol;
     start.row  = startRow;
     start.type = RoomType::Standard;
+    start.startsEmpty = GetRandomValue(0, 2) == 0;
     _grid[startRow][startCol] = 0;
     _rooms.push_back(start);
     _startIdx = 0;
 
     DungeonRoom firstRoom;
-    firstRoom.col  = startCol;
-    firstRoom.row  = startRow - 1;
+    firstRoom.col  = firstCol;
+    firstRoom.row  = firstRow;
     firstRoom.type = RoomType::Standard;
     _grid[firstRoom.row][firstRoom.col] = 1;
     _rooms.push_back(firstRoom);
@@ -91,6 +113,12 @@ void DungeonGen::GrowRooms()
         if (nc < 0 || nc >= kGridSize || nr < 0 || nr >= kGridSize)
             continue;
         if (_grid[nr][nc] != -1)
+            continue;
+
+        // Never add a second room beside the entrance. Removing that door
+        // later could isolate a valid branch from the rest of the dungeon.
+        if (std::abs(nr - startRow) + std::abs(nc - startCol) == 1 &&
+            !(nr == firstRow && nc == firstCol))
             continue;
 
         DungeonRoom room;
@@ -118,6 +146,20 @@ void DungeonGen::AssignSpecialRooms()
     if (_rooms.empty())
         return;
 
+    auto degree = [&](int roomIdx)
+    {
+        const DungeonRoom& room = _rooms[roomIdx];
+        return (int)room.hasNorth + (int)room.hasSouth +
+               (int)room.hasEast + (int)room.hasWest;
+    };
+
+    for (int i = 0; i < (int)_rooms.size(); ++i)
+    {
+        _rooms[i].depth = std::max(0, DistanceBFS(_startIdx, i));
+        _rooms[i].encounterProfile = _rooms[i].depth <= 1
+            ? EncounterProfile::Skirmish : EncounterProfile::Assault;
+    }
+
     // Boss = furthest room from start.
     _bossIdx = FindFurthest(_startIdx);
     if (_bossIdx >= 0)
@@ -134,7 +176,8 @@ void DungeonGen::AssignSpecialRooms()
         if (d > bestDist) { bestDist = d; _keyIdx = i; }
     }
 
-    // Collect all remaining Standard rooms and shuffle them.
+    // Collect rooms that may hold authored reward/pressure beats. The key room
+    // remains ordinary so its existing progression behaviour is preserved.
     std::vector<int> pool;
     for (int i = 0; i < (int)_rooms.size(); i++)
     {
@@ -142,45 +185,91 @@ void DungeonGen::AssignSpecialRooms()
             continue;
         pool.push_back(i);
     }
-    for (int i = (int)pool.size() - 1; i > 0; i--)
-        std::swap(pool[i], pool[GetRandomValue(0, i)]);
-
-    // Assign exactly one of each special type from the shuffled pool.
-    // Rest and Shop rooms are not generated. Zeph is village-only and the
-    // entrance room deliberately contains no service or reward objects.
-    int idx = 0;
-    if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Elite;    }
-    if (idx < (int)pool.size()) { _rooms[pool[idx++]].type = RoomType::Treasure; }
-    // All remaining rooms stay Standard.
-
-    // Entrance room only ever exits north — random growth can attach rooms east/west/south
-    // of the start cell, so strip those connections after the fact.
-    _rooms[_startIdx].hasSouth = false;
-    _rooms[_startIdx].hasEast  = false;
-    _rooms[_startIdx].hasWest  = false;
-
-    // Strip reciprocal connections so no neighboring room opens a door facing the entrance.
-    // BuildConnections uses raw grid adjacency, so east/west neighbors of the Store
-    // would otherwise generate a door tile pointing into the Store room.
-    int storeRow = _rooms[_startIdx].row;
-    int storeCol = _rooms[_startIdx].col;
-    if (storeCol + 1 < kGridSize)
+    auto takeBest = [&](auto score) -> int
     {
-        int eastNeighbor = _grid[storeRow][storeCol + 1];
-        if (eastNeighbor >= 0) _rooms[eastNeighbor].hasWest = false;
-    }
-    if (storeCol - 1 >= 0)
+        if (pool.empty()) return -1;
+        int bestPosition = 0;
+        int bestScore = score(pool[0]);
+        for (int position = 1; position < (int)pool.size(); ++position)
+        {
+            const int candidateScore = score(pool[position]);
+            if (candidateScore > bestScore ||
+                (candidateScore == bestScore && GetRandomValue(0, 1) == 1))
+            {
+                bestPosition = position;
+                bestScore = candidateScore;
+            }
+        }
+        const int result = pool[bestPosition];
+        pool.erase(pool.begin() + bestPosition);
+        return result;
+    };
+
+    // Treasure prefers a deep dead end, giving side branches an intentional
+    // payoff. Elite pressure sits deep in the route, but does not compete with
+    // the boss or treasure room for the same graph slot.
+    const int treasure = takeBest([&](int roomIdx)
     {
-        int westNeighbor = _grid[storeRow][storeCol - 1];
-        if (westNeighbor >= 0) _rooms[westNeighbor].hasEast = false;
+        return _rooms[roomIdx].depth * 10 + (degree(roomIdx) == 1 ? 24 : 0);
+    });
+    if (treasure >= 0)
+    {
+        _rooms[treasure].type = RoomType::Treasure;
+        _rooms[treasure].encounterProfile = EncounterProfile::Skirmish;
     }
 
-    // The room directly north has no south door. Once the player leaves the
-    // quiet entrance, the dungeon closes behind them.
-    int northOfStart = _grid[_rooms[_startIdx].row - 1][_rooms[_startIdx].col];
-    if (northOfStart >= 0)
-        _rooms[northOfStart].hasSouth = false;
+    const int elite = takeBest([&](int roomIdx)
+    {
+        return _rooms[roomIdx].depth * 10 + (degree(roomIdx) >= 2 ? 4 : 0);
+    });
+    if (elite >= 0)
+    {
+        _rooms[elite].type = RoomType::Elite;
+        _rooms[elite].encounterProfile = EncounterProfile::Assault;
+    }
 
+    if (_bossIdx >= 0)
+        _rooms[_bossIdx].encounterProfile = EncounterProfile::Assault;
+
+    // One holdout and one swarm create a readable rhythm in every full graph.
+    // They remain Standard rooms so rewards and existing room-clear handling do
+    // not need another special-room type.
+    auto profileCandidate = [&](EncounterProfile profile, bool avoidBossNeighbor) -> int
+    {
+        int best = -1;
+        int bestScore = std::numeric_limits<int>::min();
+        for (int pass = 0; pass < 2 && best < 0; ++pass)
+        {
+            for (int roomIdx : pool)
+            {
+                if (_rooms[roomIdx].type != RoomType::Standard) continue;
+                const bool bossNeighbor = _bossIdx >= 0 &&
+                    std::abs(_rooms[roomIdx].row - _rooms[_bossIdx].row) +
+                    std::abs(_rooms[roomIdx].col - _rooms[_bossIdx].col) == 1;
+                if (avoidBossNeighbor && pass == 0 && bossNeighbor) continue;
+                const int score = _rooms[roomIdx].depth * 10 +
+                                  (degree(roomIdx) >= 2 ? 5 : 0);
+                if (score > bestScore)
+                {
+                    best = roomIdx;
+                    bestScore = score;
+                }
+            }
+            if (!avoidBossNeighbor) break;
+        }
+        if (best >= 0)
+        {
+            _rooms[best].encounterProfile = profile;
+            pool.erase(std::remove(pool.begin(), pool.end(), best), pool.end());
+        }
+        return best;
+    };
+    profileCandidate(EncounterProfile::Holdout, true);
+    profileCandidate(EncounterProfile::Swarm, false);
+
+    _rooms[_startIdx].encounterProfile = EncounterProfile::Skirmish;
+
+    // The entrance's single inward connection was guaranteed while growing.
     // Boss room gets exactly one dungeon connector. Other adjacent rooms may
     // exist in the grid, but they should not open extra boss entrances.
     if (_bossIdx >= 0)

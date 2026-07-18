@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 
 namespace
 {
@@ -61,13 +62,15 @@ namespace
         }
     }
 
-    bool CanAdd(const EncounterSpawnEntry& entry, const EncounterPlanDebug& debug, int tier)
+    bool CanAdd(const EncounterSpawnEntry& entry, const EncounterPlanDebug& debug,
+                int tier, int roomSpecialistCap)
     {
         if (entry.specialist == SpecialistClass::None)
             return true;
         const int index = static_cast<int>(entry.specialist);
         return debug.specialistCounts[index] < SpecialistCap(entry.specialist, tier)
-            && debug.expensiveUnits < Balance::Pressure::kExpensiveUnitCap[tier];
+            && debug.expensiveUnits < Balance::Pressure::kExpensiveUnitCap[tier]
+            && debug.expensiveUnits < roomSpecialistCap;
     }
 
     void CountEntry(const EncounterSpawnEntry& entry, EncounterPlanDebug& debug)
@@ -92,6 +95,25 @@ namespace
         entry.swarmProfile = swarmProfile;
         return entry;
     }
+
+    std::pair<int, int> PopulationRange(EncounterProfile profile,
+                                        const RoomCombatCapacity& capacity)
+    {
+        const int cap = std::max(3, capacity.totalBodyCap);
+        switch (profile)
+        {
+        case EncounterProfile::Skirmish:
+            return { std::max(3, cap - 4), std::max(3, cap - 2) };
+        case EncounterProfile::Assault:
+            return { std::max(4, cap - 2), cap };
+        case EncounterProfile::Swarm:
+            if (capacity.band == RoomCapacityBand::Arena) return { 14, cap };
+            return { std::max(5, cap - 2), cap };
+        case EncounterProfile::Holdout:
+            return { std::max(5, cap - 1), cap };
+        }
+        return { std::max(3, cap - 4), cap };
+    }
 }
 
 EncounterPlan EncounterPlanner::Build(const EncounterRequest& request)
@@ -99,20 +121,22 @@ EncounterPlan EncounterPlanner::Build(const EncounterRequest& request)
     EncounterPlan plan{};
     const int tier = std::clamp(request.tier, 0, 2);
     DeterministicRng rng(request.seed);
-    plan.swarm = request.swarm;
-
-    const int minPopulation = request.swarm ? Balance::Pressure::kSwarmPeakMin
-                                            : Balance::Pressure::kPopulationMin[tier];
-    const int maxPopulation = request.swarm ? Balance::Pressure::kSwarmPeakMax
-                                            : Balance::Pressure::kPopulationMax[tier];
+    const EncounterProfile profile = request.swarm
+        ? EncounterProfile::Swarm : request.profile;
+    plan.swarm = profile == EncounterProfile::Swarm;
+    const auto [minPopulation, maxPopulation] = PopulationRange(profile, request.capacity);
+    const int abilityBonus = std::clamp(request.learnedAbilityCount - 1, 0, 2);
     plan.debug.targetPopulation = std::clamp(rng.Range(minPopulation, maxPopulation)
-                                             + request.populationBonus,
-                                             minPopulation, maxPopulation);
+                                             + request.populationBonus + abilityBonus,
+                                             minPopulation, request.capacity.totalBodyCap);
+    plan.debug.openingBodyCap = request.capacity.openingBodyCap;
+    plan.debug.totalBodyCap = request.capacity.totalBodyCap;
+    plan.debug.pressureCap = request.capacity.pressureCap;
 
     std::vector<EncounterSpawnEntry> authored;
     authored.reserve(plan.debug.targetPopulation);
-    const int ordinaryTarget = request.swarm
-        ? std::min(Balance::Pressure::kPopulationMax[tier], plan.debug.targetPopulation)
+    const int ordinaryTarget = plan.swarm
+        ? std::min(std::max(4, request.capacity.totalBodyCap / 2), plan.debug.targetPopulation)
         : plan.debug.targetPopulation;
 
     int totalWeight = 0;
@@ -130,7 +154,9 @@ EncounterPlan EncounterPlanner::Build(const EncounterRequest& request)
                 roll -= candidate.weights[tier];
                 if (roll <= 0)
                 {
-                    if (candidate.weights[tier] > 0 && CanAdd(candidate.entry, plan.debug, tier))
+                    if (candidate.weights[tier] > 0 &&
+                        CanAdd(candidate.entry, plan.debug, tier,
+                               request.capacity.specialistCap))
                         selected = &candidate;
                     break;
                 }
@@ -149,8 +175,8 @@ EncounterPlan EncounterPlanner::Build(const EncounterRequest& request)
         CountEntry(entry, plan.debug);
     }
 
-    const int openingBodyCap = Balance::Pressure::kOpeningBodyCap[tier];
-    const int openingDangerCap = std::max(1, Balance::Pressure::kDangerCap[tier]
+    const int openingBodyCap = request.capacity.openingBodyCap;
+    const int openingDangerCap = std::max(1, request.capacity.pressureCap
                                              - std::max(0, request.hazardPressure));
     for (const EncounterSpawnEntry& entry : authored)
     {

@@ -96,6 +96,7 @@ struct RoomLayout
     // legacy centre-of-room fallback for rooms saved before marker support.
     int treasureChestCol = -1;
     int treasureChestRow = -1;
+    RoomCapacityOverride combatCapacityOverride = RoomCapacityOverride::Auto;
 
     TileType tiles[kRows][kCols]{};
     bool fall[kRows][kCols]{};

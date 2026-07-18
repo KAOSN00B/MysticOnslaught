@@ -14,6 +14,26 @@ class RoomEditor
 public:
     enum class Layer { Ground, Visual, Door, Collision, Props, Decor, FallZones, DoorZones, ChestSpawn };
 
+    // View-only transform for the contiguous sprite-sheet palette. Source
+    // rectangles remain in their original 16 px tile coordinates at every zoom.
+    struct SheetPaletteView
+    {
+        float zoom = 1.f;
+        float scrollX = 0.f;
+        float scrollY = 0.f;
+
+        float CellSize(Rectangle viewport, int columns) const;
+        Vector2 SheetOrigin(Rectangle viewport) const;
+        static Rectangle SourceRectBetween(int col0, int row0, int col1, int row1);
+        bool TileAt(Vector2 point, Rectangle viewport, int columns, int rows,
+                    int& col, int& row) const;
+        void ZoomAt(float wheel, Vector2 anchor, Rectangle viewport,
+                    int columns, int rows);
+        void PanBy(Vector2 screenDelta, Rectangle viewport, int columns, int rows);
+        void Clamp(Rectangle viewport, int columns, int rows);
+        void Reset();
+    };
+
     void Bind(const std::string& tilesetStem, Biome biome,
               const TileDefSet& definitions, Texture2D sheet, Texture2D groundSheet,
               const std::filesystem::path& roomRoot,
@@ -43,6 +63,7 @@ public:
     bool SetSolid(int col, int row, bool enabled);
     bool SetFall(int col, int row, bool enabled);
     bool SetFallSurface(FallSurface surface);
+    bool SetCombatCapacityOverride(RoomCapacityOverride capacity);
     bool TreasureChestSpawnFits(int col, int row) const;
     bool SetTreasureChestSpawn(int col, int row);
     bool ClearTreasureChestSpawn();
@@ -199,6 +220,13 @@ private:
     bool _wantsBack = false;
     bool _playtestRequested = false;
     float _paletteScroll = 0.f;
+    SheetPaletteView _sheetPaletteView{};
+    bool _sheetPalettePanning = false;
+    Vector2 _sheetPalettePanMouse{};
+    bool _sheetTileSelecting = false;
+    int _sheetTileDragCol = 0;
+    int _sheetTileDragRow = 0;
+    int _sheetTileSelectionSource = -1;
     float _libraryScroll = 0.f;
     mutable std::string _status;
     mutable float _statusTimer = 0.f;

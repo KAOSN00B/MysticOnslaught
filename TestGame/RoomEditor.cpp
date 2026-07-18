@@ -85,6 +85,18 @@ namespace
         }
     }
 
+    const char* CapacityOverrideLabel(RoomCapacityOverride capacity)
+    {
+        switch (capacity)
+        {
+        case RoomCapacityOverride::Small:  return "Small";
+        case RoomCapacityOverride::Medium: return "Medium";
+        case RoomCapacityOverride::Large:  return "Large";
+        case RoomCapacityOverride::Arena:  return "Arena";
+        default:                           return "Auto";
+        }
+    }
+
     Color FallSurfaceColor(FallSurface surface, unsigned char alpha)
     {
         switch (surface)
@@ -115,6 +127,94 @@ namespace
     }
 }
 
+float RoomEditor::SheetPaletteView::CellSize(Rectangle viewport, int columns) const
+{
+    return columns > 0 ? (viewport.width / (float)columns) * zoom : 0.f;
+}
+
+Vector2 RoomEditor::SheetPaletteView::SheetOrigin(Rectangle viewport) const
+{
+    return { viewport.x - scrollX, viewport.y - scrollY };
+}
+
+Rectangle RoomEditor::SheetPaletteView::SourceRectBetween(int col0, int row0,
+                                                          int col1, int row1)
+{
+    const int left = std::min(col0, col1);
+    const int top = std::min(row0, row1);
+    const int right = std::max(col0, col1);
+    const int bottom = std::max(row0, row1);
+    return { (float)(left * 16), (float)(top * 16),
+             (float)((right - left + 1) * 16),
+             (float)((bottom - top + 1) * 16) };
+}
+
+bool RoomEditor::SheetPaletteView::TileAt(Vector2 point, Rectangle viewport,
+                                          int columns, int rows,
+                                          int& col, int& row) const
+{
+    if (columns <= 0 || rows <= 0 || !CheckCollisionPointRec(point, viewport))
+        return false;
+
+    const float cellSize = CellSize(viewport, columns);
+    const Vector2 origin = SheetOrigin(viewport);
+    col = (int)std::floor((point.x - origin.x) / cellSize);
+    row = (int)std::floor((point.y - origin.y) / cellSize);
+    return col >= 0 && col < columns && row >= 0 && row < rows;
+}
+
+void RoomEditor::SheetPaletteView::Clamp(Rectangle viewport, int columns, int rows)
+{
+    if (columns <= 0 || rows <= 0)
+    {
+        scrollX = scrollY = 0.f;
+        return;
+    }
+
+    const float cellSize = CellSize(viewport, columns);
+    const float maxScrollX = std::max(0.f, columns * cellSize - viewport.width);
+    const float maxScrollY = std::max(0.f, rows * cellSize - viewport.height);
+    scrollX = std::clamp(scrollX, 0.f, maxScrollX);
+    scrollY = std::clamp(scrollY, 0.f, maxScrollY);
+}
+
+void RoomEditor::SheetPaletteView::ZoomAt(float wheel, Vector2 anchor,
+                                          Rectangle viewport,
+                                          int columns, int rows)
+{
+    if (wheel == 0.f || columns <= 0 || rows <= 0 ||
+        !CheckCollisionPointRec(anchor, viewport))
+        return;
+
+    const float oldCellSize = CellSize(viewport, columns);
+    const Vector2 oldOrigin = SheetOrigin(viewport);
+    const float sourceCol = (anchor.x - oldOrigin.x) / oldCellSize;
+    const float sourceRow = (anchor.y - oldOrigin.y) / oldCellSize;
+    const float factor = wheel > 0.f ? 1.15f : (1.f / 1.15f);
+    const float newZoom = std::clamp(zoom * factor, 1.f, 20.f);
+    if (newZoom == zoom) return;
+
+    zoom = newZoom;
+    const float newCellSize = CellSize(viewport, columns);
+    scrollX = viewport.x + sourceCol * newCellSize - anchor.x;
+    scrollY = viewport.y + sourceRow * newCellSize - anchor.y;
+    Clamp(viewport, columns, rows);
+}
+
+void RoomEditor::SheetPaletteView::PanBy(Vector2 screenDelta, Rectangle viewport,
+                                         int columns, int rows)
+{
+    scrollX -= screenDelta.x;
+    scrollY -= screenDelta.y;
+    Clamp(viewport, columns, rows);
+}
+
+void RoomEditor::SheetPaletteView::Reset()
+{
+    zoom = 1.f;
+    scrollX = scrollY = 0.f;
+}
+
 std::string RoomEditor::MakeRoomId(const std::string& tilesetStem)
 {
     static unsigned long long sequence = 0;
@@ -138,6 +238,10 @@ void RoomEditor::BindForTesting(const std::string& tilesetStem, Biome biome,
     _room.roomType = RoomType::Standard;
     _undo.clear();
     _redo.clear();
+    _paletteScroll = 0.f;
+    _sheetPaletteView.Reset();
+    _sheetPalettePanning = false;
+    _sheetTileSelecting = false;
 }
 
 bool RoomEditor::AddGroundBrushTile(const std::string& sourceTileset,
@@ -697,7 +801,16 @@ void RoomEditor::SelectSourceByStem(const std::string& stem)
 {
     const auto& sources = _catalog.Sources();
     for (int i = 0; i < (int)sources.size(); ++i)
-        if (sources[(std::size_t)i].stem == stem) { _selectedSource = i; return; }
+        if (sources[(std::size_t)i].stem == stem)
+        {
+            if (_selectedSource != i)
+            {
+                _sheetPaletteView.Reset();
+                _sheetTileSelecting = false;
+            }
+            _selectedSource = i;
+            return;
+        }
 }
 
 void RoomEditor::PickAt(int col, int row)
@@ -874,6 +987,18 @@ bool RoomEditor::SetFallSurface(FallSurface surface)
         return false;
     PushUndo();
     _room.fallSurface = surface;
+    return true;
+}
+
+bool RoomEditor::SetCombatCapacityOverride(RoomCapacityOverride capacity)
+{
+    const int value = static_cast<int>(capacity);
+    if (value < static_cast<int>(RoomCapacityOverride::Auto) ||
+        value > static_cast<int>(RoomCapacityOverride::Arena) ||
+        _room.combatCapacityOverride == capacity)
+        return false;
+    PushUndo();
+    _room.combatCapacityOverride = capacity;
     return true;
 }
 
@@ -1903,6 +2028,21 @@ void RoomEditor::Update()
                 if (_layer == Layer::ChestSpawn) _layer = Layer::Ground;
             }
         }
+        Rectangle capacityButton{ 880,18,330,38 };
+        if (CheckCollisionPointRec(mouse, capacityButton))
+        {
+            int next = static_cast<int>(_room.combatCapacityOverride) + 1;
+            if (next > static_cast<int>(RoomCapacityOverride::Arena))
+                next = static_cast<int>(RoomCapacityOverride::Auto);
+            const RoomCapacityOverride capacity = static_cast<RoomCapacityOverride>(next);
+            if (SetCombatCapacityOverride(capacity))
+            {
+                _status = std::string("Combat capacity: ") + CapacityOverrideLabel(capacity) +
+                    (capacity == RoomCapacityOverride::Auto
+                        ? " (measured during playtest)" : " (authored override)");
+                _statusTimer = 2.5f;
+            }
+        }
         for (int i = 0; i < 4; ++i)
         {
             const float current = WallDepthAt(_room, i);
@@ -1962,22 +2102,79 @@ void RoomEditor::Update()
         const bool groundBrushPanelVisible = groundTilePalette && !_groundBrushTiles.empty();
         const float tilePaletteBottom = groundBrushPanelVisible
             ? 744.f : 988.f;
+        const Rectangle sheetViewport{
+            1210.f, tilePaletteTop + 2.f, 660.f,
+            std::max(1.f, tilePaletteBottom - tilePaletteTop - 2.f)
+        };
+        const RoomAssetSource* sheetSource = rawTilePalette ? SelectedSource() : nullptr;
+        const bool multiTilePalette = (_layer == Layer::Ground ||
+            _layer == Layer::Visual) && !DecorModeOnTileLayer();
+        const float wheel = GetMouseWheelMove();
         float maxScroll = 0.f;
         if (ShowingAssetPalette())
         {
             const int rows = ((int)MatchingAssetIndices().size() + 4) / 5;
             maxScroll = std::max(0.f, rows * 108.f - 700.f);
         }
-        else if (_layer == Layer::Ground || _layer == Layer::Visual || _layer == Layer::Door)
+
+        if (sheetSource != nullptr && sheetSource->tileColumns > 0 &&
+            sheetSource->tileRows > 0)
         {
-            if (const RoomAssetSource* s = SelectedSource(); s && s->tileColumns > 0)
+            _sheetPaletteView.Clamp(sheetViewport, sheetSource->tileColumns,
+                                    sheetSource->tileRows);
+            _sheetPaletteView.ZoomAt(wheel, mouse, sheetViewport,
+                                     sheetSource->tileColumns, sheetSource->tileRows);
+
+            if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) &&
+                CheckCollisionPointRec(mouse, sheetViewport))
             {
-                const float cellPx = 660.f / (float)s->tileColumns;
-                maxScroll = std::max(0.f, s->tileRows * cellPx -
-                    std::max(1.f, tilePaletteBottom - tilePaletteTop));
+                _sheetPalettePanning = true;
+                _sheetPalettePanMouse = mouse;
+            }
+            if (_sheetPalettePanning)
+            {
+                if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE))
+                {
+                    const Vector2 delta{ mouse.x - _sheetPalettePanMouse.x,
+                                         mouse.y - _sheetPalettePanMouse.y };
+                    _sheetPaletteView.PanBy(delta, sheetViewport,
+                                            sheetSource->tileColumns,
+                                            sheetSource->tileRows);
+                    _sheetPalettePanMouse = mouse;
+                }
+                else _sheetPalettePanning = false;
+            }
+
+            int hoverCol = 0, hoverRow = 0;
+            const bool overSheetTile = _sheetPaletteView.TileAt(
+                mouse, sheetViewport, sheetSource->tileColumns,
+                sheetSource->tileRows, hoverCol, hoverRow);
+            if (multiTilePalette && overSheetTile &&
+                IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+            {
+                _sheetTileSelecting = true;
+                _sheetTileDragCol = hoverCol;
+                _sheetTileDragRow = hoverRow;
+                _sheetTileSelectionSource = _selectedSource;
+                _selectedRawTile = SheetPaletteView::SourceRectBetween(
+                    hoverCol, hoverRow, hoverCol, hoverRow);
+                _selectedTileAnchorOffset = {};
+            }
+            if (_sheetTileSelecting && multiTilePalette &&
+                _sheetTileSelectionSource == _selectedSource && overSheetTile &&
+                (IsMouseButtonDown(MOUSE_BUTTON_LEFT) ||
+                 IsMouseButtonReleased(MOUSE_BUTTON_LEFT)))
+            {
+                _selectedRawTile = SheetPaletteView::SourceRectBetween(
+                    _sheetTileDragCol, _sheetTileDragRow, hoverCol, hoverRow);
+                _selectedTileAnchorOffset = {};
             }
         }
-        _paletteScroll = std::clamp(_paletteScroll - GetMouseWheelMove() * 90.f, 0.f, maxScroll);
+        else
+        {
+            _sheetPalettePanning = false;
+            _paletteScroll = std::clamp(_paletteScroll - wheel * 90.f, 0.f, maxScroll);
+        }
         // Ground/Visual layers: a "Tiles | Decor" toggle switches the palette to
         // banded Decor/AnimDecor assets (animated water/lava as ground/visual).
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
@@ -1987,6 +2184,8 @@ void RoomEditor::Update()
             _tileLayerDecorMode = !_tileLayerDecorMode;
             _selectedAssetId.clear();
             _paletteScroll = 0.f;
+            _sheetPaletteView.Reset();
+            _sheetTileSelecting = false;
             _paletteSearch.clear();
             _editingSearch = false;
         }
@@ -2158,6 +2357,8 @@ void RoomEditor::Update()
                 _selectedRawTile = {0.f,0.f,16.f,16.f};
                 _selectedTileAnchorOffset = {};
                 _paletteScroll = 0.f;
+                _sheetPaletteView.Reset();
+                _sheetTileSelecting = false;
             }
             else if (!handledGroundControl && sourceCount > 0 && CheckCollisionPointRec(mouse, {1828,230,42,34}))
             {
@@ -2166,23 +2367,23 @@ void RoomEditor::Update()
                 _selectedRawTile = {0.f,0.f,16.f,16.f};
                 _selectedTileAnchorOffset = {};
                 _paletteScroll = 0.f;
+                _sheetPaletteView.Reset();
+                _sheetTileSelecting = false;
             }
             else if (!handledGroundControl && !handledTileOverhang &&
-                     (_layer == Layer::Ground || _layer == Layer::Visual || _layer == Layer::Door) &&
+                     _layer == Layer::Door &&
                      !DecorModeOnTileLayer())
             {
                 const RoomAssetSource* source = SelectedSource();
                 if (source != nullptr && source->tileColumns > 0 && source->tileRows > 0)
                 {
-                    // Map the click onto the contiguous sheet (matches DrawPalette).
+                    // Map through the palette view while preserving 16 px source
+                    // coordinates. Zoom and pan never alter the selected asset.
                     const int cols = source->tileColumns, rows = source->tileRows;
-                    const float cellPx = 660.f / (float)cols;
-                    const float ox = 1210.f, oy = tilePaletteTop + 2.f - _paletteScroll;
-                    if (mouse.x >= ox && mouse.x < ox + cols * cellPx &&
-                        mouse.y >= oy && mouse.y < oy + rows * cellPx)
+                    int gc = 0, gr = 0;
+                    if (_sheetPaletteView.TileAt(mouse, sheetViewport, cols, rows,
+                                                 gc, gr))
                     {
-                        const int gc = std::clamp((int)((mouse.x - ox) / cellPx), 0, cols - 1);
-                        const int gr = std::clamp((int)((mouse.y - oy) / cellPx), 0, rows - 1);
                         _selectedRawTile = { (float)(gc * 16), (float)(gr * 16), 16.f, 16.f };
                         _selectedTileAnchorOffset = {};
                     }
@@ -2226,6 +2427,8 @@ void RoomEditor::Update()
         }
     }
     // The search box only exists on the asset palette — never leave it focused elsewhere.
+    if (_sheetTileSelecting && !IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+        _sheetTileSelecting = false;
     if (!ShowingAssetPalette()) _editingSearch = false;
     if (_layer != Layer::Ground || DecorModeOnTileLayer()) _editingGroundBrushName = false;
     UpdateCanvas();
@@ -2240,6 +2443,10 @@ void RoomEditor::DrawToolbar() const
     DrawButton({535,18,125,38}, "Playtest");
     DrawButton({670,18,90,38}, "Undo", false, CanUndo());
     DrawButton({770,18,90,38}, "Redo", false, CanRedo());
+    const std::string capacityLabel = std::string("Combat Capacity: ") +
+        CapacityOverrideLabel(_room.combatCapacityOverride);
+    DrawButton({880,18,330,38}, capacityLabel.c_str(),
+               _room.combatCapacityOverride != RoomCapacityOverride::Auto);
     DrawText("Name", 30, 79, 18, Fade(WHITE, .7f));
     DrawRectangleRec({130,70,360,38}, _editingName ? Color{45,70,100,255} : Color{27,30,36,255});
     DrawRectangleLinesEx({130,70,360,38}, 1.f, _editingName ? SKYBLUE : Fade(WHITE,.25f));
@@ -2676,8 +2883,14 @@ void RoomEditor::DrawPalette() const
                              "Collision Brush", "Props", "Decor",
                              "Fall Zone Brush", "Door Clear Zones",
                              "Treasure Chest Spawn" };
+    const bool rawTilePalette = (_layer == Layer::Ground ||
+        _layer == Layer::Visual || _layer == Layer::Door) &&
+        !DecorModeOnTileLayer();
     DrawText(titles[(int)_layer],1205,172,24,GOLD);
-    DrawText("Mouse wheel scrolls. TAB hides this panel.",1205,202,15,Fade(WHITE,.5f));
+    DrawText(rawTilePalette
+                 ? "Left-drag selects. Wheel zooms. Middle-drag pans. TAB hides."
+                 : "Mouse wheel scrolls. TAB hides this panel.",
+             1205,202,15,Fade(WHITE,.5f));
     // Ground/Visual: toggle between painting flat tiles and banded Decor assets.
     if (_layer == Layer::Ground || _layer == Layer::Visual)
         DrawButton({1700,170,180,30},
@@ -2717,15 +2930,16 @@ void RoomEditor::DrawPalette() const
                  1218,260,16,empty?Fade(WHITE,.4f):RAYWHITE);
     }
 
-    const bool rawTilePalette = (_layer == Layer::Ground ||
-        _layer == Layer::Visual || _layer == Layer::Door) &&
-        !DecorModeOnTileLayer();
     const float tilePaletteTop = rawTilePalette
         ? (groundTilePalette ? 350.f : 310.f)
         : 283.f;
     const bool groundBrushPanelVisible = groundTilePalette && !_groundBrushTiles.empty();
     const float tilePaletteBottom = groundBrushPanelVisible
         ? 744.f : 988.f;
+    const Rectangle sheetViewport{
+        1210.f, tilePaletteTop + 2.f, 660.f,
+        std::max(1.f, tilePaletteBottom - tilePaletteTop - 2.f)
+    };
     if (rawTilePalette)
     {
         static const char* labels[8] = {
@@ -2739,8 +2953,14 @@ void RoomEditor::DrawPalette() const
                            _selectedTileAnchorOffset.y, bottom,
                            _selectedTileAnchorOffset.x, right),
                  1210, (int)tilePaletteTop - 8, 13, Fade(WHITE,.68f));
+        DrawText(TextFormat("%.0f%%", _sheetPaletteView.zoom * 100.f),
+                 1818, (int)tilePaletteTop - 8, 13, Fade(GOLD,.85f));
     }
-    BeginScissorMode(1190,(int)tilePaletteTop,690,(int)(tilePaletteBottom-tilePaletteTop));
+    BeginScissorMode(rawTilePalette ? (int)sheetViewport.x : 1190,
+                     rawTilePalette ? (int)sheetViewport.y : (int)tilePaletteTop,
+                     rawTilePalette ? (int)sheetViewport.width : 690,
+                     rawTilePalette ? (int)sheetViewport.height
+                                    : (int)(tilePaletteBottom-tilePaletteTop));
     if ((_layer == Layer::Ground || _layer == Layer::Visual || _layer == Layer::Door) &&
         !DecorModeOnTileLayer() && selectedSource!=nullptr)
     {
@@ -2750,8 +2970,9 @@ void RoomEditor::DrawPalette() const
         Texture2D texture=TextureFor(selectedSource->stem);
         const int cols=std::max(1,selectedSource->tileColumns);
         const int rows=std::max(1,selectedSource->tileRows);
-        const float cellPx=660.f/(float)cols;
-        const float ox=1210.f, oy=tilePaletteTop+2.f-_paletteScroll;
+        const float cellPx=_sheetPaletteView.CellSize(sheetViewport, cols);
+        const Vector2 sheetOrigin=_sheetPaletteView.SheetOrigin(sheetViewport);
+        const float ox=sheetOrigin.x, oy=sheetOrigin.y;
         if(texture.id)
             DrawTexturePro(texture,{0,0,(float)(cols*16),(float)(rows*16)},
                            {ox,oy,cols*cellPx,rows*cellPx},{},0.f,WHITE);

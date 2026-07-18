@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Enemy.h"
+#include "RoomCapacity.h"
 
 #include <cstdint>
 #include <deque>
@@ -34,6 +35,9 @@ struct EncounterRequest
     int hazardPressure = 0;
     int populationBonus = 0;
     bool swarm = false;
+    EncounterProfile profile = EncounterProfile::Skirmish;
+    RoomCombatCapacity capacity{};
+    int learnedAbilityCount = 0;
 };
 
 struct EncounterPlanDebug
@@ -44,6 +48,9 @@ struct EncounterPlanDebug
     int openingPressure = 0;
     int totalPressure = 0;
     int expensiveUnits = 0;
+    int openingBodyCap = 0;
+    int totalBodyCap = 0;
+    int pressureCap = 0;
     int specialistCounts[(int)SpecialistClass::Count]{};
 };
 
