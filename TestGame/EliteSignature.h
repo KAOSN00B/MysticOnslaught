@@ -181,6 +181,20 @@ bool ShouldEnterElitePhaseTwo(bool alreadyLatched, float health, float maxHealth
 // Distance from a point to a line segment (lane/trail hit tests and warnings).
 float DistancePointToSegment(Vector2 point, Vector2 start, Vector2 end);
 
+// Rotate a vector by an angle (fissure/lane fans, branch spreads).
+Vector2 RotateVector(Vector2 vector, float radians);
+
+// Evenly fans `count` directions across `totalSpreadRadians`, centred on
+// `baseDirection` (index 0 = most counter-clockwise). Used for Infernal
+// fissures, Bonechill ice lanes and Stormclub lightning branches, so every
+// multi-lane attack keeps authored, walkable gaps.
+Vector2 EliteSpreadDirection(Vector2 baseDirection, int index, int count,
+                             float totalSpreadRadians);
+
+// Bonechill frontal frost armour: 45% reduction — ceil keeps chip damage real,
+// so the armour NEVER reduces a positive hit to zero.
+int ApplyBonechillFrontReduction(int damage);
+
 // ── Ogre charge sequencing (pure, testable) ─────────────────────────────────
 // SECOND WIND: phase two performs two charges; a wall impact always ends the
 // whole sequence immediately (into the stun punish window).

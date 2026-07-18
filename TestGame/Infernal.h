@@ -40,12 +40,38 @@ public:
     // Fire identity: burn the player on every landed melee hit.
     void OnMeleeHitPlayer(Character* target) override;
 
+    // ── Elite signature: The Living Furnace ──────────────────────────────────
+    // Cinder March (committed line walk that drops spaced flame patches) and
+    // Furnace Burst (three forward fissures with walkable gaps). OVERHEATED at
+    // 50% adds one staggered fissure wave, slightly faster melee, and a longer
+    // exhausted recovery. Signatures run only for the elite-room miniboss —
+    // pack Infernals keep plain burning melee.
+    bool UpdateEliteSignature(float deltaTime, Vector2 navigationTarget,
+        bool hasNavigationTarget, const std::vector<std::unique_ptr<Enemy>>& enemies,
+        const std::vector<Vector2>& propCenters) override;
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     void PlayAttackSound() override;
     void PlayDeathSound() override;
 
 private:
     static void EnsureSharedResourcesLoaded();
     void SetIdleAnimation(bool resetFrame);
+    void SetSignatureSheet(const Texture2D& sheet);
+    void EmitFurnaceFissures(float spreadRadians, int fissureCount);
+
+    enum class SignatureState { None, MarchTelegraph, Marching, BurstTelegraph, BurstRecovery };
+    SignatureState _signatureState = SignatureState::None;
+    float   _signatureTimer     = 0.f;   // time remaining in the current state
+    float   _signatureCooldown  = 0.f;   // countdown to the next signature
+    Vector2 _signatureDirection{ 1.f, 0.f };  // locked when the telegraph begins
+    float   _marchPatchAccumulator = 0.f;     // distance since the last patch
+    int     _marchPatchesDropped   = 0;
+    bool    _secondWavePending  = false;      // OVERHEATED staggered wave
+    float   _secondWaveTimer    = 0.f;
 
     int   _variantTier = 0;
 

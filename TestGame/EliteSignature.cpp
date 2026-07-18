@@ -167,6 +167,32 @@ bool ShouldEnterElitePhaseTwo(bool alreadyLatched, float health, float maxHealth
     return health <= maxHealth * Balance::Elite::kPhaseThreshold;
 }
 
+Vector2 RotateVector(Vector2 vector, float radians)
+{
+    const float cosine = std::cos(radians);
+    const float sine   = std::sin(radians);
+    return Vector2{ vector.x * cosine - vector.y * sine,
+                    vector.x * sine + vector.y * cosine };
+}
+
+Vector2 EliteSpreadDirection(Vector2 baseDirection, int index, int count,
+                             float totalSpreadRadians)
+{
+    if (count <= 1)
+        return baseDirection;
+    const float step = totalSpreadRadians / (float)(count - 1);
+    const float angle = -totalSpreadRadians * 0.5f + step * (float)index;
+    return RotateVector(baseDirection, angle);
+}
+
+int ApplyBonechillFrontReduction(int damage)
+{
+    if (damage <= 0)
+        return damage;
+    int reduced = (int)std::ceil((float)damage * Balance::Elite::kBonechillFrontDamageTaken);
+    return std::max(1, reduced);
+}
+
 int NextOgreChargeCount(bool phaseTwo)
 {
     return phaseTwo ? 2 : 1;

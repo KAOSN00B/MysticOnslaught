@@ -42,12 +42,37 @@ public:
     // fight is about kiting a relentless advance, not pushing it around.
     void ApplyHitKnockback(Vector2 /*dir*/, float /*speed*/) override {}
 
+    // ── Elite signature: The Frozen Wall ─────────────────────────────────────
+    // Frontal frost armour (45% reduction while advancing — NEVER zero, never
+    // "IMMUNE"; rear hits and hits during the slam windup/recovery are full),
+    // Permafrost Slam (committed cone + three ice lanes with gaps), and
+    // ARMOUR SHATTERED at 50% (armour gone, +25% speed, shorter cooldown).
+    // Signatures run only for the elite-room miniboss.
+    void TakeDamage(int damage, Vector2 attackerPos) override;
+    bool UpdateEliteSignature(float deltaTime, Vector2 navigationTarget,
+        bool hasNavigationTarget, const std::vector<std::unique_ptr<Enemy>>& enemies,
+        const std::vector<Vector2>& propCenters) override;
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     void PlayAttackSound() override;
     void PlayDeathSound() override;
 
 private:
     static void EnsureSharedResourcesLoaded();
     void SetIdleAnimation(bool resetFrame);
+    void SetSignatureSheet(const Texture2D& sheet);
+    bool IsFrostArmourActive() const;
+
+    enum class SignatureState { None, SlamTelegraph, SlamRecovery };
+    SignatureState _signatureState = SignatureState::None;
+    float   _signatureTimer    = 0.f;
+    float   _signatureCooldown = 0.f;
+    float   _signatureCooldownDuration = 5.5f;   // shortened by ARMOUR SHATTERED
+    Vector2 _signatureDirection{ 1.f, 0.f };
+    bool    _frostArmourBroken = false;
 
     int _variantTier = 0;
 

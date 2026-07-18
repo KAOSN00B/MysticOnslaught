@@ -110,6 +110,13 @@ void Bonechill::ResetForSpawn(Vector2 pos)
     _waypoints.clear();
     _waypointIndex = 0;
 
+    _signatureState    = SignatureState::None;
+    _signatureTimer    = 0.f;
+    _signatureCooldownDuration = Balance::Elite::kBonechillSignatureCooldown;
+    _signatureCooldown = _signatureCooldownDuration * 0.5f;   // first slam comes sooner
+    _signatureDirection = Vector2{ 1.f, 0.f };
+    _frostArmourBroken  = false;
+
     ResetTuningState();
     ApplyStoredTuning();
 }
@@ -141,6 +148,218 @@ void Bonechill::OnMeleeHitPlayer(Character* target)
     if (target == nullptr)
         return;
     target->ApplyChill(kChillDuration, kChillSpeedMult);
+}
+
+// =============================================================================
+// Elite signature: The Frozen Wall.
+bool Bonechill::IsFrostArmourActive() const
+{
+    // Armour holds only while deliberately advancing in phase one. The slam's
+    // windup and recovery drop it entirely — attacking the opening is always
+    // fully rewarded — and ARMOUR SHATTERED removes it for good.
+    return _isEliteMiniboss && !_frostArmourBroken && !_dying && IsAlive() &&
+           _signatureState == SignatureState::None;
+}
+
+void Bonechill::TakeDamage(int damage, Vector2 attackerPos)
+{
+    // Frontal frost armour: reduce (ceil, min 1) then hand the result to the
+    // COMMON damage path so Guard Links, revives, statuses and damage numbers
+    // stay authoritative. Rear hits pass through untouched. Never IMMUNE.
+    if (IsFrostArmourActive() && damage > 0)
+    {
+        Vector2 toAttacker = Vector2Subtract(attackerPos, _worldPos);
+        if (Vector2Length(toAttacker) > 0.01f)
+        {
+            toAttacker = Vector2Normalize(toAttacker);
+            const Vector2 facing{ (float)_rightLeft, 0.f };
+            const float frontalDot = toAttacker.x * facing.x + toAttacker.y * facing.y;
+            if (frontalDot >= 0.35f)
+                damage = ApplyBonechillFrontReduction(damage);
+        }
+    }
+    Enemy::TakeDamage(damage, attackerPos);
+}
+
+void Bonechill::SetSignatureSheet(const Texture2D& sheet)
+{
+    if (_texture.id == sheet.id)
+        return;
+    _texture    = sheet;
+    _width      = kBonechillFrameWidth;
+    _height     = (float)sheet.height;
+    _updateTime = kBonechillFrameTime;
+    _maxFrames  = kBonechillFrameCount;
+    _frame      = 0;
+    _runningTime = 0.f;
+}
+
+bool Bonechill::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*/,
+    bool /*hasNavigationTarget*/, const std::vector<std::unique_ptr<Enemy>>& /*enemies*/,
+    const std::vector<Vector2>& /*propCenters*/)
+{
+    if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
+        return false;
+
+    // ARMOUR SHATTERED: one-time 50% escalation. The wall cracks — no more
+    // frontal reduction, but it hunts faster and slams more often. Counterplay
+    // shifts from flanking to dodge timing.
+    if (ConsumePhaseChange() >= 1)
+    {
+        RequestBossCallout("ARMOUR SHATTERED");
+        EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Bonechill,
+                         EliteMove::BonechillPermafrostSlam, 0, _worldPos });
+        _frostArmourBroken = true;
+        _speed *= Balance::Elite::kBonechillPhaseSpeed;
+        _signatureCooldownDuration *= Balance::Elite::kBonechillPhaseCooldownMult;
+        if (_signatureState != SignatureState::None)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = 1.0f;
+        }
+    }
+
+    if (IsFrozen() || _takingDamage)
+    {
+        if (_signatureState != SignatureState::None)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = _signatureCooldownDuration * 0.6f;
+        }
+        return false;
+    }
+
+    switch (_signatureState)
+    {
+    case SignatureState::None:
+    {
+        _signatureCooldown -= deltaTime;
+        if (_signatureCooldown > 0.f || _attacking)
+            return false;
+
+        const float distanceToPlayer = Vector2Distance(_target->GetFeetWorldPos(), _worldPos);
+        if (distanceToPlayer > 520.f)
+            return false;   // keep advancing; slam only at threatening range
+
+        Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+        _signatureDirection = (Vector2Length(toPlayer) > 0.01f)
+            ? Vector2Normalize(toPlayer) : Vector2{ (float)_rightLeft, 0.f };
+        if (_signatureDirection.x < -0.01f) _rightLeft = -1;
+        if (_signatureDirection.x >  0.01f) _rightLeft =  1;
+
+        _signatureState = SignatureState::SlamTelegraph;
+        _signatureTimer = Balance::Elite::kBonechillSlamTelegraph;
+        _eliteSignatureCasts++;
+        EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Bonechill,
+                         EliteMove::BonechillPermafrostSlam, 0, _worldPos, {}, _signatureDirection });
+        return true;
+    }
+
+    case SignatureState::SlamTelegraph:
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Bonechill,
+                             EliteMove::BonechillPermafrostSlam, 0, _worldPos, {}, _signatureDirection });
+            // Direct slam cone in front, then three ice lanes with walkable
+            // gaps between them. Zones resolve centrally in CombatDirector.
+            EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Bonechill,
+                             EliteMove::BonechillPermafrostSlam, 0, _worldPos, {}, _signatureDirection });
+            for (int laneIndex = 0; laneIndex < 3; ++laneIndex)
+            {
+                Vector2 laneDirection = EliteSpreadDirection(
+                    _signatureDirection, laneIndex, 3, 56.f * DEG2RAD);
+                EmitEliteEvent({ EliteEventKind::TrailPatch, EliteArchetype::Bonechill,
+                                 EliteMove::BonechillPermafrostSlam, 0, _worldPos, {}, laneDirection });
+            }
+            PlayAttackSound();
+            _signatureState = SignatureState::SlamRecovery;
+            _signatureTimer = Balance::Elite::kBonechillSlamRecovery;
+        }
+        return true;
+
+    case SignatureState::SlamRecovery:
+        // Fully vulnerable (no frost armour) — the authored punish window.
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = _signatureCooldownDuration;
+            EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Bonechill,
+                             EliteMove::BonechillPermafrostSlam, 0, _worldPos });
+            SetIdleAnimation(true);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void Bonechill::DrawEliteTelegraph() const
+{
+    // Frost-armour indicator: a frontal ice arc while the armour holds, so the
+    // player can SEE which side is reduced and flank behind it.
+    if (IsFrostArmourActive())
+    {
+        const float arcRadius = kBonechillFrameWidth * _scale * 0.55f;
+        const float facingAngle = (_rightLeft >= 0) ? 0.f : 180.f;
+        DrawCircleSectorLines(_worldPos, arcRadius, facingAngle - 55.f, facingAngle + 55.f,
+                              12, Fade(Color{ 150, 220, 255, 255 }, 0.55f));
+        DrawCircleSectorLines(_worldPos, arcRadius - 6.f, facingAngle - 45.f, facingAngle + 45.f,
+                              10, Fade(Color{ 200, 240, 255, 255 }, 0.35f));
+    }
+
+    if (_signatureState != SignatureState::SlamTelegraph)
+        return;
+
+    // Slam warning: the direct cone plus the three lane outlines — exactly the
+    // geometry the Execute events will damage.
+    Color warn = Fade(Color{ 120, 200, 255, 255 }, 0.22f);
+    for (int laneIndex = 0; laneIndex < 3; ++laneIndex)
+    {
+        Vector2 laneDirection = EliteSpreadDirection(_signatureDirection, laneIndex, 3, 56.f * DEG2RAD);
+        Vector2 laneEnd = Vector2Add(_worldPos,
+            Vector2Scale(laneDirection, Balance::Elite::kBonechillLaneLength));
+        Vector2 side{ -laneDirection.y, laneDirection.x };
+        const float halfWidth = Balance::Elite::kBonechillLaneWidth;
+        Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  halfWidth));
+        Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -halfWidth));
+        Vector2 cornerC = Vector2Add(laneEnd, Vector2Scale(side, -halfWidth));
+        Vector2 cornerD = Vector2Add(laneEnd, Vector2Scale(side,  halfWidth));
+        DrawTriangle(cornerA, cornerB, cornerC, warn);
+        DrawTriangle(cornerA, cornerC, cornerD, warn);
+        DrawLineEx(cornerB, cornerC, 2.f, Fade(Color{ 170, 225, 255, 255 }, 0.6f));
+        DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 170, 225, 255, 255 }, 0.6f));
+    }
+    // Direct-slam impact disc right in front.
+    Vector2 slamCentre = Vector2Add(_worldPos, Vector2Scale(_signatureDirection, 150.f));
+    DrawCircleLines((int)slamCentre.x, (int)slamCentre.y, 140.f, Fade(Color{ 170, 225, 255, 255 }, 0.6f));
+}
+
+void Bonechill::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive())
+        return;
+    _signatureCooldown = 0.f;
+}
+
+void Bonechill::DebugForceElitePhaseTwo()
+{
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * 0.5f)));
+}
+
+const char* Bonechill::GetEliteSignatureStateName() const
+{
+    switch (_signatureState)
+    {
+    case SignatureState::SlamTelegraph: return "SlamTelegraph";
+    case SignatureState::SlamRecovery:  return "SlamRecovery";
+    default: return _frostArmourBroken ? "Advance (shattered)" : "Advance (armoured)";
+    }
 }
 
 // =============================================================================

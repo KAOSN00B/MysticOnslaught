@@ -128,6 +128,46 @@ static void TestEventQueueIsBoundedAndFIFO()
     assert(!queue.Pop(none));
 }
 
+static void TestBonechillFrontReductionNeverZeroes()
+{
+    assert(ApplyBonechillFrontReduction(10) == 6);   // ceil(10 * 0.55)
+    assert(ApplyBonechillFrontReduction(2) == 2);    // ceil(1.1)
+    assert(ApplyBonechillFrontReduction(1) == 1);    // chip damage stays real
+    assert(ApplyBonechillFrontReduction(0) == 0);
+}
+
+static void TestSpreadDirectionsLeaveWalkableGaps()
+{
+    const float pi = 3.14159265f;
+    const Vector2 forward{ 1.f, 0.f };
+
+    // Middle of three fissures fires straight ahead; outer two are symmetric.
+    Vector2 left   = EliteSpreadDirection(forward, 0, 3, 50.f * pi / 180.f);
+    Vector2 middle = EliteSpreadDirection(forward, 1, 3, 50.f * pi / 180.f);
+    Vector2 right  = EliteSpreadDirection(forward, 2, 3, 50.f * pi / 180.f);
+    assert(std::fabs(middle.x - 1.f) < 0.001f && std::fabs(middle.y) < 0.001f);
+    assert(std::fabs(left.y + right.y) < 0.001f);    // mirrored about forward
+
+    // At Infernal fissure length, adjacent centerlines separate wider than two
+    // lane half-widths — a real, walkable gap exists between fissures.
+    const float length = Balance::Elite::kInfernalFissureLength;
+    Vector2 leftEnd{ left.x * length, left.y * length };
+    Vector2 middleEnd{ middle.x * length, middle.y * length };
+    float separation = std::sqrt((leftEnd.x - middleEnd.x) * (leftEnd.x - middleEnd.x) +
+                                 (leftEnd.y - middleEnd.y) * (leftEnd.y - middleEnd.y));
+    assert(separation > 2.f * Balance::Elite::kInfernalFissureWidth);
+
+    // Same guarantee for Bonechill's ice lanes.
+    const float laneLength = Balance::Elite::kBonechillLaneLength;
+    Vector2 laneA = EliteSpreadDirection(forward, 0, 3, 56.f * pi / 180.f);
+    Vector2 laneB = EliteSpreadDirection(forward, 1, 3, 56.f * pi / 180.f);
+    Vector2 laneAEnd{ laneA.x * laneLength, laneA.y * laneLength };
+    Vector2 laneBEnd{ laneB.x * laneLength, laneB.y * laneLength };
+    float laneSeparation = std::sqrt((laneAEnd.x - laneBEnd.x) * (laneAEnd.x - laneBEnd.x) +
+                                     (laneAEnd.y - laneBEnd.y) * (laneAEnd.y - laneBEnd.y));
+    assert(laneSeparation > 2.f * Balance::Elite::kBonechillLaneWidth);
+}
+
 static void TestOgreChargeSequencing()
 {
     assert(NextOgreChargeCount(false) == 1);
@@ -161,6 +201,8 @@ int main()
     TestModifierSelectionIsAlwaysCompatibleAndDeterministic();
     TestPhaseLatchFiresExactlyOnce();
     TestEventQueueIsBoundedAndFIFO();
+    TestBonechillFrontReductionNeverZeroes();
+    TestSpreadDirectionsLeaveWalkableGaps();
     TestOgreChargeSequencing();
     TestDistancePointToSegmentGeometry();
     std::puts("Elite signature tests passed");

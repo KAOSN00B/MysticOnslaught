@@ -111,6 +111,15 @@ void Infernal::ResetForSpawn(Vector2 pos)
     _waypoints.clear();
     _waypointIndex = 0;
 
+    _signatureState        = SignatureState::None;
+    _signatureTimer        = 0.f;
+    _signatureCooldown     = Balance::Elite::kInfernalSignatureCooldown * 0.5f;   // first one comes sooner
+    _signatureDirection    = Vector2{ 1.f, 0.f };
+    _marchPatchAccumulator = 0.f;
+    _marchPatchesDropped   = 0;
+    _secondWavePending     = false;
+    _secondWaveTimer       = 0.f;
+
     ResetTuningState();
     ApplyStoredTuning();
 }
@@ -142,6 +151,257 @@ void Infernal::OnMeleeHitPlayer(Character* target)
     if (target == nullptr)
         return;
     target->ApplyBurnTicks(kBurnTickDelay, kBurnTickCount, kBurnDamagePerTick, _worldPos);
+}
+
+// =============================================================================
+// Elite signature: The Living Furnace.
+void Infernal::SetSignatureSheet(const Texture2D& sheet)
+{
+    if (_texture.id == sheet.id)
+        return;
+    _texture    = sheet;
+    _width      = kInfFrameWidth;
+    _height     = (float)sheet.height;
+    _updateTime = kInfFrameTime;
+    _maxFrames  = kInfFrameCount;
+    _frame      = 0;
+    _runningTime = 0.f;
+}
+
+void Infernal::EmitFurnaceFissures(float spreadRadians, int fissureCount)
+{
+    for (int fissureIndex = 0; fissureIndex < fissureCount; ++fissureIndex)
+    {
+        Vector2 fissureDirection = EliteSpreadDirection(
+            _signatureDirection, fissureIndex, fissureCount, spreadRadians);
+        EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Infernal,
+                         EliteMove::InfernalFurnaceBurst, 0, _worldPos, {},
+                         fissureDirection });
+    }
+}
+
+bool Infernal::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*/,
+    bool /*hasNavigationTarget*/, const std::vector<std::unique_ptr<Enemy>>& /*enemies*/,
+    const std::vector<Vector2>& /*propCenters*/)
+{
+    if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
+        return false;
+
+    // OVERHEATED: one-time 50% escalation. Cancel the current signature safely
+    // and answer with an immediate Furnace Burst; melee also quickens slightly
+    // for the rest of the fight.
+    if (ConsumePhaseChange() >= 1)
+    {
+        RequestBossCallout("OVERHEATED");
+        EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Infernal,
+                         EliteMove::InfernalFurnaceBurst, 0, _worldPos });
+        _attackDelay *= Balance::Elite::kInfernalPhaseMeleeMult;
+        _signatureState = SignatureState::BurstTelegraph;
+        _signatureTimer = Balance::Elite::kInfernalBurstTelegraph;
+        Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+        _signatureDirection = (Vector2Length(toPlayer) > 0.01f)
+            ? Vector2Normalize(toPlayer) : Vector2{ (float)_rightLeft, 0.f };
+        _eliteSignatureCasts++;
+        EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Infernal,
+                         EliteMove::InfernalFurnaceBurst, 0, _worldPos, {}, _signatureDirection });
+    }
+
+    // Freeze / a hurt flinch interrupts the signature into a plain reset —
+    // interrupting the windup IS the counterplay.
+    if (IsFrozen() || _takingDamage)
+    {
+        if (_signatureState != SignatureState::None)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = Balance::Elite::kInfernalSignatureCooldown * 0.6f;
+            _secondWavePending = false;
+        }
+        return false;
+    }
+
+    // OVERHEATED staggered wave: two extra fissures land shortly after the
+    // main three, aimed between the original gaps.
+    if (_secondWavePending)
+    {
+        _secondWaveTimer -= deltaTime;
+        if (_secondWaveTimer <= 0.f)
+        {
+            _secondWavePending = false;
+            EmitFurnaceFissures(25.f * DEG2RAD, 2);
+        }
+    }
+
+    switch (_signatureState)
+    {
+    case SignatureState::None:
+    {
+        _signatureCooldown -= deltaTime;
+        if (_signatureCooldown > 0.f || _attacking)
+            return false;
+
+        const float distanceToPlayer = Vector2Distance(_target->GetFeetWorldPos(), _worldPos);
+        Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+        _signatureDirection = (Vector2Length(toPlayer) > 0.01f)
+            ? Vector2Normalize(toPlayer) : Vector2{ (float)_rightLeft, 0.f };
+        if (_signatureDirection.x < -0.01f) _rightLeft = -1;
+        if (_signatureDirection.x >  0.01f) _rightLeft =  1;
+
+        // Far away: march the room and paint the trail. Mid-range: burst.
+        const bool marchChosen = distanceToPlayer > 430.f;
+        _signatureState = marchChosen ? SignatureState::MarchTelegraph
+                                      : SignatureState::BurstTelegraph;
+        _signatureTimer = marchChosen ? Balance::Elite::kInfernalMarchTelegraph
+                                      : Balance::Elite::kInfernalBurstTelegraph;
+        _eliteSignatureCasts++;
+        EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Infernal,
+                         marchChosen ? EliteMove::InfernalCinderMarch
+                                     : EliteMove::InfernalFurnaceBurst,
+                         0, _worldPos, {}, _signatureDirection });
+        return true;
+    }
+
+    case SignatureState::MarchTelegraph:
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Infernal,
+                             EliteMove::InfernalCinderMarch, 0, _worldPos, {}, _signatureDirection });
+            _signatureState = SignatureState::Marching;
+            _signatureTimer = Balance::Elite::kInfernalMarchActive;
+            _marchPatchAccumulator = Balance::Elite::kInfernalPatchSpacing;   // first patch immediately
+            _marchPatchesDropped = 0;
+            SetSignatureSheet(_walkAnim);
+        }
+        return true;
+
+    case SignatureState::Marching:
+    {
+        // Committed line walk: faster than pursuit, direction never re-aims.
+        SetSignatureSheet(_walkAnim);
+        const float marchSpeed = _speed * 1.6f;
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(_signatureDirection, marchSpeed * deltaTime));
+
+        // Spaced, short-lived flame patches — crossable, and capped so the room
+        // never becomes permanently divided.
+        _marchPatchAccumulator += marchSpeed * deltaTime;
+        if (_marchPatchAccumulator >= Balance::Elite::kInfernalPatchSpacing &&
+            _marchPatchesDropped < Balance::Elite::kInfernalPatchCap)
+        {
+            _marchPatchAccumulator = 0.f;
+            _marchPatchesDropped++;
+            EmitEliteEvent({ EliteEventKind::TrailPatch, EliteArchetype::Infernal,
+                             EliteMove::InfernalCinderMarch, 0, _worldPos });
+        }
+
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = Balance::Elite::kInfernalSignatureCooldown;
+            EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Infernal,
+                             EliteMove::InfernalCinderMarch, 0, _worldPos });
+            SetIdleAnimation(true);
+        }
+        return true;
+    }
+
+    case SignatureState::BurstTelegraph:
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Infernal,
+                             EliteMove::InfernalFurnaceBurst, 0, _worldPos, {}, _signatureDirection });
+            EmitFurnaceFissures(50.f * DEG2RAD, 3);
+            if (IsElitePhaseTwo())
+            {
+                _secondWavePending = true;
+                _secondWaveTimer = 0.4f;
+            }
+            _signatureState = SignatureState::BurstRecovery;
+            _signatureTimer = IsElitePhaseTwo() ? Balance::Elite::kInfernalBurstRecoveryP2
+                                                : Balance::Elite::kInfernalBurstRecovery;
+        }
+        return true;
+
+    case SignatureState::BurstRecovery:
+        // Exhausted: stands still and takes it — the authored punish window.
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = Balance::Elite::kInfernalSignatureCooldown;
+            EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Infernal,
+                             EliteMove::InfernalFurnaceBurst, 0, _worldPos });
+            SetIdleAnimation(true);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void Infernal::DrawEliteTelegraph() const
+{
+    // Warnings only — the fissure/patch art itself is animated VFX owned by
+    // CombatDirector once the events execute.
+    if (_signatureState == SignatureState::BurstTelegraph)
+    {
+        for (int fissureIndex = 0; fissureIndex < 3; ++fissureIndex)
+        {
+            Vector2 fissureDirection = EliteSpreadDirection(
+                _signatureDirection, fissureIndex, 3, 50.f * DEG2RAD);
+            Vector2 fissureEnd = Vector2Add(_worldPos,
+                Vector2Scale(fissureDirection, Balance::Elite::kInfernalFissureLength));
+            Vector2 side{ -fissureDirection.y, fissureDirection.x };
+            const float halfWidth = Balance::Elite::kInfernalFissureWidth;
+            Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  halfWidth));
+            Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -halfWidth));
+            Vector2 cornerC = Vector2Add(fissureEnd, Vector2Scale(side, -halfWidth));
+            Vector2 cornerD = Vector2Add(fissureEnd, Vector2Scale(side,  halfWidth));
+            Color warn = Fade(Color{ 255, 120, 40, 255 }, 0.22f);
+            DrawTriangle(cornerA, cornerB, cornerC, warn);
+            DrawTriangle(cornerA, cornerC, cornerD, warn);
+            DrawLineEx(cornerB, cornerC, 2.f, Fade(Color{ 255, 160, 70, 255 }, 0.6f));
+            DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 255, 160, 70, 255 }, 0.6f));
+        }
+    }
+    else if (_signatureState == SignatureState::MarchTelegraph)
+    {
+        // Thin committed-line warning for the march path.
+        Vector2 marchEnd = Vector2Add(_worldPos,
+            Vector2Scale(_signatureDirection, _speed * 1.6f * Balance::Elite::kInfernalMarchActive));
+        DrawLineEx(_worldPos, marchEnd, 6.f, Fade(Color{ 255, 120, 40, 255 }, 0.35f));
+    }
+}
+
+void Infernal::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive())
+        return;
+    _signatureCooldown = 0.f;
+}
+
+void Infernal::DebugForceElitePhaseTwo()
+{
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * 0.5f)));
+}
+
+const char* Infernal::GetEliteSignatureStateName() const
+{
+    switch (_signatureState)
+    {
+    case SignatureState::MarchTelegraph: return "MarchTelegraph";
+    case SignatureState::Marching:       return "Marching";
+    case SignatureState::BurstTelegraph: return "BurstTelegraph";
+    case SignatureState::BurstRecovery:  return "BurstRecovery";
+    default:                             return "Pursuit";
+    }
 }
 
 // =============================================================================
