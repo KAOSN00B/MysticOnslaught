@@ -153,6 +153,8 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _pitStartScale    = 0.f;
     _pitFallTint      = WHITE;
     _bestiaryRecorded = false;
+    if (_isEliteMiniboss)
+        SetPhaseThresholds({});   // previous pooled life was an elite — drop its 50% latch
     _isEliteMiniboss  = false;
     _isInvulnerable   = false;
     _leapInvulnerable = false;
@@ -181,11 +183,14 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _electricChargeTotalTimer = 0.f;
     _attacking = false;
     _damageApplied = false;
-    _lungeState = LungeState::None;
-    _lungeTimer = 0.f;
-    _lungeCooldown = (float)GetRandomValue(80, 180) / 100.f;
-    _lungeDir = Vector2Zero();
-    _lungeDamageApplied = false;
+    // Pooled reuse must never leak a previous life's elite state.
+    _eliteEvents.Clear();
+    _eliteEventSequence   = 0;
+    _eliteDroppedEvents   = 0;
+    _eliteGuardLinked     = false;
+    _eliteGuardReducedHit = false;
+    _eliteSignatureCasts  = 0;
+    _eliteSignatureHits   = 0;
     _burnPanicDir = Vector2Zero();
     _burnPanicTurnTimer = 0.f;
     _burnSoundTimer = 0.f;
@@ -240,6 +245,11 @@ void Enemy::SetIsEliteMiniboss(bool b)
     _attackPower *= 1.25f;
     _speed *= 1.10f;
     _expValue = std::max(_expValue + 4, (int)std::ceil(_expValue * 2.0f));
+
+    // Arm the one-time 50% escalation through the shared phase latch (the same
+    // system full bosses use). It does NOT change movement or invulnerability —
+    // each elite reacts to ConsumePhaseChange() in its own signature update.
+    SetPhaseThresholds({ Balance::Elite::kPhaseThreshold });
 }
 
 void Enemy::ApplyEnrage()
@@ -646,10 +656,10 @@ void Enemy::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, boo
             return;
 
         _attackCooldown -= dt;
-        if (_lungeCooldown > 0.f)
-            _lungeCooldown -= dt;
 
-        if (UpdateEliteLunge(dt))
+        // A curated elite's signature move may own movement/attacks this frame
+        // (telegraphs, committed charges, leaps). Ordinary enemies return false.
+        if (UpdateEliteSignature(dt, navigationTarget, hasNavigationTarget, enemies, propCenters))
         {
             HandleAnimation(dt);
             return;
@@ -1148,7 +1158,7 @@ bool Enemy::CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies
             continue;
         if (Vector2Distance(_worldPos, other->_worldPos) > kSlotRadius)
             continue;
-        if (other->_attacking || other->_lungeState == LungeState::Windup || other->_lungeState == LungeState::Lunging)
+        if (other->_attacking)
             committed++;
     }
 
@@ -1164,108 +1174,26 @@ bool Enemy::CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies
     return committed < maxCommitted;
 }
 
-bool Enemy::UpdateEliteLunge(float dt)
+bool Enemy::EmitEliteEvent(EliteSignatureEvent event)
 {
-    // Runs for the elite-room miniboss, and always for types whose own kit is
-    // built around the lunge (see UsesPersonalLunge — Stormclub's leaping smash).
-    if ((!_isEliteMiniboss && !UsesPersonalLunge()) || _target == nullptr || _dying || !IsAlive())
-        return false;
-    if (IsFrozen() || _takingDamage || !_pendingBurns.empty() || _attacking)
+    event.sequence = _eliteEventSequence++;
+    event.phase = GetPhase();
+    if (!_eliteEvents.Push(event))
     {
-        if (_lungeState != LungeState::None)
-        {
-            _lungeState = LungeState::Recovery;
-            _lungeTimer = 0.f;
-        }
-        return _lungeState != LungeState::None;
-    }
-
-    Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
-    float dist = Vector2Length(toPlayer);
-
-    if (_lungeState == LungeState::None)
-    {
-        if (_lungeCooldown <= 0.f && dist >= kEliteLungeMinRange && dist <= kEliteLungeMaxRange)
-        {
-            _lungeState = LungeState::Windup;
-            _lungeTimer = 0.f;
-            _lungeDamageApplied = false;
-            _velocity = Vector2Zero();
-            _texture = _idleAnim;
-            _frame = 0;
-            _runningTime = 0.f;
-            _maxFrames = (int)(_texture.width / _width);
-            _updateTime = 1.f / 10.f;
-        }
+        _eliteDroppedEvents++;
         return false;
     }
+    return true;
+}
 
-    if (dist > 0.01f)
-    {
-        if (toPlayer.x < 0.f) _rightLeft = -1;
-        else if (toPlayer.x > 0.f) _rightLeft = 1;
-    }
-
-    if (_lungeState == LungeState::Windup)
-    {
-        _velocity = Vector2Zero();
-        _texture = _idleAnim;
-        _lungeTimer += dt;
-        if (_lungeTimer >= kEliteLungeWindup)
-        {
-            _lungeDir = (dist > 0.01f) ? Vector2Normalize(toPlayer) : Vector2{ (float)_rightLeft, 0.f };
-            _lungeState = LungeState::Lunging;
-            _lungeTimer = 0.f;
-            _lungeDamageApplied = false;
-            _texture = _attackAnim;
-            _frame = 0;
-            _runningTime = 0.f;
-            _maxFrames = (int)(_texture.width / _width);
-            _updateTime = kEliteLungeDuration / std::max(1, _maxFrames);
-            PlayAttackSound();
-        }
-        return true;
-    }
-
-    if (_lungeState == LungeState::Lunging)
-    {
-        _texture = _attackAnim;
-        _worldPos = Vector2Add(_worldPos, Vector2Scale(_lungeDir, kEliteLungeSpeed * dt));
-        if (!_lungeDamageApplied && CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
-        {
-            _target->TakeDamage((int)_attackPower, _worldPos);
-            OnMeleeHitPlayer(_target);   // elite-lunge contact also applies on-hit status
-            _lungeDamageApplied = true;
-        }
-        _lungeTimer += dt;
-        if (_lungeTimer >= kEliteLungeDuration)
-        {
-            _lungeState = LungeState::Recovery;
-            _lungeTimer = 0.f;
-            _lungeCooldown = kEliteLungeCooldown;
-            _texture = _idleAnim;
-            _frame = 0;
-            _runningTime = 0.f;
-            _maxFrames = (int)(_texture.width / _width);
-            _updateTime = 1.f / 10.f;
-        }
-        return true;
-    }
-
-    if (_lungeState == LungeState::Recovery)
-    {
-        _velocity = Vector2Zero();
-        _texture = _idleAnim;
-        _lungeTimer += dt;
-        if (_lungeTimer >= kEliteLungeRecovery)
-        {
-            _lungeState = LungeState::None;
-            _lungeTimer = 0.f;
-        }
-        return true;
-    }
-
-    return false;
+EliteSignatureTelemetry Enemy::GetEliteSignatureTelemetry() const
+{
+    EliteSignatureTelemetry telemetry;
+    telemetry.phase = GetPhase();
+    telemetry.casts = _eliteSignatureCasts;
+    telemetry.hits = _eliteSignatureHits;
+    telemetry.droppedEvents = _eliteDroppedEvents;
+    return telemetry;
 }
 
 void Enemy::UpdateBurnPanic(float dt)
@@ -1292,7 +1220,7 @@ void Enemy::UpdateBurnPanic(float dt)
 
 void Enemy::HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies)
 {
-    if (_dying || _target == nullptr || IsFrozen() || _takingDamage || !_pendingBurns.empty() || _lungeState != LungeState::None)
+    if (_dying || _target == nullptr || IsFrozen() || _takingDamage || !_pendingBurns.empty())
         return;
 
     float distance = Vector2Length(Vector2Subtract(_target->GetFeetWorldPos(), _worldPos));
@@ -1651,6 +1579,15 @@ void Enemy::TakeDamage(int damage, Vector2 attackerPos)
     {
         _hitBlock = HitBlockReason::Shielded;
         return;
+    }
+
+    // Guard Links elite modifier: while linked guards live, damage is visibly
+    // REDUCED (never zeroed) — attacks always connect and always progress the
+    // fight, unlike the old bodyguard invulnerability.
+    if (_eliteGuardLinked && damage > 0)
+    {
+        damage = ApplyGuardLinkReduction(damage);
+        _eliteGuardReducedHit = true;
     }
 
     // Check whether this hit would kill us and the revive is still available.

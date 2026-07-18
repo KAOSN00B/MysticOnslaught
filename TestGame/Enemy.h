@@ -3,6 +3,7 @@
 #include "Character.h"
 #include "NavigationGrid.h"
 #include "GameBalance.h"
+#include "EliteSignature.h"
 #include "SfxBank.h"
 #include "raymath.h"
 #include <vector>
@@ -342,11 +343,43 @@ public:
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
 
-    // ── Personal lunge ───────────────────────────────────────────────────────
-    // The windup→dash→recovery lunge (UpdateEliteLunge) normally only runs for
-    // the elite-room miniboss. A type that lunges as part of its own kit
-    // (Stormclub's leaping smash) overrides this to true so it lunges always.
-    virtual bool UsesPersonalLunge() const { return false; }
+    // ── Elite signature kits ──────────────────────────────────────────────────
+    // The generic elite lunge is gone: signature movement belongs to the elite
+    // that was designed for it (Ogre's charge, Stormclub's leap, Venomfang's
+    // pounce). A curated elite overrides these hooks; ordinary enemies keep the
+    // do-nothing defaults. UpdateEliteSignature may temporarily own movement
+    // and attacks — returning true skips normal chase/melee for that frame.
+    virtual EliteArchetype GetEliteArchetype() const { return EliteArchetype::Count; }
+    virtual bool UpdateEliteSignature(float deltaTime, Vector2 navigationTarget,
+        bool hasNavigationTarget, const std::vector<std::unique_ptr<Enemy>>& enemies,
+        const std::vector<Vector2>& propCenters)
+    {
+        (void)deltaTime; (void)navigationTarget; (void)hasNavigationTarget;
+        (void)enemies; (void)propCenters;
+        return false;
+    }
+    // Draws this elite's warning geometry (world space). CombatDirector calls it
+    // during the world pass so telegraphs render under enemies and VFX.
+    virtual void DrawEliteTelegraph() const {}
+    virtual void DebugForceEliteSignature() {}
+    virtual void DebugForceElitePhaseTwo() {}
+    virtual const char* GetEliteSignatureStateName() const { return "None"; }
+    virtual EliteSignatureTelemetry GetEliteSignatureTelemetry() const;
+
+    // Bounded per-enemy combat-beat queue: elites push, CombatDirector drains
+    // right after this enemy's Update. EmitEliteEvent stamps sequence + phase.
+    bool EmitEliteEvent(EliteSignatureEvent event);
+    bool ConsumeEliteEvent(EliteSignatureEvent& event) { return _eliteEvents.Pop(event); }
+    void ClearEliteEvents() { _eliteEvents.Clear(); }
+
+    // Guard Links room modifier: visible damage reduction while linked guards
+    // live — replaces the old bodyguard full invulnerability.
+    void SetEliteGuardLinked(bool linked) { _eliteGuardLinked = linked; }
+    bool IsEliteGuardLinked() const { return _eliteGuardLinked; }
+    // True once per reduced hit — damage-number code shows the reduction.
+    bool ConsumeGuardReducedFlag() { bool was = _eliteGuardReducedHit; _eliteGuardReducedHit = false; return was; }
+
+    bool IsElitePhaseTwo() const { return _isEliteMiniboss && GetPhase() >= 1; }
 
     // ── Attack swing weight (juice) ───────────────────────────────────────────
     // True for enemies whose basic attack is a melee swing that reads well with
@@ -487,7 +520,6 @@ protected:
     void HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies);
     void PickApproachOffset();
     bool CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies) const;
-    bool UpdateEliteLunge(float dt);
     void UpdateBurnPanic(float dt);
     void UpdateBurns(float dt);
     void UpdateElectricCharge(float dt);
@@ -558,19 +590,14 @@ protected:
     bool  _attacking    = false;
     bool  _damageApplied = false;
 
-    enum class LungeState { None, Windup, Lunging, Recovery };
-    LungeState _lungeState = LungeState::None;
-    float   _lungeTimer = 0.f;
-    float   _lungeCooldown = 0.f;
-    Vector2 _lungeDir = {};
-    bool    _lungeDamageApplied = false;
-    static constexpr float kEliteLungeWindup = 0.42f;
-    static constexpr float kEliteLungeDuration = 0.18f;
-    static constexpr float kEliteLungeRecovery = 0.35f;
-    static constexpr float kEliteLungeCooldown = 2.4f;
-    static constexpr float kEliteLungeSpeed = 720.f;
-    static constexpr float kEliteLungeMinRange = 145.f;
-    static constexpr float kEliteLungeMaxRange = 430.f;
+    // ── Elite signature runtime (see the public elite hooks above) ────────────
+    EliteEventQueue _eliteEvents;
+    std::uint32_t   _eliteEventSequence   = 0;
+    int             _eliteDroppedEvents   = 0;
+    bool            _eliteGuardLinked     = false;
+    bool            _eliteGuardReducedHit = false;
+    int             _eliteSignatureCasts  = 0;
+    int             _eliteSignatureHits   = 0;
 
     Vector2 _burnPanicDir = {};
     float   _burnPanicTurnTimer = 0.f;
