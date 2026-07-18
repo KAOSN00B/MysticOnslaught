@@ -30,6 +30,7 @@ public:
     Venomfang* AsVenomfang() override { return this; }
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
 
+    EliteArchetype GetEliteArchetype() const override { return EliteArchetype::Venomfang; }
     EnemyRole   GetEncounterRole() const override { return EnemyRole::Assassin; }
     int         GetSpawnCost()     const override { return 3; }
     const char* GetTuningName()    const override { return "Venomfang"; }

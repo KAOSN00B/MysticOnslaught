@@ -29,6 +29,7 @@ public:
     Rectangle GetCollisionRec() const override;
     Capsule2D GetCapsule()      const override;
     Ogre* AsOgre() override { return this; }
+    EliteArchetype GetEliteArchetype() const override { return EliteArchetype::Ogre; }
     void PlayHurtSound() override;
     void PlayDeathSound() override;
 

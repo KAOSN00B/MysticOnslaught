@@ -32,6 +32,7 @@ public:
 
     // Curated role: a slow, heavy anchor. Melee, so it also gets the swing-weight
     // lean (UsesAttackLunge defaults true for the Tank role).
+    EliteArchetype GetEliteArchetype() const override { return EliteArchetype::Infernal; }
     EnemyRole   GetEncounterRole() const override { return EnemyRole::Tank; }
     int         GetSpawnCost()     const override { return 4; }
     const char* GetTuningName()    const override { return "Infernal"; }

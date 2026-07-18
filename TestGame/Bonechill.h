@@ -30,6 +30,7 @@ public:
     Bonechill* AsBonechill() override { return this; }
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Metal; }
 
+    EliteArchetype GetEliteArchetype() const override { return EliteArchetype::Bonechill; }
     EnemyRole   GetEncounterRole() const override { return EnemyRole::Tank; }
     int         GetSpawnCost()     const override { return 4; }
     const char* GetTuningName()    const override { return "Bonechill"; }

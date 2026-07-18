@@ -181,12 +181,13 @@ namespace
         Color       color;
     };
 
+    // Order matches EliteModifier (0=Cage, 1=GuardLinks, 2=Enrage, 3=ArenaPressure).
+    // Guard Links is damage REDUCTION now, so the banner teaches the real rule.
     constexpr EliteChallengeBannerDef kEliteChallengeBanners[] = {
-        { "ARENA CONSTRICTION",    "CONDITION: CAGE WALLS  |  STAY INSIDE THE RING", Color{220,  40, 200, 255} },
-        { "INVULNERABILITY LINKS", "CONDITION: BODYGUARDS  |  BREAK THE LINK",      Color{180, 100, 255, 255} },
-        { "PERMANENT ENRAGE",      "CONDITION: ENRAGED  |  FAST & LETHAL",          Color{255,  60,  60, 255} },
-        { "GAP-CLOSER LEAP",       "CONDITION: HUNTING LEAP  |  KEEP MOVING",       Color{255, 180,  60, 255} },
-        { "ROOM HAZARDS",          "CONDITION: HAZARD VOLLEYS  |  WATCH THE FLOOR", Color{255, 220,  80, 255} },
+        { "ARENA CONSTRICTION", "CONDITION: CAGE WALLS  |  STAY INSIDE THE RING",   Color{220,  40, 200, 255} },
+        { "GUARD LINKS",        "CONDITION: GUARDED  |  KILL GUARDS TO BREAK THE LINK", Color{180, 100, 255, 255} },
+        { "PERMANENT ENRAGE",   "CONDITION: ENRAGED  |  FAST & LETHAL",             Color{255,  60,  60, 255} },
+        { "ARENA PRESSURE",     "CONDITION: HAZARD VOLLEYS  |  WATCH THE FLOOR",    Color{255, 220,  80, 255} },
     };
 
     const EliteChallengeBannerDef& GetEliteChallengeBannerDef(int mechanic)
@@ -701,7 +702,6 @@ void Engine::StartNextRoom(RoomType type)
     _eliteMechanic           = -1;
     _eliteMinibossPtr        = nullptr;
     _eliteCageRadius         = 0.f;
-    _eliteIsLeaping          = false;
     _eliteEnrageWarningTimer = 0.f;
     _eliteHazardSpawnTimer   = 0.f;
 
@@ -1167,14 +1167,7 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     _expTallyDone = false;
     _tallyChoiceChaining = false;
     _eliteRewardGranted = false;
-    _eliteMechanic = -1;
-    _eliteMinibossPtr = nullptr;
-    _eliteCageRadius = 0.f;
-    _eliteEnrageWarningTimer = 0.f;
-    _eliteHazardSpawnTimer = 0.f;
-    _eliteIsLeaping = false;
-    _eliteLeapCooldown = 0.f;
-    _eliteLeapTimer = 0.f;
+    ResetEliteRoomRuntime();
     _dungeonClearEffects.clear();
 
     const auto& rooms = _dungeonGen.GetRooms();
@@ -1227,20 +1220,10 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     else if (type == RoomType::Elite)
     {
         Enemy* miniboss = SpawnEliteMiniboss(GetDungeonSpawnPos(cellW, cellH));
-        _eliteMinibossPtr = miniboss;
-        _eliteMechanic    = GetEliteMechanicForRoom(_dungeonRoomIdx);
-        _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
-        if (_eliteMechanic == 0)
-        {
-            _eliteCageCenter      = { sw * 0.5f, sh * 0.5f };
-            _eliteCageRadius      = kEliteCageRadius;
-            _eliteCageDamageTimer = kEliteCageDamageInterval;
-        }
-        else if (_eliteMechanic == 1) { if (miniboss) miniboss->SetInvulnerable(true); }
-        else if (_eliteMechanic == 2) { if (miniboss) miniboss->ApplyEnrage(); }
-        else if (_eliteMechanic == 3) { _eliteLeapCooldown = kLeapInterval; }
-        else if (_eliteMechanic == 4) { _eliteHazardSpawnTimer = (float)GetRandomValue((int)(kHazardVolleyMinInterval * 100.f), (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f; }
         spawnAt([&](Vector2 p) { SpawnBasicEnemy(p); }, 2);
+        // One shared setup path — called after ALL room enemies exist so
+        // Guard Links can count the living guards.
+        InitializeEliteRoomRuntime(miniboss, _dungeonRoomIdx, sw, sh);
         _dungeonEnemiesSpawned = true;
     }
     else if (type == RoomType::Standard)
@@ -1299,14 +1282,7 @@ void Engine::DebugRestartRoomAs(RoomType type)
     _expTallyDone = false;
     _tallyChoiceChaining = false;
     _eliteRewardGranted = false;
-    _eliteMechanic = -1;
-    _eliteMinibossPtr = nullptr;
-    _eliteCageRadius = 0.f;
-    _eliteEnrageWarningTimer = 0.f;
-    _eliteHazardSpawnTimer = 0.f;
-    _eliteIsLeaping = false;
-    _eliteLeapCooldown = 0.f;
-    _eliteLeapTimer = 0.f;
+    ResetEliteRoomRuntime();
 
     _currentRoomType = type;
     _currentRoom = (_currentRoom % 5) + 1;
@@ -1735,9 +1711,6 @@ void Engine::SpawnEnemies()
     ctx.eliteCageRadius = &_eliteCageRadius;
     ctx.eliteCageDamageTimer = &_eliteCageDamageTimer;
     ctx.eliteEnrageWarningTimer = &_eliteEnrageWarningTimer;
-    ctx.eliteIsLeaping = &_eliteIsLeaping;
-    ctx.eliteLeapCooldown = &_eliteLeapCooldown;
-    ctx.eliteLeapTimer = &_eliteLeapTimer;
     ctx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
     ctx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
     ctx.playerPos = _player.GetWorldPos();
@@ -2596,6 +2569,17 @@ void Engine::UpdateGamePlay(float dt)
             case DebugActionKind::SetEliteMechanic:
                 _debug.SetForcedEliteMechanic(cmd.value);
                 DebugRestartRoomAs(RoomType::Elite); break;
+            case DebugActionKind::SetEliteType:
+                _debug.SetForcedEliteType(cmd.value);
+                DebugRestartRoomAs(RoomType::Elite); break;
+            case DebugActionKind::ForceEliteSignature:
+                if (_eliteMinibossPtr && _eliteMinibossPtr->IsActive() && _eliteMinibossPtr->IsAlive())
+                    _eliteMinibossPtr->DebugForceEliteSignature();
+                break;
+            case DebugActionKind::ForceElitePhaseTwo:
+                if (_eliteMinibossPtr && _eliteMinibossPtr->IsActive() && _eliteMinibossPtr->IsAlive())
+                    _eliteMinibossPtr->DebugForceElitePhaseTwo();
+                break;
             case DebugActionKind::SpawnGrunt:
                 SpawnBasicEnemy(Vector2Add(spawnBase, Vector2{ 220.f, 40.f })); break;
             case DebugActionKind::SpawnCyclops:
@@ -2822,11 +2806,6 @@ void Engine::UpdateGamePlay(float dt)
         eliteCtx.eliteCageRadius = &_eliteCageRadius;
         eliteCtx.eliteCageDamageTimer = &_eliteCageDamageTimer;
         eliteCtx.eliteEnrageWarningTimer = &_eliteEnrageWarningTimer;
-        eliteCtx.eliteIsLeaping = &_eliteIsLeaping;
-        eliteCtx.eliteLeapStartPos = &_eliteLeapStartPos;
-        eliteCtx.eliteLeapTarget = &_eliteLeapTarget;
-        eliteCtx.eliteLeapCooldown = &_eliteLeapCooldown;
-        eliteCtx.eliteLeapTimer = &_eliteLeapTimer;
         eliteCtx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
         eliteCtx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
         eliteCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
@@ -14347,8 +14326,12 @@ Enemy* Engine::SpawnVenomfang(Vector2 pos)
 Enemy* Engine::SpawnEliteMiniboss(Vector2 pos)
 {
     enum { kOgre, kInfernal, kBonechill, kStormclub, kVenomfang, kEliteTypeCount };
+    // Debug panel can pin the elite type for QA; -1 = normal random roll.
+    const int forcedType = _debug.GetForcedEliteType();
+    const int typeRoll = (forcedType >= 0 && forcedType < kEliteTypeCount)
+        ? forcedType : GetRandomValue(0, kEliteTypeCount - 1);
     Enemy* miniboss = nullptr;
-    switch (GetRandomValue(0, kEliteTypeCount - 1))
+    switch (typeRoll)
     {
     case kInfernal:  miniboss = SpawnInfernal(pos);  break;
     case kBonechill: miniboss = SpawnBonechill(pos); break;
@@ -14846,11 +14829,7 @@ bool Engine::RestoreDungeonRoomEnemyState(int roomIdx)
 
     ResetEliteRoomRuntime();
     bool anySpawned = false;
-    if (_currentRoomType == RoomType::Elite)
-    {
-        _eliteMechanic = GetEliteMechanicForRoom(roomIdx);
-        _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
-    }
+    Enemy* restoredElite = nullptr;
 
     for (const DungeonEnemySnapshot& snapshot : state.survivors)
     {
@@ -14861,7 +14840,7 @@ bool Engine::RestoreDungeonRoomEnemyState(int roomIdx)
             // The elite buff is re-applied inside SpawnDungeonSnapshotEnemy for
             // any "Elite_<base>" survivor; just re-point the room's elite handle.
             if (spawned->IsEliteMiniboss())
-                _eliteMinibossPtr = spawned;
+                restoredElite = spawned;
         }
         else if (snapshot.type == "Molarbeast")
         {
@@ -14869,44 +14848,12 @@ bool Engine::RestoreDungeonRoomEnemyState(int roomIdx)
         }
     }
 
-    if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
-    {
-        if (_eliteMechanic == 0)
-        {
-            _eliteCageCenter = { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
-            _eliteCageRadius = kEliteCageRadius;
-            _eliteCageDamageTimer = kEliteCageDamageInterval;
-        }
-        else if (_eliteMechanic == 1)
-        {
-            bool hasBodyguard = false;
-            for (const auto& enemy : _enemies)
-            {
-                if (enemy && enemy->IsActive() && !enemy->IsEliteMiniboss())
-                {
-                    hasBodyguard = true;
-                    break;
-                }
-            }
-            if (_eliteMinibossPtr)
-                _eliteMinibossPtr->SetInvulnerable(hasBodyguard);
-        }
-        else if (_eliteMechanic == 2)
-        {
-            if (_eliteMinibossPtr)
-                _eliteMinibossPtr->ApplyEnrage();
-        }
-        else if (_eliteMechanic == 3)
-        {
-            _eliteLeapCooldown = kLeapInterval;
-        }
-        else if (_eliteMechanic == 4)
-        {
-            _eliteHazardSpawnTimer = (float)GetRandomValue(
-                (int)(kHazardVolleyMinInterval * 100.f),
-                (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
-        }
-    }
+    // Re-entry runs the SAME setup path as a fresh room. The stored modifier is
+    // reused (GetCompatibleEliteMechanicForRoom keeps it), so the challenge never
+    // rerolls; Guard Links recounts the surviving guards.
+    if (_currentRoomType == RoomType::Elite && restoredElite)
+        InitializeEliteRoomRuntime(restoredElite, roomIdx,
+                                   (float)kVirtualWidth, (float)kVirtualHeight);
 
     _dungeonEnemiesSpawned = anySpawned;
     if (!anySpawned)
@@ -16557,38 +16504,11 @@ void Engine::SpawnDungeonRoomEnemies()
     }
     else if (type == RoomType::Elite)
     {
-        // Spawn the miniboss and initialize the elite mechanic for this room.
-        // A curated bruiser is rolled (Ogre / Infernal / ...) and marked elite.
+        // Spawn the miniboss (a curated bruiser: Ogre / Infernal / ...) plus its
+        // guards, then run the ONE shared elite-room setup path.
         Enemy* miniboss = SpawnEliteMiniboss(GetDungeonSpawnPos(cellW, cellH));
-        ResetEliteRoomRuntime();
-        _eliteMinibossPtr = miniboss;
-        _eliteMechanic = GetEliteMechanicForRoom(i);
-        _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
-
-        switch (_eliteMechanic)
-        {
-        case 0:  // Cage - centred on screen
-            _eliteCageCenter      = { sw * 0.5f, sh * 0.5f };
-            _eliteCageRadius      = kEliteCageRadius;
-            _eliteCageDamageTimer = kEliteCageDamageInterval;
-            break;
-        case 1:  // Bodyguard - miniboss immune until fodder die
-            if (miniboss) miniboss->SetInvulnerable(true);
-            break;
-        case 2:  // Enrage - miniboss powered up immediately
-            if (miniboss) miniboss->ApplyEnrage();
-            break;
-        case 3:  // Leap - miniboss leaps at the player periodically
-            _eliteLeapCooldown = kLeapInterval;
-            break;
-        case 4:  // Hazards - periodic lava volley
-            _eliteHazardSpawnTimer = (float)GetRandomValue(
-                (int)(kHazardVolleyMinInterval * 100.f),
-                (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
-            break;
-        }
-
         spawnAt([&](Vector2 p){ SpawnBasicEnemy(p); }, tier == 0 ? 1 : 2);
+        InitializeEliteRoomRuntime(miniboss, i, sw, sh);
     }
     else  // Standard
     {
@@ -16805,30 +16725,74 @@ void Engine::ResetEliteRoomRuntime()
     {
         _eliteMinibossPtr->SetInvulnerable(false);
         _eliteMinibossPtr->SetLeapFrozen(false);
+        _eliteMinibossPtr->SetEliteGuardLinked(false);
+        _eliteMinibossPtr->ClearEliteEvents();
     }
     _eliteMechanic           = -1;
     _eliteMinibossPtr        = nullptr;
     _eliteCageRadius         = 0.f;
     _eliteCageDamageTimer    = 0.f;
     _eliteEnrageWarningTimer = 0.f;
-    _eliteIsLeaping          = false;
-    _eliteLeapCooldown       = 0.f;
-    _eliteLeapTimer          = 0.f;
     _eliteHazardSpawnTimer   = 0.f;
 }
 
-int Engine::GetEliteMechanicForRoom(int roomIdx)
+int Engine::GetCompatibleEliteMechanicForRoom(int roomIdx, EliteArchetype archetype)
 {
     DungeonRoomState& state = _dungeonRoomStates[roomIdx];
-    int forced = _debug.GetForcedEliteMechanic();
-    if (forced >= 0 && forced <= 4)
-    {
-        state.eliteMechanic = forced;
+    const int forced = _debug.GetForcedEliteMechanic();
+
+    // A stored modifier survives re-entry/snapshot restore — the room's
+    // challenge never rerolls — but only while it stays compatible with the
+    // elite that actually lives in the room.
+    if (state.eliteMechanic >= 0 && state.eliteMechanic < (int)EliteModifier::Count &&
+        forced < 0 &&
+        IsEliteModifierCompatible(archetype, (EliteModifier)state.eliteMechanic))
         return state.eliteMechanic;
-    }
-    if (state.eliteMechanic < 0 || state.eliteMechanic > 4)
-        state.eliteMechanic = GetRandomValue(0, 4);
+
+    const std::uint32_t seed = (std::uint32_t)GetRandomValue(1, 0x7ffffffe);
+    state.eliteMechanic = (int)ChooseEliteModifier(archetype, seed, forced);
     return state.eliteMechanic;
+}
+
+void Engine::InitializeEliteRoomRuntime(Enemy* elite, int roomIdx,
+                                        float worldWidth, float worldHeight)
+{
+    ResetEliteRoomRuntime();
+    _eliteMinibossPtr = elite;
+    if (!elite)
+        return;
+
+    _eliteMechanic = GetCompatibleEliteMechanicForRoom(roomIdx, elite->GetEliteArchetype());
+    _eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
+
+    switch (_eliteMechanic)
+    {
+    case 0:   // Cage — stay inside the ring
+        _eliteCageCenter      = { worldWidth * 0.5f, worldHeight * 0.5f };
+        _eliteCageRadius      = kEliteCageRadius;
+        _eliteCageDamageTimer = kEliteCageDamageInterval;
+        break;
+    case 1:   // Guard Links — 60% reduction while any guard lives (never immune)
+    {
+        bool anyGuardAlive = false;
+        for (const auto& enemy : _enemies)
+        {
+            if (enemy.get() == elite) continue;
+            if (enemy && enemy->IsActive() && enemy->IsAlive() && !enemy->IsDying())
+            { anyGuardAlive = true; break; }
+        }
+        elite->SetEliteGuardLinked(anyGuardAlive);
+        break;
+    }
+    case 2:   // Permanent Enrage
+        elite->ApplyEnrage();
+        break;
+    case 3:   // Arena Pressure — themed hazard volleys on the shared budget
+        _eliteHazardSpawnTimer = (float)GetRandomValue(
+            (int)(kHazardVolleyMinInterval * 100.f),
+            (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
+        break;
+    }
 }
 
 
@@ -16857,13 +16821,7 @@ void Engine::SetPlaytestEnemies(bool enemiesOn)
     _enemies.clear();
     _dungeonReinforcements.clear();
     _roomClearPending = false;
-    _eliteMechanic = -1;
-    _eliteMinibossPtr = nullptr;
-    _eliteIsLeaping = false;
-    _eliteLeapCooldown = 0.f;
-    _eliteLeapTimer = 0.f;
-    _eliteEnrageWarningTimer = 0.f;
-    _eliteHazardSpawnTimer = 0.f;
+    ResetEliteRoomRuntime();
 
     if (enemiesOn)
     {
@@ -20201,11 +20159,6 @@ void Engine::UpdateDungeonRun(float dt)
             eliteCtx.eliteCageRadius        = &_eliteCageRadius;
             eliteCtx.eliteCageDamageTimer   = &_eliteCageDamageTimer;
             eliteCtx.eliteEnrageWarningTimer = &_eliteEnrageWarningTimer;
-            eliteCtx.eliteIsLeaping         = &_eliteIsLeaping;
-            eliteCtx.eliteLeapStartPos      = &_eliteLeapStartPos;
-            eliteCtx.eliteLeapTarget        = &_eliteLeapTarget;
-            eliteCtx.eliteLeapCooldown      = &_eliteLeapCooldown;
-            eliteCtx.eliteLeapTimer         = &_eliteLeapTimer;
             eliteCtx.eliteHazardSpawnTimer  = &_eliteHazardSpawnTimer;
             eliteCtx.isSpawnPositionValid   = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
             eliteCtx.triggerScreenShake     = [&](float s, float d){ TriggerScreenShake(s, d); };

@@ -30,6 +30,7 @@ public:
     Stormclub* AsStormclub() override { return this; }
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Flesh; }
 
+    EliteArchetype GetEliteArchetype() const override { return EliteArchetype::Stormclub; }
     EnemyRole   GetEncounterRole() const override { return EnemyRole::Charger; }
     int         GetSpawnCost()     const override { return 4; }
     const char* GetTuningName()    const override { return "Stormclub"; }

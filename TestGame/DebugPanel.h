@@ -9,6 +9,9 @@ enum class DebugActionKind
     ClearEnemiesContinue,
     RestartRoom,
     SetEliteMechanic,
+    SetEliteType,         // value = EliteArchetype index; -1 = random
+    ForceEliteSignature,  // trigger the active elite's signature move now
+    ForceElitePhaseTwo,   // drop the active elite to its 50% escalation
     SpawnGrunt,
     SpawnCyclops,
     SpawnOgre,
@@ -48,6 +51,8 @@ public:
     bool IsGodMode()              const { return _godMode;             }
     int  GetForcedEliteMechanic() const { return _forcedEliteMechanic; }
     void SetForcedEliteMechanic(int v)  { _forcedEliteMechanic = v;   }
+    int  GetForcedEliteType()     const { return _forcedEliteType; }
+    void SetForcedEliteType(int v)      { _forcedEliteType = v;    }
     void ToggleOpen()                  { _open = !_open;              }
     void SetOpen(bool open)            { _open = open;                }
 
@@ -62,4 +67,5 @@ private:
     bool  _godMode             = false;
     float _scrollY             = 0.f;
     int   _forcedEliteMechanic = -1;
+    int   _forcedEliteType     = -1;
 };

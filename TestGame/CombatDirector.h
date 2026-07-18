@@ -40,9 +40,6 @@ struct CombatSpawnContext
     float* eliteCageRadius = nullptr;
     float* eliteCageDamageTimer = nullptr;
     float* eliteEnrageWarningTimer = nullptr;
-    bool* eliteIsLeaping = nullptr;
-    float* eliteLeapCooldown = nullptr;
-    float* eliteLeapTimer = nullptr;
     float* eliteHazardSpawnTimer = nullptr;
 
     // Player world position — used to place role-based spawns (ranged in back,
@@ -81,11 +78,6 @@ struct EliteMechanicsContext
     float* eliteCageRadius = nullptr;
     float* eliteCageDamageTimer = nullptr;
     float* eliteEnrageWarningTimer = nullptr;
-    bool* eliteIsLeaping = nullptr;
-    Vector2* eliteLeapStartPos = nullptr;
-    Vector2* eliteLeapTarget = nullptr;
-    float* eliteLeapCooldown = nullptr;
-    float* eliteLeapTimer = nullptr;
     float* eliteHazardSpawnTimer = nullptr;
 
     std::function<bool(Vector2)> isSpawnPositionValid;

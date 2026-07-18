@@ -33,10 +33,6 @@ namespace
     constexpr float kEliteCageRadius = 500.f;
     constexpr float kEliteCageDamageInterval = 0.5f;
     constexpr float kEliteEnrageWarningDuration = 4.0f;
-    constexpr float kLeapInterval = 8.0f;
-    constexpr float kLeapDuration = 1.5f;
-    constexpr float kLeapAoERadius = 90.f;
-    constexpr int   kLeapAoEDamage = 3;
     constexpr float kHazardVolleyMinInterval = 1.5f;
     constexpr float kHazardVolleyMaxInterval = 2.5f;
     constexpr int   kHazardVolleyMinCount = 3;
@@ -141,35 +137,35 @@ void CombatDirector::SpawnEnemies(const CombatSpawnContext& ctx) const
         if (eliteMiniboss != nullptr)
             eliteMiniboss->SetIsEliteMiniboss(true);
 
-        *ctx.eliteMechanic = (ctx.forcedEliteMechanic >= 0) ? ctx.forcedEliteMechanic : GetRandomValue(0, 4);
+        // Roll a modifier COMPATIBLE with this elite (EliteModifier ids 0-3).
+        // A non-curated elite (Basic/Cyclops → archetype Count) safely falls
+        // back to Enrage inside ChooseEliteModifier.
+        const EliteArchetype archetype = eliteMiniboss
+            ? eliteMiniboss->GetEliteArchetype() : EliteArchetype::Count;
+        const std::uint32_t seed = (std::uint32_t)GetRandomValue(1, 0x7ffffffe);
+        *ctx.eliteMechanic = (int)ChooseEliteModifier(archetype, seed, ctx.forcedEliteMechanic);
         *ctx.eliteMinibossPtr = eliteMiniboss;
         *ctx.eliteCageRadius = 0.f;
         *ctx.eliteCageDamageTimer = 0.f;
         *ctx.eliteEnrageWarningTimer = kEliteEnrageWarningDuration;
-        *ctx.eliteIsLeaping = false;
-        *ctx.eliteLeapCooldown = 0.f;
-        *ctx.eliteLeapTimer = 0.f;
         *ctx.eliteHazardSpawnTimer = 0.f;
 
         switch (*ctx.eliteMechanic)
         {
-        case 0:
+        case 0:   // Cage
             *ctx.eliteCageCenter = { mapW * 0.5f, mapH * 0.5f };
             *ctx.eliteCageRadius = kEliteCageRadius;
             *ctx.eliteCageDamageTimer = kEliteCageDamageInterval;
             break;
-        case 1:
+        case 1:   // Guard Links — reduction while guards live, never immunity
             if (*ctx.eliteMinibossPtr)
-                (*ctx.eliteMinibossPtr)->SetInvulnerable(true);
+                (*ctx.eliteMinibossPtr)->SetEliteGuardLinked(true);
             break;
-        case 2:
+        case 2:   // Permanent Enrage
             if (*ctx.eliteMinibossPtr)
                 (*ctx.eliteMinibossPtr)->ApplyEnrage();
             break;
-        case 3:
-            *ctx.eliteLeapCooldown = kLeapInterval;
-            break;
-        case 4:
+        case 3:   // Arena Pressure
             *ctx.eliteHazardSpawnTimer = (float)GetRandomValue(
                 (int)(kHazardVolleyMinInterval * 100.f),
                 (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
@@ -342,7 +338,7 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
     }
 
     if (*ctx.eliteMechanic == 1
-        && *ctx.eliteMinibossPtr && (*ctx.eliteMinibossPtr)->IsInvulnerable()
+        && *ctx.eliteMinibossPtr && (*ctx.eliteMinibossPtr)->IsEliteGuardLinked()
         && (*ctx.eliteMinibossPtr)->IsActive() && !(*ctx.eliteMinibossPtr)->IsDying())
     {
         bool anyGruntAlive = false;
@@ -354,55 +350,17 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
         }
         if (!anyGruntAlive)
         {
-            (*ctx.eliteMinibossPtr)->SetInvulnerable(false);
-            // Payoff callout: the shield only drops once its bodyguards fall, so
-            // announce it — this is what teaches the "kill the adds first" rule.
-            (*ctx.eliteMinibossPtr)->RequestBossCallout("SHIELD DOWN");
+            (*ctx.eliteMinibossPtr)->SetEliteGuardLinked(false);
+            // Payoff callout: the damage reduction only breaks once its guards
+            // fall — this is what teaches the "kill the adds first" rule.
+            (*ctx.eliteMinibossPtr)->RequestBossCallout("GUARD BROKEN");
         }
     }
 
     if (*ctx.eliteEnrageWarningTimer > 0.f)
         *ctx.eliteEnrageWarningTimer -= dt;
 
-    if (*ctx.eliteMechanic == 3
-        && *ctx.eliteMinibossPtr && (*ctx.eliteMinibossPtr)->IsActive()
-        && (*ctx.eliteMinibossPtr)->IsAlive() && !(*ctx.eliteMinibossPtr)->IsDying())
-    {
-        if (!*ctx.eliteIsLeaping)
-        {
-            *ctx.eliteLeapCooldown -= dt;
-            if (*ctx.eliteLeapCooldown <= 0.f)
-            {
-                *ctx.eliteLeapStartPos = (*ctx.eliteMinibossPtr)->GetWorldPos();
-                *ctx.eliteLeapTarget = ctx.player->GetFeetWorldPos();
-                *ctx.eliteIsLeaping = true;
-                *ctx.eliteLeapTimer = kLeapDuration;
-                (*ctx.eliteMinibossPtr)->SetLeapFrozen(true);
-            }
-        }
-        else
-        {
-            (*ctx.eliteMinibossPtr)->Teleport(*ctx.eliteLeapStartPos);
-            *ctx.eliteLeapTimer -= dt;
-
-            if (*ctx.eliteLeapTimer <= 0.f)
-            {
-                (*ctx.eliteMinibossPtr)->Teleport(*ctx.eliteLeapTarget);
-                (*ctx.eliteMinibossPtr)->SetLeapFrozen(false);
-                *ctx.eliteIsLeaping = false;
-                *ctx.eliteLeapCooldown = kLeapInterval;
-
-                float dist = Vector2Distance(ctx.player->GetWorldPos(), *ctx.eliteLeapTarget);
-                if (dist <= kLeapAoERadius)
-                    ctx.player->TakeDamage(kLeapAoEDamage, *ctx.eliteLeapTarget);
-
-                if (ctx.triggerScreenShake)
-                    ctx.triggerScreenShake(8.f, 0.25f);
-            }
-        }
-    }
-
-    if (*ctx.eliteMechanic == 4)
+    if (*ctx.eliteMechanic == 3)
     {
         *ctx.eliteHazardSpawnTimer -= dt;
         if (*ctx.eliteHazardSpawnTimer <= 0.f)

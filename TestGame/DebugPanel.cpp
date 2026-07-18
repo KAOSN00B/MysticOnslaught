@@ -242,14 +242,29 @@ namespace
             { "Boss",     { DebugActionKind::RestartRoom, 5 } },
         });
 
-        skip(38.f);  // "Elite Mechanics" section header
+        skip(38.f);  // "Elite Modifiers" section header
         AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 74, 130, 220 }, {
-            { "Random",  { DebugActionKind::SetEliteMechanic, -1 } },
-            { "Cage",    { DebugActionKind::SetEliteMechanic,  0 } },
-            { "Links",   { DebugActionKind::SetEliteMechanic,  1 } },
-            { "Enrage",  { DebugActionKind::SetEliteMechanic,  2 } },
-            { "Leap",    { DebugActionKind::SetEliteMechanic,  3 } },
-            { "Hazards", { DebugActionKind::SetEliteMechanic,  4 } },
+            { "Random",      { DebugActionKind::SetEliteMechanic, -1 } },
+            { "Cage",        { DebugActionKind::SetEliteMechanic,  0 } },
+            { "Guard Links", { DebugActionKind::SetEliteMechanic,  1 } },
+            { "Enrage",      { DebugActionKind::SetEliteMechanic,  2 } },
+            { "Pressure",    { DebugActionKind::SetEliteMechanic,  3 } },
+        });
+
+        skip(38.f);  // "Elite Type" section header
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 104, 96, 150, 220 }, {
+            { "Random",    { DebugActionKind::SetEliteType, -1 } },
+            { "Ogre",      { DebugActionKind::SetEliteType,  0 } },
+            { "Infernal",  { DebugActionKind::SetEliteType,  1 } },
+            { "Bonechill", { DebugActionKind::SetEliteType,  2 } },
+            { "Stormclub", { DebugActionKind::SetEliteType,  3 } },
+            { "Venomfang", { DebugActionKind::SetEliteType,  4 } },
+        });
+
+        skip(38.f);  // "Elite Actions" section header
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 104, 74, 220 }, {
+            { "Force Signature", { DebugActionKind::ForceEliteSignature, 0 } },
+            { "Force Phase Two", { DebugActionKind::ForceElitePhaseTwo,  0 } },
         });
 
         skip(38.f);  // "Spawns" section header
@@ -306,6 +321,7 @@ void DebugPanel::Activate()
     _godMode             = false;
     _scrollY             = 0.f;
     _forcedEliteMechanic = -1;
+    _forcedEliteType     = -1;
 }
 
 void DebugPanel::Deactivate()
@@ -433,14 +449,29 @@ void DebugPanel::Draw(int act, int room, const char* roomTypeName) const
         { "Boss",     { DebugActionKind::RestartRoom, 5 } },
     });
 
-    section("Elite Mechanics");
+    section("Elite Modifiers");
     AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 74, 130, 220 }, {
-        { "Random",  { DebugActionKind::SetEliteMechanic, -1 } },
-        { "Cage",    { DebugActionKind::SetEliteMechanic,  0 } },
-        { "Links",   { DebugActionKind::SetEliteMechanic,  1 } },
-        { "Enrage",  { DebugActionKind::SetEliteMechanic,  2 } },
-        { "Leap",    { DebugActionKind::SetEliteMechanic,  3 } },
-        { "Hazards", { DebugActionKind::SetEliteMechanic,  4 } },
+        { "Random",      { DebugActionKind::SetEliteMechanic, -1 } },
+        { "Cage",        { DebugActionKind::SetEliteMechanic,  0 } },
+        { "Guard Links", { DebugActionKind::SetEliteMechanic,  1 } },
+        { "Enrage",      { DebugActionKind::SetEliteMechanic,  2 } },
+        { "Pressure",    { DebugActionKind::SetEliteMechanic,  3 } },
+    });
+
+    section("Elite Type");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 104, 96, 150, 220 }, {
+        { "Random",    { DebugActionKind::SetEliteType, -1 } },
+        { "Ogre",      { DebugActionKind::SetEliteType,  0 } },
+        { "Infernal",  { DebugActionKind::SetEliteType,  1 } },
+        { "Bonechill", { DebugActionKind::SetEliteType,  2 } },
+        { "Stormclub", { DebugActionKind::SetEliteType,  3 } },
+        { "Venomfang", { DebugActionKind::SetEliteType,  4 } },
+    });
+
+    section("Elite Actions");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 104, 74, 220 }, {
+        { "Force Signature", { DebugActionKind::ForceEliteSignature, 0 } },
+        { "Force Phase Two", { DebugActionKind::ForceElitePhaseTwo,  0 } },
     });
 
     section("Spawns");

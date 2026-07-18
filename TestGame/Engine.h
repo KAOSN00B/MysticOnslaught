@@ -1099,28 +1099,21 @@ private:
     bool        _starterAbilityGiftClaimed = false;
 
     // -- Elite-room state (all reset in StartNextRoom) ---------------------
-    // Active mechanic index: 0=Cage, 1=Bodyguard, 2=Enrage, 3=Leap, 4=Hazards; -1=none
+    // Active modifier index (matches EliteModifier): 0=Cage, 1=GuardLinks,
+    // 2=Enrage, 3=ArenaPressure; -1=none. The legacy Leap modifier is gone —
+    // movement is part of each elite's own signature kit now.
     int     _eliteMechanic            = -1;
     Enemy*  _eliteMinibossPtr         = nullptr;  // non-owning ptr into _enemies
     Vector2 _eliteCageCenter          = {};
     float   _eliteCageRadius          = 0.f;
     float   _eliteCageDamageTimer     = 0.f;
     float   _eliteEnrageWarningTimer  = 0.f;
-    bool    _eliteIsLeaping           = false;
-    Vector2 _eliteLeapStartPos        = {};
-    Vector2 _eliteLeapTarget          = {};
-    float   _eliteLeapCooldown        = 0.f;
-    float   _eliteLeapTimer           = 0.f;
     float   _eliteHazardSpawnTimer    = 0.f;
 
     // -- Elite constants ---------------------------------------------------
     static constexpr float kEliteCageRadius             = 500.f;
     static constexpr float kEliteCageDamageInterval     = 0.5f;
     static constexpr float kEliteEnrageWarningDuration  = 4.0f;
-    static constexpr float kLeapInterval                = 8.0f;
-    static constexpr float kLeapDuration                = 1.5f;
-    static constexpr float kLeapAoERadius               = 90.f;
-    static constexpr int   kLeapAoEDamage               = 3;
     static constexpr float kHazardVolleyMinInterval     = 0.55f;
     static constexpr float kHazardVolleyMaxInterval     = 0.95f;
     static constexpr int   kHazardVolleyMinCount        = 3;
@@ -1646,7 +1639,14 @@ private:
     Enemy*    SpawnDungeonSnapshotEnemy(const DungeonEnemySnapshot& snapshot);
     std::string GetDungeonSnapshotType(Enemy& enemy) const;
     void      ResetEliteRoomRuntime();
-    int       GetEliteMechanicForRoom(int roomIdx);
+    // ONE elite-room setup path: debug restarts, fresh dungeon rooms, room
+    // re-entry and snapshot restore all initialize the modifier here so no
+    // path can drift. Call AFTER every enemy for the room has been spawned
+    // (Guard Links counts the living guards).
+    void      InitializeEliteRoomRuntime(Enemy* elite, int roomIdx,
+                                         float worldWidth, float worldHeight);
+    // Rolls (or restores) a modifier COMPATIBLE with this elite archetype.
+    int       GetCompatibleEliteMechanicForRoom(int roomIdx, EliteArchetype archetype);
 
     // Door state helpers for tile-dungeon rooms.
     void ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonDoorSide entryDoorSide) const;
