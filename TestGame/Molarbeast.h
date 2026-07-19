@@ -39,14 +39,27 @@ public:
     bool UsesAttackLunge() const override { return false; }  // ranged lava-ball thrower
     int GetExpValue() const override { return _expValue; }
 
-    bool WantsToFireLavaBall() const { return _pendingLavaBallShot; }
+    // Single volley shots use the pending flag; the set piece's lava FAN queues
+    // several targets that drain one per frame through the same spawn pipeline.
+    bool WantsToFireLavaBall() const { return _pendingLavaBallShot || !_lavaFanQueue.empty(); }
     Vector2 GetLavaBallSpawnPos() const;
-    Vector2 GetQueuedLavaBallTarget() const { return _queuedLavaBallTarget; }
+    Vector2 GetQueuedLavaBallTarget() const
+    {
+        return _lavaFanQueue.empty() ? _queuedLavaBallTarget : _lavaFanQueue.front();
+    }
     void OnLavaBallSpawned();
 
     bool IsDashing() const { return _state == State::Dashing; }
     void OnDashBlocked();
     bool ConsumeImpactShakeRequest();
+
+    // ── Hybrid encounter pattern (first boss to speak the elite language) ────
+    // Lane warnings for the set-piece charge AND the ordinary dash draw through
+    // the shared elite world pass; debug forcing reuses the elite hooks.
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
 
 private:
     enum class State
@@ -127,6 +140,30 @@ private:
     bool _impactShakeRequested = false;
     int  _dashChainRemaining = 0;   // phase 1+: zig-zag follow-up dashes
     std::vector<const Enemy*> _dashedEnemies;
+
+    // ── Survival set piece: the Lava Stampede ─────────────────────────────────
+    // Telegraph a charge lane → lock → charge it → (phase two+: the lane burns
+    // behind it, then a second freshly telegraphed charge) → lava fan → an
+    // exhausted PUNISH window. A wall crash cuts the sequence short and grants
+    // the longest punish — bait-and-punish stays the smart play.
+    enum class SetPieceStep { None, LaneTelegraph, Charging, Fan, Punish };
+    void BeginSetPiece();
+    void AbortSetPiece(float retrySeconds);
+    void UpdateSetPiece(float dt, const std::vector<std::unique_ptr<Enemy>>& enemies);
+    void OnSetPieceChargeFinished(bool blockedByArena);
+    void QueueLavaFan(int shotCount);
+
+    SetPieceStep _setPieceStep = SetPieceStep::None;
+    float   _setPieceTimer = 0.f;
+    float   _setPieceCooldown = 6.f;          // first set piece soon after engage
+    int     _setPieceChargesRemaining = 0;
+    Vector2 _setPieceLaneStart{};
+    std::vector<Vector2> _lavaFanQueue;       // fan shots drain one per frame
+
+    // Ordinary attack deck (EncounterPattern cards): dash and volley never
+    // repeat back-to-back and each cools its own group.
+    int   _previousCardId = -1;
+    float _cardGroupCooldowns[2] = { 0.f, 0.f };
 
     static constexpr int _sheetFrameCount = 6;
     static constexpr float _bossScale = 7.0f;

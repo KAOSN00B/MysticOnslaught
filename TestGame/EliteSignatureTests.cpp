@@ -2,10 +2,12 @@
 // Build standalone (no raylib linking needed — Vector2 is header-only):
 //   cl /nologo /std:c++17 /EHsc /DELITE_SIGNATURE_TEST_MAIN ^
 //      /I"C:\CLibraries\raylib-5.5_win64_msvc16\include" ^
-//      TestGame\EliteSignature.cpp TestGame\EliteSignatureTests.cpp ^
+//      TestGame\EliteSignature.cpp TestGame\EncounterPattern.cpp ^
+//      TestGame\EliteSignatureTests.cpp ^
 //      /link /OUT:x64\Debug\EliteSignatureTests.exe
 
 #include "EliteSignature.h"
+#include "EncounterPattern.h"
 #include "GameBalance.h"
 
 #include <cassert>
@@ -208,6 +210,48 @@ static void TestDistancePointToSegmentGeometry()
     assert(std::fabs(DistancePointToSegment({ 3.f, 4.f }, { 0.f, 0.f }, { 0.f, 0.f }) - 5.f) < tolerance);
 }
 
+static void TestAttackCardSelection()
+{
+    // A tiny Molarbeast-shaped deck: Dash (id 0, mid+ range, group 0) and
+    // Volley (id 1, any range, group 1, phase 2+ heavier weight elsewhere).
+    const AttackCard deck[] = {
+        { 0, 0x7, 250.f, 1.0e9f, 3, 0, false },   // Dash
+        { 1, 0x7, 120.f, 950.f,  2, 1, false },   // Volley
+        { 2, 0x4, 0.f,   1.0e9f, 5, -1, false },  // phase-three-only finisher
+    };
+    const int deckSize = 3;
+    float coldGroups[2] = { 0.f, 0.f };
+
+    // No immediate repeats: with Dash as the previous card, Dash never returns.
+    for (std::uint32_t seed = 0; seed < 200; ++seed)
+    {
+        int picked = SelectAttackCard(deck, deckSize, 0, 500.f, 0, coldGroups, 2, seed);
+        assert(picked == 1);   // only Volley survives in phase one
+    }
+
+    // Range filter: standing inside 250 removes Dash; past 950 removes Volley.
+    assert(SelectAttackCard(deck, deckSize, 0, 150.f, -1, coldGroups, 2, 7) == 1);
+    assert(SelectAttackCard(deck, deckSize, 0, 1200.f, -1, coldGroups, 2, 7) == 0);
+
+    // Phase filter: the finisher only exists in phase three (phase index 2).
+    for (std::uint32_t seed = 0; seed < 200; ++seed)
+        assert(SelectAttackCard(deck, deckSize, 0, 500.f, -1, coldGroups, 2, seed) != 2);
+    bool finisherSeen = false;
+    for (std::uint32_t seed = 0; seed < 200; ++seed)
+        if (SelectAttackCard(deck, deckSize, 2, 500.f, -1, coldGroups, 2, seed) == 2)
+            finisherSeen = true;
+    assert(finisherSeen);
+
+    // Group cooldown filter, and the safe -1 fallback when nothing is valid.
+    float hotGroups[2] = { 1.5f, 2.0f };
+    assert(SelectAttackCard(deck, deckSize, 0, 500.f, -1, hotGroups, 2, 7) == -1);
+
+    // Deterministic: the same seed always picks the same card.
+    int firstPick = SelectAttackCard(deck, deckSize, 2, 500.f, -1, coldGroups, 2, 42);
+    for (int repeat = 0; repeat < 10; ++repeat)
+        assert(SelectAttackCard(deck, deckSize, 2, 500.f, -1, coldGroups, 2, 42) == firstPick);
+}
+
 #ifdef ELITE_SIGNATURE_TEST_MAIN
 int main()
 {
@@ -222,6 +266,7 @@ int main()
     TestSpreadDirectionsLeaveWalkableGaps();
     TestOgreChargeSequencing();
     TestDistancePointToSegmentGeometry();
+    TestAttackCardSelection();
     std::puts("Elite signature tests passed");
     return 0;
 }

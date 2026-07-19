@@ -96,6 +96,7 @@ call emcc ^
   %SRC%\EncounterPlanner.cpp ^
   %SRC%\RoomCapacity.cpp ^
   %SRC%\EliteSignature.cpp ^
+  %SRC%\EncounterPattern.cpp ^
   %SRC%\WorldConfig.cpp ^
   %SRC%\DungeonGen.cpp ^
   %SRC%\RoomLayout.cpp ^

@@ -1,7 +1,7 @@
 #include "Molarbeast.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
-#include "VirtualCanvas.h"
+#include "EncounterPattern.h"
 
 #include "Character.h"
 #include "VirtualCanvas.h"
@@ -49,7 +49,7 @@ void Molarbeast::Init()
 
     // Lock in stable collision dimensions from the idle sheet. These never
     // change again so every collision rect stays consistent across all
-    // animation states � melee, hurt, dash, ranged sheets can all differ in
+    // animation states � melee, hurt, dash, ranged sheets can all differ in
     // size without making the hurtbox jump around.
     _stableFrameW = _idleAnim.width / (float)_sheetFrameCount;
     _stableFrameH = _idleAnim.height;
@@ -101,6 +101,17 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _queuedLavaBallTarget = _worldPos;
     _dashChainRemaining = 0;
     _dashedEnemies.clear();
+
+    _setPieceStep = SetPieceStep::None;
+    _setPieceTimer = 0.f;
+    _setPieceCooldown = 6.f;
+    _setPieceChargesRemaining = 0;
+    _setPieceLaneStart = _worldPos;
+    _lavaFanQueue.clear();
+    _previousCardId = -1;
+    _cardGroupCooldowns[0] = 0.f;
+    _cardGroupCooldowns[1] = 0.f;
+    ClearEliteEvents();
 
     // 3 phases: 66% adds a zig-zag follow-up dash + longer lavaball volleys; 33%
     // (also the enrage point) tightens special cadence.
@@ -154,6 +165,46 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
     _specialTimer    -= dt;
     _meleeCooldown   -= dt;
     _contactCooldown -= dt;
+    _cardGroupCooldowns[0] -= dt;
+    _cardGroupCooldowns[1] -= dt;
+
+    // ── Hybrid encounter pattern ─────────────────────────────────────────────
+    // Phase entry beat: announce the escalation and answer with the phase's
+    // survival set piece immediately (the current ordinary attack is cancelled
+    // safely). The boss stays fully damageable throughout.
+    if (const int newPhase = ConsumePhaseChange(); newPhase >= 1)
+    {
+        RequestBossCallout(newPhase >= 2 ? "LAVA STAMPEDE" : "MOLTEN FURY");
+        EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                         EliteMove::MolarbeastCharge, 0, _worldPos });
+        if (_state == State::DashCharging || _state == State::RangedCharging ||
+            _state == State::RangedVolley || _state == State::Recovery)
+        {
+            _state = State::Chasing;
+            _dashChainRemaining = 0;
+            _volleyShotsRemaining = 0;
+            SetIdleAnimation(true);
+        }
+        if (_state == State::Chasing)
+            BeginSetPiece();
+    }
+    else if (_setPieceStep == SetPieceStep::None && _state == State::Chasing &&
+             !IsFrozen() && !_takingDamage)
+    {
+        // Between phase entries the set piece returns on its own cadence, so
+        // every phase keeps its memorable centrepiece move.
+        _setPieceCooldown -= dt;
+        if (_setPieceCooldown <= 0.f)
+            BeginSetPiece();
+    }
+
+    if (_setPieceStep != SetPieceStep::None)
+    {
+        UpdateSetPiece(dt, enemies);
+        TryDealContactDamage();
+        HandleAnimation(dt);
+        return;
+    }
 
     // Make frame-scoped data available to BT leaf lambdas.
     _cachedEnemies     = &enemies;
@@ -326,7 +377,7 @@ void Molarbeast::TakeDamage(int damage, Vector2 attackerPos)
     }
 
     _takingDamage = true;
-    // Short per-hit guard only � prevents the same overlapping hitbox from
+    // Short per-hit guard only � prevents the same overlapping hitbox from
     // registering twice in consecutive frames. _takingDamage stays true
     // independently until the hurt animation finishes, so the visual hold
     // is not tied to this timer.
@@ -424,7 +475,10 @@ Vector2 Molarbeast::GetLavaBallSpawnPos() const
 
 void Molarbeast::OnLavaBallSpawned()
 {
-    _pendingLavaBallShot = false;
+    if (!_lavaFanQueue.empty())
+        _lavaFanQueue.erase(_lavaFanQueue.begin());
+    else
+        _pendingLavaBallShot = false;
 }
 
 void Molarbeast::OnDashBlocked()
@@ -526,7 +580,7 @@ void Molarbeast::BuildBehaviourTree()
     meleeSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool
     {
         if (_target == nullptr) return false;
-        if (_state == State::MeleeAttacking) return true;   // already swinging � hold branch
+        if (_state == State::MeleeAttacking) return true;   // already swinging � hold branch
         if (_state != State::Chasing)        return false;  // never interrupt a special
         if (_meleeCooldown > 0.f)            return false;
         float dist = Vector2Distance(_worldPos, _target->GetFeetWorldPos());
@@ -561,14 +615,14 @@ void Molarbeast::BuildBehaviourTree()
     // Returning FAILURE from every branch lets Node C (Chasing) run.
     auto specialSel = std::make_unique<BTSelector>();
 
-    // B1 � Dash
+    // B1 � Dash
     auto dashSeq = std::make_unique<BTSequence>();
     dashSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
         return _state == State::DashCharging || _state == State::Dashing;
     }));
     dashSeq->AddChild(std::make_unique<BTAction>([this](float dt) -> BTStatus
     {
-        // Run one phase per frame � matches original switch behaviour where
+        // Run one phase per frame � matches original switch behaviour where
         // DashCharging and Dashing were separate cases that never ran together.
         if (_state == State::DashCharging)
         {
@@ -579,7 +633,7 @@ void Molarbeast::BuildBehaviourTree()
         return BTStatus::RUNNING;
     }));
 
-    // B2 � Ranged
+    // B2 � Ranged
     auto rangedSeq = std::make_unique<BTSequence>();
     rangedSeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
         return _state == State::RangedCharging || _state == State::RangedVolley;
@@ -595,7 +649,7 @@ void Molarbeast::BuildBehaviourTree()
         return BTStatus::RUNNING;
     }));
 
-    // B3 � Recovery
+    // B3 � Recovery
     auto recoverySeq = std::make_unique<BTSequence>();
     recoverySeq->AddChild(std::make_unique<BTCondition>([this]() -> bool {
         return _state == State::Recovery;
@@ -606,7 +660,7 @@ void Molarbeast::BuildBehaviourTree()
         return (_state == State::Recovery) ? BTStatus::RUNNING : BTStatus::SUCCESS;
     }));
 
-    // B4 � Special trigger: returns FAILURE while the timer is still positive
+    // B4 � Special trigger: returns FAILURE while the timer is still positive
     // (allowing Node C to run), fires BeginRandomSpecial when it expires.
     // To swap "Dash" for a new move later: replace the BeginRandomSpecial call
     // here or add a new branch above B4.
@@ -623,7 +677,7 @@ void Molarbeast::BuildBehaviourTree()
     specialSel->AddChild(std::move(triggerSpecial));
 
     // -- Node C: Orbit / Movement (Action) ------------------------------------
-    // Default fallback � circles the player, handles A* nav and stuck recovery.
+    // Default fallback � circles the player, handles A* nav and stuck recovery.
     // Runs only when Nodes A and B both return FAILURE.
     auto chaseAction = std::make_unique<BTAction>([this](float dt) -> BTStatus
     {
@@ -871,7 +925,7 @@ void Molarbeast::HandleMelee()
         return;
 
     // GetThreatCollisionRec already extends the hurtbox forward by
-    // _attackFrontPadding � use it directly as the melee swing hitbox.
+    // _attackFrontPadding � use it directly as the melee swing hitbox.
     Rectangle attackRec = GetThreatCollisionRec();
 
     if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
@@ -1040,7 +1094,7 @@ void Molarbeast::HandleAnimation(float dt)
     case State::RangedVolley:
         if (_volleyShotsRemaining <= 0)
         {
-            // All shots fired and the sheet just played through � clean exit.
+            // All shots fired and the sheet just played through � clean exit.
             ResetSpecialCooldown();
             _state = State::Recovery;
             _recoveryTimer = _recoveryDuration;
@@ -1048,7 +1102,7 @@ void Molarbeast::HandleAnimation(float dt)
         }
         else
         {
-            // Still firing � loop the ranged sheet so it keeps cycling.
+            // Still firing � loop the ranged sheet so it keeps cycling.
             _frame = 0;
         }
         break;
@@ -1069,7 +1123,7 @@ void Molarbeast::TryDealContactDamage()
         return;
     // No contact damage during melee (its own hitbox handles damage), dash
     // (handled by HandleDash), or ranged volley (gives the player a close-range
-    // dodge window � step in to avoid lavaballs without being simultaneously punished).
+    // dodge window � step in to avoid lavaballs without being simultaneously punished).
     if (_state == State::MeleeAttacking || _state == State::Dashing || _state == State::RangedVolley)
         return;
     if (_contactCooldown > 0.f)
@@ -1130,6 +1184,14 @@ void Molarbeast::ResetContactCooldown()
 
 void Molarbeast::FinishDash(bool blockedByArena)
 {
+    // Set-piece charges route to the pattern runner: the sequence (second lane,
+    // burning ground, fan, punish) owns what happens after a charge ends.
+    if (_setPieceStep == SetPieceStep::Charging)
+    {
+        OnSetPieceChargeFinished(blockedByArena);
+        return;
+    }
+
     _impactShakeRequested = true;
     _velocity = Vector2Zero();
 
@@ -1155,11 +1217,33 @@ void Molarbeast::FinishDash(bool blockedByArena)
 
 void Molarbeast::BeginRandomSpecial()
 {
-    const bool useDash = GetRandomValue(0, 1) == 0;
+    // Ordinary attack deck (hybrid encounter model): dash and volley are
+    // CARDS — range-gated, weighted, never repeating back-to-back, and each
+    // cooling its own group — so the boss reads as making decisions instead
+    // of coin-flipping the same move twice in a row.
+    static const AttackCard kDeck[] = {
+        { 0, 0x7, 240.f, 1.0e9f, 3, 0, false },   // committed dash: needs a runway
+        { 1, 0x7, 140.f, 980.f,  2, 1, false },   // lava volley: mid-range pressure
+    };
+    const float distanceToPlayer = Vector2Distance(_target->GetFeetWorldPos(), _worldPos);
+    const int pickedIndex = SelectAttackCard(kDeck, 2, GetPhase(), distanceToPlayer,
+                                             _previousCardId, _cardGroupCooldowns, 2,
+                                             (std::uint32_t)GetRandomValue(1, 0x7ffffffe));
+    if (pickedIndex < 0)
+    {
+        // No valid card right now (bad range / everything cooling): reposition
+        // briefly and try again — never force a nonsensical attack.
+        _specialTimer = 0.8f;
+        return;
+    }
+
+    const AttackCard& pickedCard = kDeck[pickedIndex];
+    _previousCardId = pickedCard.id;
+    _cardGroupCooldowns[pickedCard.cooldownGroup] = 3.5f;
     _chargeDuration = GetChargeDuration();
     _chargeTimer = _chargeDuration;
 
-    if (useDash)
+    if (pickedCard.id == 0)
     {
         _dashChainRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
         _state = State::DashCharging;
@@ -1169,6 +1253,273 @@ void Molarbeast::BeginRandomSpecial()
     {
         _state = State::RangedCharging;
         SetRangedAnimation(true);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Survival set piece: the Lava Stampede.
+// Phase one: one telegraphed lane charge → 3-shot lava fan → exhausted punish.
+// Phase two (MOLTEN FURY): the finished lane BURNS behind it, then a second
+// freshly telegraphed charge before the fan.
+// Phase three (LAVA STAMPEDE): both charges burn their lanes, the fan grows to
+// five shots, and the punish window is the longest. A wall crash at any point
+// ends the sequence early and grants extra punish time.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Molarbeast::BeginSetPiece()
+{
+    _setPieceStep = SetPieceStep::LaneTelegraph;
+    _setPieceTimer = 0.9f;
+    _setPieceChargesRemaining = (GetPhase() >= 1) ? 2 : 1;
+    _dashChainRemaining = 0;            // set-piece charges never zig-zag
+    _velocity = Vector2Zero();
+    // DashCharging state gives the existing red build-up tint while the lane
+    // warning is on the floor; the pattern runner owns the actual timing.
+    _state = State::DashCharging;
+    _chargeDuration = _setPieceTimer;
+    _chargeTimer = _setPieceTimer;
+    SetDashAnimation(true);
+    EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Ogre,
+                     EliteMove::MolarbeastCharge, 0, _worldPos,
+                     _target ? _target->GetFeetWorldPos() : _worldPos });
+}
+
+void Molarbeast::AbortSetPiece(float retrySeconds)
+{
+    _setPieceStep = SetPieceStep::None;
+    _setPieceTimer = 0.f;
+    _setPieceChargesRemaining = 0;
+    _setPieceCooldown = retrySeconds;
+    _state = State::Chasing;
+    SetIdleAnimation(true);
+}
+
+void Molarbeast::UpdateSetPiece(float dt, const std::vector<std::unique_ptr<Enemy>>& enemies)
+{
+    switch (_setPieceStep)
+    {
+    case SetPieceStep::LaneTelegraph:
+    {
+        // A freeze or hurt flinch during the windup interrupts the whole
+        // sequence — reading the fight and striking the windup is counterplay.
+        if (IsFrozen() || _takingDamage)
+        {
+            AbortSetPiece(4.f);
+            return;
+        }
+
+        _velocity = Vector2Zero();
+        Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+        if (toPlayer.x < 0.f) _rightLeft = -1.f;
+        if (toPlayer.x > 0.f) _rightLeft = 1.f;
+
+        _setPieceTimer -= dt;
+        _chargeTimer = _setPieceTimer;   // drives the red build-up tint
+        if (_setPieceTimer <= 0.f)
+        {
+            // LOCK: the lane direction commits here and never re-aims.
+            _dashDirection = (Vector2Length(toPlayer) > 0.01f)
+                ? Vector2Normalize(toPlayer) : Vector2{ _rightLeft, 0.f };
+            _setPieceLaneStart = _worldPos;
+            _dashedEnemies.clear();
+            _state = State::Dashing;
+            _setPieceStep = SetPieceStep::Charging;
+            EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Ogre,
+                             EliteMove::MolarbeastCharge, 0, _worldPos, {}, _dashDirection });
+            EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Ogre,
+                             EliteMove::MolarbeastCharge, 0, _worldPos, {}, _dashDirection });
+            SetDashAnimation(true);
+        }
+        return;
+    }
+
+    case SetPieceStep::Charging:
+        // The existing dash handler owns travel, scatter, player contact, and
+        // wall impacts; FinishDash routes back to OnSetPieceChargeFinished.
+        HandleDash(dt, enemies);
+        return;
+
+    case SetPieceStep::Fan:
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            QueueLavaFan(GetPhase() >= 2 ? 5 : 3);
+            SetSoundVolume(_attackSound, 0.4f);
+            StopSound(_attackSound);
+            PlaySound(_attackSound);
+            _setPieceStep = SetPieceStep::Punish;
+            _setPieceTimer = 1.2f + 0.3f * (float)GetPhase();
+            _state = State::Recovery;
+            SetIdleAnimation(true);
+            EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
+                             EliteMove::MolarbeastCharge, 0, _worldPos });
+        }
+        return;
+
+    case SetPieceStep::Punish:
+        // Exhausted: stands and takes it. THE window to spend a big ability.
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            _setPieceStep = SetPieceStep::None;
+            _setPieceCooldown = 12.f - 1.5f * (float)GetPhase();
+            ResetSpecialCooldown();
+            _state = State::Chasing;
+            SetIdleAnimation(true);
+        }
+        return;
+
+    default:
+        return;
+    }
+}
+
+void Molarbeast::OnSetPieceChargeFinished(bool blockedByArena)
+{
+    _impactShakeRequested = true;
+    _velocity = Vector2Zero();
+    _setPieceChargesRemaining = std::max(0, _setPieceChargesRemaining - 1);
+
+    // Phase two+: the finished lane IGNITES behind the boss — spaced, short
+    // lived patches the player can cross, resolved by CombatDirector zones.
+    if (GetPhase() >= 1)
+    {
+        Vector2 laneDelta = Vector2Subtract(_worldPos, _setPieceLaneStart);
+        const float laneLength = Vector2Length(laneDelta);
+        if (laneLength > 1.f)
+        {
+            const Vector2 laneDirection = Vector2Scale(laneDelta, 1.f / laneLength);
+            constexpr float kPatchSpacing = 130.f;
+            constexpr int kPatchCap = 6;
+            int patchesDropped = 0;
+            for (float along = kPatchSpacing * 0.5f;
+                 along < laneLength && patchesDropped < kPatchCap;
+                 along += kPatchSpacing, ++patchesDropped)
+            {
+                Vector2 patchPosition = Vector2Add(_setPieceLaneStart,
+                                                   Vector2Scale(laneDirection, along));
+                EmitEliteEvent({ EliteEventKind::TrailPatch, EliteArchetype::Ogre,
+                                 EliteMove::MolarbeastLavaTrail, 0, patchPosition });
+            }
+        }
+    }
+
+    if (blockedByArena)
+    {
+        // Wall crash: the sequence ends immediately and the punish window grows
+        // — baiting the stampede into the arena boundary stays the smart play.
+        _setPieceStep = SetPieceStep::Punish;
+        _setPieceTimer = 1.7f + 0.3f * (float)GetPhase();
+        _state = State::Recovery;
+        SetIdleAnimation(true);
+        EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
+                         EliteMove::MolarbeastCharge, 0, _worldPos });
+        return;
+    }
+
+    if (_setPieceChargesRemaining > 0)
+    {
+        // Second charge: a fresh, shorter telegraph from wherever it stopped —
+        // the player is never asked to read two lanes at once.
+        _setPieceStep = SetPieceStep::LaneTelegraph;
+        _setPieceTimer = 0.65f;
+        _state = State::DashCharging;
+        _chargeDuration = _setPieceTimer;
+        _chargeTimer = _setPieceTimer;
+        SetDashAnimation(true);
+        EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Ogre,
+                         EliteMove::MolarbeastCharge, 0, _worldPos,
+                         _target ? _target->GetFeetWorldPos() : _worldPos });
+        return;
+    }
+
+    // Charges done: brief gather, then the lava fan rakes toward the player.
+    _setPieceStep = SetPieceStep::Fan;
+    _setPieceTimer = 0.45f;
+    _state = State::RangedCharging;
+    SetRangedAnimation(true);
+}
+
+void Molarbeast::QueueLavaFan(int shotCount)
+{
+    if (_target == nullptr)
+        return;
+    Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+    Vector2 fanCentre = (Vector2Length(toPlayer) > 0.01f)
+        ? Vector2Normalize(toPlayer) : Vector2{ _rightLeft, 0.f };
+    constexpr float kFanDistance = 520.f;
+    for (int shotIndex = 0; shotIndex < shotCount; ++shotIndex)
+    {
+        Vector2 shotDirection = EliteSpreadDirection(fanCentre, shotIndex, shotCount,
+                                                     70.f * DEG2RAD);
+        _lavaFanQueue.push_back(Vector2Add(_worldPos,
+                                           Vector2Scale(shotDirection, kFanDistance)));
+    }
+}
+
+void Molarbeast::DrawEliteTelegraph() const
+{
+    // Lane warning for the set-piece charge AND the ordinary dash windup —
+    // molten orange, tracking the player until the lock freezes it.
+    const bool setPieceWindup = (_setPieceStep == SetPieceStep::LaneTelegraph);
+    const bool ordinaryWindup = (_setPieceStep == SetPieceStep::None &&
+                                 _state == State::DashCharging);
+    if ((!setPieceWindup && !ordinaryWindup) || _target == nullptr)
+        return;
+
+    Vector2 aim = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+    if (Vector2Length(aim) < 0.01f)
+        aim = Vector2{ _rightLeft, 0.f };
+    aim = Vector2Normalize(aim);
+
+    const float laneLength = 1100.f;
+    const float laneHalfWidth = setPieceWindup ? 95.f : 75.f;
+    Vector2 laneEnd = Vector2Add(_worldPos, Vector2Scale(aim, laneLength));
+    Vector2 side{ -aim.y, aim.x };
+
+    const float windupTotal = (_chargeDuration > 0.01f) ? _chargeDuration : 1.f;
+    const float windupRatio = std::clamp(1.f - _chargeTimer / windupTotal, 0.f, 1.f);
+    Color laneColor = Fade(Color{ 255, 110, 40, 255 }, 0.14f + 0.24f * windupRatio);
+
+    Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  laneHalfWidth));
+    Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerC = Vector2Add(laneEnd,   Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerD = Vector2Add(laneEnd,   Vector2Scale(side,  laneHalfWidth));
+    DrawTriangle(cornerA, cornerB, cornerC, laneColor);
+    DrawTriangle(cornerA, cornerC, cornerD, laneColor);
+    DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 255, 150, 70, 255 }, 0.6f));
+    DrawLineEx(cornerB, cornerC, 2.f, Fade(Color{ 255, 150, 70, 255 }, 0.6f));
+}
+
+void Molarbeast::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _setPieceStep != SetPieceStep::None)
+        return;
+    if (_state == State::Chasing)
+        BeginSetPiece();
+    else
+        _setPieceCooldown = 0.f;
+}
+
+void Molarbeast::DebugForceElitePhaseTwo()
+{
+    // Drops to the NEXT phase threshold (66% then 33%) so QA can step through
+    // all three phases with repeated presses.
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* Molarbeast::GetEliteSignatureStateName() const
+{
+    switch (_setPieceStep)
+    {
+    case SetPieceStep::LaneTelegraph: return "StampedeTelegraph";
+    case SetPieceStep::Charging:      return "StampedeCharge";
+    case SetPieceStep::Fan:           return "LavaFan";
+    case SetPieceStep::Punish:        return "Exhausted";
+    default:                          return "OrdinaryDeck";
     }
 }
 

@@ -1079,6 +1079,35 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
         }
         break;
 
+    case EliteMove::MolarbeastCharge:
+        // The boss body owns the charge damage (its dash handler); Execute
+        // marks the launch beat for sound and one combined shake.
+        if (event.kind == EliteEventKind::Execute)
+            impactFeedback(6.f, 0.15f);
+        break;
+
+    case EliteMove::MolarbeastLavaTrail:
+        if (event.kind == EliteEventKind::TrailPatch)
+        {
+            // Burning ground along a finished stampede lane: ignites after a
+            // beat (never instant), burns briefly, then the arena resets.
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Disc;
+                zone->status = EliteStatusPayload::Burn;
+                zone->start = event.origin;
+                zone->radius = 78.f;
+                zone->telegraphRemaining = 0.45f;   // visible ignition delay
+                zone->activeRemaining = 2.6f;
+                zone->tickInterval = 0.55f;
+                zone->tickRemaining = 0.1f;
+                zone->damage = 1.f;
+            }
+            spawnHazardFx(event.origin, BossFx::PoisonPool, 2.4f, 3.0f, fireOrange);
+        }
+        break;
+
     case EliteMove::VenomfangPounce:
         if (event.kind == EliteEventKind::TrailPatch)
         {
