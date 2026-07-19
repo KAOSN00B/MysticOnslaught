@@ -194,6 +194,10 @@ public:
     void ApplyPoison(float duration, float tickInterval, float damagePerTick, int stacks = 1);
     bool IsPoisoned() const { return _poisonTimer > 0.f; }
     int  GetPoisonStacks() const { return _poisonStacks; }
+    // True while any damage-immunity window runs (spawn i-frames, dash, forced
+    // push). Elite attack zones check this so statuses respect the same
+    // protection as direct damage.
+    bool HasActiveIFrames() const { return _hasIFrames || _dashInvincible || _forcedPushActive; }
     // Strong decaying shove away from a blow (Stormclub elite). Rides the normal
     // velocity channel (ApplyVelocity decays it), so it ends on its own — unlike
     // StartForcedPush, which locks the player until a wall stops it.

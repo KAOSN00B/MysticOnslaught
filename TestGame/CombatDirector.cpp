@@ -556,6 +556,16 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (ctx.spawnBossCallout)
                 ctx.spawnBossCallout(enemy->GetWorldPos(), callout);
 
+        // Drain this elite's signature events immediately after its Update so
+        // zones snapshot world positions from THIS frame. Events translate into
+        // bounded attack zones, sounds, VFX and shake — the enemy AI never owns
+        // renderer or player-damage responsibilities directly.
+        {
+            EliteSignatureEvent signatureEvent{};
+            while (enemy->ConsumeEliteEvent(signatureEvent))
+                SpawnEliteZonesForEvent(signatureEvent, ctx);
+        }
+
         if (Ogre* ogre = enemy->AsOgre())
         {
             if (ogre->ConsumeImpactShakeRequest())
@@ -819,6 +829,387 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
         ctx.spawnSmallSlime(spawnPos);
     for (const Vector2& spawnPos : pendingBasicEnemySpawns)
         ctx.spawnBasicEnemy(spawnPos);
+
+    // Tick the live elite attack zones (damage + statuses resolve centrally),
+    // and re-arm the one-shake-per-cast throttle for the next frame.
+    UpdateEliteZones(ctx, dt);
+    _eliteImpactFeedbackThisFrame = false;
+}
+
+// ── Elite signature zones ────────────────────────────────────────────────────
+
+EliteAttackZone* CombatDirector::AcquireEliteZone() const
+{
+    for (EliteAttackZone& zone : _eliteZones)
+    {
+        if (!zone.active)
+        {
+            zone = EliteAttackZone{};
+            zone.active = true;
+            zone.sequence = _eliteZoneSequence++;
+            return &zone;
+        }
+    }
+    _eliteZonesDropped++;
+    return nullptr;
+}
+
+void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
+                                             const EnemyRuntimeContext& ctx) const
+{
+    namespace Elite = Balance::Elite;
+    SfxBank& sfx = SfxBank::Get();
+
+    // One combined impact response per cast: the first Execute this frame plays
+    // the sound and shake; further branches/fissures stay silent.
+    auto impactFeedback = [&](float shakeStrength, float shakeDuration)
+    {
+        if (_eliteImpactFeedbackThisFrame)
+            return;
+        _eliteImpactFeedbackThisFrame = true;
+        sfx.PlayEliteImpact((int)event.archetype);
+        if (ctx.triggerScreenShake)
+            ctx.triggerScreenShake(shakeStrength, shakeDuration);
+    };
+    auto spawnFx = [&](Vector2 position, BossFx fxId, float scale, Color tint)
+    {
+        if (ctx.spawnEliteFx)
+            ctx.spawnEliteFx(position, (int)fxId, scale, tint);
+    };
+    auto spawnHazardFx = [&](Vector2 position, BossFx fxId, float scale,
+                             float duration, Color tint)
+    {
+        if (ctx.spawnEliteHazardFx)
+            ctx.spawnEliteHazardFx(position, (int)fxId, scale, duration, tint);
+    };
+    // Sprite bursts spaced along a lane so the whole fissure/branch reads as
+    // art rather than one puff at the origin.
+    auto spawnLaneFx = [&](Vector2 start, Vector2 direction, float length,
+                           BossFx fxId, float scale, Color tint)
+    {
+        for (float along = length * 0.33f; along <= length; along += length * 0.33f)
+            spawnFx(Vector2{ start.x + direction.x * along, start.y + direction.y * along },
+                    fxId, scale, tint);
+    };
+
+    const Color fireOrange { 255, 140,  60, 255 };
+    const Color iceBlue    { 150, 215, 255, 255 };
+    const Color stormGold  { 255, 230, 140, 255 };
+    const Color toxicGreen { 140, 235,  90, 255 };
+
+    switch (event.kind)
+    {
+    case EliteEventKind::Telegraph:
+        sfx.PlayEliteTelegraph((int)event.archetype);
+        return;
+
+    case EliteEventKind::Lock:
+        return;   // the lock beat is visual (warning freezes); no zone, no sound
+
+    case EliteEventKind::PhaseChange:
+        sfx.PlayElitePhase();
+        if (ctx.triggerScreenShake)
+            ctx.triggerScreenShake(10.f, 0.3f);
+        return;
+
+    case EliteEventKind::Recover:
+        return;   // punish window — intentionally quiet
+
+    case EliteEventKind::Execute:
+    case EliteEventKind::TrailPatch:
+        break;    // fall through to the per-move zone table below
+    }
+
+    switch (event.move)
+    {
+    case EliteMove::OgreCharge:
+        // The Ogre's body IS the hitbox (its rush code owns contact damage);
+        // Execute here only marks the launch beat.
+        if (event.kind == EliteEventKind::Execute)
+            impactFeedback(5.f, 0.12f);
+        break;
+
+    case EliteMove::InfernalCinderMarch:
+        if (event.kind == EliteEventKind::TrailPatch)
+        {
+            // Short-lived flame patch: lingering disc that burns on a tick.
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Disc;
+                zone->status = EliteStatusPayload::Burn;
+                zone->start = event.origin;
+                zone->radius = 70.f;
+                zone->activeRemaining = Elite::kInfernalPatchLifetime;
+                zone->tickInterval = 0.55f;
+                zone->tickRemaining = 0.15f;   // brief grace as the patch ignites
+                zone->damage = 1.f;
+            }
+            spawnHazardFx(event.origin, BossFx::PoisonPool, 2.2f,
+                          Elite::kInfernalPatchLifetime, fireOrange);
+        }
+        break;
+
+    case EliteMove::InfernalFurnaceBurst:
+        if (event.kind == EliteEventKind::Execute)
+        {
+            // One fire fissure: a lane along the locked direction.
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Lane;
+                zone->status = EliteStatusPayload::Burn;
+                zone->start = event.origin;
+                zone->end = Vector2{ event.origin.x + event.direction.x * Elite::kInfernalFissureLength,
+                                     event.origin.y + event.direction.y * Elite::kInfernalFissureLength };
+                zone->radius = Elite::kInfernalFissureWidth;
+                zone->activeRemaining = 0.5f;
+                zone->damage = 2.f;
+            }
+            spawnLaneFx(event.origin, event.direction, Elite::kInfernalFissureLength,
+                        BossFx::ToxicEruption, 4.2f, fireOrange);
+            impactFeedback(7.f, 0.18f);
+        }
+        break;
+
+    case EliteMove::BonechillPermafrostSlam:
+        if (event.kind == EliteEventKind::Execute)
+        {
+            // The direct slam: a heavy disc right in front of the wall.
+            Vector2 slamCentre{ event.origin.x + event.direction.x * 150.f,
+                                event.origin.y + event.direction.y * 150.f };
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Disc;
+                zone->status = EliteStatusPayload::Chill;
+                zone->start = slamCentre;
+                zone->radius = 140.f;
+                zone->activeRemaining = 0.35f;
+                zone->damage = 3.f;
+            }
+            spawnFx(slamCentre, BossFx::BulwarkSlam, 6.f, iceBlue);
+            impactFeedback(9.f, 0.22f);
+        }
+        else   // TrailPatch = one ice lane
+        {
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Lane;
+                zone->status = EliteStatusPayload::Chill;
+                zone->start = event.origin;
+                zone->end = Vector2{ event.origin.x + event.direction.x * Elite::kBonechillLaneLength,
+                                     event.origin.y + event.direction.y * Elite::kBonechillLaneLength };
+                zone->radius = Elite::kBonechillLaneWidth;
+                zone->activeRemaining = 0.5f;
+                zone->damage = 1.f;
+            }
+            spawnLaneFx(event.origin, event.direction, Elite::kBonechillLaneLength,
+                        BossFx::DiveImpact, 3.4f, iceBlue);
+        }
+        break;
+
+    case EliteMove::StormclubThunderLeap:
+        if (event.kind == EliteEventKind::Execute)
+        {
+            // Central landing impact — most damage plus a real knockback.
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Disc;
+                zone->status = EliteStatusPayload::Knockback;
+                zone->start = event.target;
+                zone->radius = Elite::kStormclubImpactRadius;
+                zone->activeRemaining = 0.3f;
+                zone->damage = 3.f;
+            }
+            spawnFx(event.target, BossFx::HeavyStrike, 6.5f, stormGold);
+            impactFeedback(10.f, 0.25f);
+        }
+        else   // TrailPatch = one lightning branch
+        {
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Lane;
+                zone->status = EliteStatusPayload::Shock;
+                zone->start = event.origin;
+                zone->end = Vector2{ event.origin.x + event.direction.x * Elite::kStormclubBranchLength,
+                                     event.origin.y + event.direction.y * Elite::kStormclubBranchLength };
+                zone->radius = Elite::kStormclubBranchWidth;
+                zone->activeRemaining = 0.4f;
+                zone->damage = 1.f;
+            }
+            spawnLaneFx(event.origin, event.direction, Elite::kStormclubBranchLength,
+                        BossFx::DashDust, 3.2f, stormGold);
+        }
+        break;
+
+    case EliteMove::VenomfangPounce:
+        if (event.kind == EliteEventKind::TrailPatch)
+        {
+            // Poison trail patch: no direct damage — stepping in it poisons.
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Disc;
+                zone->status = EliteStatusPayload::Poison;
+                zone->start = event.origin;
+                zone->radius = 55.f;
+                zone->activeRemaining = Elite::kVenomfangTrailLifetime;
+                zone->tickInterval = 0.7f;
+                zone->tickRemaining = 0.2f;
+                zone->damage = 0.f;
+            }
+            spawnHazardFx(event.origin, BossFx::PoisonPool, 1.8f,
+                          Elite::kVenomfangTrailLifetime, toxicGreen);
+        }
+        else if (event.kind == EliteEventKind::Execute)
+        {
+            impactFeedback(4.f, 0.10f);   // pounce launch — bite damage is body contact
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+void CombatDirector::UpdateEliteZones(const EnemyRuntimeContext& ctx, float dt) const
+{
+    if (ctx.player == nullptr)
+        return;
+
+    const Rectangle playerRect = ctx.player->GetCollisionRec();
+    const Vector2 playerCentre{ playerRect.x + playerRect.width * 0.5f,
+                                playerRect.y + playerRect.height * 0.5f };
+    const float playerRadius = std::min(playerRect.width, playerRect.height) * 0.5f;
+
+    auto zoneOverlapsPlayer = [&](const EliteAttackZone& zone)
+    {
+        if (zone.shape == EliteZoneShape::Lane)
+            return DistancePointToSegment(playerCentre, zone.start, zone.end)
+                   <= zone.radius + playerRadius;
+        return Vector2Distance(playerCentre, zone.start) <= zone.radius + playerRadius;
+    };
+
+    auto applyZoneHit = [&](EliteAttackZone& zone)
+    {
+        // Respect the player's protection windows for BOTH damage and status —
+        // a dash through a fissure must actually work.
+        if (ctx.player->HasActiveIFrames() || !ctx.player->IsAlive())
+            return;
+
+        const int damage = (int)std::lround(zone.damage);
+        if (damage > 0)
+            ctx.player->TakeDamage(damage, zone.start);
+
+        switch (zone.status)
+        {
+        case EliteStatusPayload::Burn:
+            ctx.player->ApplyBurnTicks(0.5f, 2, 0.4f, zone.start);
+            break;
+        case EliteStatusPayload::Chill:
+            ctx.player->ApplyChill(2.0f, 0.6f);
+            break;
+        case EliteStatusPayload::Shock:
+            ctx.player->ApplyChill(0.8f, 0.5f);   // brief stagger-slow
+            break;
+        case EliteStatusPayload::Poison:
+            ctx.player->ApplyPoison(Balance::Elite::kPoisonDuration,
+                                    Balance::Elite::kPoisonTickInterval,
+                                    Balance::Elite::kPoisonDamagePerTick);
+            break;
+        case EliteStatusPayload::Knockback:
+        {
+            Vector2 away = Vector2Subtract(ctx.player->GetWorldPos(), zone.start);
+            ctx.player->ApplyKnockbackImpulse(away, 3200.f);
+            break;
+        }
+        default:
+            break;
+        }
+    };
+
+    for (EliteAttackZone& zone : _eliteZones)
+    {
+        if (!zone.active)
+            continue;
+
+        // No damage before the warned moment.
+        if (zone.telegraphRemaining > 0.f)
+        {
+            zone.telegraphRemaining -= dt;
+            continue;
+        }
+
+        zone.activeRemaining -= dt;
+        if (zone.activeRemaining <= 0.f)
+        {
+            zone.active = false;
+            continue;
+        }
+
+        if (zone.tickInterval > 0.f)
+        {
+            // Lingering patch: damages on its authored cadence while overlapped.
+            zone.tickRemaining -= dt;
+            if (zone.tickRemaining <= 0.f)
+            {
+                zone.tickRemaining = zone.tickInterval;
+                if (zoneOverlapsPlayer(zone))
+                    applyZoneHit(zone);
+            }
+        }
+        else if (!zone.hitPlayer && zoneOverlapsPlayer(zone))
+        {
+            // One-shot zone: hits at most once.
+            zone.hitPlayer = true;
+            applyZoneHit(zone);
+        }
+    }
+}
+
+void CombatDirector::DrawEliteWorld(const std::vector<std::unique_ptr<Enemy>>& enemies) const
+{
+    // Per-elite warning geometry (charge lanes, fissure outlines, landing
+    // markers). Drawn in world space; the caller supplies the camera transform.
+    for (const auto& enemy : enemies)
+    {
+        if (enemy->IsActive() && enemy->IsAlive() && !enemy->IsDying())
+            enemy->DrawEliteTelegraph();
+    }
+
+    // Thin outlines on ACTIVE one-shot zones so the hit area stays readable
+    // under the sprite FX for its brief live window.
+    for (const EliteAttackZone& zone : _eliteZones)
+    {
+        if (!zone.active || zone.telegraphRemaining > 0.f || zone.tickInterval > 0.f)
+            continue;
+        const Color outline = Fade(WHITE, 0.30f);
+        if (zone.shape == EliteZoneShape::Lane)
+            DrawLineEx(zone.start, zone.end, 3.f, outline);
+        else
+            DrawCircleLines((int)zone.start.x, (int)zone.start.y, zone.radius, outline);
+    }
+}
+
+void CombatDirector::ClearEliteRuntime()
+{
+    for (EliteAttackZone& zone : _eliteZones)
+        zone.active = false;
+    _eliteImpactFeedbackThisFrame = false;
+    // Dropped-zone telemetry intentionally persists — it is a health metric.
+}
+
+int CombatDirector::GetActiveEliteZoneCount() const
+{
+    int activeCount = 0;
+    for (const EliteAttackZone& zone : _eliteZones)
+        if (zone.active)
+            activeCount++;
+    return activeCount;
 }
 
 void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) const

@@ -25,6 +25,7 @@
 #include "RoomCollision.h"
 #include "VirtualCanvas.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include "VirtualCanvas.h"
 
 #include <algorithm>
@@ -2876,6 +2877,10 @@ void Engine::UpdateGamePlay(float dt)
         enemyRuntimeCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         enemyRuntimeCtx.spawnBossFx = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
         enemyRuntimeCtx.spawnBossCallout = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
+        enemyRuntimeCtx.spawnEliteFx = [&](Vector2 pos, int fxId, float scale, Color tint)
+            { SpawnEliteFx(pos, fxId, scale, tint); };
+        enemyRuntimeCtx.spawnEliteHazardFx = [&](Vector2 pos, int fxId, float scale, float duration, Color tint)
+            { SpawnEliteHazardFx(pos, fxId, scale, duration, tint); };
         RebuildEnemyHazardZones();
         enemyRuntimeCtx.hazards = &_enemyHazardZones;
         _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
@@ -10015,6 +10020,62 @@ void Engine::SpawnBossFx(Vector2 worldPos, int fxId)
     _vfx.SpawnSpriteFx(&_bossFx[fxId], worldPos, _bossFxFrames[fxId], 7.f, 1.f / 24.f);
 }
 
+// Debug-only elite readout: archetype, modifier, phase, signature state,
+// cast/hit counters, live zone count and drop telemetry. Never shown in
+// normal play — the caller gates on the debug panel being open.
+void Engine::DrawEliteSignatureTelemetry() const
+{
+    if (_eliteMinibossPtr == nullptr || !_eliteMinibossPtr->IsActive())
+        return;
+
+    static const char* kArchetypeNames[] = { "Ogre", "Infernal", "Bonechill", "Stormclub", "Venomfang", "None" };
+    static const char* kModifierNames[]  = { "Cage", "Guard Links", "Enrage", "Arena Pressure" };
+    const int archetypeIndex = std::clamp((int)_eliteMinibossPtr->GetEliteArchetype(), 0, 5);
+    const char* modifierName = (_eliteMechanic >= 0 && _eliteMechanic < 4)
+        ? kModifierNames[_eliteMechanic] : "None";
+    const EliteSignatureTelemetry telemetry = _eliteMinibossPtr->GetEliteSignatureTelemetry();
+
+    const int panelX = 20;
+    int lineY = (int)(kVirtualHeight * 0.5f) + 40;
+    auto line = [&](const char* text, Color color)
+    {
+        DrawText(text, panelX + 1, lineY + 1, 18, Fade(BLACK, 0.7f));
+        DrawText(text, panelX, lineY, 18, color);
+        lineY += 22;
+    };
+    line("ELITE TELEMETRY", Color{ 255, 210, 150, 255 });
+    line(TextFormat("Type: %s  |  Modifier: %s", kArchetypeNames[archetypeIndex], modifierName), RAYWHITE);
+    line(TextFormat("State: %s  |  Phase: %d", _eliteMinibossPtr->GetEliteSignatureStateName(),
+                    telemetry.phase + 1), RAYWHITE);
+    line(TextFormat("Casts: %d  |  Hits: %d", telemetry.casts, telemetry.hits), RAYWHITE);
+    line(TextFormat("Zones: %d/%d  |  Dropped z:%d e:%d",
+                    _combatDirector.GetActiveEliteZoneCount(),
+                    Balance::Elite::kSignatureZoneCapacity,
+                    _combatDirector.GetDroppedEliteZoneCount(),
+                    telemetry.droppedEvents),
+         (_combatDirector.GetDroppedEliteZoneCount() + telemetry.droppedEvents > 0)
+             ? Color{ 255, 120, 100, 255 } : RAYWHITE);
+    line(TextFormat("Guard linked: %s", _eliteMinibossPtr->IsEliteGuardLinked() ? "YES (60%% DR)" : "no"), RAYWHITE);
+}
+
+// Elite signature art: one-shot animated impact with caller-chosen scale/tint.
+// Reuses the owned FX_Boss* strips so active elite attacks are real animation.
+void Engine::SpawnEliteFx(Vector2 worldPos, int fxId, float scale, Color tint)
+{
+    if (fxId < 0 || fxId >= (int)_bossFx.size()) return;
+    if (_bossFx[fxId].id == 0 || _bossFxFrames[fxId] <= 0) return;
+    _vfx.SpawnSpriteFx(&_bossFx[fxId], worldPos, _bossFxFrames[fxId], scale, 1.f / 24.f, tint);
+}
+
+// Elite lingering hazard art: a looping animated decal for the patch lifetime
+// (flame patches, poison trail). The gameplay zone owns collision/damage.
+void Engine::SpawnEliteHazardFx(Vector2 worldPos, int fxId, float scale, float duration, Color tint)
+{
+    if (fxId < 0 || fxId >= (int)_bossFx.size()) return;
+    if (_bossFx[fxId].id == 0 || _bossFxFrames[fxId] <= 0) return;
+    _vfx.SpawnHazardDecal(&_bossFx[fxId], worldPos, _bossFxFrames[fxId], scale, duration, tint);
+}
+
 void Engine::SpawnAbilityFx(AbilityType a, Vector2 playerPos, Vector2 facing, float facingSign)
 {
     int idx = (int)a;
@@ -16734,6 +16795,9 @@ void Engine::ResetEliteRoomRuntime()
     _eliteCageDamageTimer    = 0.f;
     _eliteEnrageWarningTimer = 0.f;
     _eliteHazardSpawnTimer   = 0.f;
+    // Every reset path also clears the bounded attack-zone pool so no elite
+    // damage/warning survives a room exit, restart, or snapshot restore.
+    _combatDirector.ClearEliteRuntime();
 }
 
 int Engine::GetCompatibleEliteMechanicForRoom(int roomIdx, EliteArchetype archetype)
@@ -19991,6 +20055,10 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
         eCtx.spawnBossFx        = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
         eCtx.spawnBossCallout   = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
+        eCtx.spawnEliteFx       = [&](Vector2 pos, int fxId, float scale, Color tint)
+            { SpawnEliteFx(pos, fxId, scale, tint); };
+        eCtx.spawnEliteHazardFx = [&](Vector2 pos, int fxId, float scale, float duration, Color tint)
+            { SpawnEliteHazardFx(pos, fxId, scale, duration, tint); };
         RebuildEnemyHazardZones();
         eCtx.hazards            = &_enemyHazardZones;
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);
@@ -20748,6 +20816,14 @@ void Engine::DrawDungeonRun()
                 // _shakeOffset shifts everything together so the screen-shake effect is visible.
                 Vector2 worldOffset{ -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
                 Vector2 shakenCamRef{ _cameraPos.x - _shakeOffset.x, _cameraPos.y - _shakeOffset.y };
+
+                // Elite signature warnings (charge lanes, fissure outlines,
+                // landing markers) draw in WORLD space under the enemies and
+                // projectiles — one matrix translation supplies the camera.
+                rlPushMatrix();
+                rlTranslatef(sw * 0.5f - shakenCamRef.x, sh * 0.5f - shakenCamRef.y, 0.f);
+                _combatDirector.DrawEliteWorld(_enemies);
+                rlPopMatrix();
                 for (const auto& proj : _spreadProjectiles)
                     proj.Draw(worldOffset);
                 for (const auto& proj : _lavaBalls)
@@ -21181,6 +21257,7 @@ void Engine::DrawDungeonRun()
                     DrawRoomTelemetry();   // per-room balance readout (Phase 5)
                     if (_gameState == GameState::DungeonRun)
                         DrawEnemyFacingDebug();   // facing arrows + front/rear cones
+                    DrawEliteSignatureTelemetry();   // elite state/phase/casts readout
                 }
             }
             if (_isHitboxEditorActive)

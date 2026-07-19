@@ -117,6 +117,12 @@ struct EnemyRuntimeContext
     // Show a floating boss-state word (ENRAGED / PHASE SHIFT / ...) at a world
     // position. Safe no-op if unset. See Enemy::ConsumeBossCallout.
     std::function<void(Vector2, const char*)> spawnBossCallout;
+    // Elite signature art: a one-shot animated impact (BossFx id, scale, tint)
+    // and a lingering animated hazard decal (id, scale, duration, tint). Both
+    // route to Engine-owned sprite strips so ACTIVE attacks are real art —
+    // simple shapes remain only for warnings/targeting. Safe no-ops if unset.
+    std::function<void(Vector2, int, float, Color)> spawnEliteFx;
+    std::function<void(Vector2, int, float, float, Color)> spawnEliteHazardFx;
 };
 
 struct EnemyDeathContext
@@ -162,6 +168,28 @@ public:
     void ClearBossSupportAdds(BossSupportState& cyclopsSupport, BossSupportState& ogreSupport) const;
     void UpdateBossSupportRespawns(const BossSupportContext& ctx, float dt) const;
 
+    // ── Elite signature runtime ──────────────────────────────────────────────
+    // CombatDirector owns the bounded attack-zone pool: elites emit events,
+    // UpdateEnemyRuntime drains them into zones, zones damage/status the player
+    // centrally, and DrawEliteWorld renders warnings (world space — the caller
+    // wraps it in the camera translation).
+    void DrawEliteWorld(const std::vector<std::unique_ptr<Enemy>>& enemies) const;
+    void ClearEliteRuntime();                    // room exit / reset / restart
+    int  GetActiveEliteZoneCount() const;
+    int  GetDroppedEliteZoneCount() const { return _eliteZonesDropped; }
+
 private:
+    EliteAttackZone* AcquireEliteZone() const;   // nullptr when the pool is full
+    void SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
+                                 const EnemyRuntimeContext& ctx) const;
+    void UpdateEliteZones(const EnemyRuntimeContext& ctx, float dt) const;
+
     mutable std::vector<Vector2> _propCentersScratch;
+    // Fixed pool — never allocates; the 65th concurrent zone is dropped and
+    // counted rather than growing the array. (mutable: mirrors the scratch
+    // pattern above because UpdateEnemyRuntime is const.)
+    mutable std::array<EliteAttackZone, Balance::Elite::kSignatureZoneCapacity> _eliteZones{};
+    mutable std::uint32_t _eliteZoneSequence = 0;
+    mutable int _eliteZonesDropped = 0;
+    mutable bool _eliteImpactFeedbackThisFrame = false;   // one shake+sound per cast
 };

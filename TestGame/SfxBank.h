@@ -75,6 +75,13 @@ public:
     void PlayCreatureDeath(CreatureFamily family);
     void PlayCreatureHurt(CreatureFamily family);
 
+    // ── Elite signature intents (archetype index = EliteArchetype) ───────────
+    // Distinct windup / impact clips per elite, with explicit fallbacks so a
+    // missing file never silences the beat. Phase transitions always roar.
+    void PlayEliteTelegraph(int eliteArchetype, float volume = 0.55f);
+    void PlayEliteImpact(int eliteArchetype, float volume = 0.7f);
+    void PlayElitePhase(float volume = 0.8f);
+
 private:
     SfxBank() = default;
     Sound* Find(SfxId id);                       // nullptr if not loaded/missing

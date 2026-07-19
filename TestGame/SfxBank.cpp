@@ -218,6 +218,38 @@ void SfxBank::PlayCreatureHurt(CreatureFamily family)
     }
 }
 
+// ── Elite signature intents ──────────────────────────────────────────────────
+// Archetype order matches EliteArchetype: Ogre, Infernal, Bonechill, Stormclub,
+// Venomfang. Play() itself is a safe no-op for missing clips, so these mappings
+// double as the fallback chain (element cast/impact clips are all loaded).
+void SfxBank::PlayEliteTelegraph(int eliteArchetype, float volume)
+{
+    switch (eliteArchetype)
+    {
+    case 1:  Play(SfxId::CastFire, volume);     break;   // Infernal
+    case 2:  Play(SfxId::CastIce, volume);      break;   // Bonechill
+    case 3:  Play(SfxId::CastElectric, volume); break;   // Stormclub
+    default: Play(SfxId::EnemyAggro, volume);   break;   // Ogre / Venomfang
+    }
+}
+
+void SfxBank::PlayEliteImpact(int eliteArchetype, float volume)
+{
+    switch (eliteArchetype)
+    {
+    case 1:  Play(SfxId::ImpactFire, volume);     break;   // Infernal
+    case 2:  Play(SfxId::ImpactIce, volume);      break;   // Bonechill
+    case 3:  Play(SfxId::ImpactElectric, volume); break;   // Stormclub
+    case 4:  Play(SfxId::ImpactPoison, volume);   break;   // Venomfang
+    default: Play(SfxId::BossImpact, volume);     break;   // Ogre
+    }
+}
+
+void SfxBank::PlayElitePhase(float volume)
+{
+    Play(SfxId::BossRoar, volume);
+}
+
 void SfxBank::PlayAbilityCast(AbilityType a)
 {
     switch (a)

@@ -1533,10 +1533,25 @@ void Enemy::DrawEliteLabel(Vector2 screenPos, float w, float h)
     static Font font = GetFontDefault();
     static constexpr float kFontSize = 20.f;
     static constexpr float kSpacing = 1.f;
+
+    // Unique entrance identity per curated elite: its title in a restrained
+    // archetype accent, plus a matching underline that doubles as the
+    // health-bar accent strip. Non-curated elites keep the plain gold ELITE.
     const char* text = "ELITE";
+    Color accent{ 255, 210, 70, 255 };
+    switch (GetEliteArchetype())
+    {
+    case EliteArchetype::Ogre:      text = "THE BATTERING RAM";   accent = Color{ 205, 120,  70, 255 }; break;  // rust
+    case EliteArchetype::Infernal:  text = "THE LIVING FURNACE";  accent = Color{ 255, 100,  60, 255 }; break;  // red-orange
+    case EliteArchetype::Bonechill: text = "THE FROZEN WALL";     accent = Color{ 140, 210, 255, 255 }; break;  // ice blue
+    case EliteArchetype::Stormclub: text = "THE THUNDER BREAKER"; accent = Color{ 255, 225, 110, 255 }; break;  // electric gold
+    case EliteArchetype::Venomfang: text = "THE AMBUSH PREDATOR"; accent = Color{ 150, 235, 100, 255 }; break;  // toxic green
+    default: break;
+    }
 
     DrawTextEx(font, text, { labelPos.x + 1.f, labelPos.y + 1.f }, kFontSize, kSpacing, Fade(BLACK, 0.6f));
-    DrawTextEx(font, text, labelPos, kFontSize, kSpacing, Color{255, 210, 70, 255});
+    DrawTextEx(font, text, labelPos, kFontSize, kSpacing, accent);
+    DrawLineEx({ labelPos.x, barY - 2.f }, { labelPos.x + barWidth, barY - 2.f }, 2.f, Fade(accent, 0.85f));
 }
 
 void Enemy::ApplyFreeze(float duration)
