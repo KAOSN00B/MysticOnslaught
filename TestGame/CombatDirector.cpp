@@ -762,13 +762,31 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
 
         if (Osiris* osiris = enemy->AsOsiris())
         {
-            // Judgement Nova — a full ring of bolts.
+            // Judgement Nova — a ring of bolts with AUTHORED safe wedges: any
+            // bolt inside a gap is skipped, so the counterplay is reading the
+            // wedge the telegraph showed, not pixel-threading bolt spacing.
             if (osiris->WantsToCastNova() && ctx.enemyProjectiles != nullptr)
             {
-                int boltCount = osiris->GetNovaBoltCount();
+                const int boltCount = osiris->GetNovaBoltCount();
+                const int gapCount = osiris->GetNovaGapCount();
+                const float gapCentre = osiris->GetNovaGapCentreAngle();
+                const float gapHalf = osiris->GetNovaGapHalfWidth();
+                auto angleInsideGap = [&](float angle)
+                {
+                    for (int gapIndex = 0; gapIndex < gapCount; ++gapIndex)
+                    {
+                        float wedgeCentre = gapCentre + PI * (float)gapIndex;
+                        float difference = fmodf(angle - wedgeCentre + 3.f * PI, 2.f * PI) - PI;
+                        if (fabsf(difference) < gapHalf)
+                            return true;
+                    }
+                    return false;
+                };
                 for (int i = 0; i < boltCount; i++)
                 {
                     float angle = ((float)i / (float)boltCount) * 2.f * PI;
+                    if (angleInsideGap(angle))
+                        continue;
                     EnemyProjectile bolt;
                     bolt.Init(osiris->GetWorldPos(), Vector2{ cosf(angle), sinf(angle) },
                         EnemyProjectileKind::FireBolt, osiris->GetAttackPower(), "Osiris_Judgement_Nova");

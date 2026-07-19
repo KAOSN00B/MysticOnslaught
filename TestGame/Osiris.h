@@ -49,6 +49,20 @@ public:
     int     GetVolleyBoltCount() const { return _volleyBoltCount; }
     void    OnVolleyCast() { _pendingVolley = false; }
 
+    // Every Judgement ring now carries authored SAFE SECTORS: CombatDirector
+    // skips bolts inside the gap wedge(s), so the counterplay is reading the
+    // wedge — not pixel-threading bolt spacing. Two gaps sit opposite each
+    // other (the phase-three spoke waves).
+    int     GetNovaGapCount() const { return _novaGapCount; }
+    float   GetNovaGapCentreAngle() const { return _novaGapCentreAngle; }
+    float   GetNovaGapHalfWidth() const { return _novaGapHalfWidth; }
+
+    // ── Hybrid encounter pattern (safe-sector / projectile family) ───────────
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     // Character Animator support
     const char* GetTuningName() const override { return "Osiris"; }
     int         GetEditorAnimCount() const override { return 6; }
@@ -77,6 +91,34 @@ private:
     Vector2 GetPushDirectionToPlayer() const;
     void HandleAnimation(float dt);
 
+    // ── Survival set piece: Judgement of the Sun ─────────────────────────────
+    // Phase one: one telegraphed ring with a broad safe wedge → punish.
+    // Phase two (SOLAR WRATH): a second delayed ring, gap rotated but always
+    // reachable. Phase three (JUDGEMENT OF THE SUN): relocate to a validated
+    // arena point, three spoke waves alternating TWO opposite safe wedges,
+    // a final ring, then the longest punish.
+    enum class SetPieceStep
+    {
+        None, RingTelegraph, BetweenRings, RelocateOut, RelocateIn,
+        SpokeWaves, Punish
+    };
+    void BeginSetPiece();
+    void AbortSetPiece(float retrySeconds);
+    void UpdateSetPiece(float dt);
+    void FireJudgementRing(int gapCount, float gapCentreAngle, float gapHalfWidth,
+                           int boltCount);
+    void AimNovaGapAtPlayer();   // fresh wedge a short reposition off the player
+
+    SetPieceStep _setPieceStep = SetPieceStep::None;
+    float _setPieceTimer = 0.f;
+    float _setPieceCooldown = 7.f;
+    int   _setPieceRingsRemaining = 0;
+    int   _setPieceSpokeWavesRemaining = 0;
+    float _setPieceGapAngle = 0.f;      // current safe-wedge centre (radians)
+
+    // Ordinary attack deck (EncounterPattern cards).
+    int _previousCardId = -1;
+
     State _state = State::Stalking;
     float _stateTimer       = 0.f;
     float _meleeCooldown    = 0.f;
@@ -86,6 +128,9 @@ private:
     float _teleportCooldown = 0.f;
     bool  _pendingNova      = false;
     int   _novaBoltCount    = 8;
+    int   _novaGapCount     = 1;      // safe wedges in the next ring (1 or 2)
+    float _novaGapCentreAngle = 0.f;  // radians, boss-relative
+    float _novaGapHalfWidth = 0.61f;  // ~35 degrees half-width
     bool  _pendingVolley    = false;
     Vector2 _volleyDirection{};
     int   _volleyBoltCount  = 3;

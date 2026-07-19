@@ -187,6 +187,8 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
         }
         if (_state == State::Chasing)
             BeginSetPiece();
+        else
+            _setPieceCooldown = 0.5f;   // mid-dash/melee: the stampede opens moments later
     }
     else if (_setPieceStep == SetPieceStep::None && _state == State::Chasing &&
              !IsFrozen() && !_takingDamage)

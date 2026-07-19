@@ -1,6 +1,7 @@
 #include "Osiris.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "EncounterPattern.h"
 #include "Character.h"
 #include "raymath.h"
 #include <algorithm>
@@ -70,6 +71,17 @@ void Osiris::ResetForSpawn(Vector2 pos)
     _novaChainRemaining = 0;
     _pendingPhaseNova = false;
     _teleportTarget = pos;
+    _novaGapCount = 1;
+    _novaGapCentreAngle = 0.f;
+    _novaGapHalfWidth = 0.61f;
+    _setPieceStep = SetPieceStep::None;
+    _setPieceTimer = 0.f;
+    _setPieceCooldown = 7.f;
+    _setPieceRingsRemaining = 0;
+    _setPieceSpokeWavesRemaining = 0;
+    _setPieceGapAngle = 0.f;
+    _previousCardId = -1;
+    ClearEliteEvents();
 
     // 3 phases: 66% adds a double Judgement Nova + 5-bolt volleys; 33% widens to
     // 7-bolt volleys, blinks more, and reappears with an instant nova.
@@ -145,9 +157,42 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         Vector2 toPlayer = Vector2Subtract(heroWorldPos, _worldPos);
         float dist = Vector2Length(toPlayer);
 
-        // Each phase change opens with a Judgement Nova (queued until he's stalking).
-        int newPhase = ConsumePhaseChange();
-        if (newPhase >= 0) _pendingPhaseNova = true;
+        // ── Hybrid encounter pattern ─────────────────────────────────────────
+        // Phase entry beat: announce, cancel the current cast safely, and open
+        // the phase with its survival set piece. Fully damageable throughout.
+        if (const int newPhase = ConsumePhaseChange(); newPhase >= 1)
+        {
+            RequestBossCallout(newPhase >= 2 ? "JUDGEMENT OF THE SUN" : "SOLAR WRATH");
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos });
+            if (_state == State::NovaCasting || _state == State::VolleyCasting ||
+                _state == State::Recovery)
+            {
+                _state = State::Stalking;
+                _novaChainRemaining = 0;
+                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+            }
+            if (_state == State::Stalking)
+                BeginSetPiece();
+            else
+                _setPieceCooldown = 0.5f;   // mid-teleport/melee: open moments later
+        }
+        else if (_setPieceStep == SetPieceStep::None && _state == State::Stalking &&
+                 !controlled && !_takingDamage)
+        {
+            _setPieceCooldown -= dt;
+            if (_setPieceCooldown <= 0.f)
+                BeginSetPiece();
+        }
+
+        if (_setPieceStep != SetPieceStep::None)
+        {
+            UpdateSetPiece(dt);
+            if (_state != State::TeleportOut && _state != State::TeleportIn)
+                TryDealContactDamage();
+            HandleAnimation(dt);
+            return;
+        }
 
         switch (_state)
         {
@@ -157,12 +202,6 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
             if (toPlayer.x < -20.f) _rightLeft = -1.f;
             if (toPlayer.x >  20.f) _rightLeft =  1.f;
-
-            if (_pendingPhaseNova)
-            {
-                _pendingPhaseNova = false;
-                _novaCooldown = 0.f;   // let the phase nova fire immediately below
-            }
 
             // Sand Step away whenever the player gets too close.
             if (dist < _panicDistance && _teleportCooldown <= 0.f)
@@ -181,20 +220,37 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 break;
             }
 
-            if (_novaCooldown <= 0.f)
+            // Ordinary attack deck: Judgement Nova and Wrath Volley are cards —
+            // the live cooldowns ARE the card groups, and the previous-card
+            // memory stops the same cast from repeating back-to-back.
+            if (_novaCooldown <= 0.f || (_volleyCooldown <= 0.f && dist > 260.f))
             {
-                _state = State::NovaCasting; _stateTimer = 0.f;
-                _novaChainRemaining = (GetPhase() >= 1) ? 1 : 0;   // double nova from phase 1
-                SetAnimation(_sharedMagicAnim, _novaCastDuration / (float)_sheetFrameCount, true);
-                PlaySound(_sharedCastSound);
-                break;
-            }
-            if (_volleyCooldown <= 0.f && dist > 260.f)
-            {
-                _state = State::VolleyCasting; _stateTimer = 0.f;
-                SetAnimation(_sharedMagicAnim, _volleyCastDuration / (float)_sheetFrameCount, true);
-                PlaySound(_sharedCastSound);
-                break;
+                static const AttackCard kDeck[] = {
+                    { 0, 0x7, 0.f,   1.0e9f, 2, 0, false },   // gapped Judgement Nova
+                    { 1, 0x7, 260.f, 1.0e9f, 3, 1, false },   // aimed Wrath Volley
+                };
+                const float cardGroupCooldowns[2] = { _novaCooldown, _volleyCooldown };
+                const int pickedIndex = SelectAttackCard(kDeck, 2, GetPhase(), dist,
+                    _previousCardId, cardGroupCooldowns, 2,
+                    (std::uint32_t)GetRandomValue(1, 0x7ffffffe));
+                if (pickedIndex == 0)
+                {
+                    _previousCardId = 0;
+                    _state = State::NovaCasting; _stateTimer = 0.f;
+                    _novaChainRemaining = (GetPhase() >= 1) ? 1 : 0;   // double nova from phase 1
+                    AimNovaGapAtPlayer();
+                    SetAnimation(_sharedMagicAnim, _novaCastDuration / (float)_sheetFrameCount, true);
+                    PlaySound(_sharedCastSound);
+                    break;
+                }
+                if (pickedIndex == 1)
+                {
+                    _previousCardId = 1;
+                    _state = State::VolleyCasting; _stateTimer = 0.f;
+                    SetAnimation(_sharedMagicAnim, _volleyCastDuration / (float)_sheetFrameCount, true);
+                    PlaySound(_sharedCastSound);
+                    break;
+                }
             }
 
             // Slow regal drift that keeps the comfortable casting gap.
@@ -249,8 +305,10 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _novaBoltCount = (GetPhase() >= 2) ? 14 : (GetPhase() >= 1 ? 10 : 8);
                 if (_novaChainRemaining > 0)
                 {
-                    // Double Nova: a second ring right after, offset so the safe gaps move.
+                    // Double Nova: a second ring right after, safe wedge rotated
+                    // 120 degrees so the player must move — but never far.
                     _novaChainRemaining--;
+                    _novaGapCentreAngle += 2.094f;
                     _stateTimer = 0.f;   // stay in NovaCasting for the follow-up ring
                     SetAnimation(_sharedMagicAnim, _novaCastDuration / (float)_sheetFrameCount, true);
                 }
@@ -302,6 +360,7 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 {
                     _state = State::NovaCasting; _stateTimer = 0.f;
                     _novaChainRemaining = 0;   // single quick nova on arrival
+                    AimNovaGapAtPlayer();
                     SetAnimation(_sharedMagicAnim, _novaCastDuration / (float)_sheetFrameCount, true);
                     PlaySound(_sharedCastSound);
                 }
@@ -383,6 +442,306 @@ Vector2 Osiris::GetPushDirectionToPlayer() const
     if (_target == nullptr) return Vector2{ 1.f, 0.f };
     Vector2 away = Vector2Subtract(_target->GetWorldPos(), _worldPos);
     return (Vector2Length(away) > 0.01f) ? Vector2Normalize(away) : Vector2{ 1.f, 0.f };
+}
+
+void Osiris::AimNovaGapAtPlayer()
+{
+    Vector2 toPlayer = (_target != nullptr)
+        ? Vector2Subtract(_target->GetFeetWorldPos(), _worldPos) : Vector2{ 1.f, 0.f };
+    const float playerAngle = atan2f(toPlayer.y, toPlayer.x);
+    const float side = (GetRandomValue(0, 1) == 0) ? 1.f : -1.f;
+    // The safe wedge sits ~52 degrees off the player's current angle: standing
+    // still is never safe, but the gap is always a short reposition away.
+    _novaGapCentreAngle = playerAngle + side * 0.9f;
+    _novaGapCount = 1;
+    _novaGapHalfWidth = 0.61f;
+}
+
+void Osiris::FireJudgementRing(int gapCount, float gapCentreAngle, float gapHalfWidth,
+                               int boltCount)
+{
+    _novaGapCount = gapCount;
+    _novaGapCentreAngle = gapCentreAngle;
+    _novaGapHalfWidth = gapHalfWidth;
+    _novaBoltCount = boltCount;
+    _pendingNova = true;
+    PlaySound(_sharedCastSound);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Survival set piece: Judgement of the Sun.
+// Phase one: one telegraphed ring with a broad safe wedge → exhausted punish.
+// Phase two (SOLAR WRATH): a second delayed ring whose wedge rotates 120°.
+// Phase three (JUDGEMENT OF THE SUN): relocate toward the arena centre, three
+// spoke waves alternating TWO opposite safe wedges, one final ring, and the
+// longest punish. Every wave is individually readable; he stays damageable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Osiris::BeginSetPiece()
+{
+    _setPieceRingsRemaining = (GetPhase() == 1) ? 2 : 1;
+    _setPieceSpokeWavesRemaining = (GetPhase() >= 2) ? 3 : 0;
+    AimNovaGapAtPlayer();
+    _setPieceGapAngle = _novaGapCentreAngle;
+    _velocity = Vector2Zero();
+
+    if (GetPhase() >= 2)
+    {
+        // Relocate first: a validated point toward the arena centre, so the
+        // spoke storm always fires from readable, open ground.
+        Vector2 arenaCentre{ (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
+        static const std::vector<Vector2> kNoProps;
+        _teleportTarget = ClampElitePathToNavigable(_worldPos, arenaCentre, kNoProps);
+        _setPieceStep = SetPieceStep::RelocateOut;
+        _setPieceTimer = _teleportOutDuration;
+        _state = State::TeleportOut;
+        _stateTimer = 0.f;
+        PlaySound(_sharedCastSound);
+    }
+    else
+    {
+        _setPieceStep = SetPieceStep::RingTelegraph;
+        _setPieceTimer = 0.85f;
+        _state = State::NovaCasting;   // magic pose + mirage rules stay consistent
+        _stateTimer = 0.f;
+        SetAnimation(_sharedMagicAnim, 0.85f / (float)_sheetFrameCount, true);
+        PlaySound(_sharedCastSound);
+    }
+    EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Ogre,
+                     EliteMove::None, 0, _worldPos });
+}
+
+void Osiris::AbortSetPiece(float retrySeconds)
+{
+    _setPieceStep = SetPieceStep::None;
+    _setPieceTimer = 0.f;
+    _setPieceRingsRemaining = 0;
+    _setPieceSpokeWavesRemaining = 0;
+    _setPieceCooldown = retrySeconds;
+    _state = State::Stalking;
+    _stateTimer = 0.f;
+    SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+}
+
+void Osiris::UpdateSetPiece(float dt)
+{
+    const int ringBoltCount = (GetPhase() >= 2) ? 16 : (GetPhase() >= 1 ? 12 : 10);
+
+    switch (_setPieceStep)
+    {
+    case SetPieceStep::RingTelegraph:
+        // Striking the windup (freeze) interrupts the whole judgement.
+        if (IsFrozen())
+        {
+            AbortSetPiece(4.f);
+            return;
+        }
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            FireJudgementRing(1, _setPieceGapAngle, 0.70f, ringBoltCount);
+            _setPieceRingsRemaining--;
+            if (_setPieceRingsRemaining > 0)
+            {
+                // Second ring: the wedge rotates 120° — reachable, never a
+                // memory test of two overlapping warnings.
+                _setPieceGapAngle += 2.094f;
+                _setPieceStep = SetPieceStep::BetweenRings;
+                _setPieceTimer = 0.7f;
+            }
+            else if (_setPieceSpokeWavesRemaining > 0)
+            {
+                _setPieceStep = SetPieceStep::SpokeWaves;
+                _setPieceTimer = 0.6f;
+            }
+            else
+            {
+                _setPieceStep = SetPieceStep::Punish;
+                _setPieceTimer = 1.3f + 0.3f * (float)GetPhase();
+                _state = State::Recovery;
+                _stateTimer = 0.f;
+                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
+                                 EliteMove::None, 0, _worldPos });
+            }
+        }
+        return;
+
+    case SetPieceStep::BetweenRings:
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            _setPieceStep = SetPieceStep::RingTelegraph;
+            _setPieceTimer = 0.6f;
+            _state = State::NovaCasting;
+            _stateTimer = 0.f;
+            SetAnimation(_sharedMagicAnim, 0.6f / (float)_sheetFrameCount, true);
+            PlaySound(_sharedCastSound);
+        }
+        return;
+
+    case SetPieceStep::RelocateOut:
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            _worldPos = _teleportTarget;
+            _setPieceStep = SetPieceStep::RelocateIn;
+            _setPieceTimer = _teleportInDuration;
+            _state = State::TeleportIn;
+            _stateTimer = 0.f;
+        }
+        return;
+
+    case SetPieceStep::RelocateIn:
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            // Arrived: one readable telegraph, then the spoke waves begin.
+            _setPieceStep = SetPieceStep::RingTelegraph;
+            _setPieceTimer = 0.9f;
+            _setPieceRingsRemaining = 1;   // the FINAL ring fires after the spokes
+            _state = State::NovaCasting;
+            _stateTimer = 0.f;
+            AimNovaGapAtPlayer();
+            _setPieceGapAngle = _novaGapCentreAngle;
+            SetAnimation(_sharedMagicAnim, 0.9f / (float)_sheetFrameCount, true);
+            PlaySound(_sharedCastSound);
+        }
+        return;
+
+    case SetPieceStep::SpokeWaves:
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            // Each wave: TWO opposite safe wedges, rotating 45° per wave in
+            // authored steps — the player reads the sector sequence, the
+            // spokes never continuously track.
+            FireJudgementRing(2, _setPieceGapAngle, 0.66f, 14);
+            _setPieceGapAngle += 0.785f;
+            _setPieceSpokeWavesRemaining--;
+            if (_setPieceSpokeWavesRemaining > 0)
+            {
+                _setPieceTimer = 0.55f;
+            }
+            else
+            {
+                _setPieceStep = SetPieceStep::Punish;
+                _setPieceTimer = 1.9f;
+                _state = State::Recovery;
+                _stateTimer = 0.f;
+                SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+                EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
+                                 EliteMove::None, 0, _worldPos });
+            }
+        }
+        return;
+
+    case SetPieceStep::Punish:
+        // Spent from the judgement: stands still and takes it.
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            _setPieceStep = SetPieceStep::None;
+            _setPieceCooldown = 13.f - 1.5f * (float)GetPhase();
+            _novaCooldown = _novaCooldownBase * 0.6f;     // no instant follow-up ring
+            _volleyCooldown = _volleyCooldownBase * 0.5f;
+            _state = State::Stalking;
+            _stateTimer = 0.f;
+            SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+        }
+        return;
+
+    default:
+        return;
+    }
+}
+
+void Osiris::DrawEliteTelegraph() const
+{
+    // Ring warning: low-alpha danger band with the SAFE wedge(s) left clear
+    // and outlined in gold — the wedge is the read, drawn for both set-piece
+    // rings and ordinary (deck) Judgement Novas.
+    const bool setPieceWindup = (_setPieceStep == SetPieceStep::RingTelegraph ||
+                                 _setPieceStep == SetPieceStep::SpokeWaves ||
+                                 _setPieceStep == SetPieceStep::BetweenRings);
+    const bool ordinaryWindup = (_setPieceStep == SetPieceStep::None &&
+                                 _state == State::NovaCasting);
+    if (!setPieceWindup && !ordinaryWindup)
+        return;
+
+    const float gapCentreDegrees = (setPieceWindup ? _setPieceGapAngle : _novaGapCentreAngle) * RAD2DEG;
+    const float gapHalfDegrees   = _novaGapHalfWidth * RAD2DEG;
+    const int   gapCount = (_setPieceStep == SetPieceStep::SpokeWaves) ? 2 : _novaGapCount;
+    const float innerRadius = 120.f;
+    const float outerRadius = 430.f;
+    const Color dangerColor = Fade(Color{ 255, 190, 60, 255 }, 0.15f);
+    const Color safeColor   = Fade(Color{ 255, 235, 140, 255 }, 0.7f);
+
+    if (gapCount >= 2)
+    {
+        // Two opposite wedges: danger arcs fill the space between them.
+        for (int wedgeIndex = 0; wedgeIndex < 2; ++wedgeIndex)
+        {
+            const float wedgeCentre = gapCentreDegrees + 180.f * (float)wedgeIndex;
+            DrawRing(_worldPos, innerRadius, outerRadius,
+                     wedgeCentre + gapHalfDegrees, wedgeCentre + 180.f - gapHalfDegrees,
+                     24, dangerColor);
+            DrawLineEx(Vector2{ _worldPos.x + cosf((wedgeCentre - gapHalfDegrees) * DEG2RAD) * outerRadius,
+                                _worldPos.y + sinf((wedgeCentre - gapHalfDegrees) * DEG2RAD) * outerRadius },
+                       _worldPos, 2.f, safeColor);
+            DrawLineEx(Vector2{ _worldPos.x + cosf((wedgeCentre + gapHalfDegrees) * DEG2RAD) * outerRadius,
+                                _worldPos.y + sinf((wedgeCentre + gapHalfDegrees) * DEG2RAD) * outerRadius },
+                       _worldPos, 2.f, safeColor);
+        }
+    }
+    else
+    {
+        DrawRing(_worldPos, innerRadius, outerRadius,
+                 gapCentreDegrees + gapHalfDegrees, gapCentreDegrees + 360.f - gapHalfDegrees,
+                 36, dangerColor);
+        DrawLineEx(Vector2{ _worldPos.x + cosf((gapCentreDegrees - gapHalfDegrees) * DEG2RAD) * outerRadius,
+                            _worldPos.y + sinf((gapCentreDegrees - gapHalfDegrees) * DEG2RAD) * outerRadius },
+                   _worldPos, 2.f, safeColor);
+        DrawLineEx(Vector2{ _worldPos.x + cosf((gapCentreDegrees + gapHalfDegrees) * DEG2RAD) * outerRadius,
+                            _worldPos.y + sinf((gapCentreDegrees + gapHalfDegrees) * DEG2RAD) * outerRadius },
+                   _worldPos, 2.f, safeColor);
+    }
+}
+
+void Osiris::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _setPieceStep != SetPieceStep::None)
+        return;
+    if (_state == State::Stalking)
+        BeginSetPiece();
+    else
+        _setPieceCooldown = 0.f;
+}
+
+void Osiris::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* Osiris::GetEliteSignatureStateName() const
+{
+    switch (_setPieceStep)
+    {
+    case SetPieceStep::RingTelegraph: return "JudgementTelegraph";
+    case SetPieceStep::BetweenRings:  return "BetweenRings";
+    case SetPieceStep::RelocateOut:
+    case SetPieceStep::RelocateIn:    return "Relocating";
+    case SetPieceStep::SpokeWaves:    return "SpokeWaves";
+    case SetPieceStep::Punish:        return "Spent";
+    default:                          return "OrdinaryDeck";
+    }
 }
 
 void Osiris::HandleAnimation(float dt)
