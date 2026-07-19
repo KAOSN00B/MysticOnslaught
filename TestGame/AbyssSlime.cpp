@@ -105,6 +105,8 @@ void AbyssSlime::ResetForSpawn(Vector2 pos)
     _jumpCooldown    = 2.6f;   // first leap comes fairly quickly
     _airborneTimer   = 0.f;
     _landingDamageApplied = false;
+    _rainJumpsRemaining = 0;
+    _recoveryOverride   = 0.f;
     _summonedAt66    = false;
     _summonedAt33    = false;
     _pendingSummonCount   = 0;
@@ -293,6 +295,11 @@ void AbyssSlime::HandleChasing(float dt, Vector2 heroWorldPos, const std::vector
         target = ClampToAbyssArena(target, _homePos);
         if (Vector2Distance(_worldPos, target) > 150.f)
         {
+            // Abyss Rain: the leap chains across the room by phase — one leap
+            // normally, two from 66%, three at 33%. Every landing marker is
+            // shown and locked individually, and the LAST landing pays out the
+            // long punish window while the puddle zigzag lingers.
+            _rainJumpsRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
             BeginJump();
             return;
         }
@@ -555,8 +562,20 @@ void AbyssSlime::HandleLanding(float dt)
 
     if (_stateTimer >= 0.4f)
     {
+        if (_rainJumpsRemaining > 0)
+        {
+            // Abyss Rain continues: the NEXT landing marker is telegraphed and
+            // locked only now — never two overlapping destinations.
+            _rainJumpsRemaining--;
+            BeginJump();
+            return;
+        }
+
         _state = State::Recovery;
         _stateTimer = 0.f;
+        // The end of a multi-leap rain is the fight's biggest punish window.
+        if (GetPhase() >= 1)
+            _recoveryOverride = 1.1f + 0.4f * (float)GetPhase();
         _jumpCooldown = IsEnraged() ? _jumpCooldownBase * 0.6f : _jumpCooldownBase;
         SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     }
@@ -629,10 +648,15 @@ void AbyssSlime::HandleRecovery(float dt)
 {
     _stateTimer += dt;
     float duration = IsEnraged() ? _recoveryDuration * 0.6f : _recoveryDuration;
+    // Abyss Rain's final landing overrides the normal breather with a real
+    // punish window (never shortened by the enrage).
+    if (_recoveryOverride > 0.f)
+        duration = _recoveryOverride;
     if (_stateTimer >= duration)
     {
         _state = State::Chasing;
         _stateTimer = 0.f;
+        _recoveryOverride = 0.f;
     }
 }
 
@@ -691,6 +715,7 @@ void AbyssSlime::ReactToPhaseChange(int newPhase)
     BeginPhaseTransition(0.65f);
     _impactShakeRequested = true;
     _acidBurstCooldown = 0.8f;
+    RequestBossCallout(newPhase >= 2 ? "ABYSS RAIN" : "ABYSS SURGE");
 
     float radius = (newPhase >= 2) ? 135.f : 110.f;
     SpawnPuddle(_worldPos, radius);
@@ -709,6 +734,32 @@ bool AbyssSlime::ConsumeImpactShakeRequest()
     bool requested = _impactShakeRequested;
     _impactShakeRequested = false;
     return requested;
+}
+
+void AbyssSlime::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _state != State::Chasing)
+        return;
+    _jumpCooldown = 0.f;   // the signature IS the (chained) crushing leap
+}
+
+void AbyssSlime::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* AbyssSlime::GetEliteSignatureStateName() const
+{
+    switch (_state)
+    {
+    case State::JumpCharging: return (_rainJumpsRemaining > 0) ? "AbyssRainWindup" : "LeapWindup";
+    case State::Airborne:     return "Airborne";
+    case State::Landing:      return "Landing";
+    case State::AcidBurst:    return "AcidBurst";
+    case State::Summoning:    return "Summoning";
+    default:                  return "Hopping";
+    }
 }
 
 // =============================================================================

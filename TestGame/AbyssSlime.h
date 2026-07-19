@@ -57,6 +57,11 @@ public:
     int  ConsumeSummonRequest();
     bool ConsumeImpactShakeRequest();
 
+    // ── Hybrid encounter pattern: Abyss Rain ─────────────────────────────────
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
 private:
     enum class State
     {
@@ -111,6 +116,11 @@ private:
     float _airborneTimer    = 0.f;
     float _airborneDuration = 0.7f;
     bool  _landingDamageApplied = false;
+    // Abyss Rain: chained leaps crossing the room. Each leap re-telegraphs its
+    // own locked landing marker (the next target appears only after the
+    // previous landing), and the final landing earns a LONG punish recovery.
+    int   _rainJumpsRemaining = 0;
+    float _recoveryOverride   = 0.f;   // > 0: one-shot longer recovery duration
     bool  _summonedAt66     = false;
     bool  _summonedAt33     = false;
     int   _pendingSummonCount = 0;
