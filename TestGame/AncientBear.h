@@ -42,6 +42,16 @@ public:
 
     bool ConsumeImpactShakeRequest();
 
+    // ── Hybrid encounter pattern: Dream Collapse ─────────────────────────────
+    // Every slam draws its danger shape during the windup, and the SHAPE is
+    // what escalates: discs (safe outside), then a ring (safe in close OR far
+    // out), then three 120-degree wedges rotating in a fixed, learnable order.
+    // The pull changes your movement problem; the shapes are the answer key.
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     // Character Animator support
     const char* GetTuningName() const override { return "AncientBear"; }
     int         GetEditorAnimCount() const override { return 6; }
@@ -78,6 +88,16 @@ private:
     int   _slamChainRemaining = 0;    // phase 1 = double slam, phase 2 = triple
     bool  _pendingPhaseRoar   = false;// phase change opens with a Dream Pull -> slam
     bool  _impactShakeRequested = false;
+
+    // Slam variants (Dream Collapse): 0 = disc, 1 = ring, 2 = wedge. The chain
+    // sets each slam's variant; wedges rotate 120 degrees per slam.
+    int   _slamVariant = 0;
+    int   _slamIndexInChain = 0;
+    float _slamWedgeAngle = 0.f;      // radians, wedge centre
+    static constexpr float _slamRingInnerRadius = 200.f;
+    static constexpr float _slamRingOuterRadius = 420.f;
+    static constexpr float _slamWedgeRadius     = 360.f;
+    static constexpr float _slamWedgeHalfAngle  = 1.047f;   // 60 degrees each side
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;
 

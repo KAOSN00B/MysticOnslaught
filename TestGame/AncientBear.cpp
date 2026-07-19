@@ -65,6 +65,10 @@ void AncientBear::ResetForSpawn(Vector2 pos)
     _slamChainRemaining = 0;
     _pendingPhaseRoar = false;
     _impactShakeRequested = false;
+    _slamVariant = 0;
+    _slamIndexInChain = 0;
+    _slamWedgeAngle = 0.f;
+    ClearEliteEvents();
 
     // 3 phases: 66% makes the pull chain into a DOUBLE slam; 33% (runes ignite) a
     // TRIPLE slam with the faster/longer pull. Each phase opens with a Dream Pull.
@@ -137,7 +141,11 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         // Each phase change opens with a Dream Pull -> (multi) slam, fired when neutral.
         int newPhase = ConsumePhaseChange();
-        if (newPhase >= 0) { _pendingPhaseRoar = true; _impactShakeRequested = true; }
+        if (newPhase >= 0)
+        {
+            _pendingPhaseRoar = true; _impactShakeRequested = true;
+            RequestBossCallout(newPhase >= 2 ? "DREAM COLLAPSE" : "NIGHTMARE");
+        }
         if (_pendingPhaseRoar && !controlled &&
             (_state == State::Lumbering || _state == State::Recovery))
         {
@@ -228,8 +236,24 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             float duration = IsRuneIgnited() ? _roarDuration * 0.8f : _roarDuration;
             if (_stateTimer >= duration)
             {
-                // The pull always chains into the slam. Phase scales how many slams follow.
+                // The pull always chains into the slam. Phase scales how many
+                // slams follow AND what shape each one takes (Dream Collapse):
+                //   phase 0: one disc (safe = outside the circle)
+                //   phase 1: disc, then a RING (safe = hug him or stand far)
+                //   phase 2: three rotating 120-degree WEDGES in a fixed order
                 _slamChainRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
+                _slamIndexInChain = 0;
+                if (GetPhase() >= 2)
+                {
+                    _slamVariant = 2;
+                    Vector2 toPlayerNow = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+                    _slamWedgeAngle = (Vector2Length(toPlayerNow) > 0.01f)
+                        ? atan2f(toPlayerNow.y, toPlayerNow.x) : 0.f;
+                }
+                else
+                {
+                    _slamVariant = 0;
+                }
                 _state = State::SlamWindup; _stateTimer = 0.f;
                 SetAnimation(_sharedMeleeAnim, _slamWindupDuration / (float)_sheetFrameCount, true);
             }
@@ -254,7 +278,29 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (!_slamDamageApplied && _stateTimer > 0.05f)
             {
                 _slamDamageApplied = true;
-                if (Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _slamRadius)
+                // Hit test matches the warned SHAPE exactly.
+                const Vector2 playerFeet = _target->GetFeetWorldPos();
+                const float playerDistance = Vector2Distance(_worldPos, playerFeet);
+                bool playerInsideShape = false;
+                if (_slamVariant == 0)          // disc: safe outside
+                {
+                    playerInsideShape = playerDistance < _slamRadius;
+                }
+                else if (_slamVariant == 1)     // ring: safe in close OR far out
+                {
+                    playerInsideShape = playerDistance >= _slamRingInnerRadius &&
+                                        playerDistance <= _slamRingOuterRadius;
+                }
+                else                            // wedge: safe outside the sector
+                {
+                    Vector2 toPlayerNow = Vector2Subtract(playerFeet, _worldPos);
+                    const float playerAngle = atan2f(toPlayerNow.y, toPlayerNow.x);
+                    float angleDifference = fmodf(playerAngle - _slamWedgeAngle + 3.f * PI,
+                                                  2.f * PI) - PI;
+                    playerInsideShape = playerDistance < _slamWedgeRadius &&
+                                        fabsf(angleDifference) < _slamWedgeHalfAngle;
+                }
+                if (playerInsideShape)
                 {
                     _target->TakeFractionalDamage(1.5f, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
@@ -265,7 +311,13 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 if (_slamChainRemaining > 0)
                 {
                     // Multi-slam: wind up and crash down again before recovering.
+                    // The next slam's SHAPE advances the learnable sequence.
                     _slamChainRemaining--;
+                    _slamIndexInChain++;
+                    if (GetPhase() >= 2)
+                        _slamWedgeAngle += 2.094f;   // fixed 120-degree rotation
+                    else
+                        _slamVariant = 1;            // second slam is the ring
                     _state = State::SlamWindup; _stateTimer = 0.f;
                     _slamDamageApplied = false;
                     _impactShakeRequested = true;
@@ -297,6 +349,75 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     }
 
     HandleAnimation(dt);
+}
+
+void AncientBear::DrawEliteTelegraph() const
+{
+    // The current slam's danger SHAPE draws through the pull and the windup,
+    // so the dragged player always knows where the safe region is before the
+    // paw comes down.
+    const bool showSlamWarning = (_state == State::Roaring ||
+                                  _state == State::SlamWindup);
+    if (!showSlamWarning)
+        return;
+
+    const Color dangerFill = Fade(Color{ 190, 110, 255, 255 }, 0.16f);
+    const Color dangerEdge = Fade(Color{ 220, 160, 255, 255 }, 0.6f);
+
+    if (_state == State::Roaring)
+    {
+        // Pull reach indicator: a faint outer circle showing the drag range.
+        const float pullRange = IsRuneIgnited() ? _pullRange * 1.2f : _pullRange;
+        DrawCircleLines((int)_worldPos.x, (int)_worldPos.y, pullRange,
+                        Fade(Color{ 190, 110, 255, 255 }, 0.30f));
+    }
+
+    if (_slamVariant == 0)          // disc: everything inside is danger
+    {
+        DrawCircleV(_worldPos, _slamRadius, dangerFill);
+        DrawCircleLines((int)_worldPos.x, (int)_worldPos.y, _slamRadius, dangerEdge);
+    }
+    else if (_slamVariant == 1)     // ring: safe hugging him or standing far
+    {
+        DrawRing(_worldPos, _slamRingInnerRadius, _slamRingOuterRadius,
+                 0.f, 360.f, 36, dangerFill);
+        DrawCircleLines((int)_worldPos.x, (int)_worldPos.y, _slamRingInnerRadius, dangerEdge);
+        DrawCircleLines((int)_worldPos.x, (int)_worldPos.y, _slamRingOuterRadius, dangerEdge);
+    }
+    else                            // wedge: a 120-degree sector, rotating per slam
+    {
+        const float wedgeStartDegrees = (_slamWedgeAngle - _slamWedgeHalfAngle) * RAD2DEG;
+        const float wedgeEndDegrees   = (_slamWedgeAngle + _slamWedgeHalfAngle) * RAD2DEG;
+        DrawCircleSector(_worldPos, _slamWedgeRadius, wedgeStartDegrees, wedgeEndDegrees,
+                         18, dangerFill);
+        DrawCircleSectorLines(_worldPos, _slamWedgeRadius, wedgeStartDegrees, wedgeEndDegrees,
+                              18, dangerEdge);
+    }
+}
+
+void AncientBear::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _state != State::Lumbering)
+        return;
+    _roarCooldown = 0.f;   // the signature IS the pull-into-slam sequence
+}
+
+void AncientBear::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* AncientBear::GetEliteSignatureStateName() const
+{
+    switch (_state)
+    {
+    case State::Roaring:    return "DreamPull";
+    case State::SlamWindup: return (_slamVariant == 2) ? "WedgeWindup"
+                                 : (_slamVariant == 1) ? "RingWindup" : "SlamWindup";
+    case State::Slamming:   return "Slamming";
+    default:                return "Lumbering";
+    }
 }
 
 void AncientBear::TryDealContactDamage()
