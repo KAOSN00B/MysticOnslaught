@@ -1126,6 +1126,30 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
         }
         break;
 
+    case EliteMove::WerewolfClawLane:
+        if (event.kind == EliteEventKind::Execute)
+        {
+            // One claw slash lane: its own 0.4s warning, then a fast strike.
+            // Three lanes fan with walkable gaps (the elite spread helper).
+            if (EliteAttackZone* zone = AcquireEliteZone())
+            {
+                zone->owner = event.archetype; zone->move = event.move;
+                zone->shape = EliteZoneShape::Lane;
+                zone->status = EliteStatusPayload::None;
+                zone->start = event.origin;
+                zone->end = Vector2{ event.origin.x + event.direction.x * 430.f,
+                                     event.origin.y + event.direction.y * 430.f };
+                zone->radius = 55.f;
+                zone->telegraphRemaining = 0.4f;
+                zone->activeRemaining = 0.22f;
+                zone->damage = 1.f;
+            }
+            spawnLaneFx(event.origin, event.direction, 430.f,
+                        BossFx::ClawSwipe, 3.6f, Color{ 255, 90, 80, 255 });
+            impactFeedback(5.f, 0.12f);
+        }
+        break;
+
     case EliteMove::VenomfangPounce:
         if (event.kind == EliteEventKind::TrailPatch)
         {
@@ -1283,12 +1307,47 @@ void CombatDirector::DrawEliteWorld(const std::vector<std::unique_ptr<Enemy>>& e
         }
     }
 
-    // Thin outlines on ACTIVE one-shot zones so the hit area stays readable
-    // under the sprite FX for its brief live window.
+    // Zone warnings and readability outlines. A zone still in its telegraph
+    // window draws a REAL warning (fill + outline) — no zone may damage from
+    // ground the player was never shown. Active one-shot zones keep a thin
+    // outline so the hit area stays readable under the sprite FX.
     for (const EliteAttackZone& zone : _eliteZones)
     {
-        if (!zone.active || zone.telegraphRemaining > 0.f || zone.tickInterval > 0.f)
+        if (!zone.active)
             continue;
+
+        if (zone.telegraphRemaining > 0.f)
+        {
+            const Color warnFill = Fade(Color{ 255, 120, 60, 255 }, 0.20f);
+            const Color warnEdge = Fade(Color{ 255, 170, 90, 255 }, 0.65f);
+            if (zone.shape == EliteZoneShape::Lane)
+            {
+                Vector2 laneDelta = Vector2Subtract(zone.end, zone.start);
+                const float laneLength = Vector2Length(laneDelta);
+                if (laneLength > 0.01f)
+                {
+                    Vector2 laneDirection = Vector2Scale(laneDelta, 1.f / laneLength);
+                    Vector2 side{ -laneDirection.y, laneDirection.x };
+                    Vector2 cornerA = Vector2Add(zone.start, Vector2Scale(side,  zone.radius));
+                    Vector2 cornerB = Vector2Add(zone.start, Vector2Scale(side, -zone.radius));
+                    Vector2 cornerC = Vector2Add(zone.end,   Vector2Scale(side, -zone.radius));
+                    Vector2 cornerD = Vector2Add(zone.end,   Vector2Scale(side,  zone.radius));
+                    DrawTriangle(cornerA, cornerB, cornerC, warnFill);
+                    DrawTriangle(cornerA, cornerC, cornerD, warnFill);
+                    DrawLineEx(cornerA, cornerD, 2.f, warnEdge);
+                    DrawLineEx(cornerB, cornerC, 2.f, warnEdge);
+                }
+            }
+            else
+            {
+                DrawCircleV(zone.start, zone.radius, warnFill);
+                DrawCircleLines((int)zone.start.x, (int)zone.start.y, zone.radius, warnEdge);
+            }
+            continue;
+        }
+
+        if (zone.tickInterval > 0.f)
+            continue;   // lingering patches carry their own decal art
         const Color outline = Fade(WHITE, 0.30f);
         if (zone.shape == EliteZoneShape::Lane)
             DrawLineEx(zone.start, zone.end, 3.f, outline);

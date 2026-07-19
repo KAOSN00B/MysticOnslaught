@@ -42,6 +42,12 @@ public:
 
     bool ConsumeImpactShakeRequest();
 
+    // ── Hybrid encounter pattern: Blood Moon Hunt ────────────────────────────
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     // Character Animator support
     const char* GetTuningName() const override { return "Werewolf"; }
     int         GetEditorAnimCount() const override { return 8; }
@@ -90,6 +96,31 @@ private:
     bool  _pounceChainUsed  = false;   // phase 2: one extra immediate pounce per leap
     bool  _impactShakeRequested = false;
     float _circleSign       = 1.f;
+
+    // ── Pounce fairness ──────────────────────────────────────────────────────
+    // The landing marker tracks the player for most of the windup, then LOCKS
+    // (clamped to navigable ground) — after lock it never moves, so the marker
+    // the player reads is always the true landing point.
+    bool _pounceLocked = false;
+    static constexpr float _pounceLockFraction = 0.68f;   // lock at 68% of the windup
+
+    // ── Survival set piece: Claw Hunt / Blood Moon Hunt ──────────────────────
+    // Phase two (RABID): three sequential claw lanes with safe gaps, then a
+    // locked pounce through the final lane. Phase three (BLOOD MOON): TWO
+    // individually telegraphed pounces — if both miss, a long exhausted
+    // recovery is the reward for dodging twice.
+    enum class SetPieceStep { None, ClawLanes, Pouncing, Exhausted };
+    void BeginSetPiece();
+    void UpdateSetPiece(float dt);
+    void OnSetPieceLanding(bool landedHit);
+
+    SetPieceStep _setPieceStep = SetPieceStep::None;
+    float _setPieceTimer = 0.f;
+    float _setPieceCooldown = 9.f;
+    int   _setPieceLanesRemaining = 0;
+    int   _setPiecePouncesRemaining = 0;
+    bool  _setPieceAnyPounceHit = false;
+    const std::vector<Vector2>* _framePropCenters = nullptr;   // frame-scoped, for the lock clamp
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;
 

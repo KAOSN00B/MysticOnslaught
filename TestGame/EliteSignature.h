@@ -59,7 +59,8 @@ enum class EliteMove : std::uint8_t
     VenomfangPounce,
     // Boss encounter-pattern moves share the same event/zone pipeline.
     MolarbeastCharge,      // set-piece lane charge (telegraph → lock → dash)
-    MolarbeastLavaTrail    // burning ground left along a finished charge lane
+    MolarbeastLavaTrail,   // burning ground left along a finished charge lane
+    WerewolfClawLane       // sequential claw slash lanes with safe gaps
 };
 
 enum class EliteZoneShape : std::uint8_t { Disc, Lane, Cone };

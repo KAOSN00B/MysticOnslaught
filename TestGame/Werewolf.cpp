@@ -1,6 +1,7 @@
 #include "Werewolf.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "EncounterPattern.h"
 #include "Character.h"
 #include "raymath.h"
 #include <algorithm>
@@ -71,6 +72,14 @@ void Werewolf::ResetForSpawn(Vector2 pos)
     _pounceChainUsed = false;
     _impactShakeRequested = false;
     _circleSign = (GetRandomValue(0, 1) == 0) ? -1.f : 1.f;
+    _pounceLocked = false;
+    _setPieceStep = SetPieceStep::None;
+    _setPieceTimer = 0.f;
+    _setPieceCooldown = 9.f;
+    _setPieceLanesRemaining = 0;
+    _setPiecePouncesRemaining = 0;
+    _setPieceAnyPounceHit = false;
+    ClearEliteEvents();
 
     // 3 phases: the two Blood Howls (66% / 33%) advance the phase, unlocking the
     // Rabid three-swipe combo (phase 1) then the chained double-pounce (phase 2).
@@ -120,10 +129,11 @@ void Werewolf::PlayEditorAnim(int index)
 }
 
 void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
-    const std::vector<std::unique_ptr<Enemy>>&, const std::vector<Vector2>&)
+    const std::vector<std::unique_ptr<Enemy>>&, const std::vector<Vector2>& propCenters)
 {
     if (!_isActive) return;
     _worldPosLastFrame = _worldPos;
+    _framePropCenters = &propCenters;   // frame-scoped, used by the pounce lock clamp
 
     UpdateHit(dt);
     UpdateBurns(dt);
@@ -160,6 +170,36 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         bool controlled = IsFrozen() || IsElectroStunned();
         float frenzyMult = IsFrenzied() ? 1.35f : 1.f;
 
+        // ── Hybrid encounter pattern ─────────────────────────────────────────
+        // Phase callouts ride the Blood Howl beats; the Claw Hunt set piece
+        // returns on its own cadence from phase two onward.
+        if (const int newPhase = ConsumePhaseChange(); newPhase >= 1)
+        {
+            RequestBossCallout(newPhase >= 2 ? "BLOOD MOON" : "RABID");
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::WerewolfClawLane, 0, _worldPos });
+            _setPieceCooldown = std::min(_setPieceCooldown, 2.5f);
+        }
+        if (_setPieceStep == SetPieceStep::None && GetPhase() >= 1 &&
+            _state == State::Chasing && !controlled && !_takingDamage)
+        {
+            _setPieceCooldown -= dt;
+            if (_setPieceCooldown <= 0.f)
+                BeginSetPiece();
+        }
+        if (_setPieceStep == SetPieceStep::ClawLanes ||
+            _setPieceStep == SetPieceStep::Exhausted)
+        {
+            UpdateSetPiece(dt);
+            TryDealContactDamage();
+            _worldPos.x = std::clamp(_worldPos.x, 180.f, (float)kVirtualWidth  - 180.f);
+            _worldPos.y = std::clamp(_worldPos.y, 180.f, (float)kVirtualHeight - 180.f);
+            HandleAnimation(dt);
+            return;
+        }
+        // SetPieceStep::Pouncing runs THROUGH the normal pounce states below;
+        // Landing routes its outcome back via OnSetPieceLanding.
+
         switch (_state)
         {
         case State::Chasing:
@@ -180,7 +220,24 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         case State::PounceCharging:
             _stateTimer += dt;
-            _pounceTarget = _target->GetFeetWorldPos();   // tracks until launch
+            // The landing marker tracks the player for most of the windup, then
+            // LOCKS (clamped to navigable ground). After lock the marker — and
+            // therefore the landing — never moves again.
+            if (!_pounceLocked)
+            {
+                _pounceTarget = _target->GetFeetWorldPos();
+                if (_stateTimer >= (_pounceChargeDuration / frenzyMult) * _pounceLockFraction)
+                {
+                    static const std::vector<Vector2> kNoProps;
+                    const std::vector<Vector2>& propCentersForClamp =
+                        (_framePropCenters != nullptr) ? *_framePropCenters : kNoProps;
+                    _pounceTarget = ClampElitePathToNavigable(_worldPos, _pounceTarget,
+                                                              propCentersForClamp);
+                    _pounceLocked = true;
+                    EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Ogre,
+                                     EliteMove::None, 0, _worldPos, _pounceTarget });
+                }
+            }
             if (_stateTimer >= _pounceChargeDuration / frenzyMult)
             {
                 _state = State::Airborne;
@@ -200,19 +257,28 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (!_landingDamageApplied)
             {
                 _landingDamageApplied = true;
-                if (Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _landingRadius)
+                const bool landedHit =
+                    Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _landingRadius;
+                if (landedHit)
                 {
                     _target->TakeFractionalDamage(1.0f, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
+                if (_setPieceStep == SetPieceStep::Pouncing && landedHit)
+                    _setPieceAnyPounceHit = true;
             }
             if (_stateTimer >= 0.32f)
             {
+                if (_setPieceStep == SetPieceStep::Pouncing)
+                {
+                    OnSetPieceLanding(_setPieceAnyPounceHit);
+                }
                 // Moon-Mad (phase 2): chain straight into one more pounce so a single
                 // dodge isn't enough — you have to keep moving after the first landing.
-                if (GetPhase() >= 2 && !_pounceChainUsed && _target != nullptr)
+                else if (GetPhase() >= 2 && !_pounceChainUsed && _target != nullptr)
                 {
                     _pounceChainUsed = true;
+                    _pounceLocked = false;
                     _state = State::PounceCharging; _stateTimer = 0.f;
                     SetAnimation(_sharedJumpAnim, 0.3f, true);
                 }
@@ -266,6 +332,7 @@ void Werewolf::HandleChasing(float dt, Vector2 heroWorldPos)
     {
         _state = State::PounceCharging; _stateTimer = 0.f;
         _pounceChainUsed = false;   // fresh leap — phase-2 chain available again
+        _pounceLocked = false;
         SetAnimation(_sharedJumpAnim, 0.3f, true);   // crouch pose (held frames)
         return;
     }
@@ -404,6 +471,184 @@ bool Werewolf::ConsumeImpactShakeRequest()
     bool requested = _impactShakeRequested;
     _impactShakeRequested = false;
     return requested;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Survival set piece: Claw Hunt (phase two) → Blood Moon Hunt (phase three).
+// Three sequential claw lanes with safe gaps between them, then a locked
+// pounce; phase three performs TWO individually telegraphed pounces, and if
+// both miss, a long exhausted recovery rewards the double dodge.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Werewolf::BeginSetPiece()
+{
+    _setPieceStep = SetPieceStep::ClawLanes;
+    _setPieceTimer = 0.05f;   // the first lane warning appears almost at once
+    _setPieceLanesRemaining = 3;
+    _setPiecePouncesRemaining = (GetPhase() >= 2) ? 2 : 1;
+    _setPieceAnyPounceHit = false;
+    _velocity = Vector2Zero();
+    SetAnimation(_sharedHowlAnim, 1.f / 10.f, true);   // snarling stance
+    EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Ogre,
+                     EliteMove::WerewolfClawLane, 0, _worldPos });
+}
+
+void Werewolf::UpdateSetPiece(float dt)
+{
+    switch (_setPieceStep)
+    {
+    case SetPieceStep::ClawLanes:
+    {
+        // A freeze interrupts the hunt entirely — striking the stance is real
+        // counterplay, and the hunt returns later.
+        if (IsFrozen())
+        {
+            _setPieceStep = SetPieceStep::None;
+            _setPieceCooldown = 5.f;
+            _state = State::Chasing;
+            SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+            return;
+        }
+
+        _velocity = Vector2Zero();
+        Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+        if (toPlayer.x < -20.f) _rightLeft = -1.f;
+        if (toPlayer.x >  20.f) _rightLeft =  1.f;
+
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            // Fire one claw lane: three lanes fan around the player with
+            // walkable gaps; each locks the moment it is emitted and shows its
+            // own 0.4s warning before the slash lands (CombatDirector zone).
+            Vector2 fanCentre = (Vector2Length(toPlayer) > 0.01f)
+                ? Vector2Normalize(toPlayer) : Vector2{ _rightLeft, 0.f };
+            const int laneIndex = 3 - _setPieceLanesRemaining;
+            Vector2 laneDirection = EliteSpreadDirection(fanCentre, laneIndex, 3, 80.f * DEG2RAD);
+            EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Ogre,
+                             EliteMove::WerewolfClawLane, 0, _worldPos, {}, laneDirection });
+            PlaySound(_attackSound);
+
+            _setPieceLanesRemaining--;
+            if (_setPieceLanesRemaining > 0)
+            {
+                _setPieceTimer = 0.55f;
+            }
+            else
+            {
+                // The hunt finishes through the NORMAL pounce states, fully
+                // telegraphed with the locked landing marker.
+                _setPieceStep = SetPieceStep::Pouncing;
+                _state = State::PounceCharging;
+                _stateTimer = 0.f;
+                _pounceLocked = false;
+                _pounceChainUsed = true;   // the set piece owns its own chain
+                SetAnimation(_sharedJumpAnim, 0.3f, true);
+            }
+        }
+        return;
+    }
+
+    case SetPieceStep::Exhausted:
+        // Both pounces missed: the predator is spent. The longest window the
+        // fight offers — dodging twice earned it.
+        _velocity = Vector2Zero();
+        _setPieceTimer -= dt;
+        if (_setPieceTimer <= 0.f)
+        {
+            _setPieceStep = SetPieceStep::None;
+            _setPieceCooldown = 12.f - 1.5f * (float)GetPhase();
+            _pounceCooldown = _pounceCooldownBase;
+            _state = State::Chasing;
+            _stateTimer = 0.f;
+            SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+        }
+        return;
+
+    default:
+        return;
+    }
+}
+
+void Werewolf::OnSetPieceLanding(bool /*landedHit*/)
+{
+    _setPiecePouncesRemaining = std::max(0, _setPiecePouncesRemaining - 1);
+
+    if (_setPiecePouncesRemaining > 0)
+    {
+        // BLOOD MOON second pounce: a fresh, fully telegraphed windup from the
+        // new position — never two overlapping landing markers.
+        _state = State::PounceCharging;
+        _stateTimer = 0.f;
+        _pounceLocked = false;
+        SetAnimation(_sharedJumpAnim, 0.3f, true);
+        return;
+    }
+
+    if (!_setPieceAnyPounceHit)
+    {
+        _setPieceStep = SetPieceStep::Exhausted;
+        _setPieceTimer = 1.8f;
+        _state = State::Recovery;
+        _stateTimer = 0.f;
+        SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+        EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
+                         EliteMove::WerewolfClawLane, 0, _worldPos });
+        return;
+    }
+
+    // A pounce connected: the hunt paid off — normal recovery, hunt rearms.
+    _setPieceStep = SetPieceStep::None;
+    _setPieceCooldown = 12.f - 1.5f * (float)GetPhase();
+    _pounceCooldown = IsFrenzied() ? _pounceCooldownBase * 0.55f : _pounceCooldownBase;
+    _state = State::Recovery;
+    _stateTimer = 0.f;
+    SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
+}
+
+void Werewolf::DrawEliteTelegraph() const
+{
+    // Locked-landing marker: the core fairness read for every pounce (ordinary,
+    // chained, and set-piece). Gold while it still tracks; blood red once
+    // locked — after that the marker never moves.
+    if (_state != State::PounceCharging)
+        return;
+    const float pulse = 0.7f + 0.3f * sinf((float)GetTime() * 10.f);
+    const Color markerColor = _pounceLocked ? Color{ 255, 70, 60, 255 }
+                                            : Color{ 255, 210, 110, 255 };
+    DrawCircleLines((int)_pounceTarget.x, (int)_pounceTarget.y,
+                    _landingRadius * pulse, Fade(markerColor, 0.75f));
+    DrawCircleLines((int)_pounceTarget.x, (int)_pounceTarget.y,
+                    _landingRadius, Fade(markerColor, 0.4f));
+    DrawCircleV(_pounceTarget, 9.f, Fade(markerColor, 0.6f));
+}
+
+void Werewolf::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _setPieceStep != SetPieceStep::None)
+        return;
+    if (GetPhase() >= 1 && _state == State::Chasing)
+        BeginSetPiece();
+    else
+        _pounceCooldown = 0.f;   // phase one: force the ordinary locked pounce
+}
+
+void Werewolf::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* Werewolf::GetEliteSignatureStateName() const
+{
+    switch (_setPieceStep)
+    {
+    case SetPieceStep::ClawLanes: return "ClawHunt";
+    case SetPieceStep::Pouncing:  return "BloodMoonPounce";
+    case SetPieceStep::Exhausted: return "Exhausted";
+    default:
+        return (_state == State::PounceCharging) ? "PounceWindup" : "Prowling";
+    }
 }
 
 void Werewolf::HandleAnimation(float dt)
