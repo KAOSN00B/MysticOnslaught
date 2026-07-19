@@ -68,8 +68,11 @@ void TitanGuard::ResetForSpawn(Vector2 pos)
     _slamDamageApplied = false;
     _impactShakeRequested = false;
     _bombsRemaining = 0;
+    _salvoAimCount = 0;
+    _salvoAimIndex = 0;
     _pendingSlamQueued = false;
     _shieldDownTimer = 0.f;
+    ClearEliteEvents();
     _chargeDir = Vector2{ 1.f, 0.f };
     _chargeTravelled = 0.f;
 
@@ -207,6 +210,26 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             {
                 _state = State::BombThrowing; _stateTimer = 0.f;
                 _bombsRemaining = (GetPhase() >= 1) ? _bombSalvoCount : 1;   // Bomb Salvo
+
+                // Siege Protocol: author the whole salvo NOW — a row of fixed
+                // slots spanning the player's position, with one corridor slot
+                // deliberately skipped. The pattern is decided before the first
+                // bomb flies and never chases the player afterward.
+                _salvoAimCount = 0;
+                _salvoAimIndex = 0;
+                const Vector2 playerFeet = _target->GetFeetWorldPos();
+                const int slotCount = std::min(kSalvoSlotCap, _bombsRemaining + 1);
+                const int corridorSlot = GetRandomValue(0, slotCount - 1);
+                const float rowSpacing = 230.f;
+                const float rowStart = playerFeet.x - rowSpacing * (float)(slotCount - 1) * 0.5f;
+                for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex)
+                {
+                    if (slotIndex == corridorSlot)
+                        continue;   // the authored safe corridor
+                    _salvoAimPoints[_salvoAimCount++] =
+                        Vector2{ rowStart + rowSpacing * (float)slotIndex, playerFeet.y };
+                }
+                _bombsRemaining = _salvoAimCount;
                 SetAnimation(_sharedBombAnim, _bombCastDuration / (float)_sheetFrameCount, true);
                 break;
             }
@@ -252,12 +275,11 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             _stateTimer += dt;
             if (_stateTimer >= _bombCastDuration)
             {
-                // Lob one bomb; a salvo scatters the rest around the player's feet.
+                // Lob the next AUTHORED slot of the salvo row (see Advancing).
                 _pendingBomb = true;
-                Vector2 aim = _target->GetFeetWorldPos();
-                if (_bombsRemaining < _bombSalvoCount)   // spread the follow-ups
-                    aim.x += (float)GetRandomValue(-220, 220);
-                _bombTarget = aim;
+                _bombTarget = (_salvoAimIndex < _salvoAimCount)
+                    ? _salvoAimPoints[_salvoAimIndex++]
+                    : _target->GetFeetWorldPos();
                 _shieldDownTimer = _shieldDownDuration;   // arm raised to throw -> front open
                 _bombsRemaining--;
 
@@ -411,13 +433,39 @@ void TitanGuard::BeginBulwarkSlam()
 
 void TitanGuard::ReactToPhaseChange(int newPhase)
 {
-    (void)newPhase;
     // Queue the signature Bulwark Slam; the Update loop fires it once he's neutral
     // (so it can't cut off a mace swing mid-frame). The post-slam stagger is the
     // guaranteed full-damage opening each phase hands the player.
     _pendingSlamQueued = true;
     _impactShakeRequested = true;
+    RequestBossCallout(newPhase >= 2 ? "SIEGE PROTOCOL" : "BOMB SALVO");
     PlaySound(_sharedSlamSound);
+}
+
+void TitanGuard::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _state != State::Advancing)
+        return;
+    _bombCooldown = 0.f;   // force the authored salvo row
+}
+
+void TitanGuard::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* TitanGuard::GetEliteSignatureStateName() const
+{
+    switch (_state)
+    {
+    case State::BombThrowing: return "SiegeSalvo";
+    case State::SlamWindup:   return "BulwarkWindup";
+    case State::Slamming:     return "BulwarkSlam";
+    case State::Staggered:    return "Staggered";
+    case State::ShieldCharge: return "ShieldCharge";
+    default:                  return IsShieldDown() ? "ShieldDown" : "Advancing";
+    }
 }
 
 void TitanGuard::HandleAnimation(float dt)

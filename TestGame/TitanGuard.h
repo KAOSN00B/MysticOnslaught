@@ -48,6 +48,11 @@ public:
     Vector2 GetBombSpawnPos() const;
     void    OnBombThrown() { _pendingBomb = false; }
 
+    // ── Hybrid encounter pattern: Siege Protocol ─────────────────────────────
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     // Character Animator support
     const char* GetTuningName() const override { return "TitanGuard"; }
     int         GetEditorAnimCount() const override { return 7; }
@@ -89,6 +94,13 @@ private:
     bool  _slamDamageApplied = false;
     bool  _impactShakeRequested = false;
     int   _bombsRemaining  = 0;       // Bomb Salvo (phase 1+) fires several in a row
+    // Siege Protocol: salvo aims are AUTHORED at salvo start — a row of fixed
+    // slots across the player's position with one corridor slot skipped, so a
+    // bomb can never jitter randomly into the only safe route.
+    static constexpr int kSalvoSlotCap = 6;
+    Vector2 _salvoAimPoints[kSalvoSlotCap]{};
+    int   _salvoAimCount = 0;
+    int   _salvoAimIndex = 0;
     bool  _pendingSlamQueued = false; // phase change wants a Bulwark Slam when neutral
     float _shieldDownTimer = 0.f;     // shield lowered to attack -> front fully open
     Vector2 _chargeDir{ 1.f, 0.f };   // Shield Charge (phase 2)
