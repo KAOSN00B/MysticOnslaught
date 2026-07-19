@@ -72,6 +72,7 @@ void ToxicVermin::ResetForSpawn(Vector2 pos)
     _eruptChainRemaining = 0;
     _pendingPhaseBurrow = false;
     _impactShakeRequested = false;
+    ClearEliteEvents();
 
     // 3 phases: 66% widens the toxic spit to 5 globs + a double eruption; 33% erupts
     // THREE times in a row and fouls the ground on every surface attack.
@@ -161,7 +162,11 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         // NOT a burrow, so a phase transition never yanks the worm underground
         // (untouchable) and locks the player out of damaging it.
         int newPhase = ConsumePhaseChange();
-        if (newPhase >= 0) { _pendingPhaseBurrow = true; _impactShakeRequested = true; }
+        if (newPhase >= 0)
+        {
+            _pendingPhaseBurrow = true; _impactShakeRequested = true;
+            RequestBossCallout(newPhase >= 2 ? "PLAGUE FLOOD" : "VILE SURGE");
+        }
         if (_pendingPhaseBurrow && !controlled && _state == State::Surface)
         {
             _pendingPhaseBurrow = false;
@@ -289,7 +294,11 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         case State::Erupting:
             _stateTimer += dt;
-            if (!_eruptDamageApplied && _stateTimer > 0.12f)
+            // The eruption point LOCKED the moment the mound stopped (position
+            // froze on entering this state); the burst now waits behind a real
+            // marked warning instead of striking 0.12s after surfacing —
+            // stepping off the marker always works.
+            if (!_eruptDamageApplied && _stateTimer > 0.50f)
             {
                 _eruptDamageApplied = true;
                 if (Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _eruptRadius)
@@ -301,7 +310,7 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _pendingPoisonPool = true;
                 _poisonPoolPos = _worldPos;
             }
-            if (_stateTimer >= 0.45f)
+            if (_stateTimer >= 0.85f)
             {
                 if (_eruptChainRemaining > 0)
                 {
@@ -335,6 +344,52 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
     }
 
     HandleAnimation(dt);
+}
+
+void ToxicVermin::DrawEliteTelegraph() const
+{
+    // Eruption warning: the burst point locked when the mound stopped; the
+    // 0.5s ring is the read — step off the marker before it blows.
+    if (_state == State::Erupting && !_eruptDamageApplied)
+    {
+        const float pulse = 0.7f + 0.3f * sinf((float)GetTime() * 11.f);
+        DrawCircleV(_worldPos, _eruptRadius, Fade(Color{ 140, 220, 80, 255 }, 0.16f));
+        DrawCircleLines((int)_worldPos.x, (int)_worldPos.y, _eruptRadius * pulse,
+                        Fade(Color{ 170, 245, 100, 255 }, 0.7f));
+        DrawCircleLines((int)_worldPos.x, (int)_worldPos.y, _eruptRadius,
+                        Fade(Color{ 170, 245, 100, 255 }, 0.4f));
+    }
+    // The chasing mound itself stays visible so the player can track it.
+    else if (_state == State::Tunnelling)
+    {
+        DrawCircleLines((int)_worldPos.x, (int)_worldPos.y, 55.f,
+                        Fade(Color{ 140, 220, 80, 255 }, 0.45f));
+    }
+}
+
+void ToxicVermin::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _state != State::Surface)
+        return;
+    _burrowCooldown = 0.f;   // the signature IS the burrow-eruption chain
+}
+
+void ToxicVermin::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* ToxicVermin::GetEliteSignatureStateName() const
+{
+    switch (_state)
+    {
+    case State::Burrowing:  return "Burrowing";
+    case State::Tunnelling: return "Tunnelling";
+    case State::Erupting:   return _eruptDamageApplied ? "Erupted" : "EruptWarning";
+    case State::SpitCasting:return "SpitCasting";
+    default:                return "Surface";
+    }
 }
 
 void ToxicVermin::TryDealContactDamage()

@@ -51,6 +51,12 @@ public:
     // Poison pool requests (Engine spawns clouds; consumed like the spit)
     bool    ConsumePoisonPoolRequest(Vector2& outPos);
 
+    // ── Hybrid encounter pattern: Plague Flood ───────────────────────────────
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     // Character Animator support
     const char* GetTuningName() const override { return "ToxicVermin"; }
     int         GetEditorAnimCount() const override { return 8; }
