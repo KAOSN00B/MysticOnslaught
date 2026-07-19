@@ -109,6 +109,14 @@ void Stormclub::ResetForSpawn(Vector2 pos)
     _waypoints.clear();
     _waypointIndex = 0;
 
+    _signatureState    = SignatureState::None;
+    _signatureTimer    = 0.f;
+    _signatureCooldown = Balance::Elite::kStormclubSignatureCooldown * 0.5f;   // first leap comes sooner
+    _leapTarget        = Vector2Zero();
+    _activeLeapRange   = Balance::Elite::kStormclubLeapRange;
+    _leapsRemaining    = 0;
+    _landedOnPlayer    = false;
+
     ResetTuningState();
     ApplyStoredTuning();
 }
@@ -141,6 +149,227 @@ void Stormclub::OnMeleeHitPlayer(Character* target)
         return;
     Vector2 away = Vector2Subtract(target->GetWorldPos(), _worldPos);
     target->ApplyKnockbackImpulse(away, kSmashKnockbackSpeed);
+}
+
+// =============================================================================
+// Elite signature: The Thunder Breaker.
+void Stormclub::SetSignatureSheet(const Texture2D& sheet)
+{
+    if (_texture.id == sheet.id)
+        return;
+    _texture    = sheet;
+    _width      = kStormclubFrameWidth;
+    _height     = (float)sheet.height;
+    _updateTime = kStormclubFrameTime;
+    _maxFrames  = kStormclubFrameCount;
+    _frame      = 0;
+    _runningTime = 0.f;
+}
+
+void Stormclub::BeginLeapTelegraph(float telegraphSeconds, float leapRange)
+{
+    _signatureState  = SignatureState::LeapTelegraph;
+    _signatureTimer  = telegraphSeconds;
+    _activeLeapRange = leapRange;
+    _eliteSignatureCasts++;
+    EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Stormclub,
+                     EliteMove::StormclubThunderLeap, 0, _worldPos,
+                     _target ? _target->GetFeetWorldPos() : _worldPos });
+}
+
+bool Stormclub::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*/,
+    bool /*hasNavigationTarget*/, const std::vector<std::unique_ptr<Enemy>>& /*enemies*/,
+    const std::vector<Vector2>& /*propCenters*/)
+{
+    if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
+        return false;
+
+    // TEMPEST: one-time 50% escalation — future signature cycles chain two
+    // shorter leaps, each individually telegraphed and avoidable.
+    if (ConsumePhaseChange() >= 1)
+    {
+        RequestBossCallout("TEMPEST");
+        EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Stormclub,
+                         EliteMove::StormclubThunderLeap, 0, _worldPos });
+        if (_signatureState == SignatureState::LeapTelegraph)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = 1.0f;
+        }
+    }
+
+    if (IsFrozen() || _takingDamage)
+    {
+        // A mid-air leap keeps travelling (it is already committed); windup and
+        // recovery states break out normally.
+        if (_signatureState == SignatureState::LeapTelegraph)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = Balance::Elite::kStormclubSignatureCooldown * 0.6f;
+            _leapsRemaining = 0;
+        }
+        if (_signatureState != SignatureState::Leaping)
+            return _signatureState != SignatureState::None;
+    }
+
+    switch (_signatureState)
+    {
+    case SignatureState::None:
+    {
+        _signatureCooldown -= deltaTime;
+        if (_signatureCooldown > 0.f || _attacking)
+            return false;
+
+        const float distanceToPlayer = Vector2Distance(_target->GetFeetWorldPos(), _worldPos);
+        if (distanceToPlayer < 220.f)
+            return false;   // too close — the club swing already covers this range
+
+        _leapsRemaining = IsElitePhaseTwo() ? 2 : 1;
+        BeginLeapTelegraph(Balance::Elite::kStormclubLeapTelegraph,
+                           IsElitePhaseTwo() ? Balance::Elite::kStormclubLeapRangeP2
+                                             : Balance::Elite::kStormclubLeapRange);
+        return true;
+    }
+
+    case SignatureState::LeapTelegraph:
+    {
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        // The marker follows the player during the windup — the LOCK happens
+        // when the timer ends, and the landing point never moves afterward.
+        Vector2 desired = _target->GetFeetWorldPos();
+        Vector2 toDesired = Vector2Subtract(desired, _worldPos);
+        const float desiredDistance = Vector2Length(toDesired);
+        _leapTarget = (desiredDistance > _activeLeapRange && desiredDistance > 0.01f)
+            ? Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired), _activeLeapRange))
+            : desired;
+
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Stormclub,
+                             EliteMove::StormclubThunderLeap, 0, _worldPos, _leapTarget });
+            _signatureState = SignatureState::Leaping;
+            _landedOnPlayer = false;
+            SetSignatureSheet(_attackAnim);
+            if (_leapTarget.x < _worldPos.x - 1.f) _rightLeft = -1;
+            if (_leapTarget.x > _worldPos.x + 1.f) _rightLeft =  1;
+        }
+        return true;
+    }
+
+    case SignatureState::Leaping:
+    {
+        // Continuous travel toward the locked point — never a teleport.
+        Vector2 toTarget = Vector2Subtract(_leapTarget, _worldPos);
+        const float remainingDistance = Vector2Length(toTarget);
+        const float stepDistance = Balance::Elite::kStormclubLeapSpeed * deltaTime;
+        if (remainingDistance <= stepDistance || remainingDistance < 0.01f)
+        {
+            _worldPos = _leapTarget;
+
+            // LANDING: central impact plus three lightning branches with even
+            // 120-degree gaps, one branch continuing the travel direction.
+            Vector2 travelDirection = Vector2Subtract(_leapTarget, _worldPosLastFrame);
+            travelDirection = (Vector2Length(travelDirection) > 0.01f)
+                ? Vector2Normalize(travelDirection) : Vector2{ (float)_rightLeft, 0.f };
+            EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Stormclub,
+                             EliteMove::StormclubThunderLeap, 0, _worldPos, _leapTarget,
+                             travelDirection });
+            for (int branchIndex = 0; branchIndex < 3; ++branchIndex)
+            {
+                Vector2 branchDirection = EliteSpreadDirection(
+                    travelDirection, branchIndex, 3, 240.f * DEG2RAD);
+                EmitEliteEvent({ EliteEventKind::TrailPatch, EliteArchetype::Stormclub,
+                                 EliteMove::StormclubThunderLeap, 0, _worldPos, {},
+                                 branchDirection });
+            }
+            PlayAttackSound();
+
+            _landedOnPlayer = Vector2Distance(_target->GetFeetWorldPos(), _worldPos)
+                              <= Balance::Elite::kStormclubImpactRadius;
+            if (_landedOnPlayer)
+                _eliteSignatureHits++;
+
+            _leapsRemaining = std::max(0, _leapsRemaining - 1);
+            if (_leapsRemaining > 0)
+            {
+                // TEMPEST second leap: the next target is shown and locked only
+                // AFTER this landing — never two overlapping destinations.
+                BeginLeapTelegraph(0.5f, Balance::Elite::kStormclubLeapRangeP2);
+            }
+            else
+            {
+                // Miss = the club stays embedded: the long punish window.
+                _signatureState = SignatureState::Recovery;
+                _signatureTimer = _landedOnPlayer ? Balance::Elite::kStormclubHitRecovery
+                                                  : Balance::Elite::kStormclubMissRecovery;
+                EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Stormclub,
+                                 EliteMove::StormclubThunderLeap, 0, _worldPos });
+                SetSignatureSheet(_idleAnim);
+            }
+        }
+        else
+        {
+            _worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toTarget), stepDistance));
+        }
+        return true;
+    }
+
+    case SignatureState::Recovery:
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = Balance::Elite::kStormclubSignatureCooldown;
+            SetIdleAnimation(true);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void Stormclub::DrawEliteTelegraph() const
+{
+    if (_signatureState != SignatureState::LeapTelegraph)
+        return;
+
+    // Landing marker: a pulsing ring where the leap will come down. During the
+    // windup it tracks the player; the lock freezes it.
+    const float pulse = 0.75f + 0.25f * sinf((float)GetTime() * 9.f);
+    DrawCircleLines((int)_leapTarget.x, (int)_leapTarget.y,
+                    Balance::Elite::kStormclubImpactRadius * pulse,
+                    Fade(Color{ 255, 220, 90, 255 }, 0.75f));
+    DrawCircleLines((int)_leapTarget.x, (int)_leapTarget.y,
+                    Balance::Elite::kStormclubImpactRadius,
+                    Fade(Color{ 255, 240, 150, 255 }, 0.45f));
+    DrawCircleV(_leapTarget, 10.f, Fade(Color{ 255, 220, 90, 255 }, 0.55f));
+}
+
+void Stormclub::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive())
+        return;
+    _signatureCooldown = 0.f;
+}
+
+void Stormclub::DebugForceElitePhaseTwo()
+{
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * 0.5f)));
+}
+
+const char* Stormclub::GetEliteSignatureStateName() const
+{
+    switch (_signatureState)
+    {
+    case SignatureState::LeapTelegraph: return "LeapTelegraph";
+    case SignatureState::Leaping:       return "Leaping";
+    case SignatureState::Recovery:      return "ClubEmbedded";
+    default:                            return "Pursuit";
+    }
 }
 
 // =============================================================================

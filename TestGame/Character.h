@@ -187,6 +187,13 @@ public:
     // Icy hit: slow movement for a duration (Bonechill elite). Re-applying refreshes.
     void ApplyChill(float duration, float speedMult);
     bool IsChilled() const { return _chillTimer > 0.f; }
+    // Venom bite (Venomfang elite): a REAL stacking poison status, distinct from
+    // burn. Stacks cap at 3 (repeated bites refresh duration instead of piling
+    // unlimited damage); each tick deals damagePerTick x stacks on a stable
+    // cadence. Green tint while active; cleared on Init/Revive/room entry.
+    void ApplyPoison(float duration, float tickInterval, float damagePerTick, int stacks = 1);
+    bool IsPoisoned() const { return _poisonTimer > 0.f; }
+    int  GetPoisonStacks() const { return _poisonStacks; }
     // Strong decaying shove away from a blow (Stormclub elite). Rides the normal
     // velocity channel (ApplyVelocity decays it), so it ends on its own — unlike
     // StartForcedPush, which locks the player until a wall stops it.
@@ -790,6 +797,14 @@ private:
     // Chill status (icy enemy hits) — movement multiplier while the timer runs.
     float _chillTimer = 0.f;
     float _chillMult  = 1.f;
+
+    // Poison status (Venomfang bites/trail) — scalar state, not a tick vector,
+    // so reapplication can never duplicate per-frame containers.
+    float _poisonTimer         = 0.f;
+    float _poisonTickInterval  = 0.8f;
+    float _poisonTickRemaining = 0.f;
+    float _poisonDamagePerTick = 0.f;
+    int   _poisonStacks        = 0;
 
     float _manaRegenAccum      = 0.f;    // fractional accumulator — avoids float drift on int mana
     float _manaRegenMultiplier = 1.0f;   // boosted by upgrades / future store purchases

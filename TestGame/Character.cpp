@@ -220,6 +220,7 @@ void Character::Init()
     _killsSinceHeal = 0;
     _pendingBurnTicks.clear();
     _chillTimer = 0.f; _chillMult = 1.f;
+    _poisonTimer = 0.f; _poisonStacks = 0; _poisonDamagePerTick = 0.f; _poisonTickRemaining = 0.f;
 
     _maxMana             = classInfo.baseMana;
     // Runs start with a full mana pool — cooldowns (not an empty bar) are what
@@ -580,6 +581,26 @@ void Character::Update(float dt)
         if (_chillTimer <= 0.f) { _chillTimer = 0.f; _chillMult = 1.f; }
     }
 
+    // Poison ticks on a stable cadence: a huge frame catches up at most a few
+    // ticks instead of dumping the whole duration at once.
+    if (_poisonTimer > 0.f && !_dying)
+    {
+        _poisonTimer -= dt;
+        _poisonTickRemaining -= dt;
+        int catchUpGuard = 0;
+        while (_poisonTickRemaining <= 0.f && catchUpGuard++ < 4)
+        {
+            _poisonTickRemaining += std::max(0.1f, _poisonTickInterval);
+            ApplyBurnTickDamage(_poisonDamagePerTick * (float)_poisonStacks, _worldPos);
+        }
+        if (_poisonTimer <= 0.f)
+        {
+            _poisonTimer = 0.f;
+            _poisonStacks = 0;
+            _poisonDamagePerTick = 0.f;
+        }
+    }
+
     if (!_dying && !_takingDamage)
     {
         if (!HandleForcedPush(dt))
@@ -926,9 +947,11 @@ void Character::DrawPlayer(Vector2 cameraPos)
         dest.x += (_rightLeft > 0.f ? 1.f : -1.f) * swing;
     }
 
-    // Chilled: icy blue tint so the slow reads on the sprite (matches how frozen
-    // enemies are tinted). Normal: plain white.
-    Color bodyTint = (_chillTimer > 0.f) ? Color{ 150, 205, 255, 255 } : WHITE;
+    // Status tints: poisoned = sickly green (Venomfang), chilled = icy blue
+    // (matches how frozen enemies are tinted). Normal: plain white. Poison wins
+    // when both run because its damage is the more urgent read.
+    Color bodyTint = (_poisonTimer > 0.f) ? Color{ 150, 235, 120, 255 }
+                   : (_chillTimer  > 0.f) ? Color{ 150, 205, 255, 255 } : WHITE;
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, bodyTint);
     if (_damageBuffTimer > 0.f)
         DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, Fade(Color{ 255, 45, 35, 255 }, 0.38f));
@@ -1093,6 +1116,7 @@ void Character::Revive()
     _forcedPushStunTimer = 0.f;
     _pendingBurnTicks.clear();
     _chillTimer = 0.f; _chillMult = 1.f;
+    _poisonTimer = 0.f; _poisonStacks = 0; _poisonDamagePerTick = 0.f; _poisonTickRemaining = 0.f;
     // True respawns wipe ability cooldowns — a fresh attempt starts unlocked.
     for (int i = 0; i < _hardAbilityCap; i++)
     {
@@ -1119,6 +1143,7 @@ void Character::RefreshForRoomEntry()
     _forcedPushStunTimer = 0.f;
     _pendingBurnTicks.clear();
     _chillTimer = 0.f; _chillMult = 1.f;
+    _poisonTimer = 0.f; _poisonStacks = 0; _poisonDamagePerTick = 0.f; _poisonTickRemaining = 0.f;
     if (_health < 1.f) _health = 1.f;   // safety clamp — never enter a room dead
     GrantInvulnerability(1.5f);         // brief i-frames so entry isn't punished
 }
@@ -1311,6 +1336,23 @@ void Character::ApplyChill(float duration, float speedMult)
     // Refresh rather than stack: the strongest (lowest) multiplier wins.
     _chillTimer = std::max(_chillTimer, duration);
     _chillMult  = std::min(_chillMult, std::clamp(speedMult, 0.2f, 1.f));
+}
+
+void Character::ApplyPoison(float duration, float tickInterval, float damagePerTick, int stacks)
+{
+    if (_dying || duration <= 0.f)
+        return;
+    const bool wasPoisoned = (_poisonTimer > 0.f);
+    // Refresh, don't extend past the fresh duration; stacks cap so repeated
+    // bites are threatening without unlimited unavoidable damage.
+    _poisonTimer = std::max(_poisonTimer, duration);
+    if (tickInterval > 0.f)
+        _poisonTickInterval = tickInterval;
+    _poisonDamagePerTick = std::max(_poisonDamagePerTick, damagePerTick);
+    _poisonStacks = std::min(Balance::Elite::kPoisonStackCap,
+                             _poisonStacks + std::max(1, stacks));
+    if (!wasPoisoned)
+        _poisonTickRemaining = _poisonTickInterval;   // first tick after one interval
 }
 
 void Character::ApplyKnockbackImpulse(Vector2 direction, float speed)

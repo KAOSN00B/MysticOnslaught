@@ -38,12 +38,38 @@ public:
     // Storm identity: every landed melee hit blasts the player backward.
     void OnMeleeHitPlayer(Character* target) override;
 
+    // ── Elite signature: The Thunder Breaker ─────────────────────────────────
+    // Thunder Leap: a landing marker appears, LOCKS after the windup, and the
+    // elite travels there (never teleports, never retargets). Landing spawns a
+    // central impact plus three lightning branches with visible angular gaps.
+    // A miss leaves the club embedded — the long punish window. TEMPEST at 50%
+    // chains two shorter leaps; the second target locks only after the first
+    // landing. Signatures run only for the elite-room miniboss.
+    bool UpdateEliteSignature(float deltaTime, Vector2 navigationTarget,
+        bool hasNavigationTarget, const std::vector<std::unique_ptr<Enemy>>& enemies,
+        const std::vector<Vector2>& propCenters) override;
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     void PlayAttackSound() override;
     void PlayDeathSound() override;
 
 private:
     static void EnsureSharedResourcesLoaded();
     void SetIdleAnimation(bool resetFrame);
+    void SetSignatureSheet(const Texture2D& sheet);
+    void BeginLeapTelegraph(float telegraphSeconds, float leapRange);
+
+    enum class SignatureState { None, LeapTelegraph, Leaping, Recovery };
+    SignatureState _signatureState = SignatureState::None;
+    float   _signatureTimer    = 0.f;
+    float   _signatureCooldown = 0.f;
+    Vector2 _leapTarget{};          // locked at the end of the telegraph
+    float   _activeLeapRange = 0.f; // full range normally, shorter for Tempest
+    int     _leapsRemaining  = 0;   // TEMPEST performs two chained leaps
+    bool    _landedOnPlayer  = false;
 
     int _variantTier = 0;
 

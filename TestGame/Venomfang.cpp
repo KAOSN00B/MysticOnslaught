@@ -110,6 +110,17 @@ void Venomfang::ResetForSpawn(Vector2 pos)
     _waypoints.clear();
     _waypointIndex = 0;
 
+    _signatureState        = SignatureState::None;
+    _signatureTimer        = 0.f;
+    _signatureCooldown     = Balance::Elite::kVenomfangSignatureCooldown * 0.5f;   // first pounce comes sooner
+    _pounceTarget          = Vector2Zero();
+    _retreatDirection      = Vector2{ 1.f, 0.f };
+    _biteLanded            = false;
+    _pouncesRemaining      = 0;
+    _predatorMarks         = 0;
+    _predatorMarkTimer     = 0.f;
+    _trailPatchAccumulator = 0.f;
+
     ResetTuningState();
     ApplyStoredTuning();
 }
@@ -135,7 +146,8 @@ void Venomfang::SetWaveScale(int /*wave*/)
 }
 
 // =============================================================================
-// Venomous bite: a long, weak damage-over-time that outlasts the fight beat.
+// Venomous bite: applies the REAL stacking poison status (green tint, capped
+// stacks, stable ticks) instead of routing through the burn presentation.
 // Behavior identity: hit-and-run — after every landed bite it darts away from
 // the player (rides the hit-knockback channel on ITSELF, which also suppresses
 // its pursuit briefly), so it never stands still trading blows.
@@ -143,7 +155,9 @@ void Venomfang::OnMeleeHitPlayer(Character* target)
 {
     if (target == nullptr)
         return;
-    target->ApplyBurnTicks(kVenomTickDelay, kVenomTickCount, kVenomDamagePerTick, _worldPos);
+    target->ApplyPoison(Balance::Elite::kPoisonDuration,
+                        Balance::Elite::kPoisonTickInterval,
+                        Balance::Elite::kPoisonDamagePerTick);
 
     Vector2 away = Vector2Subtract(_worldPos, target->GetWorldPos());
     float len = Vector2Length(away);
@@ -151,6 +165,264 @@ void Venomfang::OnMeleeHitPlayer(Character* target)
     else              away = Vector2Scale(away, 1.f / len);
     _hitKnockbackVel   = Vector2Scale(away, kDisengageSpeed);
     _hitKnockbackTimer = kDisengageDuration;
+}
+
+// =============================================================================
+// Elite signature: The Ambush Predator.
+void Venomfang::SetSignatureSheet(const Texture2D& sheet)
+{
+    if (_texture.id == sheet.id)
+        return;
+    _texture    = sheet;
+    _width      = kVenomfangFrameWidth;
+    _height     = (float)sheet.height;
+    _updateTime = kVenomfangFrameTime;
+    _maxFrames  = kVenomfangFrameCount;
+    _frame      = 0;
+    _runningTime = 0.f;
+}
+
+void Venomfang::BeginPounceTelegraph(float telegraphSeconds)
+{
+    _signatureState = SignatureState::PounceTelegraph;
+    _signatureTimer = telegraphSeconds;
+    _eliteSignatureCasts++;
+    EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Venomfang,
+                     EliteMove::VenomfangPounce, 0, _worldPos,
+                     _target ? _target->GetFeetWorldPos() : _worldPos });
+}
+
+bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*/,
+    bool /*hasNavigationTarget*/, const std::vector<std::unique_ptr<Enemy>>& /*enemies*/,
+    const std::vector<Vector2>& /*propCenters*/)
+{
+    if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
+        return false;
+
+    // Predator's Mark expires after several seconds without another bite.
+    if (_predatorMarkTimer > 0.f)
+    {
+        _predatorMarkTimer -= deltaTime;
+        if (_predatorMarkTimer <= 0.f)
+            _predatorMarks = 0;
+    }
+
+    // BLOOD SCENT: one-time 50% escalation — faster circling, and future
+    // signature cycles permit a second, independently telegraphed pounce.
+    if (ConsumePhaseChange() >= 1)
+    {
+        RequestBossCallout("BLOOD SCENT");
+        EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Venomfang,
+                         EliteMove::VenomfangPounce, 0, _worldPos });
+        _speed *= Balance::Elite::kVenomfangPhaseCircleSpeed;
+        if (_signatureState == SignatureState::PounceTelegraph)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = 1.0f;
+        }
+    }
+
+    // Interrupting the windup cancels the pounce — that IS the counterplay.
+    // A miss or interruption never builds Predator's Mark.
+    if (IsFrozen() || _takingDamage)
+    {
+        if (_signatureState == SignatureState::PounceTelegraph)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = Balance::Elite::kVenomfangSignatureCooldown * 0.6f;
+            _pouncesRemaining = 0;
+        }
+        if (_signatureState != SignatureState::Pouncing)
+            return _signatureState != SignatureState::None;
+    }
+
+    switch (_signatureState)
+    {
+    case SignatureState::None:
+    {
+        _signatureCooldown -= deltaTime;
+        if (_signatureCooldown > 0.f || _attacking)
+            return false;
+
+        const float distanceToPlayer = Vector2Distance(_target->GetFeetWorldPos(), _worldPos);
+        if (distanceToPlayer < 200.f || distanceToPlayer > Balance::Elite::kVenomfangPounceRange + 160.f)
+            return false;   // keep circling until an off-angle window opens
+
+        _pouncesRemaining = IsElitePhaseTwo() ? 2 : 1;
+        BeginPounceTelegraph(Balance::Elite::kVenomfangPounceTelegraph);
+        return true;
+    }
+
+    case SignatureState::PounceTelegraph:
+    {
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        // The narrow path tracks the player during the windup; the LOCK happens
+        // when the timer ends and the endpoint never moves afterward.
+        Vector2 desired = _target->GetFeetWorldPos();
+        Vector2 toDesired = Vector2Subtract(desired, _worldPos);
+        const float desiredDistance = Vector2Length(toDesired);
+        _pounceTarget = (desiredDistance > Balance::Elite::kVenomfangPounceRange && desiredDistance > 0.01f)
+            ? Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired),
+                                                 Balance::Elite::kVenomfangPounceRange))
+            : desired;
+        if (_pounceTarget.x < _worldPos.x - 1.f) _rightLeft = -1;
+        if (_pounceTarget.x > _worldPos.x + 1.f) _rightLeft =  1;
+
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Venomfang,
+                             EliteMove::VenomfangPounce, 0, _worldPos, _pounceTarget });
+            EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Venomfang,
+                             EliteMove::VenomfangPounce, 0, _worldPos, _pounceTarget });
+            _signatureState = SignatureState::Pouncing;
+            _biteLanded = false;
+            SetSignatureSheet(_attackAnim);
+            PlayAttackSound();
+        }
+        return true;
+    }
+
+    case SignatureState::Pouncing:
+    {
+        // Dart along the locked path; a body-contact bite ends it early.
+        Vector2 toTarget = Vector2Subtract(_pounceTarget, _worldPos);
+        const float remainingDistance = Vector2Length(toTarget);
+        const float stepDistance = Balance::Elite::kVenomfangPounceSpeed * deltaTime;
+
+        if (!_biteLanded && _target->IsAlive() &&
+            CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
+        {
+            // BITE: base damage scaled by Predator's Mark (consecutive bites).
+            const float markMultiplier = 1.f + 0.25f * (float)_predatorMarks;
+            _target->TakeDamage((int)std::round(_attackPower * markMultiplier), _worldPos);
+            OnMeleeHitPlayer(_target);   // real poison + self-disengage impulse
+            _biteLanded = true;
+            _eliteSignatureHits++;
+            _predatorMarks = std::min(Balance::Elite::kPredatorMarkCap, _predatorMarks + 1);
+            _predatorMarkTimer = Balance::Elite::kPredatorMarkDuration;
+        }
+
+        if (_biteLanded || remainingDistance <= stepDistance || remainingDistance < 0.01f)
+        {
+            if (!_biteLanded)
+                _worldPos = _pounceTarget;
+            // Disengage away from the player, painting a short poison trail.
+            Vector2 away = Vector2Subtract(_worldPos, _target->GetFeetWorldPos());
+            _retreatDirection = (Vector2Length(away) > 0.01f)
+                ? Vector2Normalize(away) : Vector2{ -(float)_rightLeft, 0.f };
+            _signatureState = SignatureState::Retreating;
+            _signatureTimer = 0.45f;
+            _trailPatchAccumulator = 70.f;   // drop the first patch immediately
+        }
+        else
+        {
+            _worldPos = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toTarget), stepDistance));
+        }
+        return true;
+    }
+
+    case SignatureState::Retreating:
+    {
+        SetSignatureSheet(_walkAnim);
+        const float retreatSpeed = _speed * 1.8f;
+        _worldPos = Vector2Add(_worldPos, Vector2Scale(_retreatDirection, retreatSpeed * deltaTime));
+
+        // Short animated poison trail (resolved as zones by CombatDirector).
+        _trailPatchAccumulator += retreatSpeed * deltaTime;
+        if (_trailPatchAccumulator >= 70.f)
+        {
+            _trailPatchAccumulator = 0.f;
+            EmitEliteEvent({ EliteEventKind::TrailPatch, EliteArchetype::Venomfang,
+                             EliteMove::VenomfangPounce, 0, _worldPos });
+        }
+
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            _pouncesRemaining = std::max(0, _pouncesRemaining - 1);
+            if (_biteLanded && _pouncesRemaining > 0)
+            {
+                // BLOOD SCENT second pounce: an independently visible delay,
+                // then a fresh, fully telegraphed path.
+                BeginPounceTelegraph(Balance::Elite::kVenomfangSecondPounceDelay);
+            }
+            else
+            {
+                _signatureState = SignatureState::Recovery;
+                _signatureTimer = Balance::Elite::kVenomfangPounceRecovery;
+                EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Venomfang,
+                                 EliteMove::VenomfangPounce, 0, _worldPos });
+                SetIdleAnimation(true);
+            }
+        }
+        return true;
+    }
+
+    case SignatureState::Recovery:
+        _velocity = Vector2Zero();
+        SetSignatureSheet(_idleAnim);
+        _signatureTimer -= deltaTime;
+        if (_signatureTimer <= 0.f)
+        {
+            _signatureState = SignatureState::None;
+            _signatureCooldown = Balance::Elite::kVenomfangSignatureCooldown;
+            SetIdleAnimation(true);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void Venomfang::DrawEliteTelegraph() const
+{
+    if (_signatureState != SignatureState::PounceTelegraph)
+        return;
+
+    // Narrow pounce-path warning from the predator to the (tracking) endpoint.
+    Vector2 pathDirection = Vector2Subtract(_pounceTarget, _worldPos);
+    if (Vector2Length(pathDirection) < 0.01f)
+        return;
+    pathDirection = Vector2Normalize(pathDirection);
+    Vector2 side{ -pathDirection.y, pathDirection.x };
+    const float halfWidth = 34.f;
+    Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  halfWidth));
+    Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -halfWidth));
+    Vector2 cornerC = Vector2Add(_pounceTarget, Vector2Scale(side, -halfWidth));
+    Vector2 cornerD = Vector2Add(_pounceTarget, Vector2Scale(side,  halfWidth));
+    Color warn = Fade(Color{ 140, 235, 90, 255 }, 0.20f);
+    DrawTriangle(cornerA, cornerB, cornerC, warn);
+    DrawTriangle(cornerA, cornerC, cornerD, warn);
+    DrawLineEx(cornerB, cornerC, 2.f, Fade(Color{ 170, 250, 120, 255 }, 0.6f));
+    DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 170, 250, 120, 255 }, 0.6f));
+    DrawCircleLines((int)_pounceTarget.x, (int)_pounceTarget.y, 46.f,
+                    Fade(Color{ 170, 250, 120, 255 }, 0.6f));
+}
+
+void Venomfang::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive())
+        return;
+    _signatureCooldown = 0.f;
+}
+
+void Venomfang::DebugForceElitePhaseTwo()
+{
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * 0.5f)));
+}
+
+const char* Venomfang::GetEliteSignatureStateName() const
+{
+    switch (_signatureState)
+    {
+    case SignatureState::PounceTelegraph: return "PounceTelegraph";
+    case SignatureState::Pouncing:        return "Pouncing";
+    case SignatureState::Retreating:      return "Retreating";
+    case SignatureState::Recovery:        return "Recovery";
+    default:                              return "Circling";
+    }
 }
 
 // =============================================================================

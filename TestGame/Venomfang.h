@@ -35,8 +35,24 @@ public:
     int         GetSpawnCost()     const override { return 3; }
     const char* GetTuningName()    const override { return "Venomfang"; }
 
-    // Poison identity: every landed bite leaves a lingering venom DoT.
+    // Poison identity: every landed bite applies REAL stacking poison.
     void OnMeleeHitPlayer(Character* target) override;
+
+    // ── Elite signature: The Ambush Predator ─────────────────────────────────
+    // Venom Pounce: a narrow path telegraph, lock, then a darting bite at the
+    // endpoint. A landed bite applies real poison and builds Predator's Mark
+    // (cap 3, expires without another bite; each mark makes the next bite
+    // hit harder). After a bite it disengages, leaving a short poison trail.
+    // BLOOD SCENT at 50%: faster circling and a second, independently
+    // telegraphed pounce. Never invisible, never untargetable.
+    // Signatures run only for the elite-room miniboss.
+    bool UpdateEliteSignature(float deltaTime, Vector2 navigationTarget,
+        bool hasNavigationTarget, const std::vector<std::unique_ptr<Enemy>>& enemies,
+        const std::vector<Vector2>& propCenters) override;
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
 
     void PlayAttackSound() override;
     void PlayDeathSound() override;
@@ -44,13 +60,22 @@ public:
 private:
     static void EnsureSharedResourcesLoaded();
     void SetIdleAnimation(bool resetFrame);
+    void SetSignatureSheet(const Texture2D& sheet);
+    void BeginPounceTelegraph(float telegraphSeconds);
+
+    enum class SignatureState { None, PounceTelegraph, Pouncing, Retreating, Recovery };
+    SignatureState _signatureState = SignatureState::None;
+    float   _signatureTimer    = 0.f;
+    float   _signatureCooldown = 0.f;
+    Vector2 _pounceTarget{};        // locked at the end of the telegraph
+    Vector2 _retreatDirection{ 1.f, 0.f };
+    bool    _biteLanded = false;
+    int     _pouncesRemaining = 0;  // BLOOD SCENT allows a second pounce
+    int     _predatorMarks = 0;     // consecutive-bite escalation, cap 3
+    float   _predatorMarkTimer = 0.f;
+    float   _trailPatchAccumulator = 0.f;
 
     int _variantTier = 0;
-
-    // Venom applied per bite: slower, weaker, longer than the Infernal's burn.
-    static constexpr float kVenomTickDelay     = 0.7f;
-    static constexpr int   kVenomTickCount     = 5;
-    static constexpr float kVenomDamagePerTick = 0.3f;
 
     // Hit-and-run disengage dart after each landed bite.
     static constexpr float kDisengageSpeed    = 1400.f;
