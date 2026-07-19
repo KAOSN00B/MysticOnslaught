@@ -1,6 +1,7 @@
 #include "Venomfang.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "AttackTuning.h"
 #include "Character.h"
 #include "raymath.h"
 #include <algorithm>
@@ -249,7 +250,10 @@ bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
             return false;   // keep circling until an off-angle window opens
 
         _pouncesRemaining = IsElitePhaseTwo() ? 2 : 1;
-        BeginPounceTelegraph(Balance::Elite::kVenomfangPounceTelegraph);
+        // Attack Library tuning (attacktuning_Venomfang_Venom_Pounce.txt).
+        BeginPounceTelegraph(EliteSignatureValueOr(AttackTuningStore::Get("Venomfang_Venom_Pounce"),
+                                                   &AttackTuning::telegraphTime,
+                                                   Balance::Elite::kVenomfangPounceTelegraph));
         return true;
     }
 
@@ -262,9 +266,11 @@ bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         Vector2 desired = _target->GetFeetWorldPos();
         Vector2 toDesired = Vector2Subtract(desired, _worldPos);
         const float desiredDistance = Vector2Length(toDesired);
-        _pounceTarget = (desiredDistance > Balance::Elite::kVenomfangPounceRange && desiredDistance > 0.01f)
-            ? Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired),
-                                                 Balance::Elite::kVenomfangPounceRange))
+        const float pounceRange = EliteSignatureValueOr(AttackTuningStore::Get("Venomfang_Venom_Pounce"),
+                                                        &AttackTuning::travelDistance,
+                                                        Balance::Elite::kVenomfangPounceRange);
+        _pounceTarget = (desiredDistance > pounceRange && desiredDistance > 0.01f)
+            ? Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired), pounceRange))
             : desired;
         if (_pounceTarget.x < _worldPos.x - 1.f) _rightLeft = -1;
         if (_pounceTarget.x > _worldPos.x + 1.f) _rightLeft =  1;
@@ -351,7 +357,9 @@ bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
             else
             {
                 _signatureState = SignatureState::Recovery;
-                _signatureTimer = Balance::Elite::kVenomfangPounceRecovery;
+                _signatureTimer = EliteSignatureValueOr(AttackTuningStore::Get("Venomfang_Venom_Pounce"),
+                                                        &AttackTuning::recoveryTime,
+                                                        Balance::Elite::kVenomfangPounceRecovery);
                 EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Venomfang,
                                  EliteMove::VenomfangPounce, 0, _worldPos });
                 SetIdleAnimation(true);
@@ -367,7 +375,9 @@ bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         if (_signatureTimer <= 0.f)
         {
             _signatureState = SignatureState::None;
-            _signatureCooldown = Balance::Elite::kVenomfangSignatureCooldown;
+            _signatureCooldown = EliteSignatureValueOr(AttackTuningStore::Get("Venomfang_Venom_Pounce"),
+                                                       &AttackTuning::signatureCooldown,
+                                                       Balance::Elite::kVenomfangSignatureCooldown);
             SetIdleAnimation(true);
         }
         return true;

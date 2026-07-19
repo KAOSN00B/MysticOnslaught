@@ -1,6 +1,7 @@
 #include "Stormclub.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "AttackTuning.h"
 #include "Character.h"
 #include "raymath.h"
 #include <algorithm>
@@ -224,10 +225,19 @@ bool Stormclub::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         if (distanceToPlayer < 220.f)
             return false;   // too close — the club swing already covers this range
 
+        // Attack Library tuning (attacktuning_Stormclub_Thunder_Leap.txt):
+        // telegraph and travel distance override the coded defaults; Tempest
+        // leaps stay proportionally shorter.
+        const AttackTuning* signatureTuning = AttackTuningStore::Get("Stormclub_Thunder_Leap");
+        const float tunedTelegraph = EliteSignatureValueOr(signatureTuning,
+            &AttackTuning::telegraphTime, Balance::Elite::kStormclubLeapTelegraph);
+        const float tunedRange = EliteSignatureValueOr(signatureTuning,
+            &AttackTuning::travelDistance, Balance::Elite::kStormclubLeapRange);
+        const float tempestRangeRatio = Balance::Elite::kStormclubLeapRangeP2 /
+                                        Balance::Elite::kStormclubLeapRange;
         _leapsRemaining = IsElitePhaseTwo() ? 2 : 1;
-        BeginLeapTelegraph(Balance::Elite::kStormclubLeapTelegraph,
-                           IsElitePhaseTwo() ? Balance::Elite::kStormclubLeapRangeP2
-                                             : Balance::Elite::kStormclubLeapRange);
+        BeginLeapTelegraph(tunedTelegraph,
+                           IsElitePhaseTwo() ? tunedRange * tempestRangeRatio : tunedRange);
         return true;
     }
 
@@ -300,10 +310,16 @@ bool Stormclub::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
             }
             else
             {
-                // Miss = the club stays embedded: the long punish window.
+                // Miss = the club stays embedded: the long punish window. A
+                // tuned recovery scales the miss window by the same ratio.
+                const float tunedHitRecovery = EliteSignatureValueOr(
+                    AttackTuningStore::Get("Stormclub_Thunder_Leap"),
+                    &AttackTuning::recoveryTime, Balance::Elite::kStormclubHitRecovery);
+                const float missRecoveryRatio = Balance::Elite::kStormclubMissRecovery /
+                                                Balance::Elite::kStormclubHitRecovery;
                 _signatureState = SignatureState::Recovery;
-                _signatureTimer = _landedOnPlayer ? Balance::Elite::kStormclubHitRecovery
-                                                  : Balance::Elite::kStormclubMissRecovery;
+                _signatureTimer = _landedOnPlayer ? tunedHitRecovery
+                                                  : tunedHitRecovery * missRecoveryRatio;
                 EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Stormclub,
                                  EliteMove::StormclubThunderLeap, 0, _worldPos });
                 SetSignatureSheet(_idleAnim);
@@ -323,7 +339,9 @@ bool Stormclub::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         if (_signatureTimer <= 0.f)
         {
             _signatureState = SignatureState::None;
-            _signatureCooldown = Balance::Elite::kStormclubSignatureCooldown;
+            _signatureCooldown = EliteSignatureValueOr(AttackTuningStore::Get("Stormclub_Thunder_Leap"),
+                                                       &AttackTuning::signatureCooldown,
+                                                       Balance::Elite::kStormclubSignatureCooldown);
             SetIdleAnimation(true);
         }
         return true;

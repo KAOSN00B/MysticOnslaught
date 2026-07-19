@@ -1,6 +1,7 @@
 #include "Bonechill.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "AttackTuning.h"
 #include "Character.h"
 #include "raymath.h"
 #include <algorithm>
@@ -112,7 +113,9 @@ void Bonechill::ResetForSpawn(Vector2 pos)
 
     _signatureState    = SignatureState::None;
     _signatureTimer    = 0.f;
-    _signatureCooldownDuration = Balance::Elite::kBonechillSignatureCooldown;
+    _signatureCooldownDuration = EliteSignatureValueOr(
+        AttackTuningStore::Get("Bonechill_Permafrost_Slam"),
+        &AttackTuning::signatureCooldown, Balance::Elite::kBonechillSignatureCooldown);
     _signatureCooldown = _signatureCooldownDuration * 0.5f;   // first slam comes sooner
     _signatureDirection = Vector2{ 1.f, 0.f };
     _frostArmourBroken  = false;
@@ -210,8 +213,12 @@ bool Bonechill::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Bonechill,
                          EliteMove::BonechillPermafrostSlam, 0, _worldPos });
         _frostArmourBroken = true;
-        _speed *= Balance::Elite::kBonechillPhaseSpeed;
-        _signatureCooldownDuration *= Balance::Elite::kBonechillPhaseCooldownMult;
+        const AttackTuning* signatureTuning = AttackTuningStore::Get("Bonechill_Permafrost_Slam");
+        _speed *= EliteSignatureValueOr(signatureTuning, &AttackTuning::phaseSpeedMult,
+                                        Balance::Elite::kBonechillPhaseSpeed);
+        _signatureCooldownDuration *= EliteSignatureValueOr(signatureTuning,
+                                        &AttackTuning::phaseCooldownMult,
+                                        Balance::Elite::kBonechillPhaseCooldownMult);
         if (_signatureState != SignatureState::None)
         {
             _signatureState = SignatureState::None;
@@ -248,7 +255,9 @@ bool Bonechill::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         if (_signatureDirection.x >  0.01f) _rightLeft =  1;
 
         _signatureState = SignatureState::SlamTelegraph;
-        _signatureTimer = Balance::Elite::kBonechillSlamTelegraph;
+        _signatureTimer = EliteSignatureValueOr(AttackTuningStore::Get("Bonechill_Permafrost_Slam"),
+                                                &AttackTuning::telegraphTime,
+                                                Balance::Elite::kBonechillSlamTelegraph);
         _eliteSignatureCasts++;
         EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Bonechill,
                          EliteMove::BonechillPermafrostSlam, 0, _worldPos, {}, _signatureDirection });
@@ -276,7 +285,9 @@ bool Bonechill::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
             }
             PlayAttackSound();
             _signatureState = SignatureState::SlamRecovery;
-            _signatureTimer = Balance::Elite::kBonechillSlamRecovery;
+            _signatureTimer = EliteSignatureValueOr(AttackTuningStore::Get("Bonechill_Permafrost_Slam"),
+                                                    &AttackTuning::recoveryTime,
+                                                    Balance::Elite::kBonechillSlamRecovery);
         }
         return true;
 

@@ -1,6 +1,7 @@
 #include "Infernal.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "AttackTuning.h"
 #include "Character.h"
 #include "raymath.h"
 #include <algorithm>
@@ -247,11 +248,16 @@ bool Infernal::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*
         if (_signatureDirection.x >  0.01f) _rightLeft =  1;
 
         // Far away: march the room and paint the trail. Mid-range: burst.
+        // Attack Library tuning (attacktuning_Infernal_*.txt) overrides the
+        // coded telegraph lengths per move when authored.
         const bool marchChosen = distanceToPlayer > 430.f;
         _signatureState = marchChosen ? SignatureState::MarchTelegraph
                                       : SignatureState::BurstTelegraph;
-        _signatureTimer = marchChosen ? Balance::Elite::kInfernalMarchTelegraph
-                                      : Balance::Elite::kInfernalBurstTelegraph;
+        _signatureTimer = marchChosen
+            ? EliteSignatureValueOr(AttackTuningStore::Get("Infernal_Cinder_March"),
+                                    &AttackTuning::telegraphTime, Balance::Elite::kInfernalMarchTelegraph)
+            : EliteSignatureValueOr(AttackTuningStore::Get("Infernal_Furnace_Burst"),
+                                    &AttackTuning::telegraphTime, Balance::Elite::kInfernalBurstTelegraph);
         _eliteSignatureCasts++;
         EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Infernal,
                          marchChosen ? EliteMove::InfernalCinderMarch
@@ -269,7 +275,9 @@ bool Infernal::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*
             EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Infernal,
                              EliteMove::InfernalCinderMarch, 0, _worldPos, {}, _signatureDirection });
             _signatureState = SignatureState::Marching;
-            _signatureTimer = Balance::Elite::kInfernalMarchActive;
+            _signatureTimer = EliteSignatureValueOr(AttackTuningStore::Get("Infernal_Cinder_March"),
+                                                    &AttackTuning::activeTime,
+                                                    Balance::Elite::kInfernalMarchActive);
             _marchPatchAccumulator = Balance::Elite::kInfernalPatchSpacing;   // first patch immediately
             _marchPatchesDropped = 0;
             SetSignatureSheet(_walkAnim);
@@ -299,7 +307,9 @@ bool Infernal::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*
         if (_signatureTimer <= 0.f)
         {
             _signatureState = SignatureState::None;
-            _signatureCooldown = Balance::Elite::kInfernalSignatureCooldown;
+            _signatureCooldown = EliteSignatureValueOr(AttackTuningStore::Get("Infernal_Cinder_March"),
+                                                       &AttackTuning::signatureCooldown,
+                                                       Balance::Elite::kInfernalSignatureCooldown);
             EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Infernal,
                              EliteMove::InfernalCinderMarch, 0, _worldPos });
             SetIdleAnimation(true);
@@ -322,8 +332,15 @@ bool Infernal::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*
                 _secondWaveTimer = 0.4f;
             }
             _signatureState = SignatureState::BurstRecovery;
-            _signatureTimer = IsElitePhaseTwo() ? Balance::Elite::kInfernalBurstRecoveryP2
-                                                : Balance::Elite::kInfernalBurstRecovery;
+            // Tuned recovery scales the OVERHEATED window by the same ratio the
+            // coded defaults use, so phase two always recovers longer.
+            const float tunedRecovery = EliteSignatureValueOr(
+                AttackTuningStore::Get("Infernal_Furnace_Burst"),
+                &AttackTuning::recoveryTime, Balance::Elite::kInfernalBurstRecovery);
+            _signatureTimer = IsElitePhaseTwo()
+                ? tunedRecovery * (Balance::Elite::kInfernalBurstRecoveryP2 /
+                                   Balance::Elite::kInfernalBurstRecovery)
+                : tunedRecovery;
         }
         return true;
 
@@ -335,7 +352,9 @@ bool Infernal::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*
         if (_signatureTimer <= 0.f)
         {
             _signatureState = SignatureState::None;
-            _signatureCooldown = Balance::Elite::kInfernalSignatureCooldown;
+            _signatureCooldown = EliteSignatureValueOr(AttackTuningStore::Get("Infernal_Furnace_Burst"),
+                                                       &AttackTuning::signatureCooldown,
+                                                       Balance::Elite::kInfernalSignatureCooldown);
             EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Infernal,
                              EliteMove::InfernalFurnaceBurst, 0, _worldPos });
             SetIdleAnimation(true);

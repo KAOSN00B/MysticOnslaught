@@ -103,6 +103,13 @@ namespace
                 else if (std::strcmp(k, "max_targets") == 0) { out.maxTargets = val; out.hasAbility = true; }
                 else if (std::strcmp(k, "move_distance") == 0) { out.moveDistance = val; out.hasAbility = true; }
                 else if (std::strcmp(k, "preview_angle") == 0) { out.previewAngle = val; out.hasAbility = true; }
+                else if (std::strcmp(k, "sig_telegraph") == 0) { out.telegraphTime = val; out.hasSignature = true; }
+                else if (std::strcmp(k, "sig_active") == 0) { out.activeTime = val; out.hasSignature = true; }
+                else if (std::strcmp(k, "sig_recovery") == 0) { out.recoveryTime = val; out.hasSignature = true; }
+                else if (std::strcmp(k, "sig_cooldown") == 0) { out.signatureCooldown = val; out.hasSignature = true; }
+                else if (std::strcmp(k, "sig_travel") == 0) { out.travelDistance = val; out.hasSignature = true; }
+                else if (std::strcmp(k, "sig_phase_speed") == 0) { out.phaseSpeedMult = val; out.hasSignature = true; }
+                else if (std::strcmp(k, "sig_phase_cooldown") == 0) { out.phaseCooldownMult = val; out.hasSignature = true; }
             }
         }
         fclose(f);
@@ -177,6 +184,16 @@ namespace AttackTuningStore
             fprintf(f, "max_targets=%.3f\n", t.maxTargets);
             fprintf(f, "move_distance=%.3f\n", t.moveDistance);
             fprintf(f, "preview_angle=%.3f\n", t.previewAngle);
+        }
+        if (t.hasSignature)
+        {
+            fprintf(f, "sig_telegraph=%.3f\n", t.telegraphTime);
+            fprintf(f, "sig_active=%.3f\n", t.activeTime);
+            fprintf(f, "sig_recovery=%.3f\n", t.recoveryTime);
+            fprintf(f, "sig_cooldown=%.3f\n", t.signatureCooldown);
+            fprintf(f, "sig_travel=%.3f\n", t.travelDistance);
+            fprintf(f, "sig_phase_speed=%.3f\n", t.phaseSpeedMult);
+            fprintf(f, "sig_phase_cooldown=%.3f\n", t.phaseCooldownMult);
         }
 
         fclose(f);

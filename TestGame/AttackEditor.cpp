@@ -3,6 +3,7 @@
 #include "AttackEditor.h"
 #include "AbilityType.h"
 #include "AttackTuning.h"
+#include "GameBalance.h"
 #include "SpreadProjectile.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
@@ -60,6 +61,47 @@ namespace
         for (char c : s)
             out += (c == ' ' || c == '/' || c == '\\' || c == ':') ? '_' : c;
         return out;
+    }
+
+    // ── Elite signature moves ────────────────────────────────────────────────
+    // Defaults mirror the live values in Balance::Elite so the editor shows
+    // exactly what an untuned move does. Travel applies only to movement moves.
+    struct EliteMoveDef
+    {
+        const char* owner; const char* name;
+        float telegraph, active, recovery, cooldown, travel, phaseSpeed, phaseCooldown;
+    };
+    const std::vector<EliteMoveDef>& EliteMoveTable()
+    {
+        namespace Elite = Balance::Elite;
+        static const std::vector<EliteMoveDef> table = {
+            { "Infernal",  "Cinder March",    Elite::kInfernalMarchTelegraph, Elite::kInfernalMarchActive,
+              Elite::kInfernalMarchRecovery,  Elite::kInfernalSignatureCooldown, 0.f, 1.f, 1.f },
+            { "Infernal",  "Furnace Burst",   Elite::kInfernalBurstTelegraph, Elite::kInfernalBurstActive,
+              Elite::kInfernalBurstRecovery,  Elite::kInfernalSignatureCooldown, 0.f, 1.f, 1.f },
+            { "Bonechill", "Permafrost Slam", Elite::kBonechillSlamTelegraph, Elite::kBonechillSlamActive,
+              Elite::kBonechillSlamRecovery,  Elite::kBonechillSignatureCooldown, 0.f,
+              Elite::kBonechillPhaseSpeed,    Elite::kBonechillPhaseCooldownMult },
+            { "Stormclub", "Thunder Leap",    Elite::kStormclubLeapTelegraph, 0.f,
+              Elite::kStormclubHitRecovery,   Elite::kStormclubSignatureCooldown,
+              Elite::kStormclubLeapRange, 1.f, 1.f },
+            { "Venomfang", "Venom Pounce",    Elite::kVenomfangPounceTelegraph, 0.f,
+              Elite::kVenomfangPounceRecovery, Elite::kVenomfangSignatureCooldown,
+              Elite::kVenomfangPounceRange, 1.f, 1.f },
+        };
+        return table;
+    }
+    const EliteMoveDef* FindEliteMoveDef(const std::string& key)
+    {
+        for (const EliteMoveDef& moveDef : EliteMoveTable())
+            if (Sanitise(std::string(moveDef.owner) + "_" + moveDef.name) == key)
+                return &moveDef;
+        // The Ogre's charge lives in the boss table (it doubles as a boss-support
+        // add) but is elite-tunable through the same signature fields.
+        static const EliteMoveDef ogreCharge{ "Ogre", "Charge", 3.0f, 0.f, 0.70f, 6.0f, 0.f, 1.f, 1.f };
+        if (key == "Ogre_Charge")
+            return &ogreCharge;
+        return nullptr;
     }
 
     std::string TuningPath(const std::string& key) { return "attacktuning_" + key + ".txt"; }
@@ -217,6 +259,22 @@ void AttackEditor::BuildList()
             it.previewScale = mv.scale;
             _items.push_back(std::move(it));
         }
+
+    // ── Elite signature moves (their own category — elites are not bosses) ──
+    for (const EliteMoveDef& moveDef : EliteMoveTable())
+    {
+        AttackItem it;
+        it.owner   = moveDef.owner;
+        it.name    = moveDef.name;
+        it.key     = Sanitise(std::string(moveDef.owner) + "_" + moveDef.name);
+        it.isElite = true;
+        _items.push_back(std::move(it));
+    }
+    // The Ogre's charge already exists as a boss-table entry with the same
+    // key — flag it elite so it gains the signature timing rows too.
+    for (AttackItem& item : _items)
+        if (item.key == "Ogre_Charge")
+            item.isElite = true;
 }
 
 void AttackEditor::ReloadFx()
@@ -300,6 +358,35 @@ void AttackEditor::OpenAttack(int index)
     _box = CurrentDefaultBox();
 
     LoadCurrent();     // may override _box AND this item's fxStem
+
+    // Elite entries: seed the signature rows from the coded defaults, then let
+    // any saved sig_* values in the tuning file win.
+    if (it.isElite)
+    {
+        if (const EliteMoveDef* moveDef = FindEliteMoveDef(it.key))
+        {
+            _signatureValues[0] = moveDef->telegraph;
+            _signatureValues[1] = moveDef->active;
+            _signatureValues[2] = moveDef->recovery;
+            _signatureValues[3] = moveDef->cooldown;
+            _signatureValues[4] = moveDef->travel;
+            _signatureValues[5] = moveDef->phaseSpeed;
+            _signatureValues[6] = moveDef->phaseCooldown;
+        }
+        if (const AttackTuning* saved = AttackTuningStore::Get(it.key);
+            saved != nullptr && saved->hasSignature)
+        {
+            if (saved->telegraphTime > 0.f)     _signatureValues[0] = saved->telegraphTime;
+            if (saved->activeTime > 0.f)        _signatureValues[1] = saved->activeTime;
+            if (saved->recoveryTime > 0.f)      _signatureValues[2] = saved->recoveryTime;
+            if (saved->signatureCooldown > 0.f) _signatureValues[3] = saved->signatureCooldown;
+            if (saved->travelDistance > 0.f)    _signatureValues[4] = saved->travelDistance;
+            if (saved->phaseSpeedMult > 0.f)    _signatureValues[5] = saved->phaseSpeedMult;
+            if (saved->phaseCooldownMult > 0.f) _signatureValues[6] = saved->phaseCooldownMult;
+        }
+        _signatureDragRow = -1;
+    }
+
     ReloadFx();        // load the (possibly overridden) sprite
     _screen = Screen::Edit;
     _status.clear();
@@ -365,6 +452,17 @@ void AttackEditor::SaveCurrent()
     merged.y = _box.y;
     merged.w = _box.w;
     merged.h = _box.h;
+    if (_items[_selectedIdx].isElite)
+    {
+        merged.hasSignature      = true;
+        merged.telegraphTime     = _signatureValues[0];
+        merged.activeTime        = _signatureValues[1];
+        merged.recoveryTime      = _signatureValues[2];
+        merged.signatureCooldown = _signatureValues[3];
+        merged.travelDistance    = _signatureValues[4];
+        merged.phaseSpeedMult    = _signatureValues[5];
+        merged.phaseCooldownMult = _signatureValues[6];
+    }
     if (!AttackTuningStore::Save(_items[_selectedIdx].key, merged))
     {
         _status = "SAVE FAILED";
@@ -426,6 +524,14 @@ void AttackEditor::UpdateEdit()
         else { _box = CurrentDefaultBox(); _status = "Hitbox reset to default"; }
     }
     if (IsKeyPressed(KEY_S))      SaveCurrent();
+
+    // Elite entries: the signature timing rows own the mouse while dragging.
+    if (_items[_selectedIdx].isElite)
+    {
+        UpdateSignatureRows();
+        if (_signatureDragRow >= 0)
+            return;
+    }
 
     // FX playback
     if (_fxFrames > 1)
@@ -752,7 +858,9 @@ void AttackEditor::DrawEdit()
     // Header + values.
     DrawRectangle(0, 0, (int)sw, 40, Fade(BLACK, 0.75f));
     DrawText(TextFormat("%s  -  %s", it.owner.c_str(), it.name.c_str()), 12, 8, 26, GOLD);
-    if (it.isElemental)
+    if (it.isElite)
+        DrawText("(ELITE - drag the timing rows; S saves live)", (int)(sw - 500.f), 12, 20, Color{ 255, 196, 96, 255 });
+    else if (it.isElemental)
         DrawText("(elemental - real projectile / blast sprite)", (int)(sw - 480.f), 12, 20, Color{ 130, 200, 160, 255 });
     else if (it.fxStem.empty())
         DrawText("(boss visual - Phase 3; tune the box for now)", (int)(sw - 500.f), 12, 20, Color{ 200, 160, 120, 255 });
@@ -769,5 +877,93 @@ void AttackEditor::DrawEdit()
     if (!_status.empty())
         DrawText(_status.c_str(), (int)(sw - MeasureText(_status.c_str(), 22) - 16.f), (int)(sh - 54.f), 22, Color{ 150, 230, 150, 255 });
 
+    if (it.isElite)
+        DrawSignatureRows();
+
     if (_fxPickerOpen) DrawFxPicker();
+}
+
+// ── Elite signature timing rows ──────────────────────────────────────────────
+namespace
+{
+    struct SignatureRowSpec { const char* label; float perPixel; float minValue; float maxValue; };
+    // Row order matches _signatureValues: telegraph, active, recovery,
+    // cooldown, travel, phase-two speed x, phase-two cooldown x.
+    constexpr SignatureRowSpec kSignatureRows[7] = {
+        { "Telegraph (s)",    0.01f, 0.10f,  6.f },
+        { "Active (s)",       0.01f, 0.00f,  6.f },
+        { "Recovery (s)",     0.01f, 0.10f,  4.f },
+        { "Cooldown (s)",     0.02f, 0.50f, 20.f },
+        { "Travel (px)",      1.00f, 0.00f, 1400.f },
+        { "P2 Speed x",       0.005f, 0.50f, 2.f },
+        { "P2 Cooldown x",    0.005f, 0.30f, 2.f },
+    };
+    Rectangle SignatureRowRect(int rowIndex)
+    {
+        return Rectangle{ (float)kVirtualWidth - 420.f, 90.f + rowIndex * 46.f, 400.f, 40.f };
+    }
+}
+
+void AttackEditor::UpdateSignatureRows()
+{
+    Vector2 mouse = GetVirtualMousePos();
+
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _signatureDragRow < 0)
+    {
+        for (int rowIndex = 0; rowIndex < 7; ++rowIndex)
+        {
+            if (!CheckCollisionPointRec(mouse, SignatureRowRect(rowIndex)))
+                continue;
+            _signatureDragRow = rowIndex;
+            _signatureDragStartValue = _signatureValues[rowIndex];
+            _signatureDragMouseStart = mouse;
+            break;
+        }
+    }
+    if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && _signatureDragRow >= 0)
+    {
+        const SignatureRowSpec& spec = kSignatureRows[_signatureDragRow];
+        float deltaX = mouse.x - _signatureDragMouseStart.x;
+        _signatureValues[_signatureDragRow] = std::clamp(
+            _signatureDragStartValue + deltaX * spec.perPixel, spec.minValue, spec.maxValue);
+    }
+    if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+        _signatureDragRow = -1;
+}
+
+void AttackEditor::DrawSignatureRows() const
+{
+    DrawText("ELITE SIGNATURE  (drag rows)", (int)SignatureRowRect(0).x, 62, 20,
+             Color{ 255, 196, 96, 255 });
+    for (int rowIndex = 0; rowIndex < 7; ++rowIndex)
+    {
+        Rectangle row = SignatureRowRect(rowIndex);
+        bool dragging = (_signatureDragRow == rowIndex);
+        DrawRectangleRounded(row, 0.25f, 6, Fade(Color{ 40, 44, 58, 255 }, dragging ? 1.f : 0.85f));
+        DrawRectangleRoundedLines(row, 0.25f, 6, Fade(dragging ? GOLD : WHITE, dragging ? 0.8f : 0.18f));
+        DrawText(TextFormat("%s: %.2f", kSignatureRows[rowIndex].label, _signatureValues[rowIndex]),
+                 (int)row.x + 12, (int)row.y + 10, 20, RAYWHITE);
+    }
+
+    // Proportional beat timeline: Telegraph -> Active -> Recovery, so the
+    // rhythm of the move is visible while dragging.
+    const float total = std::max(0.15f,
+        _signatureValues[0] + _signatureValues[1] + _signatureValues[2]);
+    Rectangle bar{ SignatureRowRect(6).x, SignatureRowRect(6).y + 56.f, 400.f, 20.f };
+    float cursorX = bar.x;
+    const Color segmentColors[3] = { Color{ 255, 200, 80, 255 },    // telegraph
+                                     Color{ 255, 90, 70, 255 },     // active
+                                     Color{ 110, 200, 255, 255 } }; // recovery
+    const char* segmentLabels[3] = { "warn", "hit", "punish" };
+    for (int segment = 0; segment < 3; ++segment)
+    {
+        float width = bar.width * (_signatureValues[segment] / total);
+        DrawRectangleRec({ cursorX, bar.y, width, bar.height }, Fade(segmentColors[segment], 0.8f));
+        if (width > 44.f)
+            DrawText(segmentLabels[segment], (int)cursorX + 4, (int)bar.y + 3, 14, BLACK);
+        cursorX += width;
+    }
+    DrawRectangleLinesEx(bar, 1.f, Fade(WHITE, 0.4f));
+    DrawText(TextFormat("beat: %.2fs total", total), (int)bar.x, (int)(bar.y + 24.f), 16,
+             Color{ 175, 170, 190, 255 });
 }

@@ -1,6 +1,7 @@
 ﻿#include "Ogre.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
+#include "AttackTuning.h"
 #include "VirtualCanvas.h"
 
 #include "raymath.h"
@@ -553,8 +554,11 @@ void Ogre::HandleRepositioning(float dt, Vector2 navigationTarget, bool hasNavig
         _rushState = RushState::Charging;
         _chargeTimer = 0.f;
         // A fresh sequence: one charge normally, two after SECOND WIND.
+        // Attack Library tuning (attacktuning_Ogre_Charge.txt) overrides the
+        // telegraph length when authored.
         _chargesRemaining = NextOgreChargeCount(IsElitePhaseTwo());
-        _activeChargeDuration = _chargeDurationInst;
+        _activeChargeDuration = EliteSignatureValueOr(AttackTuningStore::Get("Ogre_Charge"),
+                                                      &AttackTuning::telegraphTime, _chargeDurationInst);
         _eliteSignatureCasts++;
         EmitEliteEvent({ EliteEventKind::Telegraph, EliteArchetype::Ogre,
                          EliteMove::OgreCharge, 0, _worldPos, _target->GetFeetWorldPos() });
@@ -848,14 +852,22 @@ void Ogre::FinishRush(bool stunnedOnImpact)
 
     _chargesRemaining = std::max(0, _chargesRemaining - 1);
 
+    // Attack Library tuning: authored recovery (stun) and cooldown win over the
+    // coded defaults; the wall-stun floor still applies regardless.
+    const AttackTuning* signatureTuning = AttackTuningStore::Get("Ogre_Charge");
+    const float tunedCooldown = EliteSignatureValueOr(signatureTuning,
+        &AttackTuning::signatureCooldown, _chargeCooldownDurationInst);
+
     if (stunnedOnImpact)
     {
         // Wall impact: the PRIMARY punish window. Ends the whole sequence and
         // must stay long enough for every class to land one meaningful ability.
         _chargesRemaining = 0;
         _rushState = RushState::Stunned;
-        _stunTimer = std::max(_stunDuration, Balance::Elite::kOgreWallStunMin);
-        _rushCooldown = _chargeCooldownDurationInst;
+        _stunTimer = std::max(EliteSignatureValueOr(signatureTuning,
+                                  &AttackTuning::recoveryTime, _stunDuration),
+                              Balance::Elite::kOgreWallStunMin);
+        _rushCooldown = tunedCooldown;
         EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
                          EliteMove::OgreCharge, 0, _worldPos });
     }
@@ -870,7 +882,7 @@ void Ogre::FinishRush(bool stunnedOnImpact)
     {
         _rushState = RushState::Repositioning;
         _stunTimer = 0.f;
-        _rushCooldown = _chargeCooldownDurationInst;
+        _rushCooldown = tunedCooldown;
         EmitEliteEvent({ EliteEventKind::Recover, EliteArchetype::Ogre,
                          EliteMove::OgreCharge, 0, _worldPos });
     }

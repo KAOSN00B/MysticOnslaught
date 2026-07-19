@@ -41,6 +41,7 @@ private:
         std::string key;      // save key: "<owner>_<name>" sanitised
         std::string fxStem;   // FX_<stem>.png (empty = no strip, projectile/blast)
         bool        isBoss = false;
+        bool        isElite = false;  // elite signature move (timing rows + timeline)
         bool        isElemental = false;  // Fire/Ice/Electric Spread/Bolt/Ultimate
         int         abilityIdx  = -1;     // (int)AbilityType for player abilities
         bool        circleHit = false;    // default hitbox shape
@@ -99,6 +100,17 @@ private:
     std::vector<std::string> _fxCatalog;   // available FX stems, scanned once
     bool  _fxPickerOpen   = false;
     float _fxPickerScroll = 0.f;
+
+    // ── Elite signature timing (Elite category only) ──
+    // Seven drag-to-nudge value rows (Telegraph / Active / Recovery / Cooldown
+    // / Travel / P2 Speed x / P2 Cooldown x) plus a proportional timeline bar.
+    // Saved into the same attacktuning file under the sig_* keys.
+    void  UpdateSignatureRows();
+    void  DrawSignatureRows() const;
+    float _signatureValues[7] = {};
+    int   _signatureDragRow = -1;
+    float _signatureDragStartValue = 0.f;
+    Vector2 _signatureDragMouseStart{};
 
     // ── Controls / help overlay ──
     bool  _helpOpen = false;

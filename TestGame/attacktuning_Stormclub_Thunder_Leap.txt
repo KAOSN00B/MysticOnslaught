@@ -1,0 +1,7 @@
+sig_telegraph=0.700
+sig_active=0.000
+sig_recovery=0.700
+sig_cooldown=5.000
+sig_travel=520.000
+sig_phase_speed=1.000
+sig_phase_cooldown=1.000

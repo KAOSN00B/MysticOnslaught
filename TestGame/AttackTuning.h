@@ -40,6 +40,19 @@ struct AttackTuning
     bool  hasCooldown  = false;
     float cooldown     = 0.f;    // seconds between shots (basic attack cadence)
 
+    // ── Elite signature timing (Attack Library "Elite" category) ────────────
+    // Telegraph → Active → Recovery seconds, the cooldown between signatures,
+    // travel distance for movement moves (leap/pounce), and the phase-two
+    // multipliers. Unset = the coded defaults in Balance::Elite.
+    bool  hasSignature = false;
+    float telegraphTime = 0.f;
+    float activeTime = 0.f;
+    float recoveryTime = 0.f;
+    float signatureCooldown = 0.f;
+    float travelDistance = 0.f;
+    float phaseSpeedMult = 1.f;
+    float phaseCooldownMult = 1.f;
+
     // Generic ability-lab values. These describe gameplay geometry/timing and
     // are intentionally class-agnostic so every class can use the same editor.
     bool  hasAbility = false;
@@ -62,6 +75,17 @@ const char* AttackOwnerForAbility(int abilityIdx);     // Mage/Warrior/... by en
 std::string AttackSanitise(const std::string& s);
 std::string AttackTuningKey(const std::string& owner, const std::string& name);
 std::string AttackTuningKeyForAbility(AbilityType ability);
+
+// Resolve one elite signature value: the saved tuning wins when its group is
+// present and the value is meaningful (> 0), otherwise the coded default.
+// Used by every elite so tuned and untuned moves flow through one rule.
+inline float EliteSignatureValueOr(const AttackTuning* tuning,
+                                   float AttackTuning::*field, float fallback)
+{
+    if (tuning != nullptr && tuning->hasSignature && tuning->*field > 0.f)
+        return tuning->*field;
+    return fallback;
+}
 
 namespace AttackTuningStore
 {
