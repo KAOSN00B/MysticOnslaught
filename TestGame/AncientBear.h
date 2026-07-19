@@ -41,6 +41,12 @@ public:
     bool UsesDirectPursuit() const override { return true; }
 
     bool ConsumeImpactShakeRequest();
+    // CombatDirector reads these so the slam's impact ART matches the warned
+    // shape (bursts around the ring / along the wedge, not just at his feet).
+    int   GetSlamVariant() const { return _slamVariant; }
+    float GetSlamWedgeAngle() const { return _slamWedgeAngle; }
+    float GetSlamRingMidRadius() const { return (_slamRingInnerRadius + _slamRingOuterRadius) * 0.5f; }
+    float GetSlamWedgeReach() const { return _slamWedgeRadius; }
 
     // ── Hybrid encounter pattern: Dream Collapse ─────────────────────────────
     // Every slam draws its danger shape during the windup, and the SHAPE is

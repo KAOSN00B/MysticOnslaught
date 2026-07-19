@@ -792,6 +792,11 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
                         EnemyProjectileKind::FireBolt, osiris->GetAttackPower(), "Osiris_Judgement_Nova");
                     ctx.enemyProjectiles->push_back(bolt);
                 }
+                // Release flash: the judgement ring erupts from real cast art,
+                // not just spawning bolts out of thin air.
+                if (ctx.spawnEliteFx)
+                    ctx.spawnEliteFx(osiris->GetWorldPos(), (int)BossFx::DivineSlash,
+                                     6.f, Color{ 255, 225, 130, 255 });
                 osiris->OnNovaCast();
             }
             // Wrath Volley — tight aimed fan.
@@ -870,7 +875,35 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (bear->ConsumeImpactShakeRequest())
             {
                 if (ctx.triggerScreenShake) ctx.triggerScreenShake(12.f, 0.22f);
+                // The impact ART matches the warned SHAPE: the disc bursts at
+                // his feet, the ring scatters bursts around the band, and the
+                // wedge bursts march down the sector's centreline.
                 if (ctx.spawnBossFx) ctx.spawnBossFx(bear->GetWorldPos(), (int)BossFx::CrushingSlam);
+                if (ctx.spawnEliteFx)
+                {
+                    const Vector2 bearPosition = bear->GetWorldPos();
+                    const Color dreamPurple{ 210, 150, 255, 255 };
+                    if (bear->GetSlamVariant() == 1)
+                    {
+                        const float ringRadius = bear->GetSlamRingMidRadius();
+                        for (int burstIndex = 0; burstIndex < 4; ++burstIndex)
+                        {
+                            const float burstAngle = (float)burstIndex * (PI * 0.5f) + 0.4f;
+                            ctx.spawnEliteFx(Vector2{ bearPosition.x + cosf(burstAngle) * ringRadius,
+                                                      bearPosition.y + sinf(burstAngle) * ringRadius },
+                                             (int)BossFx::CrushingSlam, 4.2f, dreamPurple);
+                        }
+                    }
+                    else if (bear->GetSlamVariant() == 2)
+                    {
+                        const float wedgeAngle = bear->GetSlamWedgeAngle();
+                        const float wedgeReach = bear->GetSlamWedgeReach();
+                        for (float along = wedgeReach * 0.4f; along <= wedgeReach; along += wedgeReach * 0.3f)
+                            ctx.spawnEliteFx(Vector2{ bearPosition.x + cosf(wedgeAngle) * along,
+                                                      bearPosition.y + sinf(wedgeAngle) * along },
+                                             (int)BossFx::CrushingSlam, 4.2f, dreamPurple);
+                    }
+                }
             }
         }
     }
@@ -1099,9 +1132,12 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
 
     case EliteMove::MolarbeastCharge:
         // The boss body owns the charge damage (its dash handler); Execute
-        // marks the launch beat for sound and one combined shake.
+        // marks the launch beat with dust art, sound, and one combined shake.
         if (event.kind == EliteEventKind::Execute)
+        {
+            spawnFx(event.origin, BossFx::DashDust, 5.f, fireOrange);
             impactFeedback(6.f, 0.15f);
+        }
         break;
 
     case EliteMove::MolarbeastLavaTrail:
