@@ -53,6 +53,15 @@ public:
 
     bool ConsumeImpactShakeRequest();
 
+    // ── Hybrid encounter pattern: Labyrinth Charge ───────────────────────────
+    // The rush lane draws on the floor and LOCKS partway through the windup —
+    // after the lock the line never turns, so baiting it into a wall is a read,
+    // not a guess. Chained charges each re-telegraph through the same lane.
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
 private:
     enum class State
     {
@@ -92,6 +101,8 @@ private:
     Vector2 _rushDirection{ 1.f, 0.f };
     float _rushTravelled   = 0.f;
     bool  _rushHitPlayer   = false;
+    bool  _rushLocked      = false;   // lane frozen at 70% of the windup
+    static constexpr float _rushLockFraction = 0.70f;
     int   _rushChainRemaining = 0;   // enraged: extra rushes queued after this one
     float _stompRingRadius = 0.f;
     bool  _stompDamageApplied = false;

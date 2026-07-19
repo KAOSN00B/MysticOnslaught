@@ -91,7 +91,9 @@ void Minotaur::ResetForSpawn(Vector2 pos)
     _rushDirection   = Vector2{ 1.f, 0.f };
     _rushTravelled   = 0.f;
     _rushHitPlayer   = false;
+    _rushLocked      = false;
     _rushChainRemaining = 0;
+    ClearEliteEvents();
     _stompRingRadius = 0.f;
     _stompDamageApplied   = false;
     _pendingPhaseStomp    = false;
@@ -186,7 +188,11 @@ void Minotaur::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget
         // Phase transition: a ground-splitting stomp, fired once he's neutral so it
         // never cuts off a rush mid-charge.
         int newPhase = ConsumePhaseChange();
-        if (newPhase >= 0) { _pendingPhaseStomp = true; _impactShakeRequested = true; }
+        if (newPhase >= 0)
+        {
+            _pendingPhaseStomp = true; _impactShakeRequested = true;
+            RequestBossCallout(newPhase >= 2 ? "LABYRINTH CHARGE" : "ENRAGED CHARGE");
+        }
         if (_pendingPhaseStomp && (_state == State::Chasing || _state == State::Recovery))
         {
             _pendingPhaseStomp = false;
@@ -237,6 +243,7 @@ void Minotaur::HandleChasing(float dt, Vector2 heroWorldPos)
     {
         _state = State::RushWindup;
         _stateTimer = 0.f;
+        _rushLocked = false;
         // Chained charges scale with the phase: 1 extra at phase 1, 2 extra (triple) at phase 2.
         _rushChainRemaining = (GetPhase() >= 2) ? 2 : (GetPhase() >= 1 ? 1 : 0);
         SetAnimation(_sharedWalkAnim, 1.f / 16.f, true);   // fast paw-the-ground shuffle
@@ -301,14 +308,22 @@ void Minotaur::HandleRushWindup(float dt)
     _velocity = Vector2Zero();
     _stateTimer += dt;
 
-    // Keep re-aiming during the windup; the charge line locks on release.
-    if (_target != nullptr)
+    // The lane re-aims for most of the windup, then LOCKS at 70% — the frozen
+    // line gives the player a real reaction beat, and after the lock the
+    // charge can never silently turn.
+    if (!_rushLocked && _target != nullptr)
     {
         Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
         if (toPlayer.x < 0.f) _rightLeft = -1.f;
         if (toPlayer.x > 0.f) _rightLeft =  1.f;
         if (Vector2LengthSqr(toPlayer) > 0.0001f)
             _rushDirection = Vector2Normalize(toPlayer);
+        if (_stateTimer >= _rushWindupDuration * _rushLockFraction)
+        {
+            _rushLocked = true;
+            EmitEliteEvent({ EliteEventKind::Lock, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos, {}, _rushDirection });
+        }
     }
 
     if (_stateTimer >= _rushWindupDuration)
@@ -369,6 +384,7 @@ void Minotaur::EndRush(bool crashedIntoWall)
         _rushChainRemaining--;
         _state = State::RushWindup;
         _stateTimer = _rushWindupDuration - _rushChainWindup;   // short re-aim only
+        _rushLocked = false;   // the chained lane re-telegraphs and re-locks
         SetAnimation(_sharedWalkAnim, 1.f / 16.f, true);
         return;
     }
@@ -506,6 +522,60 @@ bool Minotaur::ConsumeImpactShakeRequest()
     bool requested = _impactShakeRequested;
     _impactShakeRequested = false;
     return requested;
+}
+
+void Minotaur::DrawEliteTelegraph() const
+{
+    // Bull Rush lane: tracks the player through the windup, freezes at the
+    // lock. Reading the frozen lane and stepping OUT of it (ideally baiting
+    // the crash into a wall) is the whole matador dance.
+    if (_state != State::RushWindup)
+        return;
+
+    const float laneLength = _rushMaxDistance;
+    const float laneHalfWidth = 85.f;
+    Vector2 laneEnd = Vector2Add(_worldPos, Vector2Scale(_rushDirection, laneLength));
+    Vector2 side{ -_rushDirection.y, _rushDirection.x };
+
+    const float windupRatio = std::clamp(_stateTimer / _rushWindupDuration, 0.f, 1.f);
+    Color laneColor = _rushLocked
+        ? Fade(Color{ 255,  70,  50, 255 }, 0.30f)
+        : Fade(Color{ 255, 150,  60, 255 }, 0.12f + 0.14f * windupRatio);
+
+    Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  laneHalfWidth));
+    Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerC = Vector2Add(laneEnd,   Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerD = Vector2Add(laneEnd,   Vector2Scale(side,  laneHalfWidth));
+    DrawTriangle(cornerA, cornerB, cornerC, laneColor);
+    DrawTriangle(cornerA, cornerC, cornerD, laneColor);
+    DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 255, 120, 80, 255 }, 0.6f));
+    DrawLineEx(cornerB, cornerC, 2.f, Fade(Color{ 255, 120, 80, 255 }, 0.6f));
+}
+
+void Minotaur::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _state != State::Chasing)
+        return;
+    _rushCooldown = 0.f;   // the signature IS the rush — force it off cooldown
+}
+
+void Minotaur::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* Minotaur::GetEliteSignatureStateName() const
+{
+    switch (_state)
+    {
+    case State::RushWindup:  return _rushLocked ? "RushLocked" : "RushWindup";
+    case State::Rushing:     return "Rushing";
+    case State::Stunned:     return "WallStunned";
+    case State::StompWindup: return "StompWindup";
+    case State::Stomping:    return "Stomping";
+    default:                 return "Pursuit";
+    }
 }
 
 // =============================================================================
