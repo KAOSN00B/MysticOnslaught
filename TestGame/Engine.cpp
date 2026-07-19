@@ -2874,6 +2874,9 @@ void Engine::UpdateGamePlay(float dt)
             { SpawnEliteFx(pos, fxId, scale, tint); };
         enemyRuntimeCtx.spawnEliteHazardFx = [&](Vector2 pos, int fxId, float scale, float duration, Color tint)
             { SpawnEliteHazardFx(pos, fxId, scale, duration, tint); };
+        enemyRuntimeCtx.triggerScreenFlash = [&](Color color, float duration)
+            { TriggerScreenFlash(color, duration); };
+        enemyRuntimeCtx.requestHitStop = [&](float seconds) { RequestHitStop(seconds); };
         RebuildEnemyHazardZones();
         enemyRuntimeCtx.hazards = &_enemyHazardZones;
         _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
@@ -20047,6 +20050,9 @@ void Engine::UpdateDungeonRun(float dt)
             { SpawnEliteFx(pos, fxId, scale, tint); };
         eCtx.spawnEliteHazardFx = [&](Vector2 pos, int fxId, float scale, float duration, Color tint)
             { SpawnEliteHazardFx(pos, fxId, scale, duration, tint); };
+        eCtx.triggerScreenFlash = [&](Color color, float duration)
+            { TriggerScreenFlash(color, duration); };
+        eCtx.requestHitStop     = [&](float seconds) { RequestHitStop(seconds); };
         RebuildEnemyHazardZones();
         eCtx.hazards            = &_enemyHazardZones;
         _combatDirector.UpdateEnemyRuntime(eCtx, dt);

@@ -123,6 +123,11 @@ struct EnemyRuntimeContext
     // simple shapes remain only for warnings/targeting. Safe no-ops if unset.
     std::function<void(Vector2, int, float, Color)> spawnEliteFx;
     std::function<void(Vector2, int, float, float, Color)> spawnEliteHazardFx;
+    // Brief full-screen tint (phase transitions). Safe no-op if unset.
+    std::function<void(Color, float)> triggerScreenFlash;
+    // A few frames of gameplay freeze on the heaviest impacts (wall crashes,
+    // slams) — same juice primitive player hits already use. Safe no-op if unset.
+    std::function<void(float)> requestHitStop;
 };
 
 struct EnemyDeathContext

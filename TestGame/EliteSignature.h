@@ -130,6 +130,7 @@ struct EliteAttackZone
     float              radius = 0.f;             // disc radius / lane half-width
     float              halfAngleRadians = 0.f;   // cones only
     float              telegraphRemaining = 0.f; // no damage until this reaches zero
+    float              telegraphDuration = 0.f;  // authored warning length (drives the arm-up ramp)
     float              activeRemaining = 0.f;
     float              tickInterval = 0.f;       // 0 = one-shot zone
     float              tickRemaining = 0.f;

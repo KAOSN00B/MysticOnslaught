@@ -1555,6 +1555,21 @@ void Enemy::DrawHealthBar(Vector2 screenPos, float w, float h)
 
     DrawRectangle((int)barX, (int)barY, (int)barWidth, (int)_healthBarHeight, RED);
     DrawRectangle((int)barX, (int)barY, (int)(barWidth * healthPercent), (int)_healthBarHeight, GREEN);
+
+    // Phase notches: bosses and elites show their escalation gates (66%/33% or
+    // the elite 50%) as ticks on the bar, so the player can SEE the next phase
+    // coming and plan cooldowns around it — classic roguelite readability.
+    if ((IsBoss() || _isEliteMiniboss) && !_phaseThresholds.empty())
+    {
+        for (float thresholdFraction : _phaseThresholds)
+        {
+            const int notchX = (int)(barX + barWidth * thresholdFraction);
+            DrawRectangle(notchX - 1, (int)(barY - 2.f), 2,
+                          (int)_healthBarHeight + 4, Color{ 20, 16, 12, 255 });
+            DrawRectangle(notchX, (int)barY, 1,
+                          (int)_healthBarHeight, Color{ 255, 220, 130, 255 });
+        }
+    }
 }
 
 void Enemy::SetSpriteSheet(const Texture2D& sheet, int frameCount, float frameTime, bool resetFrame)

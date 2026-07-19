@@ -671,6 +671,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (abyssSlime->ConsumeImpactShakeRequest())
             {
                 if (ctx.triggerScreenShake) ctx.triggerScreenShake(9.f, 0.16f);
+                if (ctx.requestHitStop) ctx.requestHitStop(0.045f);
                 if (ctx.spawnBossFx) ctx.spawnBossFx(abyssSlime->GetWorldPos(), (int)BossFx::SlimeSlam);
             }
         }
@@ -717,6 +718,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (minotaur->ConsumeImpactShakeRequest())
             {
                 if (ctx.triggerScreenShake) ctx.triggerScreenShake(10.f, 0.18f);
+                if (ctx.requestHitStop) ctx.requestHitStop(0.05f);
                 if (ctx.spawnBossFx) ctx.spawnBossFx(minotaur->GetWorldPos(), (int)BossFx::CrushingSlam);
             }
         }
@@ -832,6 +834,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (titanGuard->ConsumeImpactShakeRequest())
             {
                 if (ctx.triggerScreenShake) ctx.triggerScreenShake(11.f, 0.2f);
+                if (ctx.requestHitStop) ctx.requestHitStop(0.05f);
                 if (ctx.spawnBossFx) ctx.spawnBossFx(titanGuard->GetWorldPos(), (int)BossFx::BulwarkSlam);
             }
         }
@@ -875,6 +878,7 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
             if (bear->ConsumeImpactShakeRequest())
             {
                 if (ctx.triggerScreenShake) ctx.triggerScreenShake(12.f, 0.22f);
+                if (ctx.requestHitStop) ctx.requestHitStop(0.055f);
                 // The impact ART matches the warned SHAPE: the disc bursts at
                 // his feet, the ring scatters bursts around the band, and the
                 // wedge bursts march down the sector's centreline.
@@ -988,16 +992,29 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
         return;
 
     case EliteEventKind::Lock:
-        return;   // the lock beat is visual (warning freezes); no zone, no sound
+        // The lock beat is FELT, not just seen: a short mechanical click as
+        // the warning freezes, so "it can no longer turn" registers by ear.
+        sfx.Play(SfxId::TrapArm, 0.5f);
+        return;
 
     case EliteEventKind::PhaseChange:
         sfx.PlayElitePhase();
         if (ctx.triggerScreenShake)
             ctx.triggerScreenShake(10.f, 0.3f);
+        // A brief red wash + a few frozen frames sell the escalation as an
+        // EVENT (Diablo-style), not just a stat change.
+        if (ctx.triggerScreenFlash)
+            ctx.triggerScreenFlash(Color{ 255, 70, 50, 255 }, 0.14f);
+        if (ctx.requestHitStop)
+            ctx.requestHitStop(0.06f);
         return;
 
     case EliteEventKind::Recover:
-        return;   // punish window — intentionally quiet
+        // Punish window opens: announce it so players LEARN the rhythm —
+        // dodging well is what buys these moments.
+        if (ctx.spawnBossCallout)
+            ctx.spawnBossCallout(event.origin, "WIDE OPEN");
+        return;
 
     case EliteEventKind::Execute:
     case EliteEventKind::TrailPatch:
@@ -1153,6 +1170,7 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->start = event.origin;
                 zone->radius = 78.f;
                 zone->telegraphRemaining = 0.45f;   // visible ignition delay
+                zone->telegraphDuration = 0.45f;
                 zone->activeRemaining = 2.6f;
                 zone->tickInterval = 0.55f;
                 zone->tickRemaining = 0.1f;
@@ -1177,6 +1195,7 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                                      event.origin.y + event.direction.y * 430.f };
                 zone->radius = 55.f;
                 zone->telegraphRemaining = 0.4f;
+                zone->telegraphDuration = 0.4f;
                 zone->activeRemaining = 0.22f;
                 zone->damage = 1.f;
             }
@@ -1354,8 +1373,12 @@ void CombatDirector::DrawEliteWorld(const std::vector<std::unique_ptr<Enemy>>& e
 
         if (zone.telegraphRemaining > 0.f)
         {
-            const Color warnFill = Fade(Color{ 255, 120, 60, 255 }, 0.20f);
-            const Color warnEdge = Fade(Color{ 255, 170, 90, 255 }, 0.65f);
+            // Arm-up ramp: the warning brightens as the strike approaches, so
+            // "leave NOW" reads at a glance without watching a timer.
+            const float armProgress = (zone.telegraphDuration > 0.01f)
+                ? 1.f - zone.telegraphRemaining / zone.telegraphDuration : 1.f;
+            const Color warnFill = Fade(Color{ 255, 120, 60, 255 }, 0.10f + 0.18f * armProgress);
+            const Color warnEdge = Fade(Color{ 255, 170, 90, 255 }, 0.35f + 0.45f * armProgress);
             if (zone.shape == EliteZoneShape::Lane)
             {
                 Vector2 laneDelta = Vector2Subtract(zone.end, zone.start);
