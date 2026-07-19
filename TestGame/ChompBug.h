@@ -47,6 +47,12 @@ public:
     int     GetSpitCount() const { return _spitCount; }
     void    OnSpitFired();
 
+    // ── Hybrid encounter pattern: Acid Crossfire ─────────────────────────────
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     // Character Animator support
     const char* GetTuningName() const override { return "ChompBug"; }
     int         GetEditorAnimCount() const override { return 6; }
@@ -82,6 +88,9 @@ private:
     Vector2 _diveEnd{};
     float _diveTimer       = 0.f;
     bool  _diveHitApplied  = false;
+    bool  _diveLocked      = false;   // line frozen at 70% of the aim
+    float _strafeSide      = 1.f;     // crossfire globs alternate sides of the lane
+    static constexpr float _diveLockFraction = 0.70f;
     int   _diveChainRemaining = 0;    // phase 1+: back-to-back dives
     float _strafeSpitTimer = 0.f;     // phase 2: drops globs along the dive path
     bool  _pendingPhaseDive = false;  // phase change opens with a dive

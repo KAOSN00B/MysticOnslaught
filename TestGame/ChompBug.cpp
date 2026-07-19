@@ -64,8 +64,11 @@ void ChompBug::ResetForSpawn(Vector2 pos)
     _orbitSign = (GetRandomValue(0, 1) == 0) ? -1.f : 1.f;
     _diveTimer = 0.f;
     _diveHitApplied = false;
+    _diveLocked = false;
+    _strafeSide = 1.f;
     _diveChainRemaining = 0;
     _strafeSpitTimer = 0.f;
+    ClearEliteEvents();
     _pendingPhaseDive = false;
     _pendingSpit = false;
     _spitDirection = Vector2Zero();
@@ -145,7 +148,11 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         // Each phase change opens with a dive-bomb (queued until it's orbiting).
         int newPhase = ConsumePhaseChange();
-        if (newPhase >= 0) _pendingPhaseDive = true;
+        if (newPhase >= 0)
+        {
+            _pendingPhaseDive = true;
+            RequestBossCallout(newPhase >= 2 ? "ACID CROSSFIRE" : "TWIN SWOOP");
+        }
         if (_pendingPhaseDive && !controlled && _state == State::Orbiting)
         {
             _pendingPhaseDive = false;
@@ -179,6 +186,7 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (_diveCooldown <= 0.f)
             {
                 _state = State::DiveAiming; _stateTimer = 0.f;
+                _diveLocked = false;
                 _diveChainRemaining = (GetPhase() >= 1) ? 1 : 0;   // double dive from phase 1
                 SetAnimation(_sharedIdleAnim, 1.f / 12.f, true);
             }
@@ -194,17 +202,23 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         case State::DiveAiming:
         {
             _stateTimer += dt;
-            // Line locks through the player with overshoot on both ends.
-            Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
-            if (Vector2LengthSqr(toPlayer) > 0.0001f)
-            {
-                Vector2 dir = Vector2Normalize(toPlayer);
-                _diveStart = _worldPos;
-                _diveEnd = Vector2Add(_target->GetFeetWorldPos(), Vector2Scale(dir, _diveOvershoot));
-                _diveEnd.x = std::clamp(_diveEnd.x, 150.f, (float)kVirtualWidth  - 150.f);
-                _diveEnd.y = std::clamp(_diveEnd.y, 150.f, (float)kVirtualHeight - 150.f);
-            }
             float aimDuration = IsEnraged() ? _diveAimDuration * 0.7f : _diveAimDuration;
+            // The strafing line tracks the player through the aim, then LOCKS
+            // at 70% — after the lock the dive can never curve.
+            if (!_diveLocked)
+            {
+                Vector2 toPlayer = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+                if (Vector2LengthSqr(toPlayer) > 0.0001f)
+                {
+                    Vector2 dir = Vector2Normalize(toPlayer);
+                    _diveStart = _worldPos;
+                    _diveEnd = Vector2Add(_target->GetFeetWorldPos(), Vector2Scale(dir, _diveOvershoot));
+                    _diveEnd.x = std::clamp(_diveEnd.x, 150.f, (float)kVirtualWidth  - 150.f);
+                    _diveEnd.y = std::clamp(_diveEnd.y, 150.f, (float)kVirtualHeight - 150.f);
+                }
+                if (_stateTimer >= aimDuration * _diveLockFraction)
+                    _diveLocked = true;
+            }
             if (_stateTimer >= aimDuration)
             {
                 _state = State::Diving;
@@ -230,27 +244,36 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
             }
 
-            // Strafe Barrage (phase 2): rain acid globs along the swoop path.
+            // Acid Crossfire (phase 2): globs fire PERPENDICULAR to the locked
+            // dive lane, alternating sides — an authored crossfire with gaps
+            // between the volleys, never a mid-dive aim at the player. The
+            // dodge that beat the dive also beats the crossfire wedge.
             if (GetPhase() >= 2 && !_pendingSpit)
             {
                 _strafeSpitTimer -= dt;
                 if (_strafeSpitTimer <= 0.f)
                 {
-                    _strafeSpitTimer = 0.12f;
-                    Vector2 aim = Vector2Subtract(_target->GetFeetWorldPos(), _worldPos);
+                    _strafeSpitTimer = 0.16f;
+                    Vector2 laneDelta = Vector2Subtract(_diveEnd, _diveStart);
+                    Vector2 laneDirection = (Vector2LengthSqr(laneDelta) > 0.0001f)
+                        ? Vector2Normalize(laneDelta) : Vector2{ 1.f, 0.f };
                     _pendingSpit = true;
-                    _spitDirection = (Vector2LengthSqr(aim) > 0.0001f) ? Vector2Normalize(aim) : Vector2{ 0.f, 1.f };
+                    _spitDirection = Vector2{ -laneDirection.y * _strafeSide,
+                                              laneDirection.x * _strafeSide };
+                    _strafeSide = -_strafeSide;
                     _spitCount = 2;
                 }
             }
 
             if (t >= 1.f)
             {
-                // Double Dive: re-aim and swoop again before recovering.
+                // Double Dive: re-aim and swoop again before recovering. The
+                // second lane re-telegraphs and re-locks like the first.
                 if (_diveChainRemaining > 0)
                 {
                     _diveChainRemaining--;
                     _state = State::DiveAiming; _stateTimer = 0.f;
+                    _diveLocked = false;
                     SetAnimation(_sharedIdleAnim, 1.f / 12.f, true);
                 }
                 else
@@ -331,6 +354,59 @@ void ChompBug::OnSpitFired()
 {
     _pendingSpit = false;
     _spitDirection = Vector2Zero();
+}
+
+void ChompBug::DrawEliteTelegraph() const
+{
+    // Dive lane warning: the strafing line tracks through the aim, freezes at
+    // the lock, and never curves after it — dodging perpendicular to the
+    // frozen lane always works.
+    if (_state != State::DiveAiming)
+        return;
+
+    Vector2 laneDelta = Vector2Subtract(_diveEnd, _diveStart);
+    if (Vector2LengthSqr(laneDelta) < 0.0001f)
+        return;
+    Vector2 laneDirection = Vector2Normalize(laneDelta);
+    Vector2 side{ -laneDirection.y, laneDirection.x };
+    const float laneHalfWidth = 70.f;
+
+    Color laneColor = _diveLocked
+        ? Fade(Color{ 140, 230,  70, 255 }, 0.30f)
+        : Fade(Color{ 180, 230, 110, 255 }, 0.15f);
+
+    Vector2 cornerA = Vector2Add(_diveStart, Vector2Scale(side,  laneHalfWidth));
+    Vector2 cornerB = Vector2Add(_diveStart, Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerC = Vector2Add(_diveEnd,   Vector2Scale(side, -laneHalfWidth));
+    Vector2 cornerD = Vector2Add(_diveEnd,   Vector2Scale(side,  laneHalfWidth));
+    DrawTriangle(cornerA, cornerB, cornerC, laneColor);
+    DrawTriangle(cornerA, cornerC, cornerD, laneColor);
+    DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 190, 245, 120, 255 }, 0.6f));
+    DrawLineEx(cornerB, cornerC, 2.f, Fade(Color{ 190, 245, 120, 255 }, 0.6f));
+}
+
+void ChompBug::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _state != State::Orbiting)
+        return;
+    _diveCooldown = 0.f;   // the signature IS the locked dive (+ crossfire)
+}
+
+void ChompBug::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* ChompBug::GetEliteSignatureStateName() const
+{
+    switch (_state)
+    {
+    case State::DiveAiming:  return _diveLocked ? "DiveLocked" : "DiveAiming";
+    case State::Diving:      return (GetPhase() >= 2) ? "AcidCrossfire" : "Diving";
+    case State::SpitCasting: return "SpitCasting";
+    default:                 return "Orbiting";
+    }
 }
 
 void ChompBug::HandleAnimation(float dt)
