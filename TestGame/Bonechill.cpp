@@ -67,13 +67,12 @@ void Bonechill::SetVariantTier(int tier)
 // =============================================================================
 void Bonechill::ResetForSpawn(Vector2 pos)
 {
-    _worldPos          = pos;
-    _worldPosLastFrame = pos;
-    _homePos           = pos;
-    _velocity          = Vector2Zero();
-    _isActive          = true;
+    // The SHARED reset owns every pooled-lifetime field (statuses, pit fall,
+    // revive, elite events, guard link, phase latch, telemetry, nav, flicker).
+    Enemy::ResetForSpawn(pos);
 
-    SetIdleAnimation(false);
+    // ── Bonechill profile on top of the shared defaults ──────────────────────
+    SetIdleAnimation(true);
     _scale = 6.2f;                 // its body art is compact, so a higher scale
                                    // is needed to match the Ogre's on-screen mass
 
@@ -87,30 +86,6 @@ void Bonechill::ResetForSpawn(Vector2 pos)
     _attackDelay     = 1.5f;
     _attackCooldown  = 0.f;
 
-    _frame       = 0;
-    _runningTime = 0.f;
-
-    _hitTimer                 = 0.f;
-    _deathTimer               = 0.4f;
-    _freezeTimer              = 0.f;
-    _isCharged                = false;
-    _chargeNextStunTime       = 0.f;
-    _electricChargeTotalTimer = 0.f;
-    _isEliteMiniboss          = false;
-    _isInvulnerable           = false;
-    _leapInvulnerable         = false;
-    _takingDamage = false;
-    _attacking    = false;
-    _dying        = false;
-
-    _forcedPushActive    = false;
-    _forcedPushDirection = Vector2Zero();
-    _forcedPushSpeed     = 0.f;
-
-    _pendingBurns.clear();
-    _waypoints.clear();
-    _waypointIndex = 0;
-
     _signatureState    = SignatureState::None;
     _signatureTimer    = 0.f;
     _signatureCooldownDuration = EliteSignatureValueOr(
@@ -120,7 +95,6 @@ void Bonechill::ResetForSpawn(Vector2 pos)
     _signatureDirection = Vector2{ 1.f, 0.f };
     _frostArmourBroken  = false;
 
-    ResetTuningState();
     ApplyStoredTuning();
 }
 

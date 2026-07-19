@@ -514,7 +514,13 @@ void Werewolf::TakeDamage(int damage, Vector2 attackerPos)
 {
     (void)attackerPos;
     if (_dying || _hitTimer > 0.f) return;
-    if (_state == State::Airborne) return;   // mid-pounce body can't be hit
+    // Mid-pounce body can't be hit — deny VISIBLY (IMMUNE feedback) so the
+    // player never reads this as random invincibility.
+    if (_state == State::Airborne)
+    {
+        _hitBlock = HitBlockReason::Immune;
+        return;
+    }
 
     _health -= (float)damage;
     if (_health > 0.f) PlayHurtSound();

@@ -71,14 +71,21 @@ struct EliteActionTiming
     float recovery  = 0.f;
 };
 
-// Walks Ready → Telegraph → Active → Recovery → Ready. Update returns true on
-// the frame a stage BOUNDARY is crossed so callers can emit lock/execute/
-// recover beats exactly once.
+// Walks Ready → Telegraph → Active → Recovery → Ready.
+//
+// NOTE: the five live elites deliberately own their own bespoke state machines
+// (charge/march/leap/pounce need custom movement per stage); this clock is the
+// shared sequence primitive for the upcoming boss encounter-pattern system.
+//
+// Update processes EVERY stage boundary the elapsed time crosses — one severe
+// frame hitch can legally cross telegraph AND active — and returns how many
+// boundaries were crossed so the caller can emit each beat exactly once.
+// Zero-duration stages are crossed immediately and can never loop forever.
 class EliteActionClock
 {
 public:
     void Start(EliteActionTiming timing);
-    bool Update(float deltaTime);   // true = stage changed this call
+    int  Update(float deltaTime);   // number of stage boundaries crossed (0..3)
     void Cancel();                  // safe abort back to Ready (phase change, death)
     EliteActionStage GetStage() const { return _stage; }
     float GetStageProgress() const;                    // 0..1 within the current stage
@@ -163,6 +170,13 @@ private:
 //   Stormclub: GuardLinks, Enrage, ArenaPressure
 //   Venomfang: Enrage, ArenaPressure
 bool IsEliteModifierCompatible(EliteArchetype archetype, EliteModifier modifier);
+
+// Shared display strings for the four modifiers — the ONE source every HUD
+// surface (entrance banner, room badge, room intro, debug panel, telemetry)
+// reads, so labels can never drift from the real rules again.
+const char* EliteModifierName(int modifier);        // "Guard Links"
+const char* EliteModifierShortName(int modifier);   // "GUARDED"
+const char* EliteModifierCondition(int modifier);   // banner condition line
 
 // Deterministically picks a compatible modifier for this archetype from `seed`.
 // A forced modifier (debug panel) is honoured only when compatible; otherwise

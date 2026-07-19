@@ -104,6 +104,21 @@ namespace
         return nullptr;
     }
 
+    // Which signature rows this move's RUNTIME actually reads — unsupported
+    // rows are hidden entirely so the editor never appears to work while
+    // gameplay ignores the value. Bit i = row i (see kSignatureRows order:
+    // telegraph, active, recovery, cooldown, travel, p2 speed, p2 cooldown).
+    unsigned EliteSupportedRowMask(const std::string& key)
+    {
+        if (key == "Ogre_Charge")               return 0b0001101;  // telegraph, recovery(stun), cooldown
+        if (key == "Infernal_Cinder_March")     return 0b0001011;  // telegraph, active(march time), cooldown
+        if (key == "Infernal_Furnace_Burst")    return 0b0001101;  // telegraph, recovery, cooldown
+        if (key == "Bonechill_Permafrost_Slam") return 0b1101101;  // + both phase-two multipliers
+        if (key == "Stormclub_Thunder_Leap")    return 0b0011101;  // + travel (leap range)
+        if (key == "Venomfang_Venom_Pounce")    return 0b0011101;  // + travel (pounce range)
+        return 0b1111111;
+    }
+
     std::string TuningPath(const std::string& key) { return "attacktuning_" + key + ".txt"; }
 
     void ForwardBox(bool& circle, float& x, float& y, float& w, float& h, float length, float height)
@@ -907,17 +922,23 @@ namespace
 void AttackEditor::UpdateSignatureRows()
 {
     Vector2 mouse = GetVirtualMousePos();
+    const unsigned supportedMask = EliteSupportedRowMask(_items[_selectedIdx].key);
 
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _signatureDragRow < 0)
     {
+        int displaySlot = 0;
         for (int rowIndex = 0; rowIndex < 7; ++rowIndex)
         {
-            if (!CheckCollisionPointRec(mouse, SignatureRowRect(rowIndex)))
-                continue;
-            _signatureDragRow = rowIndex;
-            _signatureDragStartValue = _signatureValues[rowIndex];
-            _signatureDragMouseStart = mouse;
-            break;
+            if ((supportedMask & (1u << rowIndex)) == 0)
+                continue;   // this move's runtime never reads the value — hidden
+            if (CheckCollisionPointRec(mouse, SignatureRowRect(displaySlot)))
+            {
+                _signatureDragRow = rowIndex;
+                _signatureDragStartValue = _signatureValues[rowIndex];
+                _signatureDragMouseStart = mouse;
+                break;
+            }
+            displaySlot++;
         }
     }
     if (IsMouseButtonDown(MOUSE_LEFT_BUTTON) && _signatureDragRow >= 0)
@@ -935,9 +956,13 @@ void AttackEditor::DrawSignatureRows() const
 {
     DrawText("ELITE SIGNATURE  (drag rows)", (int)SignatureRowRect(0).x, 62, 20,
              Color{ 255, 196, 96, 255 });
+    const unsigned supportedMask = EliteSupportedRowMask(_items[_selectedIdx].key);
+    int displaySlot = 0;
     for (int rowIndex = 0; rowIndex < 7; ++rowIndex)
     {
-        Rectangle row = SignatureRowRect(rowIndex);
+        if ((supportedMask & (1u << rowIndex)) == 0)
+            continue;   // hidden: the runtime ignores this value for this move
+        Rectangle row = SignatureRowRect(displaySlot++);
         bool dragging = (_signatureDragRow == rowIndex);
         DrawRectangleRounded(row, 0.25f, 6, Fade(Color{ 40, 44, 58, 255 }, dragging ? 1.f : 0.85f));
         DrawRectangleRoundedLines(row, 0.25f, 6, Fade(dragging ? GOLD : WHITE, dragging ? 0.8f : 0.18f));
@@ -946,10 +971,11 @@ void AttackEditor::DrawSignatureRows() const
     }
 
     // Proportional beat timeline: Telegraph -> Active -> Recovery, so the
-    // rhythm of the move is visible while dragging.
+    // rhythm of the move is visible while dragging. Sits under the last
+    // visible row (unsupported rows are hidden, so the stack compacts).
     const float total = std::max(0.15f,
         _signatureValues[0] + _signatureValues[1] + _signatureValues[2]);
-    Rectangle bar{ SignatureRowRect(6).x, SignatureRowRect(6).y + 56.f, 400.f, 20.f };
+    Rectangle bar{ SignatureRowRect(displaySlot).x, SignatureRowRect(displaySlot).y + 10.f, 400.f, 20.f };
     float cursorX = bar.x;
     const Color segmentColors[3] = { Color{ 255, 200, 80, 255 },    // telegraph
                                      Color{ 255, 90, 70, 255 },     // active

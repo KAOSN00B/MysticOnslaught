@@ -20,6 +20,9 @@ public:
     void Destroy();
 
     bool IsActive() const { return _isActive; }
+    // Arena Pressure themes the shared shot art per elite archetype (ice blue,
+    // storm gold, toxic green); WHITE keeps the normal lava look.
+    void SetTint(Color tint) { _tint = tint; }
     bool IsFlying() const { return _state == State::Flying; }
     bool HasHitPlayer() const { return _playerHit; }
     void OnPlayerHit() { _playerHit = true; }
@@ -42,6 +45,7 @@ private:
 
     Vector2 _worldPos{};
     Vector2 _direction{ 1.f, 0.f };
+    Color _tint = WHITE;
     std::string _tuningKey;
     float _lifeTimer = 0.f;
     float _runningTime = 0.f;

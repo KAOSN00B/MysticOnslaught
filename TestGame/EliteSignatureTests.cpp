@@ -37,9 +37,26 @@ static void TestActionClockCancelAndLargeFrames()
 
     // One huge frame still lands in the correct later stage (overshoot carry).
     clock.Start({ 0.10f, 0.50f, 0.30f });
-    assert(clock.Update(0.30f));                 // crosses telegraph into active
+    assert(clock.Update(0.30f) == 1);            // crosses telegraph into active
     assert(clock.GetStage() == EliteActionStage::Active);
     assert(clock.GetStageRemaining() > 0.29f && clock.GetStageRemaining() < 0.31f);
+
+    // A severe hitch can cross TWO stages in one update — both are reported.
+    clock.Start({ 0.10f, 0.10f, 0.50f });
+    assert(clock.Update(0.25f) == 2);            // telegraph AND active crossed
+    assert(clock.GetStage() == EliteActionStage::Recovery);
+    assert(clock.GetStageRemaining() > 0.44f && clock.GetStageRemaining() < 0.46f);
+
+    // A single update can complete the whole action.
+    clock.Start({ 0.10f, 0.10f, 0.10f });
+    assert(clock.Update(1.0f) == 3);
+    assert(clock.GetStage() == EliteActionStage::Ready);
+
+    // Zero-duration stages are crossed immediately and can never loop forever.
+    clock.Start({ 0.f, 0.f, 0.20f });
+    assert(clock.GetStage() == EliteActionStage::Telegraph);
+    assert(clock.Update(0.05f) == 2);            // through telegraph + active
+    assert(clock.GetStage() == EliteActionStage::Recovery);
 }
 
 static void TestGuardLinksReduceButNeverNullify()

@@ -12,37 +12,43 @@ void EliteActionClock::Start(EliteActionTiming timing)
     _stage = EliteActionStage::Telegraph;
     _remaining = std::max(0.f, timing.telegraph);
     // A zero-length telegraph is allowed but the caller still sees the stage
-    // once; the next Update advances it immediately.
+    // once; the next Update advances it (and any further expired stages).
 }
 
-bool EliteActionClock::Update(float deltaTime)
+int EliteActionClock::Update(float deltaTime)
 {
     if (_stage == EliteActionStage::Ready)
-        return false;
+        return 0;
 
     _remaining -= deltaTime;
-    if (_remaining > 0.f)
-        return false;
 
-    // Carry leftover time into the next stage so large frames stay accurate.
-    float overshoot = -_remaining;
-    switch (_stage)
+    // Cross EVERY boundary the elapsed time reached, carrying the overshoot
+    // forward, so one huge frame can never strand the clock inside an
+    // already-expired stage. The loop is bounded by the three real stages,
+    // which also makes zero-duration stages safe.
+    int boundariesCrossed = 0;
+    while (_remaining <= 0.f && _stage != EliteActionStage::Ready)
     {
-    case EliteActionStage::Telegraph:
-        _stage = EliteActionStage::Active;
-        _remaining = std::max(0.f, _timing.active) - overshoot;
-        break;
-    case EliteActionStage::Active:
-        _stage = EliteActionStage::Recovery;
-        _remaining = std::max(0.f, _timing.recovery) - overshoot;
-        break;
-    case EliteActionStage::Recovery:
-    default:
-        _stage = EliteActionStage::Ready;
-        _remaining = 0.f;
-        break;
+        const float overshoot = -_remaining;
+        switch (_stage)
+        {
+        case EliteActionStage::Telegraph:
+            _stage = EliteActionStage::Active;
+            _remaining = std::max(0.f, _timing.active) - overshoot;
+            break;
+        case EliteActionStage::Active:
+            _stage = EliteActionStage::Recovery;
+            _remaining = std::max(0.f, _timing.recovery) - overshoot;
+            break;
+        case EliteActionStage::Recovery:
+        default:
+            _stage = EliteActionStage::Ready;
+            _remaining = 0.f;
+            break;
+        }
+        boundariesCrossed++;
     }
-    return true;
+    return boundariesCrossed;
 }
 
 void EliteActionClock::Cancel()
@@ -119,6 +125,42 @@ bool IsEliteModifierCompatible(EliteArchetype archetype, EliteModifier modifier)
     if ((int)modifier < 0 || modifier >= EliteModifier::Count)
         return false;
     return (kCompatible[(int)archetype] & Bit(modifier)) != 0;
+}
+
+const char* EliteModifierName(int modifier)
+{
+    switch ((EliteModifier)modifier)
+    {
+    case EliteModifier::Cage:          return "Shrinking Cage";
+    case EliteModifier::GuardLinks:    return "Guard Links";
+    case EliteModifier::Enrage:        return "Permanent Enrage";
+    case EliteModifier::ArenaPressure: return "Arena Pressure";
+    default:                           return "None";
+    }
+}
+
+const char* EliteModifierShortName(int modifier)
+{
+    switch ((EliteModifier)modifier)
+    {
+    case EliteModifier::Cage:          return "CAGE";
+    case EliteModifier::GuardLinks:    return "GUARDED";
+    case EliteModifier::Enrage:        return "ENRAGE";
+    case EliteModifier::ArenaPressure: return "PRESSURE";
+    default:                           return "";
+    }
+}
+
+const char* EliteModifierCondition(int modifier)
+{
+    switch ((EliteModifier)modifier)
+    {
+    case EliteModifier::Cage:          return "CONDITION: CAGE WALLS  |  STAY INSIDE THE RING";
+    case EliteModifier::GuardLinks:    return "CONDITION: GUARDED  |  KILL GUARDS TO BREAK THE LINK";
+    case EliteModifier::Enrage:        return "CONDITION: ENRAGED  |  FAST & LETHAL";
+    case EliteModifier::ArenaPressure: return "CONDITION: HAZARD VOLLEYS  |  WATCH THE FLOOR";
+    default:                           return "";
+    }
 }
 
 EliteModifier ChooseEliteModifier(EliteArchetype archetype, std::uint32_t seed,

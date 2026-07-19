@@ -67,13 +67,12 @@ void Venomfang::SetVariantTier(int tier)
 // =============================================================================
 void Venomfang::ResetForSpawn(Vector2 pos)
 {
-    _worldPos          = pos;
-    _worldPosLastFrame = pos;
-    _homePos           = pos;
-    _velocity          = Vector2Zero();
-    _isActive          = true;
+    // The SHARED reset owns every pooled-lifetime field (statuses, pit fall,
+    // revive, elite events, guard link, phase latch, telemetry, nav, flicker).
+    Enemy::ResetForSpawn(pos);
 
-    SetIdleAnimation(false);
+    // ── Venomfang profile on top of the shared defaults ──────────────────────
+    SetIdleAnimation(true);
     _scale = 7.0f;                 // 32px art with a slim body — this high scale
                                    // brings it up to the Ogre's on-screen mass
 
@@ -87,30 +86,6 @@ void Venomfang::ResetForSpawn(Vector2 pos)
     _attackDelay     = 0.9f;       // quick bites
     _attackCooldown  = 0.f;
 
-    _frame       = 0;
-    _runningTime = 0.f;
-
-    _hitTimer                 = 0.f;
-    _deathTimer               = 0.4f;
-    _freezeTimer              = 0.f;
-    _isCharged                = false;
-    _chargeNextStunTime       = 0.f;
-    _electricChargeTotalTimer = 0.f;
-    _isEliteMiniboss          = false;
-    _isInvulnerable           = false;
-    _leapInvulnerable         = false;
-    _takingDamage = false;
-    _attacking    = false;
-    _dying        = false;
-
-    _forcedPushActive    = false;
-    _forcedPushDirection = Vector2Zero();
-    _forcedPushSpeed     = 0.f;
-
-    _pendingBurns.clear();
-    _waypoints.clear();
-    _waypointIndex = 0;
-
     _signatureState        = SignatureState::None;
     _signatureTimer        = 0.f;
     _signatureCooldown     = Balance::Elite::kVenomfangSignatureCooldown * 0.5f;   // first pounce comes sooner
@@ -122,7 +97,6 @@ void Venomfang::ResetForSpawn(Vector2 pos)
     _predatorMarkTimer     = 0.f;
     _trailPatchAccumulator = 0.f;
 
-    ResetTuningState();
     ApplyStoredTuning();
 }
 
@@ -195,7 +169,7 @@ void Venomfang::BeginPounceTelegraph(float telegraphSeconds)
 
 bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*/,
     bool /*hasNavigationTarget*/, const std::vector<std::unique_ptr<Enemy>>& /*enemies*/,
-    const std::vector<Vector2>& /*propCenters*/)
+    const std::vector<Vector2>& propCenters)
 {
     if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
         return false;
@@ -263,15 +237,16 @@ bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         SetSignatureSheet(_idleAnim);
         // The narrow path tracks the player during the windup; the LOCK happens
         // when the timer ends and the endpoint never moves afterward.
+        // Clamped to navigable ground BEFORE lock — the warned path is real.
         Vector2 desired = _target->GetFeetWorldPos();
         Vector2 toDesired = Vector2Subtract(desired, _worldPos);
         const float desiredDistance = Vector2Length(toDesired);
         const float pounceRange = EliteSignatureValueOr(AttackTuningStore::Get("Venomfang_Venom_Pounce"),
                                                         &AttackTuning::travelDistance,
                                                         Balance::Elite::kVenomfangPounceRange);
-        _pounceTarget = (desiredDistance > pounceRange && desiredDistance > 0.01f)
-            ? Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired), pounceRange))
-            : desired;
+        if (desiredDistance > pounceRange && desiredDistance > 0.01f)
+            desired = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired), pounceRange));
+        _pounceTarget = ClampElitePathToNavigable(_worldPos, desired, propCenters);
         if (_pounceTarget.x < _worldPos.x - 1.f) _rightLeft = -1;
         if (_pounceTarget.x > _worldPos.x + 1.f) _rightLeft =  1;
 

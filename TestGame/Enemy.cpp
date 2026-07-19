@@ -1174,6 +1174,49 @@ bool Enemy::CanTakeAttackSlot(const std::vector<std::unique_ptr<Enemy>>& enemies
     return committed < maxCommitted;
 }
 
+Vector2 Enemy::ClampElitePathToNavigable(Vector2 start, Vector2 desired,
+                                         const std::vector<Vector2>& propCenters,
+                                         float propClearance) const
+{
+    if (_nav == nullptr || _nav->GetCellSize() <= 0.f)
+        return desired;
+
+    Vector2 delta = Vector2Subtract(desired, start);
+    const float totalDistance = Vector2Length(delta);
+    if (totalDistance < 0.01f)
+        return desired;
+    const Vector2 direction = Vector2Scale(delta, 1.f / totalDistance);
+
+    auto pointIsBlocked = [&](Vector2 point)
+    {
+        const float cellSize = _nav->GetCellSize();
+        const int column = (int)(point.x / cellSize);
+        const int row    = (int)(point.y / cellSize);
+        // Outside the room grid counts as blocked — never commit past a wall.
+        if (column < 0 || row < 0 || column >= _nav->GetCols() || row >= _nav->GetRows())
+            return true;
+        if (_nav->IsCellBlocked(column, row))
+            return true;
+        for (const Vector2& propCenter : propCenters)
+            if (Vector2Distance(point, propCenter) < propClearance)
+                return true;
+        return false;
+    };
+
+    // Walk the warned segment and stop at the LAST valid point before the
+    // first blocked one, preserving the locked direction.
+    constexpr float kStepDistance = 24.f;
+    Vector2 lastValid = start;
+    for (float along = kStepDistance; along <= totalDistance; along += kStepDistance)
+    {
+        Vector2 candidate = Vector2Add(start, Vector2Scale(direction, along));
+        if (pointIsBlocked(candidate))
+            return lastValid;
+        lastValid = candidate;
+    }
+    return pointIsBlocked(desired) ? lastValid : desired;
+}
+
 bool Enemy::EmitEliteEvent(EliteSignatureEvent event)
 {
     event.sequence = _eliteEventSequence++;

@@ -514,6 +514,16 @@ protected:
         };
     }
 
+    // Clamps a locked movement segment (leap / pounce endpoint) to the LAST
+    // point that is inside the room, on navigable ground, and clear of solid
+    // props — the fairness rule "what was warned is what hits" requires the
+    // committed path to respect authored room geometry. Uses the same nav-grid
+    // truth as pathfinding and the player's Lightning Blink. Returns `desired`
+    // unchanged when no nav grid is attached (legacy arena mode).
+    Vector2 ClampElitePathToNavigable(Vector2 start, Vector2 desired,
+                                      const std::vector<Vector2>& propCenters,
+                                      float propClearance = 70.f) const;
+
     void HandleMovement(float dt, Vector2 navigationTarget, bool hasNavigationTarget,
         const std::vector<std::unique_ptr<Enemy>>& enemies, const std::vector<Vector2>& propCenters);
     Vector2 ResolveNavTarget(float dt, Vector2 playerFeet, Vector2 navigationTarget, bool hasNavigationTarget);

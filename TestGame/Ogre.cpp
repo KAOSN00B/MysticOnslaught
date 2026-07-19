@@ -49,14 +49,12 @@ void Ogre::Init()
 
 void Ogre::ResetForSpawn(Vector2 pos)
 {
-    // Spawn reset restores the ogre to a neutral repositioning state so pooled
-    // instances can be reused across waves without keeping stale charge data.
-    _worldPos          = pos;
-    _worldPosLastFrame = pos;
-    _homePos           = pos;
-    _velocity          = Vector2Zero();
-    _isActive          = true;
+    // The SHARED reset owns every pooled-lifetime field (statuses, pit fall,
+    // revive, elite events, guard link, phase latch, telemetry, nav, flicker)
+    // so a reused instance can never keep a previous life's data.
+    Enemy::ResetForSpawn(pos);
 
+    // ── Ogre profile on top of the shared defaults ───────────────────────────
     SetIdleAnimation(false);
 
     // Keep ogre scale aligned with the rest of the enemy cast so it feels like
@@ -71,23 +69,6 @@ void Ogre::ResetForSpawn(Vector2 pos)
 
     _frame       = GetRandomValue(0, _maxFrames - 1);
     _runningTime = GetRandomValue(0, 200) / 100.f * _updateTime;
-
-    _hitTimer                 = 0.f;
-    _deathTimer               = 0.4f;
-    _freezeTimer              = 0.f;
-    _isCharged                = false;
-    _chargeNextStunTime       = 0.f;
-    _electricChargeTotalTimer = 0.f;
-    _isEliteMiniboss          = false;
-    _isInvulnerable           = false;
-    _leapInvulnerable         = false;
-    _pendingBurns.clear();
-    _takingDamage = false;
-    _attacking    = false;
-    _dying        = false;
-
-    _stuckTimer    = 0.f;
-    _stuckCheckPos = _worldPos;
 
     _rushState     = RushState::Repositioning;
     _chargeTimer   = 0.f;

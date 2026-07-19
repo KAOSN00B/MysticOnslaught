@@ -67,13 +67,12 @@ void Stormclub::SetVariantTier(int tier)
 // =============================================================================
 void Stormclub::ResetForSpawn(Vector2 pos)
 {
-    _worldPos          = pos;
-    _worldPosLastFrame = pos;
-    _homePos           = pos;
-    _velocity          = Vector2Zero();
-    _isActive          = true;
+    // The SHARED reset owns every pooled-lifetime field (statuses, pit fall,
+    // revive, elite events, guard link, phase latch, telemetry, nav, flicker).
+    Enemy::ResetForSpawn(pos);
 
-    SetIdleAnimation(false);
+    // ── Stormclub profile on top of the shared defaults ──────────────────────
+    SetIdleAnimation(true);
     _scale = 4.8f;                 // elite-Ogre sized
 
     _health      = 12.f;
@@ -86,30 +85,6 @@ void Stormclub::ResetForSpawn(Vector2 pos)
     _attackDelay     = 1.6f;       // long recovery between smashes
     _attackCooldown  = 0.f;
 
-    _frame       = 0;
-    _runningTime = 0.f;
-
-    _hitTimer                 = 0.f;
-    _deathTimer               = 0.4f;
-    _freezeTimer              = 0.f;
-    _isCharged                = false;
-    _chargeNextStunTime       = 0.f;
-    _electricChargeTotalTimer = 0.f;
-    _isEliteMiniboss          = false;
-    _isInvulnerable           = false;
-    _leapInvulnerable         = false;
-    _takingDamage = false;
-    _attacking    = false;
-    _dying        = false;
-
-    _forcedPushActive    = false;
-    _forcedPushDirection = Vector2Zero();
-    _forcedPushSpeed     = 0.f;
-
-    _pendingBurns.clear();
-    _waypoints.clear();
-    _waypointIndex = 0;
-
     _signatureState    = SignatureState::None;
     _signatureTimer    = 0.f;
     _signatureCooldown = Balance::Elite::kStormclubSignatureCooldown * 0.5f;   // first leap comes sooner
@@ -118,7 +93,6 @@ void Stormclub::ResetForSpawn(Vector2 pos)
     _leapsRemaining    = 0;
     _landedOnPlayer    = false;
 
-    ResetTuningState();
     ApplyStoredTuning();
 }
 
@@ -180,7 +154,7 @@ void Stormclub::BeginLeapTelegraph(float telegraphSeconds, float leapRange)
 
 bool Stormclub::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget*/,
     bool /*hasNavigationTarget*/, const std::vector<std::unique_ptr<Enemy>>& /*enemies*/,
-    const std::vector<Vector2>& /*propCenters*/)
+    const std::vector<Vector2>& propCenters)
 {
     if (!_isEliteMiniboss || _target == nullptr || _dying || !IsAlive())
         return false;
@@ -247,12 +221,14 @@ bool Stormclub::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         SetSignatureSheet(_idleAnim);
         // The marker follows the player during the windup — the LOCK happens
         // when the timer ends, and the landing point never moves afterward.
+        // The endpoint is clamped to navigable ground BEFORE lock, so the
+        // marker the player reads is always the true landing point.
         Vector2 desired = _target->GetFeetWorldPos();
         Vector2 toDesired = Vector2Subtract(desired, _worldPos);
         const float desiredDistance = Vector2Length(toDesired);
-        _leapTarget = (desiredDistance > _activeLeapRange && desiredDistance > 0.01f)
-            ? Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired), _activeLeapRange))
-            : desired;
+        if (desiredDistance > _activeLeapRange && desiredDistance > 0.01f)
+            desired = Vector2Add(_worldPos, Vector2Scale(Vector2Normalize(toDesired), _activeLeapRange));
+        _leapTarget = ClampElitePathToNavigable(_worldPos, desired, propCenters);
 
         _signatureTimer -= deltaTime;
         if (_signatureTimer <= 0.f)

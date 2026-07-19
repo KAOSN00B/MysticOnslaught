@@ -68,13 +68,13 @@ void Infernal::SetVariantTier(int tier)
 // =============================================================================
 void Infernal::ResetForSpawn(Vector2 pos)
 {
-    _worldPos          = pos;
-    _worldPosLastFrame = pos;
-    _homePos           = pos;
-    _velocity          = Vector2Zero();
-    _isActive          = true;
+    // The SHARED reset owns every pooled-lifetime field (statuses, pit fall,
+    // revive, elite events, guard link, phase latch, telemetry, nav, flicker).
+    // A reused instance can never carry a previous life's data.
+    Enemy::ResetForSpawn(pos);
 
-    SetIdleAnimation(false);
+    // ── Infernal profile on top of the shared defaults ───────────────────────
+    SetIdleAnimation(true);
     _scale = 5.6f;                 // its body art is narrow, so a higher scale
                                    // is needed to match the Ogre's on-screen mass
 
@@ -88,30 +88,6 @@ void Infernal::ResetForSpawn(Vector2 pos)
     _attackDelay     = 1.4f;       // ponderous swing cadence
     _attackCooldown  = 0.f;
 
-    _frame       = 0;
-    _runningTime = 0.f;
-
-    _hitTimer                 = 0.f;
-    _deathTimer               = 0.4f;
-    _freezeTimer              = 0.f;
-    _isCharged                = false;
-    _chargeNextStunTime       = 0.f;
-    _electricChargeTotalTimer = 0.f;
-    _isEliteMiniboss          = false;
-    _isInvulnerable           = false;
-    _leapInvulnerable         = false;
-    _takingDamage = false;
-    _attacking    = false;
-    _dying        = false;
-
-    _forcedPushActive    = false;
-    _forcedPushDirection = Vector2Zero();
-    _forcedPushSpeed     = 0.f;
-
-    _pendingBurns.clear();
-    _waypoints.clear();
-    _waypointIndex = 0;
-
     _signatureState        = SignatureState::None;
     _signatureTimer        = 0.f;
     _signatureCooldown     = Balance::Elite::kInfernalSignatureCooldown * 0.5f;   // first one comes sooner
@@ -121,7 +97,6 @@ void Infernal::ResetForSpawn(Vector2 pos)
     _secondWavePending     = false;
     _secondWaveTimer       = 0.f;
 
-    ResetTuningState();
     ApplyStoredTuning();
 }
 

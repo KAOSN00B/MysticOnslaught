@@ -175,26 +175,19 @@ namespace
         return ClampInt(RoomLayout::kRows / 2 - kDungeonDoorSpanRows / 2, 1, RoomLayout::kRows - 1 - kDungeonDoorSpanRows);
     }
 
-    struct EliteChallengeBannerDef
+    // Modifier accent colours, in EliteModifier order. The label/condition
+    // STRINGS come from the shared EliteModifier* functions in EliteSignature
+    // so every HUD surface teaches the same (current) rules.
+    Color GetEliteModifierColor(int modifier)
     {
-        const char* shortLabel;
-        const char* detailLabel;
-        Color       color;
-    };
-
-    // Order matches EliteModifier (0=Cage, 1=GuardLinks, 2=Enrage, 3=ArenaPressure).
-    // Guard Links is damage REDUCTION now, so the banner teaches the real rule.
-    constexpr EliteChallengeBannerDef kEliteChallengeBanners[] = {
-        { "ARENA CONSTRICTION", "CONDITION: CAGE WALLS  |  STAY INSIDE THE RING",   Color{220,  40, 200, 255} },
-        { "GUARD LINKS",        "CONDITION: GUARDED  |  KILL GUARDS TO BREAK THE LINK", Color{180, 100, 255, 255} },
-        { "PERMANENT ENRAGE",   "CONDITION: ENRAGED  |  FAST & LETHAL",             Color{255,  60,  60, 255} },
-        { "ARENA PRESSURE",     "CONDITION: HAZARD VOLLEYS  |  WATCH THE FLOOR",    Color{255, 220,  80, 255} },
-    };
-
-    const EliteChallengeBannerDef& GetEliteChallengeBannerDef(int mechanic)
-    {
-        int idx = ClampInt(mechanic, 0, (int)(sizeof(kEliteChallengeBanners) / sizeof(kEliteChallengeBanners[0])) - 1);
-        return kEliteChallengeBanners[idx];
+        constexpr Color kColors[(int)EliteModifier::Count] = {
+            Color{220,  40, 200, 255},   // Cage
+            Color{180, 100, 255, 255},   // Guard Links
+            Color{255,  60,  60, 255},   // Enrage
+            Color{255, 220,  80, 255},   // Arena Pressure
+        };
+        int idx = ClampInt(modifier, 0, (int)EliteModifier::Count - 1);
+        return kColors[idx];
     }
 
     const char* GetDebugRoomTypeName(RoomType type)
@@ -5166,9 +5159,10 @@ void Engine::DrawHUD(bool villageMode)
 
     if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
     {
-        const EliteChallengeBannerDef& mech = GetEliteChallengeBannerDef(_eliteMechanic);
-        int mw = MeasureText(mech.shortLabel, 20);
-        drawLabelBox(mech.shortLabel, (float)(kVirtualWidth - mw - (int)hc.actOffsetX), 58.f, 20, mech.color);
+        const char* shortLabel = EliteModifierShortName(_eliteMechanic);
+        int mw = MeasureText(shortLabel, 20);
+        drawLabelBox(shortLabel, (float)(kVirtualWidth - mw - (int)hc.actOffsetX), 58.f, 20,
+                     GetEliteModifierColor(_eliteMechanic));
     }
 
     // Ascension badge (top-right, only on a modified difficulty run).
@@ -5190,16 +5184,16 @@ void Engine::DrawHUD(bool villageMode)
             alpha = _eliteEnrageWarningTimer / 0.5f;
         alpha = std::max(0.f, std::min(1.f, alpha));
 
-        const EliteChallengeBannerDef& mech = GetEliteChallengeBannerDef(_eliteMechanic);
+        const Color modifierColor = GetEliteModifierColor(_eliteMechanic);
         const char* line1 = "ELITE ENCOUNTER";
-        const char* line2 = mech.detailLabel;
+        const char* line2 = EliteModifierCondition(_eliteMechanic);
         const int sz1 = 48, sz2 = 28;
         const float bannerH = 120.f;
         const float bannerY = sh * 0.38f;
         DrawRectangle(0, (int)bannerY, (int)sw, (int)bannerH, Fade(Color{20,0,0,220}, alpha));
-        DrawRectangle(0, (int)bannerY, (int)sw, 3, Fade(mech.color, alpha));
-        DrawRectangle(0, (int)(bannerY + bannerH - 3), (int)sw, 3, Fade(mech.color, alpha));
-        DrawText(line1, (int)(sw/2.f - MeasureText(line1,sz1)/2.f), (int)(bannerY+14.f), sz1, Fade(mech.color,alpha));
+        DrawRectangle(0, (int)bannerY, (int)sw, 3, Fade(modifierColor, alpha));
+        DrawRectangle(0, (int)(bannerY + bannerH - 3), (int)sw, 3, Fade(modifierColor, alpha));
+        DrawText(line1, (int)(sw/2.f - MeasureText(line1,sz1)/2.f), (int)(bannerY+14.f), sz1, Fade(modifierColor,alpha));
         DrawText(line2, (int)(sw/2.f - MeasureText(line2,sz2)/2.f), (int)(bannerY+14.f+sz1+8.f), sz2, Fade(Color{255,220,150,255},alpha));
     }
 
@@ -10029,10 +10023,8 @@ void Engine::DrawEliteSignatureTelemetry() const
         return;
 
     static const char* kArchetypeNames[] = { "Ogre", "Infernal", "Bonechill", "Stormclub", "Venomfang", "None" };
-    static const char* kModifierNames[]  = { "Cage", "Guard Links", "Enrage", "Arena Pressure" };
     const int archetypeIndex = std::clamp((int)_eliteMinibossPtr->GetEliteArchetype(), 0, 5);
-    const char* modifierName = (_eliteMechanic >= 0 && _eliteMechanic < 4)
-        ? kModifierNames[_eliteMechanic] : "None";
+    const char* modifierName = EliteModifierName(_eliteMechanic);
     const EliteSignatureTelemetry telemetry = _eliteMinibossPtr->GetEliteSignatureTelemetry();
 
     const int panelX = 20;
@@ -10850,6 +10842,13 @@ int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
     event.boss = isBoss;
     event.damageOverTime = damageOverTime;
     _damageNumbers.Submit(event);
+
+    // Guard Links reduced this hit: show a restrained GUARDED tag beside the
+    // real (post-reduction) number so the player learns the attack WORKED but
+    // is inefficient until the guards die — never a silent or fake denial.
+    if (enemy.ConsumeGuardReducedFlag())
+        _vfx.SpawnFloatingLabel(Vector2{ enemy.GetWorldPos().x, enemy.GetWorldPos().y - 40.f },
+                                "GUARDED", Color{ 180, 100, 255, 255 }, 0.8f);
 
     // Hit direction — away from the player, so melee/ranged both shove the target
     // outward. Reused for the directional sparks and the recoil below.
@@ -16059,15 +16058,6 @@ void Engine::DrawRoomAffixBanner()
 // actionable info. Standard rooms draw nothing at the top of the screen.
 // =============================================================================
 
-// Elite mechanic display names — index matches the elite mechanic ids
-// (0 Cage, 1 Bodyguard, 2 Enrage, 3 Leap, 4 Hazards).
-static const char* kEliteMechanicNames[5] = {
-    "Shrinking Cage", "Bodyguard Shield", "Permanent Enrage", "Leaping Brute", "Room Hazards",
-};
-static const char* kEliteMechanicShort[5] = {
-    "CAGE", "SHIELD", "ENRAGE", "LEAP", "HAZARDS",
-};
-
 void Engine::QueueRoomIntroBanner()
 {
     const auto& rooms = _dungeonGen.GetRooms();
@@ -16102,9 +16092,8 @@ void Engine::QueueRoomIntroBanner()
     case RoomType::Elite:
     {
         _roomIntroTitle = "ELITE ENCOUNTER";
-        int mech = _eliteMechanic;
-        if (mech >= 0 && mech < 5)
-            _roomIntroSub = std::string("Condition: ") + kEliteMechanicNames[mech];
+        if (_eliteMechanic >= 0 && _eliteMechanic < (int)EliteModifier::Count)
+            _roomIntroSub = std::string("Condition: ") + EliteModifierName(_eliteMechanic);
         break;
     }
     case RoomType::Treasure:
@@ -16200,9 +16189,8 @@ void Engine::DrawRoomBadge() const
     }
     else if (rooms[_dungeonRoomIdx].type == RoomType::Elite && !cleared)
     {
-        int mech = _eliteMechanic;
-        label = (mech >= 0 && mech < 5)
-              ? std::string("ELITE - ") + kEliteMechanicShort[mech] : "ELITE";
+        label = (_eliteMechanic >= 0 && _eliteMechanic < (int)EliteModifier::Count)
+              ? std::string("ELITE - ") + EliteModifierShortName(_eliteMechanic) : "ELITE";
         accent = Color{ 255, 150, 70, 255 };
     }
     else if (rooms[_dungeonRoomIdx].type == RoomType::Treasure && _treasureChestSpawned && !_treasureChestBroken)

@@ -52,11 +52,14 @@ int CombatDirector::GetActiveEnemyCount(const std::vector<std::unique_ptr<Enemy>
 
 bool CombatDirector::IsBossFightActive(const std::vector<std::unique_ptr<Enemy>>& enemies) const
 {
+    // Any living boss counts — every boss class overrides IsBoss(). The old
+    // Molarbeast-only check silently broke support respawns, kill-exp
+    // suppression and other boss-fight rules for the nine other bosses.
     for (const auto& enemy : enemies)
     {
-        if (!enemy->IsActive() || !enemy->IsAlive())
+        if (!enemy->IsActive() || !enemy->IsAlive() || enemy->IsDying())
             continue;
-        if (enemy->AsMolarbeast() != nullptr)
+        if (enemy->IsBoss())
             return true;
     }
     return false;
@@ -365,6 +368,33 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
         *ctx.eliteHazardSpawnTimer -= dt;
         if (*ctx.eliteHazardSpawnTimer <= 0.f)
         {
+            // Environmental pressure budget: volleys share the same in-flight
+            // cap as room hazards, so Arena Pressure can never smother the
+            // room. A full budget briefly delays the volley instead.
+            int environmentalShotsInFlight = 0;
+            for (const LavaBallProjectile& shot : *ctx.lavaBalls)
+                if (shot.IsActive())
+                    environmentalShotsInFlight++;
+            if (environmentalShotsInFlight >= Balance::Hazards::kEnvProjectileCap)
+            {
+                *ctx.eliteHazardSpawnTimer = 0.4f;
+                return;
+            }
+
+            // Themed by elite archetype: the shared shot art carries the
+            // elite's identity colour (Infernal keeps the natural lava look).
+            Color volleyTint = WHITE;
+            if (*ctx.eliteMinibossPtr)
+            {
+                switch ((*ctx.eliteMinibossPtr)->GetEliteArchetype())
+                {
+                case EliteArchetype::Bonechill: volleyTint = Color{ 150, 215, 255, 255 }; break;
+                case EliteArchetype::Stormclub: volleyTint = Color{ 255, 230, 140, 255 }; break;
+                case EliteArchetype::Venomfang: volleyTint = Color{ 140, 235,  90, 255 }; break;
+                default: break;   // Ogre (incompatible) / Infernal: natural fire
+                }
+            }
+
             const float mapW = (ctx.worldBoundsW > 0.f) ? ctx.worldBoundsW : ctx.map->width  * ctx.mapScale;
             const float mapH = (ctx.worldBoundsH > 0.f) ? ctx.worldBoundsH : ctx.map->height * ctx.mapScale;
             const float marginLeft = 120.f;
@@ -372,7 +402,9 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
             const float marginTop = 90.f;
             const float marginBottom = 220.f;
             const Vector2 playerPos = ctx.player->GetWorldPos();
-            const int volleyCount = GetRandomValue(kHazardVolleyMinCount, kHazardVolleyMaxCount);
+            const int budgetRemaining = Balance::Hazards::kEnvProjectileCap - environmentalShotsInFlight;
+            const int volleyCount = std::min(budgetRemaining,
+                GetRandomValue(kHazardVolleyMinCount, kHazardVolleyMaxCount));
 
             for (int i = 0; i < volleyCount; ++i)
             {
@@ -405,6 +437,7 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
 
                 LavaBallProjectile projectile;
                 projectile.Init(spawnPos, Vector2{ cosf(angle), sinf(angle) });
+                projectile.SetTint(volleyTint);
                 ctx.lavaBalls->push_back(projectile);
             }
 
@@ -1179,6 +1212,28 @@ void CombatDirector::DrawEliteWorld(const std::vector<std::unique_ptr<Enemy>>& e
     {
         if (enemy->IsActive() && enemy->IsAlive() && !enemy->IsDying())
             enemy->DrawEliteTelegraph();
+    }
+
+    // Guard Links: visible beams from every living guard to the linked elite,
+    // so "kill the adds to break the 60% ward" is taught on sight.
+    for (const auto& enemy : enemies)
+    {
+        if (!enemy->IsActive() || !enemy->IsAlive() || enemy->IsDying() ||
+            !enemy->IsEliteMiniboss() || !enemy->IsEliteGuardLinked())
+            continue;
+        const Vector2 elitePosition = enemy->GetWorldPos();
+        const float pulse = 0.35f + 0.20f * sinf((float)GetTime() * 6.f);
+        for (const auto& guard : enemies)
+        {
+            if (guard.get() == enemy.get()) continue;
+            if (!guard->IsActive() || !guard->IsAlive() || guard->IsDying())
+                continue;
+            const Vector2 guardPosition = guard->GetWorldPos();
+            DrawLineEx(guardPosition, elitePosition, 4.f,
+                       Fade(Color{ 180, 100, 255, 255 }, pulse));
+            DrawLineEx(guardPosition, elitePosition, 1.5f,
+                       Fade(Color{ 230, 200, 255, 255 }, pulse + 0.15f));
+        }
     }
 
     // Thin outlines on ACTIVE one-shot zones so the hit area stays readable

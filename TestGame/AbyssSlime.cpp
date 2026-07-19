@@ -860,9 +860,13 @@ void AbyssSlime::TakeDamage(int damage, Vector2 attackerPos)
     if (_hitTimer > 0.f)
         return;
 
-    // Airborne body can't be hit — dodge the landing instead.
+    // Airborne body can't be hit — dodge the landing instead. Deny VISIBLY
+    // (IMMUNE feedback) so the player never reads this as random invincibility.
     if (_state == State::Airborne)
+    {
+        _hitBlock = HitBlockReason::Immune;
         return;
+    }
 
     _health -= (float)damage;
 
