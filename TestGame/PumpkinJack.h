@@ -43,6 +43,12 @@ public:
     bool IsBoss() const override { return true; }
     bool UsesDirectPursuit() const override { return true; }
 
+    // ── Hybrid encounter pattern: Harvest Ritual ─────────────────────────────
+    void DrawEliteTelegraph() const override;
+    void DebugForceEliteSignature() override;
+    void DebugForceElitePhaseTwo() override;
+    const char* GetEliteSignatureStateName() const override;
+
     // Character Animator support
     const char* GetTuningName() const override { return "PumpkinJack"; }
     int         GetEditorAnimCount() const override { return 7; }

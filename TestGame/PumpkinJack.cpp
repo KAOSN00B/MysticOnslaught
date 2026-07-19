@@ -97,6 +97,7 @@ void PumpkinJack::ResetForSpawn(Vector2 pos)
     _teleportTarget   = pos;
     _teleportAmbush   = false;
     _pendingPhaseSummon = false;
+    ClearEliteEvents();
 
     // 3 phases: 66% unlocks the behind-the-player ambush + 5-bolt volleys; 33% blinks
     // more and reappears straight into a volley (blink-barrage) with bigger grave calls.
@@ -188,7 +189,11 @@ void PumpkinJack::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTar
 
         // Each phase change opens with a Grave Call summon (fired when he's chasing).
         int newPhase = ConsumePhaseChange();
-        if (newPhase >= 0) _pendingPhaseSummon = true;
+        if (newPhase >= 0)
+        {
+            _pendingPhaseSummon = true;
+            RequestBossCallout(newPhase >= 2 ? "HARVEST RITUAL" : "GRAVE CALL");
+        }
         if (_pendingPhaseSummon && !controlled && _state == State::Chasing)
         {
             _pendingPhaseSummon = false;
@@ -326,7 +331,56 @@ Vector2 PumpkinJack::PickTeleportSpot() const
 
     spot.x = std::clamp(spot.x, 200.f, (float)kVirtualWidth  - 200.f);
     spot.y = std::clamp(spot.y, 200.f, (float)kVirtualHeight - 200.f);
-    return spot;
+
+    // Validated arrival: clamp the spot to navigable ground (walked from the
+    // player's position, which is walkable by definition) so Jack can never
+    // reappear inside walls, props, or fall terrain.
+    static const std::vector<Vector2> kNoProps;
+    return ClampElitePathToNavigable(playerPos, spot, kNoProps);
+}
+
+void PumpkinJack::DrawEliteTelegraph() const
+{
+    // Destination cue: while Jack is vanished, a pumpkin-orange marker shows
+    // exactly where he will reappear — the ambush "behind you" is a read, not
+    // a surprise hit.
+    if (_state != State::TeleportOut && _state != State::TeleportIn)
+        return;
+    const Vector2 markerPosition = (_state == State::TeleportOut) ? _teleportTarget : _worldPos;
+    const float pulse = 0.7f + 0.3f * sinf((float)GetTime() * 10.f);
+    const Color markerColor = _teleportAmbush ? Color{ 255, 110, 40, 255 }
+                                              : Color{ 255, 180, 80, 255 };
+    DrawCircleLines((int)markerPosition.x, (int)markerPosition.y, 70.f * pulse,
+                    Fade(markerColor, 0.7f));
+    DrawCircleLines((int)markerPosition.x, (int)markerPosition.y, 70.f,
+                    Fade(markerColor, 0.35f));
+    DrawCircleV(markerPosition, 9.f, Fade(markerColor, 0.55f));
+}
+
+void PumpkinJack::DebugForceEliteSignature()
+{
+    if (_dying || !IsAlive() || _state != State::Chasing)
+        return;
+    _teleportCooldown = 0.f;   // the signature IS the trick-step ambush loop
+}
+
+void PumpkinJack::DebugForceElitePhaseTwo()
+{
+    const float nextThreshold = (GetPhase() == 0) ? 0.65f : 0.32f;
+    _health = std::min(_health, std::max(1.f, std::floor(_maxHealth * nextThreshold)));
+}
+
+const char* PumpkinJack::GetEliteSignatureStateName() const
+{
+    switch (_state)
+    {
+    case State::TeleportOut:   return _teleportAmbush ? "AmbushVanish" : "TrickStepOut";
+    case State::TeleportIn:    return "TrickStepIn";
+    case State::VolleyCasting: return "VolleyCasting";
+    case State::Summoning:     return "GraveCall";
+    case State::Defending:     return "Defending";
+    default:                   return "Stalking";
+    }
 }
 
 void PumpkinJack::HandleTeleportOut(float dt)
