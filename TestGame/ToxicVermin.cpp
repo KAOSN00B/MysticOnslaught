@@ -164,6 +164,8 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         int newPhase = ConsumePhaseChange();
         if (newPhase >= 0)
         {
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos });
             _pendingPhaseBurrow = true; _impactShakeRequested = true;
             RequestBossCallout(newPhase >= 2 ? "PLAGUE FLOOD" : "VILE SURGE");
         }

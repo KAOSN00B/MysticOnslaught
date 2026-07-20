@@ -143,6 +143,8 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         int newPhase = ConsumePhaseChange();
         if (newPhase >= 0)
         {
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos });
             _pendingPhaseRoar = true; _impactShakeRequested = true;
             RequestBossCallout(newPhase >= 2 ? "DREAM COLLAPSE" : "NIGHTMARE");
         }

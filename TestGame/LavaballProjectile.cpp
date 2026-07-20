@@ -187,7 +187,7 @@ void LavaBallProjectile::DrawFlyingSheet(Vector2 worldOffset, float rotation) co
         source.height * _drawScale
     };
 
-    DrawTexturePro(_sharedLavaBallTex, source, dest, Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, WHITE);
+    DrawTexturePro(_sharedLavaBallTex, source, dest, Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, _tint);
 }
 
 void LavaBallProjectile::DrawHitSheet(Vector2 worldOffset) const
@@ -206,5 +206,5 @@ void LavaBallProjectile::DrawHitSheet(Vector2 worldOffset) const
         source.height * _drawScale
     };
 
-    DrawTexturePro(_sharedLavaBallHitTex, source, dest, Vector2{ dest.width * 0.5f, dest.height * 0.5f }, 0.f, WHITE);
+    DrawTexturePro(_sharedLavaBallHitTex, source, dest, Vector2{ dest.width * 0.5f, dest.height * 0.5f }, 0.f, _tint);
 }

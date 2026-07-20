@@ -261,10 +261,10 @@ namespace
             { "Venomfang", { DebugActionKind::SetEliteType,  4 } },
         });
 
-        skip(38.f);  // "Elite Actions" section header
+        skip(38.f);  // "Encounter Actions" section header
         AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 104, 74, 220 }, {
             { "Force Signature", { DebugActionKind::ForceEliteSignature, 0 } },
-            { "Force Phase Two", { DebugActionKind::ForceElitePhaseTwo,  0 } },
+            { "Advance Phase",   { DebugActionKind::ForceElitePhaseTwo,  0 } },
         });
 
         skip(38.f);  // "Spawns" section header
@@ -468,10 +468,10 @@ void DebugPanel::Draw(int act, int room, const char* roomTypeName) const
         { "Venomfang", { DebugActionKind::SetEliteType,  4 } },
     });
 
-    section("Elite Actions");
+    section("Encounter Actions");
     AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 150, 104, 74, 220 }, {
         { "Force Signature", { DebugActionKind::ForceEliteSignature, 0 } },
-        { "Force Phase Two", { DebugActionKind::ForceElitePhaseTwo,  0 } },
+        { "Advance Phase",   { DebugActionKind::ForceElitePhaseTwo,  0 } },
     });
 
     section("Spawns");

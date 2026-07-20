@@ -191,6 +191,8 @@ void PumpkinJack::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTar
         int newPhase = ConsumePhaseChange();
         if (newPhase >= 0)
         {
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos });
             _pendingPhaseSummon = true;
             RequestBossCallout(newPhase >= 2 ? "HARVEST RITUAL" : "GRAVE CALL");
         }

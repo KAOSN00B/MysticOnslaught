@@ -150,6 +150,8 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         int newPhase = ConsumePhaseChange();
         if (newPhase >= 0)
         {
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos });
             _pendingPhaseDive = true;
             RequestBossCallout(newPhase >= 2 ? "ACID CROSSFIRE" : "TWIN SWOOP");
         }

@@ -113,6 +113,7 @@ void AbyssSlime::ResetForSpawn(Vector2 pos)
     _impactShakeRequested = false;
     _acidBurstCooldown = 2.2f;
     _acidBurstFired = false;
+    ClearEliteEvents();
 
     SetPhaseThresholds({ 0.66f, 0.33f });
 
@@ -193,7 +194,11 @@ void AbyssSlime::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarg
 
     int phaseChange = ConsumePhaseChange();
     if (phaseChange >= 0)
+    {
+        EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                         EliteMove::None, 0, _worldPos });
         ReactToPhaseChange(phaseChange);
+    }
 
     if (_freezeTimer > 0.f)
         _freezeTimer -= dt;

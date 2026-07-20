@@ -327,7 +327,9 @@ private:
     // impact and lingering hazard decal. See CombatDirector's zone routing.
     void SpawnEliteFx(Vector2 worldPos, int fxId, float scale, Color tint);
     void SpawnEliteHazardFx(Vector2 worldPos, int fxId, float scale, float duration, Color tint);
-    void DrawEliteSignatureTelemetry() const;   // debug-panel-only readout
+    Enemy* FindEncounterDebugTarget();
+    const Enemy* FindEncounterDebugTarget() const;
+    void DrawEliteSignatureTelemetry() const;   // debug-panel-only elite/boss readout
 
     // Relic icons, one per archetype (PowerUps/Relic_<archetype>.png).
     Texture2D _relicIcons[7]{};

@@ -160,7 +160,11 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
         // Deferred until he's in a neutral state so it never interrupts mid-attack.
         int newPhase = ConsumePhaseChange();
         if (newPhase >= 0)
+        {
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos });
             ReactToPhaseChange(newPhase);
+        }
         if (_pendingSlamQueued && (_state == State::Advancing || _state == State::Recovery))
         {
             _pendingSlamQueued = false;

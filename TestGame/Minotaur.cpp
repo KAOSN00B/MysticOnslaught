@@ -190,6 +190,8 @@ void Minotaur::Update(float dt, Vector2 heroWorldPos, Vector2 /*navigationTarget
         int newPhase = ConsumePhaseChange();
         if (newPhase >= 0)
         {
+            EmitEliteEvent({ EliteEventKind::PhaseChange, EliteArchetype::Ogre,
+                             EliteMove::None, 0, _worldPos });
             _pendingPhaseStomp = true; _impactShakeRequested = true;
             RequestBossCallout(newPhase >= 2 ? "LABYRINTH CHARGE" : "ENRAGED CHARGE");
         }
