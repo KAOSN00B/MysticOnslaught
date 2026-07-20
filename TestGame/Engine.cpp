@@ -1,4 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
+#include "DevTools.h"
 #include "Engine.h"
 #include "VillageAssetData.h"
 #include "VirtualCanvas.h"
@@ -728,7 +729,9 @@ void Engine::DebugStartRun()
 {
     _isDailyRun = false;   // debug runs are never daily-seeded
     ResetRunState();
+#if MO_DEV_TOOLS
     _debug.Activate();
+#endif
     _awaitingStartingAbility = false;
     _starterAbilityGiftClaimed = false;
     _startingAbilityPickCount = 0;
@@ -1929,16 +1932,20 @@ void Engine::Update(float dt)
     _shop.SetPromptMode(GetPromptModeForUi());
     _worldMap.SetPromptMode(GetPromptModeForUi());
 
+#if MO_DEV_TOOLS
     // Secret unlock: F12 or \ to enable debug mode access.
     if (IsKeyPressed(KEY_F12) || IsKeyPressed(KEY_BACKSLASH))
         _demoCompleted = true;
+#endif
 
     switch (_gameState)
     {
     case GameState::Menu:
     {
         if (IsKeyPressed(KEY_F1)) _menu.ToggleBorderEditor();
+#if MO_DEV_TOOLS
         _menu.SetDebugUnlocked(_demoCompleted);
+#endif
         _menu.Update();
 
         // Ascension selector — clickable arrows to pick the run's difficulty.
@@ -1996,12 +2003,15 @@ void Engine::Update(float dt)
             _bestiaryReturnState = GameState::Menu;
             _gameState = GameState::Bestiary;
         }
+#if MO_DEV_TOOLS
         if (_menu.DebugPressed() && _demoCompleted)
         {
             DebugStartRun();
         }
+#endif
         if (_menu.QuitPressed())
             _shouldClose = true;
+#if MO_DEV_TOOLS
         if (_menu.DungeonRunPressed())
         {
             _isMainGameRun = false;
@@ -2058,6 +2068,7 @@ void Engine::Update(float dt)
         {
             EnterVillagePlayground();
         }
+#endif
         if (_menu.SettingsPressed())
         {
             _stateBeforeSettings = GameState::Menu;
@@ -2567,12 +2578,12 @@ void Engine::UpdateGamePlay(float dt)
                 _debug.SetForcedEliteType(cmd.value);
                 DebugRestartRoomAs(RoomType::Elite); break;
             case DebugActionKind::ForceEliteSignature:
-                if (_eliteMinibossPtr && _eliteMinibossPtr->IsActive() && _eliteMinibossPtr->IsAlive())
-                    _eliteMinibossPtr->DebugForceEliteSignature();
+                if (Enemy* encounter = FindEncounterDebugTarget())
+                    encounter->DebugForceEliteSignature();
                 break;
             case DebugActionKind::ForceElitePhaseTwo:
-                if (_eliteMinibossPtr && _eliteMinibossPtr->IsActive() && _eliteMinibossPtr->IsAlive())
-                    _eliteMinibossPtr->DebugForceElitePhaseTwo();
+                if (Enemy* encounter = FindEncounterDebugTarget())
+                    encounter->DebugForceElitePhaseTwo();
                 break;
             case DebugActionKind::SpawnGrunt:
                 SpawnBasicEnemy(Vector2Add(spawnBase, Vector2{ 220.f, 40.f })); break;
@@ -3909,7 +3920,7 @@ void Engine::DrawVillageInterior()
 
 void Engine::UpdateVillagePlayground(float dt)
 {
-    if (!_villageSandboxMode && _firstVillageVisit && _demoCompleted && IsKeyPressed(KEY_F8))
+    if (MO_DEV_TOOLS && !_villageSandboxMode && _firstVillageVisit && _demoCompleted && IsKeyPressed(KEY_F8))
     {
         _villageIntroDialogueActive = false;
         _villageIntroDialogueLine = 0;
@@ -5225,8 +5236,10 @@ void Engine::DrawHUD(bool villageMode)
     }
 
     // -- HUD debug editor --------------------------------------------------
+#if MO_DEV_TOOLS
     if (IsKeyPressed(KEY_NINE))
         _hudEditorActive = !_hudEditorActive;
+#endif
 
     if (_hudEditorActive)
     {
@@ -7000,8 +7013,10 @@ void Engine::DrawMap()
         (int)(sh - _mapHintY), ftSz, Color{173, 223, 236, 185});
 
     // -- Map right-panel debug editor --------------------------------------
+#if MO_DEV_TOOLS
     if (IsKeyPressed(KEY_NINE))
         _mapEditorActive = !_mapEditorActive;
+#endif
 
     if (_mapEditorActive)
     {
@@ -10017,18 +10032,45 @@ void Engine::SpawnBossFx(Vector2 worldPos, int fxId)
     _vfx.SpawnSpriteFx(&_bossFx[fxId], worldPos, _bossFxFrames[fxId], 7.f, 1.f / 24.f);
 }
 
-// Debug-only elite readout: archetype, modifier, phase, signature state,
-// cast/hit counters, live zone count and drop telemetry. Never shown in
-// normal play — the caller gates on the debug panel being open.
+Enemy* Engine::FindEncounterDebugTarget()
+{
+    if (_eliteMinibossPtr != nullptr && _eliteMinibossPtr->IsActive() &&
+        _eliteMinibossPtr->IsAlive())
+        return _eliteMinibossPtr;
+
+    for (const auto& enemy : _enemies)
+        if (enemy && enemy->IsActive() && enemy->IsAlive() && enemy->IsBoss())
+            return enemy.get();
+    return nullptr;
+}
+
+const Enemy* Engine::FindEncounterDebugTarget() const
+{
+    if (_eliteMinibossPtr != nullptr && _eliteMinibossPtr->IsActive() &&
+        _eliteMinibossPtr->IsAlive())
+        return _eliteMinibossPtr;
+
+    for (const auto& enemy : _enemies)
+        if (enemy && enemy->IsActive() && enemy->IsAlive() && enemy->IsBoss())
+            return enemy.get();
+    return nullptr;
+}
+
+// Debug-only encounter readout: type, phase, signature state, cast/hit
+// counters, live zone count and drop telemetry. Never shown in normal play.
 void Engine::DrawEliteSignatureTelemetry() const
 {
-    if (_eliteMinibossPtr == nullptr || !_eliteMinibossPtr->IsActive())
+    const Enemy* encounter = FindEncounterDebugTarget();
+    if (encounter == nullptr)
         return;
 
     static const char* kArchetypeNames[] = { "Ogre", "Infernal", "Bonechill", "Stormclub", "Venomfang", "None" };
-    const int archetypeIndex = std::clamp((int)_eliteMinibossPtr->GetEliteArchetype(), 0, 5);
-    const char* modifierName = EliteModifierName(_eliteMechanic);
-    const EliteSignatureTelemetry telemetry = _eliteMinibossPtr->GetEliteSignatureTelemetry();
+    const bool isBoss = encounter->IsBoss();
+    const int archetypeIndex = std::clamp((int)encounter->GetEliteArchetype(), 0, 5);
+    const char* typeName = isBoss ? encounter->GetTuningName() : kArchetypeNames[archetypeIndex];
+    if (typeName == nullptr) typeName = isBoss ? "Boss" : "None";
+    const char* modifierName = isBoss ? "None" : EliteModifierName(_eliteMechanic);
+    const EliteSignatureTelemetry telemetry = encounter->GetEliteSignatureTelemetry();
 
     const int panelX = 20;
     int lineY = (int)(kVirtualHeight * 0.5f) + 40;
@@ -10038,9 +10080,9 @@ void Engine::DrawEliteSignatureTelemetry() const
         DrawText(text, panelX, lineY, 18, color);
         lineY += 22;
     };
-    line("ELITE TELEMETRY", Color{ 255, 210, 150, 255 });
-    line(TextFormat("Type: %s  |  Modifier: %s", kArchetypeNames[archetypeIndex], modifierName), RAYWHITE);
-    line(TextFormat("State: %s  |  Phase: %d", _eliteMinibossPtr->GetEliteSignatureStateName(),
+    line(isBoss ? "BOSS TELEMETRY" : "ELITE TELEMETRY", Color{ 255, 210, 150, 255 });
+    line(TextFormat("Type: %s  |  Modifier: %s", typeName, modifierName), RAYWHITE);
+    line(TextFormat("State: %s  |  Phase: %d", encounter->GetEliteSignatureStateName(),
                     telemetry.phase + 1), RAYWHITE);
     line(TextFormat("Casts: %d  |  Hits: %d", telemetry.casts, telemetry.hits), RAYWHITE);
     line(TextFormat("Zones: %d/%d  |  Dropped z:%d e:%d",
@@ -10050,7 +10092,8 @@ void Engine::DrawEliteSignatureTelemetry() const
                     telemetry.droppedEvents),
          (_combatDirector.GetDroppedEliteZoneCount() + telemetry.droppedEvents > 0)
              ? Color{ 255, 120, 100, 255 } : RAYWHITE);
-    line(TextFormat("Guard linked: %s", _eliteMinibossPtr->IsEliteGuardLinked() ? "YES (60%% DR)" : "no"), RAYWHITE);
+    if (!isBoss)
+        line(TextFormat("Guard linked: %s", encounter->IsEliteGuardLinked() ? "YES (60%% DR)" : "no"), RAYWHITE);
 }
 
 // Elite signature art: one-shot animated impact with caller-chosen scale/tint.
@@ -11665,7 +11708,7 @@ void Engine::UpdateDeathRevive()
     _gamepad.Update(_gamepadBindingsEdit);
     _deathReviveTimer += dt;
 
-    if (_firstDeathRevive && _demoCompleted && IsKeyPressed(KEY_F8))
+    if (MO_DEV_TOOLS && _firstDeathRevive && _demoCompleted && IsKeyPressed(KEY_F8))
     {
         _firstDeathRevive = false;
         _prologue.Complete();
@@ -19193,7 +19236,7 @@ void Engine::UpdateDungeonRun(float dt)
     {
         // F8 is intentionally unused elsewhere. F12 unlocks developer tools;
         // together they provide a visible, test-only onboarding skip.
-        if (_demoCompleted && IsKeyPressed(KEY_F8))
+        if (MO_DEV_TOOLS && _demoCompleted && IsKeyPressed(KEY_F8))
         {
             ClearDungeonEnemies();
             _prologue.Complete();
@@ -19433,6 +19476,17 @@ void Engine::UpdateDungeonRun(float dt)
                 case DebugActionKind::SetEliteMechanic:
                     _debug.SetForcedEliteMechanic(cmd.value);
                     DebugRestartDungeonRoomAs(RoomType::Elite); break;
+                case DebugActionKind::SetEliteType:
+                    _debug.SetForcedEliteType(cmd.value);
+                    DebugRestartDungeonRoomAs(RoomType::Elite); break;
+                case DebugActionKind::ForceEliteSignature:
+                    if (Enemy* encounter = FindEncounterDebugTarget())
+                        encounter->DebugForceEliteSignature();
+                    break;
+                case DebugActionKind::ForceElitePhaseTwo:
+                    if (Enemy* encounter = FindEncounterDebugTarget())
+                        encounter->DebugForceElitePhaseTwo();
+                    break;
                 case DebugActionKind::SpawnGrunt:
                     SpawnBasicEnemy(Vector2Add(spawnBase, Vector2{ 220.f, 40.f }));
                     _dungeonEnemiesSpawned = true; break;

@@ -1,4 +1,5 @@
 #include "MainMenu.h"
+#include "DevTools.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
@@ -99,7 +100,12 @@ void MainMenu::Update()
 
     Vector2 mouse = GetVirtualMousePos();
 
+#if MO_DEV_TOOLS
+    // Backslash reveals the developer button column (Dungeon Run / editors).
+    // In PublicDemo builds this toggle compiles out, so those buttons can
+    // never appear or be clicked.
     if (IsKeyPressed(KEY_BACKSLASH)) _devToolsVisible = !_devToolsVisible;
+#endif
 
     for (auto& button : _buttons)
     {
