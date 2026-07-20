@@ -171,6 +171,11 @@
     <ClCompile Include="Cyclops.cpp" />
     <ClCompile Include="CyclopsLaserProjectile.cpp" />
     <ClCompile Include="CombatDirector.cpp" />
+    <ClCompile Include="ContentDocument.cpp" />
+    <ClCompile Include="ContentTypes.cpp" />
+    <ClCompile Include="ContentSerializers.cpp" />
+    <ClCompile Include="ContentValidation.cpp" />
+    <ClCompile Include="ContentDatabase.cpp" />
     <ClCompile Include="DebugPanel.cpp" />
     <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="Engine.cpp" />
@@ -271,6 +276,11 @@
     <ClInclude Include="BaseCharacter.h" />
     <ClInclude Include="Character.h" />
     <ClInclude Include="CombatDirector.h" />
+    <ClInclude Include="ContentDocument.h" />
+    <ClInclude Include="ContentTypes.h" />
+    <ClInclude Include="ContentSerializers.h" />
+    <ClInclude Include="ContentValidation.h" />
+    <ClInclude Include="ContentDatabase.h" />
     <ClInclude Include="Cyclops.h" />
     <ClInclude Include="CyclopsLaserProjectile.h" />
     <ClInclude Include="DebugPanel.h" />
