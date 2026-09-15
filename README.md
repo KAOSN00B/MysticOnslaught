@@ -1,4 +1,4 @@
-Mystic Onslaught
+Mystic Onslaught: Try the game at [kaosn00b.itch.io/mysticonslaught](https://kaosn00b.itch.io/mystic-onslaught)
 
 Mystic Onslaught is a top-down action roguelite built in C++ with raylib. The project combines real-time combat, class-based abilities, procedural dungeon rooms, enemy encounters, boss fights, pickups, relics, meta progression, a village hub, custom content tools, and a web build pipeline.
 
