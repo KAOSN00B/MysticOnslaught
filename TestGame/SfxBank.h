@@ -46,8 +46,18 @@ enum class SfxId
     BossImpact, BossRoar, BossSlam,
     // UI / pickup / progression
     PickupGold, PickupMagic, PickupCell, LevelUp, AbilityLearn, UIConfirm, UISelect,
+    // Imported library (Sounds/MysticExpansion: Ovani + ElvGames packs)
+    FootGrassA, FootGrassB, FootStoneA, FootStoneB, FootDirtA, FootDirtB,
+    CoinA, CoinB, ChestOpen, DoorOpen, DashA, DashB, ArmorLight, ArmorHeavy,
+    RelicReveal, RelicGained, UpgradeBought, ConsumableA, ConsumableB, GuiCancel,
+    HealA, HealB, ReviveDust, BossArrival,
+    SpellSmite, SpellFog, SpellHexproof, SpellIntoDarkness, ShotFate, StrikeDestiny,
+    KillStompA, KillStompB, KillStompC, KillExecution,
     Count
 };
+
+// What the player is walking on (set per biome / the village).
+enum class FootSurface { Default, Grass, Stone, Dirt };
 
 class SfxBank
 {
@@ -62,8 +72,17 @@ public:
     void  SetVolumeScale(float v) { _volumeScale = (v < 0.f) ? 0.f : (v > 1.f) ? 1.f : v; }
     float GetVolumeScale() const  { return _volumeScale; }
 
+    bool Has(SfxId id) const { return _sounds.count((int)id) != 0; }
+
     // Low-level: play a specific clip. Safe no-op if the clip is absent.
     void Play(SfxId id, float volume = 1.f, bool pitchJitter = true);
+    // Plays one of two variants at random; falls back when neither loaded.
+    void PlayEither(SfxId a, SfxId b, float volume, SfxId fallback = SfxId::None);
+
+    void SetFootSurface(FootSurface surface) { _footSurface = surface; }
+    // Surface footstep; returns false when the surface has no clips so the
+    // caller can keep its generic footstep.
+    bool PlayFootstep(float volume);
 
     // ── Intent-based helpers (what callers actually use) ──────────────────────
     void PlayBasicAttack(PlayerClass cls);       // per-class weapon basic
@@ -74,6 +93,9 @@ public:
     void PlayProjectileImpact(AbilityType element, float volume = 0.5f);
     void PlayCreatureDeath(CreatureFamily family);
     void PlayCreatureHurt(CreatureFamily family);
+    // Kill "crunch" layered under the creature's death sound (throttled so a
+    // multi-kill reads as one hit, not a machine gun). heavy = elite/crit kill.
+    void PlayKillCrunch(bool heavy);
 
     // ── Elite signature intents (archetype index = EliteArchetype) ───────────
     // Distinct windup / impact clips per elite, with explicit fallbacks so a
@@ -88,6 +110,8 @@ private:
 
     std::unordered_map<int, Sound> _sounds;      // SfxId -> Sound (only loaded ones)
     bool   _loaded        = false;
+    FootSurface _footSurface = FootSurface::Default;
     float  _volumeScale   = 1.f;
     double _lastImpactTime = 0.0;                 // throttles element-impact spam
+    double _lastCrunchTime = 0.0;                 // throttles kill-crunch stacking
 };

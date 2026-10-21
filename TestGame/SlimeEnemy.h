@@ -33,6 +33,11 @@ public:
 
     SlimeEnemy* AsSlime() override { return this; }
     const char* GetTuningName() const override { return IsBig() ? "SlimeBig" : "SlimeSmall"; }
+    // Slimes keep their authored sizes: their art is small inside its frame, so
+    // player-height sizing would make the small ones huge.
+    bool SizedToPlayer() const override { return false; }
+    // The big slime reads as its own kind: a violet tint instead of the green base.
+    Color BaseTint() const override { return IsBig() ? Color{ 190, 140, 255, 255 } : WHITE; }
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Slime; }
     SlimeSize   GetSize() const { return _size; }
     bool        IsBig()   const { return _size == SlimeSize::Big; }

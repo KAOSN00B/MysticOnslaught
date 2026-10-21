@@ -61,6 +61,7 @@ public:
     bool SetDoorVisual(int col, int row, const std::string& source,
                        Rectangle sourceRect, Vector2 anchorOffset = {});
     bool SetSolid(int col, int row, bool enabled);
+    void FillOuterWall();   // walls the outer ring except enabled door openings
     bool SetFall(int col, int row, bool enabled);
     bool SetFallSurface(FallSurface surface);
     bool SetCombatCapacityOverride(RoomCapacityOverride capacity);
@@ -147,6 +148,7 @@ private:
     Texture2D TextureFor(const std::string& stem) const;
     void ReleaseCatalogTextures();
     void PushUndo();
+    void DrawHelp() const;
     void NewRoom();
     void SaveRoom();
     void OpenRoom(const RoomBlueprint& room);
@@ -212,6 +214,7 @@ private:
     std::string _paletteSearch;      // props/decor palette filter
     bool _editingSearch = false;
     bool _paletteVisible = true;
+    bool _showHelp = false;          // H toggles the how-to panel
     bool _showLibrary = false;
     bool _coverageExpanded = false;
     std::string _pendingDeleteId; // room armed for delete; second click confirms

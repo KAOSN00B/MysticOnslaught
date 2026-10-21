@@ -52,6 +52,11 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: hit window + special moves ───────────────────────
+    bool     GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
     // Summon interface (read by CombatDirector after Update):
     // returns how many small slimes to spawn this frame (0 = none).
     int  ConsumeSummonRequest();
@@ -76,6 +81,7 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+    void ApplyMoveTuning() override;
 
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
     void HandleChasing(float dt, Vector2 heroWorldPos, const std::vector<Vector2>& propCenters);
@@ -147,24 +153,26 @@ private:
     static constexpr float _hopDuration       = 0.42f;
     static constexpr float _hopPauseBase      = 0.55f;   // grounded window between hops
     static constexpr float _puddleLifetime    = 6.5f;
-    static constexpr float _puddleTickDamage  = 0.25f;
+    static constexpr float _puddleTickDamage  = 2.5f;
     static constexpr float _puddleTickInterval = 0.7f;
     static constexpr int   _maxPuddles        = 14;
     static constexpr float _meleeRange        = 190.f;
     static constexpr float _meleeCooldownBase = 1.9f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit  = 0.5f;
+    static constexpr float _bossDamagePerHit  = 5.f;
     static constexpr float _bossPushSpeed     = 1350.f;   // legacy full forced-push speed; avoid for slime jumps
     static constexpr float _shortShoveDistance = 95.f;    // small bump, not push-to-wall
     static constexpr float _jumpChargeDuration = 0.85f;
     static constexpr float _jumpCooldownBase  = 4.6f;
-    static constexpr float _landingRadius     = 230.f;
+    static constexpr float kDefaultLandingRadius = 230.f;
+    float _landingRadius = kDefaultLandingRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr float _recoveryDuration  = 0.5f;
     static constexpr float _summonDuration    = 1.4f;
     static constexpr float _acidBurstDuration    = 0.9f;   // rear-up + spray cast time
     static constexpr float _acidBurstCooldownBase = 4.0f;
     static constexpr float _acidBurstRange     = 620.f;    // won't spray if player is farther
-    static constexpr float _acidBurstShockRadius = 210.f;  // close-range shockwave on cast
+    static constexpr float kDefaultAcidBurstShockRadius = 210.f;   // close-range shockwave on cast
+    float _acidBurstShockRadius = kDefaultAcidBurstShockRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr int   _bossBaseExpValue  = 15;
 
     static Texture2D _sharedIdleAnim;

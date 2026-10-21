@@ -12,6 +12,8 @@ struct AudioContext
     bool roomClearPending = false;
     bool bossFightActive = false;
     bool inCombat = false;   // enemies alive in the current room → swell biome music
+    bool finalDomain = false;   // the run's last domain: its boss gets the final-boss theme
+    bool atCrossroads = false;  // the room between domains plays the journey theme
     Biome actBiome = Biome::Caverns;
     Biome currentBiome = Biome::Caverns;
 };
@@ -19,6 +21,7 @@ struct AudioContext
 // Pure routing helpers shared by AudioManager and gameplay. Keeping these free
 // of playback state makes the intended procedural-dungeon cues testable.
 MusicCue ResolveDungeonRunMusicCue(const AudioContext& ctx);
+MusicCue BiomeMusicCue(Biome biome);   // one distinct theme per biome
 MusicCue ResolveRoomClearVictoryCue(RoomType roomType);
 
 class AudioManager
@@ -50,6 +53,7 @@ private:
     bool ShouldHoldSilenceForVictory(const AudioContext& ctx) const;
     void StartMusicCue(MusicCue cue, float startTime = 0.f);
     void StopMusicCue(MusicCue cue);
+    void FinishOutgoingMusic();
     void SuspendCurrentLoopForCue(MusicCue cue, bool resumeOnMapOnly);
     void ResumePausedLoopMusic();
 
@@ -57,9 +61,17 @@ private:
     Music _pauseThemeMusic{};
     Music _dungeonThemeMusic{};
     Music _forestThemeMusic{};
-    Music _darkBiomeMusic{};      // Demon's Insides, Graveyard
-    Music _grandBiomeMusic{};     // Ancient Castle, The Sanctuary
+    Music _darkBiomeMusic{};      // Demon's Insides
+    Music _grandBiomeMusic{};     // Ancient Castle
     Music _etherealBiomeMusic{};  // Dream Realm
+    Music _jungleMusic{};
+    Music _lostCityMusic{};
+    Music _wastelandsMusic{};
+    Music _graveyardMusic{};
+    Music _sanctuaryMusic{};
+    Music _villageMusic{};
+    Music _worldMapMusic{};
+    Music _finalBossMusic{};
     Music _bossBattleMusic{};
     Music _shopThemeMusic{};
     Music _battleVictoryMusic{};
@@ -70,6 +82,9 @@ private:
     float    _sfxVolumeScale   = 1.0f;
 
     MusicCue _currentMusicCue = MusicCue::None;
+    MusicCue _outgoingMusicCue = MusicCue::None;
+    float _outgoingFadeTimer = 0.f;
+    float _outgoingStartGain = 1.f;
     MusicCue _suspendedMusicCue = MusicCue::None;
     MusicCue _activeVictoryCue = MusicCue::None;
     float _suspendedMusicTime = 0.f;

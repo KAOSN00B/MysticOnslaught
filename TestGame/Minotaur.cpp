@@ -1,4 +1,6 @@
 #include "Minotaur.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -21,6 +23,15 @@ Sound     Minotaur::_sharedStompSound{};
 bool      Minotaur::_sharedResourcesLoaded = false;
 
 // =============================================================================
+namespace
+{
+    // Special moves (Character Animator).
+    constexpr const char* kStompKey = "Minotaur_Stomp";
+    constexpr const char* kRushKey  = "Minotaur_Rush";
+    constexpr int kStompAnimSlot = 3;
+    constexpr int kRushAnimSlot  = 1;
+}
+
 Minotaur::Minotaur(Vector2 pos)
     : Enemy(pos)
 {
@@ -63,9 +74,9 @@ void Minotaur::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health      = 70.f;
-    _maxHealth   = 70.f;
-    _attackPower = 1.f;
+    _health      = 700.f;
+    _maxHealth   = 700.f;
+    _attackPower = 10.f;
     _speed       = _moveSpeed;
     _expValue    = _bossBaseExpValue;
 
@@ -258,7 +269,7 @@ void Minotaur::HandleChasing(float dt, Vector2 heroWorldPos)
         _state = State::MeleeAttacking;
         _damageApplied = false;
         SetAnimation(_sharedMeleeAnim, 1.f / 11.f, true);
-        PlaySound(_attackSound);
+        SoundVariation::PlayPitchVaried(_attackSound);
         return;
     }
 
@@ -274,7 +285,8 @@ void Minotaur::HandleMelee()
 {
     _velocity = Vector2Zero();
 
-    if (!_damageApplied && _frame >= 3 && _target != nullptr)
+    if (!_damageApplied && _target != nullptr &&
+        MeleeWindowLive(kAnimSlotAttack, kBossMeleeHitFrame, kHitThroughLastFrame))
     {
         // Per-animation melee box (Character Animator, slot 2) wins.
         Rectangle attackRec;
@@ -288,12 +300,13 @@ void Minotaur::HandleMelee()
             attackRec.height += 48.f;
         }
 
-        if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+        const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+        if (hit)
         {
             _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
             _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
         }
-        _damageApplied = true;
+        _damageApplied = MeleeCheckDone(kAnimSlotAttack, hit);
     }
 
     if (_frame >= _maxFrames - 1)
@@ -346,10 +359,10 @@ void Minotaur::HandleRushing(float dt)
 
     // Trample the player once per rush.
     if (!_rushHitPlayer && _target != nullptr &&
-        CheckCollisionRecs(GetBodyContactRec(), _target->GetCollisionRec()))
+        CheckCollisionRecs(TunedMoveBox(kRushKey, GetBodyContactRec()), _target->GetCollisionRec()))
     {
         _rushHitPlayer = true;
-        _target->TakeFractionalDamage(1.0f, _worldPos);
+        _target->TakeFractionalDamage(10.f, _worldPos);
         _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
     }
 
@@ -452,7 +465,7 @@ void Minotaur::HandleStomping(float dt)
         if (distToPlayer <= _stompRingRadius && distToPlayer <= _stompRadius)
         {
             _stompDamageApplied = true;
-            _target->TakeFractionalDamage(1.0f, _worldPos);
+            _target->TakeFractionalDamage(10.f, _worldPos);
             _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
         }
     }
@@ -798,7 +811,7 @@ void Minotaur::SetWaveScale(int wave)
     _maxHealth   = Balance::Boss::kMinotaurHealth;
 _enrageThreshold = 0.40f;
     _speed       = _moveSpeed;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 }
 
 // =============================================================================
@@ -850,4 +863,32 @@ void Minotaur::UnloadSharedResources()
     _sharedRushSound   = Sound{};
     _sharedStompSound  = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: special moves.
+// =============================================================================
+int Minotaur::GetEditorMoveCount() const { return 2; }
+
+Enemy::MoveInfo Minotaur::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index == 0)
+    {
+        move.key = kStompKey; move.name = "Stomp"; move.shape = MoveShape::Circle;
+        move.animSlot = kStompAnimSlot; move.radius = kDefaultStompRadius;
+        move.note = "The shockwave ring grows to this size around it.";
+    }
+    else if (index == 1)
+    {
+        move.key = kRushKey; move.name = "Rush"; move.shape = MoveShape::Box;
+        move.animSlot = kRushAnimSlot; move.box = RelativeFacingRight(GetBodyContactRec());
+        move.note = "Tramples whatever this box touches during the charge.";
+    }
+    return move;
+}
+
+void Minotaur::ApplyMoveTuning()
+{
+    _stompRadius = TunedHitRadius(kStompKey, kDefaultStompRadius);
 }

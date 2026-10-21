@@ -21,6 +21,10 @@
       <Configuration>PublicDemo</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Shipping|x64">
+      <Configuration>Shipping</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
@@ -28,6 +32,12 @@
     <ProjectGuid>{b4c12470-7f9a-4dc1-8d46-03a861707ab3}</ProjectGuid>
     <RootNamespace>TestGame</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <!-- raylib 5.5 (MSVC build). Override with the MO_RAYLIB_DIR environment
+       variable or /p:MoRaylibDir=...; the default keeps existing machines working. -->
+  <PropertyGroup>
+    <MoRaylibDir Condition="'$(MoRaylibDir)'=='' and '$(MO_RAYLIB_DIR)'!=''">$(MO_RAYLIB_DIR)</MoRaylibDir>
+    <MoRaylibDir Condition="'$(MoRaylibDir)'==''">C:\CLibraries\raylib-5.5_win64_msvc16</MoRaylibDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -63,6 +73,13 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Shipping|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
@@ -81,6 +98,9 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='PublicDemo|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Shipping|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
@@ -116,13 +136,13 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\CLibraries\raylib-5.5_win64_msvc16\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MoRaylibDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\CLibraries\raylib-5.5_win64_msvc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(MoRaylibDir)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>raylib.lib;winmm.lib;gdi32.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -134,13 +154,13 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\CLibraries\raylib-5.5_win64_msvc16\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MoRaylibDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\CLibraries\raylib-5.5_win64_msvc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(MoRaylibDir)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>raylib.lib;winmm.lib;gdi32.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -150,20 +170,57 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>MO_DEV_TOOLS=0;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>MO_DEV_TOOLS=0;MO_ITCH_DEMO=1;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\CLibraries\raylib-5.5_win64_msvc16\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MoRaylibDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>C:\CLibraries\raylib-5.5_win64_msvc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(MoRaylibDir)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>raylib.lib;winmm.lib;gdi32.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Shipping|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>MO_DEV_TOOLS=0;MO_ITCH_DEMO=0;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>$(MoRaylibDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(MoRaylibDir)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>raylib.lib;winmm.lib;gdi32.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="AudioManager.cpp" />
+    <ClCompile Include="EngineJourney.cpp" />
+    <ClCompile Include="EngineFlowSelfTest.cpp" />
+    <ClCompile Include="EngineRunSave.cpp" />
+    <ClCompile Include="Json.cpp" />
+    <ClCompile Include="RunCheckpoint.cpp" />
+    <ClCompile Include="RunLog.cpp" />
+    <ClCompile Include="SaveIds.cpp" />
+    <ClCompile Include="SaveStore.cpp" />
+    <ClCompile Include="Sha256.cpp" />
+    <ClCompile Include="EngineRoomEvents.cpp" />
+    <ClCompile Include="EngineCrossroads.cpp" />
+    <ClCompile Include="EngineRunSummary.cpp" />
+    <ClCompile Include="EngineGrimoire.cpp" />
+    <ClCompile Include="EngineHud.cpp" />
+    <ClCompile Include="EngineCharacterSheet.cpp" />
+    <ClCompile Include="EngineDayNight.cpp" />
+    <ClCompile Include="DayNight.cpp" />
+    <ClCompile Include="Grimoire.cpp" />
     <ClCompile Include="BaseCharacter.cpp" />
     <ClCompile Include="CutsceneManager.cpp" />
     <ClCompile Include="DialogueBox.cpp" />
@@ -182,7 +239,6 @@
     <ClCompile Include="DebugPanel.cpp" />
     <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="Engine.cpp" />
-    <ClCompile Include="MapDirector.cpp" />
     <ClCompile Include="WorldMapManager.cpp" />
     <ClCompile Include="SettingsManager.cpp" />
     <ClCompile Include="DungeonGen.cpp" />
@@ -202,12 +258,9 @@
     <ClCompile Include="VFXManager.cpp" />
     <ClCompile Include="DamageNumberManager.cpp" />
     <ClCompile Include="EncounterPlanner.cpp" />
-    <ClCompile Include="Game.cpp" />
     <ClCompile Include="GoldPickup.cpp" />
     <ClCompile Include="HealPickup.cpp" />
-    <ClCompile Include="HUDRenderer.cpp" />
     <ClCompile Include="LavaBallProjectile.cpp" />
-    <ClCompile Include="Leaderboard.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MetaProgression.cpp" />
     <ClCompile Include="Relic.cpp" />
@@ -252,8 +305,6 @@
     <ClCompile Include="MainMenu.cpp" />
     <ClCompile Include="PauseAndGameOver.cpp" />
     <ClCompile Include="Prop.cpp" />
-    <ClCompile Include="ProjectileSystem.cpp" />
-    <ClCompile Include="RoomDirector.cpp" />
     <ClCompile Include="RunStateController.cpp" />
     <ClCompile Include="RunSession.cpp" />
     <ClCompile Include="ClassUnlockRules.cpp" />
@@ -292,7 +343,21 @@
     <ClInclude Include="Enemy.h" />
     <ClInclude Include="DevTools.h" />
     <ClInclude Include="Engine.h" />
-    <ClInclude Include="MapDirector.h" />
+    <ClInclude Include="RunProgression.h" />
+    <ClInclude Include="Json.h" />
+    <ClInclude Include="DamageSource.h" />
+    <ClInclude Include="RunCheckpoint.h" />
+    <ClInclude Include="RunLog.h" />
+    <ClInclude Include="SaveFiles.h" />
+    <ClInclude Include="SaveIds.h" />
+    <ClInclude Include="SaveStore.h" />
+    <ClInclude Include="Sha256.h" />
+    <ClInclude Include="Credits.h" />
+    <ClInclude Include="RoomEvents.h" />
+    <ClInclude Include="Grimoire.h" />
+    <ClInclude Include="SoundVariation.h" />
+    <ClInclude Include="ShopPricing.h" />
+    <ClInclude Include="DamagePolicy.h" />
     <ClInclude Include="WorldMapManager.h" />
     <ClInclude Include="SettingsManager.h" />
     <ClInclude Include="VirtualCanvas.h" />
@@ -306,14 +371,12 @@
     <ClInclude Include="VFXManager.h" />
     <ClInclude Include="DamageNumberManager.h" />
     <ClInclude Include="EncounterPlanner.h" />
-    <ClInclude Include="Game.h" />
     <ClInclude Include="GameBalance.h" />
     <ClInclude Include="GameTypes.h" />
     <ClInclude Include="GoldPickup.h" />
     <ClInclude Include="HealPickup.h" />
     <ClInclude Include="KeyBindings.h" />
     <ClInclude Include="LavaBallProjectile.h" />
-    <ClInclude Include="Leaderboard.h" />
     <ClInclude Include="MainMenu.h" />
     <ClInclude Include="Ascension.h" />
     <ClInclude Include="RoomAffix.h" />
@@ -326,6 +389,8 @@
     <ClInclude Include="MapEditor.h" />
     <ClInclude Include="VillageAssetData.h" />
     <ClInclude Include="AttackTuning.h" />
+    <ClInclude Include="EliteMoveDefs.h" />
+    <ClInclude Include="TuningFiles.h" />
     <ClInclude Include="CellPickup.h" />
     <ClInclude Include="EnemyProjectile.h" />
     <ClInclude Include="SkeletonArcher.h" />
@@ -360,8 +425,6 @@
     <ClInclude Include="PauseAndGameOver.h" />
     <ClInclude Include="Pickup.h" />
     <ClInclude Include="Prop.h" />
-    <ClInclude Include="ProjectileSystem.h" />
-    <ClInclude Include="RoomDirector.h" />
     <ClInclude Include="RunStateController.h" />
     <ClInclude Include="RunSession.h" />
     <ClInclude Include="ClassUnlockRules.h" />
@@ -371,7 +434,6 @@
     <ClInclude Include="SpreadProjectile.h" />
     <ClInclude Include="TouchControls.h" />
     <ClInclude Include="WorldConfig.h" />
-    <ClInclude Include="HUDRenderer.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="keybindings.cfg" />

@@ -13,9 +13,12 @@ namespace
     };
 }
 
-bool ShouldPlayPrologue(PrologueEntryMode mode)
+bool ShouldPlayPrologue(PrologueEntryMode /*mode*/)
 {
-    return mode == PrologueEntryMode::NewGame;
+    // The scripted prologue is retired. Onboarding now happens as action-gated
+    // prompts inside the first real dungeon room (see Engine's dungeon tutorial),
+    // so both New Game and Continue skip straight past it.
+    return false;
 }
 
 const char* GetPrologueBasicAttackName(PlayerClass playerClass)

@@ -1,4 +1,6 @@
 #include "TitanGuard.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -47,8 +49,8 @@ void TitanGuard::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health = 80.f; _maxHealth = 80.f;   // the tank of the roster
-    _attackPower = 1.f;
+    _health = 800.f; _maxHealth = 800.f;   // the tank of the roster
+    _attackPower = 10.f;
     _speed = _moveSpeed;
     _expValue = _bossBaseExpValue;
 
@@ -194,7 +196,7 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _state = State::MeleeAttacking;
                 _damageApplied = false;
                 SetAnimation(_sharedMeleeAnim, 1.f / 10.f, true);
-                PlaySound(_attackSound);
+                SoundVariation::PlayPitchVaried(_attackSound);
                 break;
             }
             // Last Bastion (phase 2): close big gaps with a shield-leading charge
@@ -247,7 +249,8 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         case State::MeleeAttacking:
             _velocity = Vector2Zero();
-            if (!_damageApplied && _frame >= 3)
+            if (bool firstCheck = false;
+                !_damageApplied && MeleeWindowLive(kAnimSlotAttack, kBossMeleeHitFrame, kHitThroughLastFrame, firstCheck))
             {
                 Rectangle attackRec;
                 if (!GetAnimMeleeRectWorld(2, attackRec))
@@ -257,14 +260,16 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                     if (_rightLeft < 0.f) attackRec.x -= 120.f;
                     attackRec.y -= 26.f; attackRec.height += 52.f;
                 }
-                if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+                const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+                if (hit)
                 {
-                    _target->TakeFractionalDamage(1.0f, _worldPos);   // heaviest melee hit
+                    _target->TakeFractionalDamage(10.f, _worldPos);   // heaviest melee hit
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
-                _damageApplied = true;
+                _damageApplied = MeleeCheckDone(kAnimSlotAttack, hit);
                 // Committing to the swing drops the guard — the front is open for a beat.
-                _shieldDownTimer = _shieldDownDuration;
+                if (firstCheck)
+                    _shieldDownTimer = _shieldDownDuration;
             }
             if (_frame >= _maxFrames - 1)
             {
@@ -323,7 +328,7 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 if (distToPlayer <= _slamRingRadius && distToPlayer <= _slamRadius)
                 {
                     _slamDamageApplied = true;
-                    _target->TakeFractionalDamage(1.5f, _worldPos);
+                    _target->TakeFractionalDamage(15.f, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
             }
@@ -356,7 +361,7 @@ void TitanGuard::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             if (_target->IsAlive() && _contactCooldown <= 0.f &&
                 Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _chargeContactRadius)
             {
-                _target->TakeFractionalDamage(1.0f, _worldPos);
+                _target->TakeFractionalDamage(10.f, _worldPos);
                 _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 _contactCooldown = _contactCooldownBase;
             }
@@ -646,7 +651,7 @@ void TitanGuard::SetWaveScale(int wave)
     (void)wave;
     _expValue = _bossBaseExpValue;
     _health = Balance::Boss::kTitanGuardHealth; _maxHealth = Balance::Boss::kTitanGuardHealth;
-    _speed = _moveSpeed; _attackPower = 1.f;
+    _speed = _moveSpeed; _attackPower = 10.f;
 }
 
 void TitanGuard::EnsureSharedResourcesLoaded()
@@ -693,4 +698,41 @@ void TitanGuard::UnloadSharedResources()
     _sharedDeathSound = Sound{};     _sharedBlockSound = Sound{};
     _sharedSlamSound = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: special moves.
+// =============================================================================
+namespace
+{
+    constexpr const char* kBulwarkSlamKey  = "TitanGuard_Bulwark_Slam";
+    constexpr const char* kShieldChargeKey = "TitanGuard_Shield_Charge";
+    constexpr int kSlamAnimSlot   = 4;
+    constexpr int kChargeAnimSlot = 1;
+}
+
+int TitanGuard::GetEditorMoveCount() const { return 2; }
+
+Enemy::MoveInfo TitanGuard::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index == 0)
+    {
+        move.key = kBulwarkSlamKey; move.name = "Bulwark Slam"; move.shape = MoveShape::Circle;
+        move.animSlot = kSlamAnimSlot; move.radius = kDefaultSlamRadius;
+        move.note = "The shockwave ring grows to this size around it.";
+    }
+    else if (index == 1)
+    {
+        move.key = kShieldChargeKey; move.name = "Shield Charge"; move.shape = MoveShape::Circle;
+        move.animSlot = kChargeAnimSlot; move.radius = kDefaultChargeContactRadius;
+        move.note = "Runs over anything this close during the charge.";
+    }
+    return move;
+}
+
+void TitanGuard::ApplyMoveTuning()
+{
+    _slamRadius          = TunedHitRadius(kBulwarkSlamKey, kDefaultSlamRadius);
+    _chargeContactRadius = TunedHitRadius(kShieldChargeKey, kDefaultChargeContactRadius);
 }

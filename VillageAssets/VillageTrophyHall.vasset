@@ -1,0 +1,12 @@
+village_asset 1
+image VillageTrophyHall.png
+size 127 96
+id VillageTrophyHall
+category Building
+service TrophyHall
+cost 0
+required 1
+unique 0
+removable 0
+collider 2.00 39.00 123.00 55.00
+interact 28.00 100.00 56.00 44.00 type=Inspect

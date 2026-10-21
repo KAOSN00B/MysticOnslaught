@@ -1,7 +1,6 @@
 ﻿#pragma once
 
 #include "raylib.h"
-#include "WebGamepad.h"
 #include "InputPrompts.h"
 
 class PauseAndGameOver
@@ -13,10 +12,27 @@ public:
     void Init();
     void Unload();
 
-    int  DrawPause(InputPromptMode promptMode = InputPromptMode::KeyboardMouse);      // 0=nothing  1=resume  2=howtoplay  3=quit  4=keybindings  5=mainmenu
-    int  DrawGameOver(InputPromptMode promptMode = InputPromptMode::KeyboardMouse);   // 0=nothing  1=retry  2=main menu  3=quit
+    // Input only (call from Update). Returns the chosen action:
+    // 0=nothing  1=resume  2=howtoplay  3=quit  4=keybindings  5=mainmenu  6=settings  7=grimoire
+    // 8=character sheet (also Q / E / Tab or a shoulder button, like switching tabs)
+    int  UpdatePause();
+    // Render only; never reads clicks or changes menu state. During a resumable
+    // run the exits read "Save & ..." (leaving is not a death).
+    void DrawPause(InputPromptMode promptMode, bool runInProgress) const;
 
 private:
+    // Geometry shared by UpdatePause (hit tests) and DrawPause (rendering).
+    struct PauseLayout
+    {
+        float sw, sh;
+        float btnW, btnH, btnGap, padV, titleH;
+        float panelX, panelY, panelW, panelH;
+        Rectangle borderRect;
+        float naturalBtnY;
+    };
+    PauseLayout ComputePauseLayout() const;
+    float       ActivePauseButtonY(const PauseLayout& layout) const;
+    static Rectangle PauseButtonRect(const PauseLayout& layout, float activeBtnY, int index);
 
     Texture2D _borderTex{};
     Texture2D _btnTex{};
@@ -25,8 +41,6 @@ private:
     // Gamepad navigation state
     int   _gpPauseSelected        = 0;
     float _gpPauseStickCooldown   = 0.f;
-    int   _gpGameOverSelected     = 0;
-    float _gpGameOverStickCooldown = 0.f;
 
     // ── Border panel editor ───────────────────────────────────────────────────
 public:

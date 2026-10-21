@@ -37,6 +37,10 @@ public:
     int         GetSpawnCost()     const override { return 4; }
     const char* GetTuningName()    const override { return "Infernal"; }
 
+    // ── Character Animator: special moves ────────────────────────────────────
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
     // Fire identity: burn the player on every landed melee hit.
     void OnMeleeHitPlayer(Character* target) override;
 
@@ -78,7 +82,7 @@ private:
     // Burn applied to the player on a fire strike (delay, ticks, dmg/tick).
     static constexpr float kBurnTickDelay   = 0.5f;
     static constexpr int   kBurnTickCount   = 3;
-    static constexpr float kBurnDamagePerTick = 0.4f;
+    static constexpr float kBurnDamagePerTick = 4.f;
 
     static constexpr int kVariantCount = 4;
     static Texture2D _sharedIdleAnim[kVariantCount];

@@ -1,0 +1,1630 @@
+{
+  "permitted_sheets": [
+    "Jungle",
+    "Jungle_ForestVariants",
+    "FD_Animated_Water"
+  ],
+  "derived_assets": {
+    "prop_0": {
+      "source_rectangle": [
+        224,
+        16,
+        64,
+        48
+      ],
+      "target_original_rectangle": [
+        0,
+        16,
+        64,
+        64
+      ],
+      "atlas_rectangle": [
+        0,
+        0,
+        64,
+        48
+      ],
+      "role": "broad green Jungle tree",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "10",
+        "15",
+        "45",
+        "33"
+      ]
+    },
+    "prop_1": {
+      "source_rectangle": [
+        192,
+        16,
+        32,
+        48
+      ],
+      "target_original_rectangle": [
+        64,
+        16,
+        64,
+        64
+      ],
+      "atlas_rectangle": [
+        64,
+        0,
+        32,
+        48
+      ],
+      "role": "narrow green Jungle tree",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "15",
+        "32",
+        "33"
+      ]
+    },
+    "prop_2": {
+      "source_rectangle": [
+        128,
+        0,
+        16,
+        32
+      ],
+      "target_original_rectangle": [
+        128,
+        0,
+        64,
+        80
+      ],
+      "atlas_rectangle": [
+        96,
+        0,
+        16,
+        32
+      ],
+      "role": "small leafy Jungle tree",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "9",
+        "16",
+        "23"
+      ]
+    },
+    "prop_3": {
+      "source_rectangle": [
+        176,
+        0,
+        16,
+        32
+      ],
+      "target_original_rectangle": [
+        192,
+        0,
+        64,
+        80
+      ],
+      "atlas_rectangle": [
+        112,
+        0,
+        16,
+        32
+      ],
+      "role": "small alternate leafy Jungle tree",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "11",
+        "16",
+        "21"
+      ]
+    },
+    "prop_4": {
+      "source_rectangle": [
+        32,
+        464,
+        32,
+        32
+      ],
+      "target_original_rectangle": [
+        432,
+        496,
+        32,
+        32
+      ],
+      "atlas_rectangle": [
+        128,
+        0,
+        32,
+        32
+      ],
+      "role": "rounded mossy boulder",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "2",
+        "3",
+        "29",
+        "29"
+      ]
+    },
+    "prop_5": {
+      "source_rectangle": [
+        32,
+        496,
+        32,
+        32
+      ],
+      "target_original_rectangle": [
+        448,
+        528,
+        32,
+        32
+      ],
+      "atlas_rectangle": [
+        160,
+        0,
+        32,
+        32
+      ],
+      "role": "wide mossy boulder",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "2",
+        "2",
+        "28",
+        "30"
+      ]
+    },
+    "prop_168711230338000_18": {
+      "source_rectangle": [
+        112,
+        384,
+        16,
+        32
+      ],
+      "target_original_rectangle": [
+        432,
+        496,
+        32,
+        32
+      ],
+      "atlas_rectangle": [
+        192,
+        0,
+        16,
+        32
+      ],
+      "role": "tall fitted mossy boulder",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "0",
+        "16",
+        "32"
+      ]
+    },
+    "prop_168713593038100_19": {
+      "source_rectangle": [
+        112,
+        416,
+        16,
+        32
+      ],
+      "target_original_rectangle": [
+        448,
+        528,
+        32,
+        32
+      ],
+      "atlas_rectangle": [
+        208,
+        0,
+        16,
+        32
+      ],
+      "role": "alternate tall fitted mossy boulder",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "0",
+        "16",
+        "32"
+      ]
+    },
+    "prop_173392298448400_1": {
+      "source_rectangle": [
+        112,
+        256,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        352,
+        496,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        224,
+        0,
+        16,
+        16
+      ],
+      "role": "small rounded mossy rock",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "0",
+        "16",
+        "16"
+      ]
+    },
+    "prop_173393896656300_2": {
+      "source_rectangle": [
+        112,
+        272,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        384,
+        496,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        240,
+        0,
+        16,
+        16
+      ],
+      "role": "small angular mossy rock",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "0",
+        "16",
+        "16"
+      ]
+    },
+    "prop_173395190463900_3": {
+      "source_rectangle": [
+        112,
+        288,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        400,
+        496,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        256,
+        0,
+        16,
+        16
+      ],
+      "role": "small flat mossy rock",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "0",
+        "16",
+        "16"
+      ]
+    },
+    "prop_173396521756000_4": {
+      "source_rectangle": [
+        112,
+        304,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        416,
+        496,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        272,
+        0,
+        16,
+        16
+      ],
+      "role": "small alternate mossy rock",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": [
+        "0",
+        "0",
+        "16",
+        "16"
+      ]
+    },
+    "decor_0": {
+      "source_rectangle": [
+        0,
+        256,
+        32,
+        32
+      ],
+      "target_original_rectangle": [
+        288,
+        528,
+        32,
+        32
+      ],
+      "atlas_rectangle": [
+        288,
+        0,
+        32,
+        32
+      ],
+      "role": "yellow Jungle flowers",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_1": {
+      "source_rectangle": [
+        64,
+        256,
+        32,
+        32
+      ],
+      "target_original_rectangle": [
+        304,
+        560,
+        32,
+        32
+      ],
+      "atlas_rectangle": [
+        320,
+        0,
+        32,
+        32
+      ],
+      "role": "teal Jungle flowers",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_2": {
+      "source_rectangle": [
+        48,
+        336,
+        48,
+        16
+      ],
+      "target_original_rectangle": [
+        288,
+        544,
+        48,
+        16
+      ],
+      "atlas_rectangle": [
+        352,
+        0,
+        48,
+        16
+      ],
+      "role": "wide yellow flower bed",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_3": {
+      "source_rectangle": [
+        16,
+        352,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        304,
+        544,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        400,
+        0,
+        16,
+        16
+      ],
+      "role": "yellow flower cluster",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_4": {
+      "source_rectangle": [
+        0,
+        336,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        320,
+        576,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        416,
+        0,
+        16,
+        16
+      ],
+      "role": "teal flower cluster",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_5": {
+      "source_rectangle": [
+        0,
+        368,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        272,
+        544,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        432,
+        0,
+        16,
+        16
+      ],
+      "role": "small yellow flower pair",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_6": {
+      "source_rectangle": [
+        48,
+        384,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        336,
+        544,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        448,
+        0,
+        16,
+        16
+      ],
+      "role": "small yellow flower trio",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_7": {
+      "source_rectangle": [
+        80,
+        384,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        304,
+        576,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        464,
+        0,
+        16,
+        16
+      ],
+      "role": "teal flower trio",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "decor_8": {
+      "source_rectangle": [
+        80,
+        400,
+        16,
+        16
+      ],
+      "target_original_rectangle": [
+        288,
+        544,
+        16,
+        16
+      ],
+      "atlas_rectangle": [
+        480,
+        0,
+        16,
+        16
+      ],
+      "role": "yellow flower sprig",
+      "fit": "nearest-neighbor to exact original footprint",
+      "collision": []
+    },
+    "anim_decor_0": {
+      "role": "animated Jungle foliage",
+      "frames": [
+        "256",
+        "592",
+        "16",
+        "16",
+        "256",
+        "608",
+        "16",
+        "16",
+        "256",
+        "624",
+        "16",
+        "16",
+        "256",
+        "640",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169099280120400_20": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "0",
+        "176",
+        "16",
+        "16",
+        "64",
+        "176",
+        "16",
+        "16",
+        "128",
+        "176",
+        "16",
+        "16",
+        "192",
+        "176",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169117514979800_21": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "16",
+        "176",
+        "16",
+        "16",
+        "80",
+        "176",
+        "16",
+        "16",
+        "144",
+        "176",
+        "16",
+        "16",
+        "208",
+        "176",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169126202018300_22": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "32",
+        "176",
+        "16",
+        "16",
+        "96",
+        "176",
+        "16",
+        "16",
+        "160",
+        "176",
+        "16",
+        "16",
+        "224",
+        "176",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169135452198400_23": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "0",
+        "192",
+        "16",
+        "16",
+        "64",
+        "192",
+        "16",
+        "16",
+        "128",
+        "192",
+        "16",
+        "16",
+        "192",
+        "192",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169144723228100_24": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "0",
+        "208",
+        "16",
+        "16",
+        "64",
+        "208",
+        "16",
+        "16",
+        "128",
+        "208",
+        "16",
+        "16",
+        "192",
+        "208",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169155040957600_25": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "16",
+        "208",
+        "16",
+        "16",
+        "80",
+        "208",
+        "16",
+        "16",
+        "144",
+        "208",
+        "16",
+        "16",
+        "208",
+        "208",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169166379563000_26": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "32",
+        "208",
+        "16",
+        "16",
+        "96",
+        "208",
+        "16",
+        "16",
+        "160",
+        "208",
+        "16",
+        "16",
+        "224",
+        "208",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169173133546700_27": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "32",
+        "192",
+        "16",
+        "16",
+        "96",
+        "192",
+        "16",
+        "16",
+        "160",
+        "192",
+        "16",
+        "16",
+        "224",
+        "192",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169184488769900_28": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "16",
+        "192",
+        "16",
+        "16",
+        "80",
+        "192",
+        "16",
+        "16",
+        "144",
+        "192",
+        "16",
+        "16",
+        "208",
+        "192",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169199441827800_29": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "0",
+        "224",
+        "16",
+        "16",
+        "64",
+        "224",
+        "16",
+        "16",
+        "128",
+        "224",
+        "16",
+        "16",
+        "192",
+        "224",
+        "16",
+        "16"
+      ]
+    },
+    "anim_decor_169211662238100_30": {
+      "role": "explicitly permitted shared water animation",
+      "frames": [
+        "32",
+        "224",
+        "16",
+        "16",
+        "96",
+        "224",
+        "16",
+        "16",
+        "160",
+        "224",
+        "16",
+        "16",
+        "224",
+        "224",
+        "16",
+        "16"
+      ]
+    }
+  },
+  "rectangles": {
+    "(16, 0, 16, 16)": [
+      [
+        96,
+        544,
+        16,
+        16
+      ],
+      "sand path becomes olive grass path"
+    ],
+    "(48, 0, 16, 16)": [
+      [
+        96,
+        544,
+        16,
+        16
+      ],
+      "sand path variation becomes olive grass path"
+    ],
+    "(16, 16, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "green grass floor"
+    ],
+    "(32, 16, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "green grass floor"
+    ],
+    "(112, 16, 16, 16)": [
+      [
+        176,
+        544,
+        16,
+        16
+      ],
+      "dark grass accent floor"
+    ],
+    "(48, 32, 16, 16)": [
+      [
+        240,
+        496,
+        16,
+        16
+      ],
+      "grass tuft overlay"
+    ],
+    "(16, 304, 16, 16)": [
+      [
+        304,
+        544,
+        16,
+        16
+      ],
+      "yellow flower cluster"
+    ],
+    "(48, 304, 16, 16)": [
+      [
+        320,
+        576,
+        16,
+        16
+      ],
+      "contrasting teal flower cluster"
+    ],
+    "(0, 416, 16, 16)": [
+      [
+        352,
+        704,
+        16,
+        16
+      ],
+      "fence upper left corner"
+    ],
+    "(16, 416, 16, 16)": [
+      [
+        368,
+        704,
+        16,
+        16
+      ],
+      "fence upper horizontal edge"
+    ],
+    "(32, 416, 16, 16)": [
+      [
+        384,
+        704,
+        16,
+        16
+      ],
+      "fence upper right corner"
+    ],
+    "(0, 432, 16, 16)": [
+      [
+        352,
+        720,
+        16,
+        16
+      ],
+      "fence left vertical edge"
+    ],
+    "(32, 432, 16, 16)": [
+      [
+        384,
+        720,
+        16,
+        16
+      ],
+      "fence right vertical edge"
+    ],
+    "(0, 448, 16, 16)": [
+      [
+        352,
+        736,
+        16,
+        16
+      ],
+      "fence lower left corner"
+    ],
+    "(16, 448, 16, 16)": [
+      [
+        368,
+        736,
+        16,
+        16
+      ],
+      "fence lower horizontal edge"
+    ],
+    "(32, 448, 16, 16)": [
+      [
+        384,
+        736,
+        16,
+        16
+      ],
+      "fence lower right corner"
+    ],
+    "(64, 32, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous green grass floor"
+    ],
+    "(80, 32, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous green grass floor; subtle source variation consolidated"
+    ],
+    "(96, 32, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous green grass floor; subtle source variation consolidated"
+    ],
+    "(0, 16, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "green grass floor"
+    ],
+    "(32, 0, 16, 16)": [
+      [
+        96,
+        544,
+        16,
+        16
+      ],
+      "olive grass path"
+    ],
+    "(64, 208, 16, 16)": [
+      [
+        352,
+        608,
+        16,
+        16
+      ],
+      "upper left wall corner"
+    ],
+    "(80, 208, 16, 16)": [
+      [
+        368,
+        608,
+        16,
+        16
+      ],
+      "upper wall edge"
+    ],
+    "(96, 208, 16, 16)": [
+      [
+        384,
+        608,
+        16,
+        16
+      ],
+      "upper right wall corner"
+    ],
+    "(64, 224, 16, 16)": [
+      [
+        352,
+        624,
+        16,
+        16
+      ],
+      "left wall edge"
+    ],
+    "(96, 224, 16, 16)": [
+      [
+        384,
+        624,
+        16,
+        16
+      ],
+      "right wall edge"
+    ],
+    "(64, 240, 16, 16)": [
+      [
+        352,
+        640,
+        16,
+        32
+      ],
+      "lower left wall corner and face"
+    ],
+    "(80, 240, 16, 16)": [
+      [
+        368,
+        640,
+        16,
+        32
+      ],
+      "lower wall edge and face"
+    ],
+    "(96, 240, 16, 16)": [
+      [
+        384,
+        640,
+        16,
+        32
+      ],
+      "lower right wall corner and face"
+    ],
+    "(64, 112, 16, 16)": [
+      [
+        352,
+        608,
+        16,
+        16
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(80, 112, 16, 16)": [
+      [
+        368,
+        608,
+        16,
+        16
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(96, 112, 16, 16)": [
+      [
+        384,
+        608,
+        16,
+        16
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(64, 128, 16, 16)": [
+      [
+        352,
+        624,
+        16,
+        16
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(96, 128, 16, 16)": [
+      [
+        384,
+        624,
+        16,
+        16
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(64, 144, 16, 16)": [
+      [
+        352,
+        640,
+        16,
+        32
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(80, 144, 16, 16)": [
+      [
+        368,
+        640,
+        16,
+        32
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(96, 144, 16, 16)": [
+      [
+        384,
+        640,
+        16,
+        32
+      ],
+      "stone wall corresponding corner/edge"
+    ],
+    "(0, 32, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(16, 32, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(32, 32, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(64, 16, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(80, 16, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(96, 16, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(64, 0, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(80, 0, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(96, 0, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(112, 0, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "continuous Jungle grass floor"
+    ],
+    "(48, 16, 16, 16)": [
+      [
+        256,
+        496,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(16, 368, 16, 16)": [
+      [
+        304,
+        544,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(32, 400, 16, 16)": [
+      [
+        320,
+        576,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(0, 304, 16, 16)": [
+      [
+        304,
+        544,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(32, 336, 16, 16)": [
+      [
+        320,
+        576,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(0, 256, 16, 16)": [
+      [
+        256,
+        496,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(32, 256, 16, 16)": [
+      [
+        272,
+        496,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(64, 288, 16, 16)": [
+      [
+        288,
+        512,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(0, 320, 16, 16)": [
+      [
+        288,
+        544,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(16, 320, 16, 16)": [
+      [
+        304,
+        544,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(32, 304, 16, 16)": [
+      [
+        320,
+        544,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(32, 320, 16, 16)": [
+      [
+        304,
+        576,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(48, 256, 16, 16)": [
+      [
+        240,
+        512,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(48, 320, 16, 16)": [
+      [
+        320,
+        576,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(64, 272, 16, 16)": [
+      [
+        320,
+        512,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(64, 320, 16, 16)": [
+      [
+        304,
+        544,
+        16,
+        16
+      ],
+      "Jungle foliage/flower counterpart"
+    ],
+    "(64, 416, 16, 16)": [
+      [
+        464,
+        608,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(80, 416, 16, 16)": [
+      [
+        480,
+        608,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(96, 416, 16, 16)": [
+      [
+        496,
+        608,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(64, 432, 16, 16)": [
+      [
+        464,
+        624,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(80, 432, 16, 16)": [
+      [
+        480,
+        624,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(96, 432, 16, 16)": [
+      [
+        496,
+        624,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(64, 448, 16, 16)": [
+      [
+        464,
+        640,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(80, 448, 16, 16)": [
+      [
+        480,
+        640,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(96, 448, 16, 16)": [
+      [
+        496,
+        640,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(64, 464, 16, 16)": [
+      [
+        464,
+        608,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(80, 464, 16, 16)": [
+      [
+        480,
+        608,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(96, 464, 16, 16)": [
+      [
+        496,
+        608,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(64, 496, 16, 16)": [
+      [
+        464,
+        624,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(80, 496, 16, 16)": [
+      [
+        480,
+        624,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(96, 496, 16, 16)": [
+      [
+        496,
+        624,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(64, 512, 16, 16)": [
+      [
+        464,
+        640,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(80, 512, 16, 16)": [
+      [
+        480,
+        640,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(96, 512, 16, 16)": [
+      [
+        496,
+        640,
+        16,
+        16
+      ],
+      "wood platform matching edge/corner"
+    ],
+    "(0, 112, 16, 16)": [
+      [
+        0,
+        528,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(16, 112, 16, 16)": [
+      [
+        16,
+        528,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(32, 112, 16, 16)": [
+      [
+        32,
+        528,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(0, 128, 16, 16)": [
+      [
+        0,
+        544,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(16, 128, 16, 16)": [
+      [
+        16,
+        544,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(32, 128, 16, 16)": [
+      [
+        32,
+        544,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(0, 144, 16, 16)": [
+      [
+        0,
+        560,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(16, 144, 16, 16)": [
+      [
+        16,
+        560,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ],
+    "(32, 144, 16, 16)": [
+      [
+        32,
+        560,
+        16,
+        16
+      ],
+      "rounded Jungle grass patch contour"
+    ]
+  },
+  "fitted_visuals": {
+    "(176, 0, 16, 16)": [
+      480,
+      448,
+      16,
+      16
+    ],
+    "(176, 16, 16, 16)": [
+      480,
+      464,
+      16,
+      16
+    ]
+  }
+}

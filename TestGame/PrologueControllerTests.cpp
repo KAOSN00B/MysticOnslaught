@@ -5,7 +5,9 @@
 
 int main()
 {
-    assert(ShouldPlayPrologue(PrologueEntryMode::NewGame));
+    // The scripted prologue is retired - onboarding is now in-dungeon prompts,
+    // so neither entry mode plays it.
+    assert(!ShouldPlayPrologue(PrologueEntryMode::NewGame));
     assert(!ShouldPlayPrologue(PrologueEntryMode::Continue));
 
     assert(std::string(GetPrologueBasicAttackName(PlayerClass::Mage)) == "Arcane Staff Bolt");

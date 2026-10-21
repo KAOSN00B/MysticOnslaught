@@ -69,10 +69,11 @@ struct RoomHazardContext
     int     envProjectilesInFlight = 0;
     // Hazard damage pre-scaled by the Engine to the run's enemy power level,
     // so hazards keep pace with the rest of the game instead of staying at 1.
-    int     scaledBoltDamage = 1;   // totem + torch shots
-    int     scaledTickDamage = 1;   // lava tick
-    std::function<void(Vector2 pos, Vector2 dir, int damage)> spawnFireBolt;
-    std::function<void(int damage, Vector2 fromPos)>          damagePlayer;
+    int     scaledBoltDamage = 10;  // totem + torch shots
+    int     scaledTickDamage = 10;  // lava tick
+    // The hazard that fires or hurts is passed along so the run log can name it.
+    std::function<void(Vector2 pos, Vector2 dir, int damage, RoomHazardType from)> spawnFireBolt;
+    std::function<void(int damage, Vector2 fromPos, RoomHazardType from)>          damagePlayer;
 };
 
 class RoomHazardDirector

@@ -173,7 +173,7 @@ void DialogueBox::Draw(Texture2D borderTex,
 
     // ── Border panel ──────────────────────────────────────────────────────────
     if (borderTex.id > 0)
-        DrawNineSlice(borderTex, srcCorner, dstCorner, panelRect, WHITE);
+        DrawNineSliceScaled(borderTex, borderCuts, borderScale, panelRect, WHITE);
     else
         DrawRectangleRec(panelRect, Color{ 20, 14, 30, 230 });
 

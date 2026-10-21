@@ -1,6 +1,6 @@
 Mystic Onslaught
 
-Mystic Onslaught is a top-down action roguelite built in C++ with raylib. The project combines real-time combat, class-based abilities, procedural dungeon rooms, enemy encounters, boss fights, pickups, relics, meta progression, a village hub, custom content tools, and a web build pipeline.
+Mystic Onslaught is a top-down action roguelite built in C++ with raylib. The project combines real-time combat, class-based abilities, procedural dungeon rooms, enemy encounters, boss fights, pickups, relics, meta progression, a village hub, and custom content tools. Development targets native Windows builds; web support has been discontinued.
 
 This is the largest project in this portfolio set and represents ongoing work toward a playable roguelite demo.
 
@@ -44,14 +44,13 @@ The current design direction is combat-first: the dungeon should test player ski
 - Audio, music, and SFX routing
 - Debug tools and in-game editors
 - Windows build support through Visual Studio
-- Web build support through Emscripten
 
 ## Tech Stack
 
 - C++
 - raylib 5.5
 - Visual Studio 2022 / MSVC v143
-- Emscripten for web builds
+- PowerShell build, test and packaging scripts in `tools/`
 - Custom text/metadata content files
 - Custom editor tools built inside the game
 
@@ -116,7 +115,7 @@ The project also includes gamepad and touch-control support, including customiza
 
 ### Engine and Game Loop
 
-The application starts through `main.cpp`, creates an `Engine` instance, and runs either a desktop loop or an Emscripten web frame loop depending on the platform.
+The application starts through `main.cpp`, creates an `Engine` instance, and runs the desktop loop.
 
 The engine handles:
 
@@ -186,9 +185,10 @@ The project uses configuration and progression files such as:
 - `settings.cfg`
 - `keybindings.cfg`
 - `metaprogress.cfg`
-- `leaderboard.txt`
+- `run_save.cfg` (suspended-run checkpoint) and `run_history.cfg`
+- `VillageLayoutSave.vlayout`
 
-These files support settings, input customization, meta progression, and leaderboard-style data.
+These files support settings, input customization, meta progression, suspended runs, and the village. The full game (Shipping) stores them in `%LOCALAPPDATA%\MysticOnslaught`; developer builds keep them in the working folder. Setting `MO_PROFILE_DIR` redirects every one of them to a sandbox folder, which the automated tests and the flow self-test use so they never touch a real profile.
 
 ### Tools and Editors
 
@@ -240,52 +240,66 @@ TestGame/
 ├── Music/
 ├── PowerUps/
 ├── VillageAssets/
-├── build_web.bat
-├── build_raylib_web.bat
-├── Makefile
-└── web_build/
+└── tools/                 (supported native build / test / package scripts)
 ```
 
 ## How to Build and Run
 
-### Windows / Visual Studio
+Native Windows is the only supported platform.
 
-Requirements:
+### Requirements
 
-- Visual Studio 2022
-- MSVC v143 toolset
-- raylib 5.5 installed at:
+- Visual Studio 2022 with the x64 C++ tools (MSVC v143)
+- raylib 5.5, MSVC build (`include\raylib.h` and `lib\raylib.lib`)
 
-```text
-C:\CLibraries\raylib-5.5_win64_msvc16
-```
+The scripts find both automatically. Visual Studio is located with `vswhere`; raylib defaults to `C:\CLibraries\raylib-5.5_win64_msvc16`. To use other locations, set `MO_VS_INSTALL` / `MO_RAYLIB_DIR` or pass `-VsInstall` / `-RaylibDir`.
 
-Steps:
+### Configurations
 
-1. Open `TestGame.sln`.
-2. Select `Debug|x64`, `Release|x64`, or `PublicDemo|x64`.
-3. Build the solution.
-4. Run the project.
+| Configuration | What it is |
+|---|---|
+| `Shipping` | Full game; no developer tools; saves to `%LOCALAPPDATA%\MysticOnslaught` |
+| `PublicDemo` | itch.io demo build |
+| `Release` | Developer build (debug panel, editors, flow self-test) |
+| `Debug` | Developer build with debug symbols, no optimisation |
 
-### Web Build
-
-The project includes a web build script:
+### Build
 
 ```text
-build_web.bat
+powershell -ExecutionPolicy Bypass -File tools\build.ps1                          # Shipping
+powershell -ExecutionPolicy Bypass -File tools\build.ps1 -Configuration Release   # developer build
 ```
 
-The script expects:
+Output goes to `x64\Build-<Configuration>\TestGame.exe`. Developer builds load assets from the `TestGame` folder, so run them with `TestGame` as the working directory. You can also open `TestGame.sln` and build any `x64` configuration in Visual Studio.
 
-- Emscripten installed at `C:\Users\rober\emsdk`
-- raylib web build available at `C:\CLibraries\raylib-src\src\libraylib.a`
+### Test
 
-To build for web:
+```text
+powershell -ExecutionPolicy Bypass -File tools\run_tests.ps1                       # every C++ suite
+powershell -ExecutionPolicy Bypass -File tools\run_tests.ps1 -Suite RunSave,RoomEditor
+powershell -ExecutionPolicy Bypass -File tools\run_flow_selftest.ps1               # drives the real game end to end
+```
 
-1. Run `build_raylib_web.bat` if raylib has not already been compiled for web.
-2. Run `build_web.bat`.
-3. The output is generated in `web_build/`.
-4. Zip the contents of `web_build/` for itch.io upload.
+### Release gate
+
+```text
+powershell -ExecutionPolicy Bypass -File tools\verify_native.ps1 -Flow
+```
+
+This builds Shipping, PublicDemo and Release, runs every suite, then runs the flow self-test. It exits non-zero if any step fails. Run it before packaging.
+
+### Package
+
+```text
+powershell -ExecutionPolicy Bypass -File tools\package_shipping.ps1 -Build
+powershell -ExecutionPolicy Bypass -File tools\smoke_shipping.ps1 -PackageDirectory x64\Packages\<folder>
+```
+
+The package goes into a new `x64\Packages\MysticOnslaught-<timestamp>` folder. Packaging refuses a build whose recorded source fingerprint no longer matches the source. It removes every player-data file (profile, run checkpoint and history, village, settings, bindings). `version.json` records the commit, whether there were uncommitted changes, and the source fingerprint.
+
+### Discontinued builds
+
+The web (Emscripten) build and the old `Makefile` were removed on 2026-10-18; web support is discontinued. Build with the `tools/` scripts or `TestGame.sln`.
 
 ## Testing and Validation
 
@@ -307,6 +321,8 @@ The project includes several C++ test files for core systems, including:
 - Elite signatures
 
 This reflects a practical QA mindset: as systems became more complex, tests were added around procedural content, room rules, balance systems, and progression logic.
+
+`tools\run_tests.ps1` builds each suite into its own folder under `x64\TestRuns\`. Suites run with `assert` enabled, an isolated `LOCALAPPDATA` and `TEMP`, and any inherited `MO_PROFILE_DIR` removed, so no test can touch real progress. Every `*Tests.cpp` file must be registered in the runner, or the run fails before building. `tools\run_flow_selftest.ps1` complements the unit suites. It plays the real developer build through menu, village, dungeon, boss, death and run summary, victory, and save/resume, using a fresh sandbox profile each time.
 
 ## What I Learned
 

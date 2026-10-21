@@ -4,6 +4,7 @@
 #include "VirtualCanvas.h"
 
 #include "Character.h"
+#include "VfxGlow.h"
 #include "VirtualCanvas.h"
 
 Texture2D HealPickup::_sharedTexture{};
@@ -31,6 +32,8 @@ void HealPickup::Draw(Vector2 worldOffset)
     screenPos.x += kVirtualWidth / 2.f;
     screenPos.y += kVirtualHeight / 2.f;
 
+    Vfx::DrawGlowHalo(screenPos, Balance::Vfx::kPickupHaloRadius, Vfx::kHealGlow, Balance::Vfx::kPickupHaloStrength);
+
     Rectangle source{ 0.f, 0.f, (float)_sharedTexture.width, (float)_sharedTexture.height };
     float scale = 6.0f;
     Rectangle dest{
@@ -45,7 +48,7 @@ void HealPickup::Draw(Vector2 worldOffset)
 
 void HealPickup::OnCollect(Character& player)
 {
-    player.Heal(1);
+    player.Heal(10);
     _isActive = false;
 }
 

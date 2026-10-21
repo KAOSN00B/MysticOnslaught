@@ -56,6 +56,9 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: the melee swing's coded hit window ───────────────
+    bool GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+
     // Volley interface (read by CombatDirector after Update)
     bool    WantsToCastVolley() const { return _pendingVolley; }
     Vector2 GetVolleyDirection() const { return _volleyDirection; }
@@ -120,7 +123,7 @@ private:
     static constexpr float _meleeRange          = 200.f;
     static constexpr float _meleeCooldownBase   = 1.7f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 0.5f;
+    static constexpr float _bossDamagePerHit    = 5.f;
     static constexpr float _bossPushSpeed       = 1350.f;
     static constexpr float _volleyCooldownBase  = 5.2f;
     static constexpr float _volleyCastDuration  = 0.9f;

@@ -1,7 +1,10 @@
 ﻿#include "ShopManager.h"
+#include "ShopPricing.h"
+#include "RunCheckpoint.h"
 #include "GameBalance.h"
 #include "VirtualCanvas.h"
 #include "NineSlice.h"
+#include "SfxBank.h"
 #include "raymath.h"
 
 #include <algorithm>
@@ -105,12 +108,12 @@ static const char* ShopWareDesc(ShopWareType type)
 {
     switch (type)
     {
-    case ShopWareType::IronrootTonic:   return "Gain 1 armour. It lasts until broken.";
-    case ShopWareType::FieldDressing:   return "Recover 1 HP. Limited emergency care.";
+    case ShopWareType::IronrootTonic:   return "+10 Defense for the rest of the run.";
+    case ShopWareType::FieldDressing:   return "Recover 10 HP. Limited emergency care.";
     case ShopWareType::ManaPrism:       return "Restore 2 mana. No maximum increase.";
     case ShopWareType::SharpeningStone: return "Your next 6 basic hits deal +15% damage.";
     case ShopWareType::FreecastSeal:   return "Next normal ability costs no mana.";
-    case ShopWareType::WardCharm:      return "Next unarmoured hit deals 1 less damage.";
+    case ShopWareType::WardCharm:      return "The next hit you take deals 10 less damage.";
     case ShopWareType::GildedCompass:  return "Next 5 gold finds are worth 25% more.";
     case ShopWareType::EchoSatchel:    return "Next 5 Echo pickups give +25% Echoes.";
     default:                           return "";
@@ -155,11 +158,10 @@ static std::string ShopWarePreview(const Character& player, ShopWareType type)
     switch (type)
     {
     case ShopWareType::IronrootTonic:
-        return TextFormat("Armour %d/%d -> %d/%d", player.GetArmour(), player.GetMaxArmour(),
-            std::min(player.GetMaxArmour(), player.GetArmour() + 1), player.GetMaxArmour());
+        return TextFormat("Defense %.0f -> %.0f", player.GetDefense(), player.GetDefense() + Balance::Stats::kDefenseMajor);
     case ShopWareType::FieldDressing:
         return TextFormat("HP %.0f -> %.0f", player.GetHealthValue(),
-            std::min(player.GetMaxHealthValue(), player.GetHealthValue() + 1.f));
+            std::min(player.GetMaxHealthValue(), player.GetHealthValue() + 10.f));
     case ShopWareType::ManaPrism:
         return TextFormat("Mana %d -> %d", player.GetMana(), std::min(player.GetMaxMana(), player.GetMana() + 2));
     case ShopWareType::SharpeningStone:
@@ -187,23 +189,29 @@ bool ShopManager::ApplyWare(Character& player, ShopWareType type)
     switch (type)
     {
     case ShopWareType::IronrootTonic:
-        if (player.GetArmour() >= player.GetMaxArmour()) return false;
-        player.AddArmour(1); return true;
+        player.AddDefense(Balance::Stats::kDefenseMajor); return true;
     case ShopWareType::FieldDressing:
         if (player.GetHealthValue() >= player.GetMaxHealthValue()) return false;
-        player.Heal(1); return true;
+        player.Heal(10); return true;
     case ShopWareType::ManaPrism:
         if (player.GetMana() >= player.GetMaxMana()) return false;
         player.RestoreMana(2); return true;
+    // Charge-based wares are refused (and refunded by the caller) at their cap,
+    // instead of silently taking gold for nothing.
     case ShopWareType::SharpeningStone:
+        if (player.GetShopWhetstoneHits() >= Character::kShopWhetstoneCap) return false;
         player.GrantShopWhetstone(); return true;
     case ShopWareType::FreecastSeal:
+        if (player.GetShopFreeCasts() >= Character::kShopFreeCastCap) return false;
         player.GrantShopFreeCast(); return true;
     case ShopWareType::WardCharm:
+        if (player.GetShopWardHits() >= Character::kShopWardCap) return false;
         player.GrantShopWard(); return true;
     case ShopWareType::GildedCompass:
+        if (player.GetShopGoldPickups() >= Character::kShopPickupBoostCap) return false;
         player.GrantShopGoldCompass(); return true;
     case ShopWareType::EchoSatchel:
+        if (player.GetShopCellPickups() >= Character::kShopPickupBoostCap) return false;
         player.GrantShopEchoSatchel(); return true;
     default:
         return false;
@@ -220,6 +228,8 @@ static const char* ShopUpgradeName(UpgradeType t)
     case UpgradeType::MaxMana:          return "Mana Reservoir";
     case UpgradeType::Defense:          return "Emergency Plate";
     case UpgradeType::MoveSpeed:        return "Fleet Boots";
+    case UpgradeType::CritChance:       return "Hawk's Eye";
+    case UpgradeType::CritDamage:       return "Cruel Edge";
     case UpgradeType::IronConstitution: return "Iron Constitution";
     case UpgradeType::SwiftFeet:        return "Predator Step";
     case UpgradeType::Ferocity:         return "Ferocity";
@@ -248,18 +258,20 @@ static const char* ShopUpgradeDesc(UpgradeType t)
     case UpgradeType::AttackRange:      return "Slightly wider melee reach.";
     case UpgradeType::MaxHealth:        return "A small max HP bump. Does not heal.";
     case UpgradeType::MaxMana:          return "Larger mana pool. Does not refill it.";
-    case UpgradeType::Defense:          return "Gain 1 armour slot now.";
+    case UpgradeType::Defense:          return "+5 Defense for the run.";
     case UpgradeType::MoveSpeed:        return "A small movement speed bump.";
+    case UpgradeType::CritChance:       return "+3% crit chance.";
+    case UpgradeType::CritDamage:       return "Crits deal +15% more.";
     case UpgradeType::IronConstitution: return "+15% max HP and heal the gain.";
     case UpgradeType::SwiftFeet:        return "+8% move speed.";
     case UpgradeType::Ferocity:         return "+10% attack, minimum small gain.";
     case UpgradeType::ArcaneMind:       return "Max MP and slight regen.";
-    case UpgradeType::IronSkin:         return "Refill 2 armour slots.";
+    case UpgradeType::IronSkin:         return "+10 Defense for the run.";
     case UpgradeType::BladeEdge:        return "Damage plus slight attack reach.";
     case UpgradeType::WarGod:           return "Strong damage and reach boost.";
     case UpgradeType::Resilience:       return "+18% max HP and heal the gain.";
     case UpgradeType::BladeStorm:       return "Damage plus +8% move speed.";
-    case UpgradeType::Juggernaut:       return "+12% max HP and 2 armour.";
+    case UpgradeType::Juggernaut:       return "+12% max HP and +10 Defense.";
     case UpgradeType::ArcaneColossus:   return "Max MP, damage, slight regen.";
     case UpgradeType::ManaFlow:         return "+1 max mana, +15% mana regen.";
     case UpgradeType::ClassAttunement:  return "Class resource gain +25%.";
@@ -270,6 +282,7 @@ static const char* ShopUpgradeDesc(UpgradeType t)
 
 static UpgradeRarity ShopUpgradeRarity(UpgradeType t)
 {
+    if (t == UpgradeType::CritChance || t == UpgradeType::CritDamage) return UpgradeRarity::Common;
     if (t <= UpgradeType::MoveSpeed)  return UpgradeRarity::Common;
     if (t <= UpgradeType::BladeEdge)  return UpgradeRarity::Rare;
     return UpgradeRarity::Epic;
@@ -305,39 +318,45 @@ static std::string ShopUpgradePreview(const Character& player, UpgradeType t)
     switch (t)
     {
     case UpgradeType::AttackPower:
-        return TextFormat("Melee %.1f -> %.1f", atk, atk + 0.5f);
+        return TextFormat("Melee %.0f -> %.0f", atk, atk + Balance::Stats::kAttackCard);
     case UpgradeType::AttackRange:
         return FormatStatPreview("Reach", rangePct, rangePct + 8.f);
     case UpgradeType::MaxHealth:
-        return FormatStatPreview("Max HP", hp, hp + 2.f);
+        return FormatStatPreview("Max HP", hp, hp + Balance::Stats::kMaxHealthCard);
     case UpgradeType::MaxMana:
         return TextFormat("Max MP %d -> %d", player.GetMaxMana(), player.GetMaxMana() + 4);
     case UpgradeType::Defense:
-        return TextFormat("Armour %d/%d -> %d/%d", player.GetArmour(), player.GetMaxArmour(), std::min(player.GetMaxArmour(), player.GetArmour() + 1), player.GetMaxArmour());
+        return TextFormat("Defense %.0f -> %.0f", player.GetDefense(), player.GetDefense() + Balance::Stats::kDefenseMinor);
     case UpgradeType::MoveSpeed:
-        return FormatStatPreview("Speed", speed, speed + 12.f);
+        return FormatStatPreview("Speed", speed, speed + Balance::Stats::kSpeedCard);
+    case UpgradeType::CritChance:
+        return TextFormat("Crit %d%% -> %d%%", (int)std::lround(player.GetCritChance() * 100.f),
+            (int)std::lround(std::min(Balance::Stats::kMaxCritChance, player.GetCritChance() + Balance::Stats::kCritChanceCard) * 100.f));
+    case UpgradeType::CritDamage:
+        return TextFormat("Crit +%d%% -> +%d%%", (int)std::lround(player.GetCritDamage() * 100.f),
+            (int)std::lround((player.GetCritDamage() + Balance::Stats::kCritDamageCard) * 100.f));
     case UpgradeType::IronConstitution:
         return FormatStatPreview("Max HP", hp, std::ceil(hp * 1.15f));
     case UpgradeType::SwiftFeet:
         return FormatStatPreview("Speed", speed, speed * 1.08f);
     case UpgradeType::Ferocity:
-        return TextFormat("Melee %d -> %d", (int)atk, (int)(atk + std::max(1.0f, atk * 0.10f)));
+        return TextFormat("Melee %d -> %d", (int)atk, (int)(atk + std::max(10.f, atk * 0.10f)));
     case UpgradeType::ArcaneMind:
         return TextFormat("Regen %.2f/s -> %.2f/s", regen, Character::kManaRegenBase * (regen / Character::kManaRegenBase + 0.10f));
     case UpgradeType::IronSkin:
-        return TextFormat("Armour %d/%d -> %d/%d", player.GetArmour(), player.GetMaxArmour(), std::min(player.GetMaxArmour(), player.GetArmour() + 2), player.GetMaxArmour());
+        return TextFormat("Defense %.0f -> %.0f", player.GetDefense(), player.GetDefense() + Balance::Stats::kDefenseMajor);
     case UpgradeType::BladeEdge:
-        return TextFormat("Melee %d -> %d | Reach +10%%", (int)atk, (int)(atk + 1.f));
+        return TextFormat("Melee %d -> %d | Reach +10%%", (int)atk, (int)(atk + 10.f));
     case UpgradeType::WarGod:
-        return TextFormat("Melee %d -> %d | Reach +12%%", (int)atk, (int)(atk + std::max(1.75f, atk * 0.15f)));
+        return TextFormat("Melee %d -> %d | Reach +12%%", (int)atk, (int)(atk + std::max(17.5f, atk * 0.15f)));
     case UpgradeType::Resilience:
         return FormatStatPreview("Max HP", hp, std::ceil(hp * 1.18f));
     case UpgradeType::BladeStorm:
-        return TextFormat("Melee %d -> %d | Speed +8%%", (int)atk, (int)(atk + 1.5f));
+        return TextFormat("Melee %d -> %d | Speed +8%%", (int)atk, (int)(atk + 15.f));
     case UpgradeType::Juggernaut:
-        return TextFormat("Max HP %.0f -> %.0f | Armour +2", hp, std::ceil(hp * 1.12f));
+        return TextFormat("Max HP %.0f -> %.0f | Defense +%.0f", hp, std::ceil(hp * 1.12f), Balance::Stats::kDefenseMajor);
     case UpgradeType::ArcaneColossus:
-        return TextFormat("MP +10 | Melee %d -> %d", (int)atk, (int)(atk + 1.5f));
+        return TextFormat("MP +10 | Melee %d -> %d", (int)atk, (int)(atk + 15.f));
     default:
         return "";
     }
@@ -385,7 +404,7 @@ static Color ShopRarityColor(UpgradeRarity r)
 
 namespace
 {
-    constexpr float kZephSpriteHeight = 192.f;
+    constexpr float kZephSpriteHeight = 128.f;   // same height as the village citizens (32 px x 4)
     constexpr float kZephCollisionWidth = 72.f;
     constexpr float kZephCollisionHeight = 112.f;
 
@@ -429,6 +448,60 @@ void ShopManager::Init(const ShopTextures& tex)
     _tex = tex;
 }
 
+void ShopManager::CaptureStock(ShopCheckpoint& out) const
+{
+    out.items.clear();
+    out.rerollCost = _rerollCost;
+    out.dailyDeal = _dailyDealIndex;
+    out.purchaseMade = _purchaseMadeThisVisit;
+    for (const ShopItem& it : _inventory)
+    {
+        ShopItemCheckpoint item;
+        item.isAbility = it.isAbility;
+        item.isContract = it.isContract;
+        item.upgradesAbility = it.upgradesAbility;
+        item.purchased = it.purchased;
+        item.reserved = it.reserved;
+        item.unavailable = it.unavailable;
+        item.ware = (int)it.wareType;
+        item.contract = (int)it.contractType;
+        item.upgrade = (int)it.upgradeType;
+        item.ability = it.abilityType;
+        item.price = it.price;
+        out.items.push_back(item);
+    }
+}
+
+bool ShopManager::RestoreStock(const ShopCheckpoint& stock, int act)
+{
+    // The checkpoint was validated as a whole when it was read.
+    if (stock.items.empty()) return false;
+    std::vector<ShopItem> items;
+    for (const ShopItemCheckpoint& saved : stock.items)
+    {
+        ShopItem it;
+        it.isAbility = saved.isAbility;
+        it.isContract = saved.isContract;
+        it.upgradesAbility = saved.upgradesAbility;
+        it.purchased = saved.purchased;
+        it.reserved = saved.reserved;
+        it.unavailable = saved.unavailable;
+        it.wareType = (ShopWareType)saved.ware;
+        it.contractType = (ShopContractType)saved.contract;
+        it.upgradeType = (UpgradeType)saved.upgrade;
+        it.abilityType = saved.ability;
+        it.price = saved.price;
+        items.push_back(it);
+    }
+    _inventory = std::move(items);
+    _rerollCost = stock.rerollCost;
+    _dailyDealIndex = stock.dailyDeal;
+    _purchaseMadeThisVisit = stock.purchaseMade;
+    _act = std::max(1, act);
+    _nearNpc = false;
+    return true;
+}
+
 void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
 {
     _npcPos               = npcWorldPos;
@@ -436,7 +509,8 @@ void ShopManager::Enter(Vector2 npcWorldPos, Character& player, int act)
     _touchPromptMode      = false;
     _npcTouchHeld         = false;
     _tab                  = 0;
-    _rerollCost           = Balance::Economy::kRerollBaseCost;
+    // Arcane Attunement (Poe's altar): the first reroll of each visit is free.
+    _rerollCost           = (_meta && _meta->HasFreeShopReroll()) ? 0 : Balance::Economy::kRerollBaseCost;
     _act                  = std::max(1, act);
     _gamepadCursorIdx      = 0;
     _gamepadNavActive      = false;
@@ -565,14 +639,18 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
                            (int)nW, (int)nH, Color{200, 120, 0, 255});
     }
 
-    const char* nameplate = "Zeph";
-    int npFs = 32, npW = MeasureText(nameplate, npFs);
-    const float npH = 40.f;
-    const float npY = sy - kZephSpriteHeight * 0.5f - npH + 8.f;
-    DrawRectangle((int)(sx - npW * 0.5f - 10), (int)npY,
-                  npW + 20, (int)npH, Fade(BLACK, 0.6f));
-    DrawText(nameplate, (int)(sx - npW * 0.5f),
-             (int)(npY + npH * 0.5f - npFs * 0.5f), npFs, GOLD);
+    // The nameplate shows only when the player is close enough to talk to Zeph.
+    if (_nearNpc)
+    {
+        const char* nameplate = "Zeph";
+        int npFs = 32, npW = MeasureText(nameplate, npFs);
+        const float npH = 40.f;
+        const float npY = sy - kZephSpriteHeight * 0.5f - npH + 8.f;
+        DrawRectangle((int)(sx - npW * 0.5f - 10), (int)npY,
+                      npW + 20, (int)npH, Fade(BLACK, 0.6f));
+        DrawText(nameplate, (int)(sx - npW * 0.5f),
+                 (int)(npY + npH * 0.5f - npFs * 0.5f), npFs, GOLD);
+    }
 
     if (_nearNpc)
     {
@@ -608,6 +686,7 @@ void ShopManager::DrawNpc(Vector2 worldOffset) const
 bool ShopManager::Update(Character& player, bool debugActive)
 {
     const float dt = GetFrameTime();
+    RefreshOffers(player);   // cards always show live prices / availability
 
     // ── Intro animation ───────────────────────────────────────────────────────
     if (_introSkipLock > 0.f) _introSkipLock -= dt;
@@ -816,17 +895,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
     }
     if (clicked && CheckCollisionPointRec(mouse, rerollBtn))
     {
-        if (player.GetGold() >= _rerollCost)
-        {
-            player.AddGold(-_rerollCost);
-            _rerollCost += Balance::Economy::kRerollStep;
-            RerollInventory(player);
-            _gamepadCursorIdx = 0;
-        }
-        else
-        {
-            _dialogue = "You don't have enough gold for a reroll!";
-        }
+        if (TryReroll(player)) _gamepadCursorIdx = 0;
         return false;
     }
 
@@ -834,14 +903,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
     if (_gamepadRerollPending)
     {
         _gamepadRerollPending = false;
-        if (player.GetGold() >= _rerollCost)
-        {
-            player.AddGold(-_rerollCost);
-            _rerollCost += Balance::Economy::kRerollStep;
-            RerollInventory(player);
-            _gamepadCursorIdx = 0;
-        }
-        else { _dialogue = "You don't have enough gold for a reroll!"; }
+        if (TryReroll(player)) _gamepadCursorIdx = 0;
         return false;
     }
     if (_gamepadLPUpgSlot >= 0)
@@ -851,7 +913,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
         AbilityType ab = player.GetLearnedAbility(slotIdx);
         if (ab != AbilityType::None)
         {
-            int upgCost = player.GetAbilityLevel(ab) * 100;
+            int upgCost = ShopPricing::AbilityUpgradePrice(player.GetAbilityLevel(ab), _act);
             if (!player.CanUpgradeAbility(ab))
                 _dialogue = "That ability is already at its peak.";
             else if (player.GetGold() < upgCost)
@@ -917,7 +979,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
             {
                 Rectangle upgBtn = { lx + cp,              cy, btnW, btnH };
                 Rectangle remBtn = { lx + cp + btnW + 8.f, cy, btnW, btnH };
-                int upgCost = player.GetAbilityLevel(ab) * 100;
+                int upgCost = ShopPricing::AbilityUpgradePrice(player.GetAbilityLevel(ab), _act);
 
                 if (clicked && CheckCollisionPointRec(mouse, upgBtn))
                 {
@@ -987,26 +1049,7 @@ bool ShopManager::Update(Character& player, bool debugActive)
             if (reserveActivated)
             {
                 _gamepadReservePending = false;
-                bool anotherReserved = false;
-                for (const auto& other : _inventory)
-                    if (other.reserved && !other.purchased) { anotherReserved = true; break; }
-                if (item.isContract)
-                    _dialogue = "Contracts cannot be reserved. The work changes daily.";
-                else if (item.reserved)
-                    _dialogue = "That one's already set aside for you.";
-                else if (anotherReserved)
-                    _dialogue = "I can only hold ONE item aside at a time.";
-                else if (player.GetGold() >= Balance::Economy::kReserveStockCost)
-                {
-                    player.AddGold(-Balance::Economy::kReserveStockCost);
-                    item.reserved = true;
-                    _dialogue = "Reserved! That one survives any reroll.";
-                }
-                else
-                {
-                    _dialogue = TextFormat("Reserving costs %d gold, friend.",
-                                           Balance::Economy::kReserveStockCost);
-                }
+                TryReserve(idx, player);
             }
 
             bool cardActivated = (clicked && CheckCollisionPointRec(mouse, cardRect)) ||
@@ -1014,58 +1057,142 @@ bool ShopManager::Update(Character& player, bool debugActive)
             if (cardActivated)
             {
                 _gamepadConfirmPending = false;
-                if (item.isAbility && !item.upgradesAbility && player.GetLearnedCount() >= 3)
+                const ShopItem bought = _inventory[idx];
+                if (TryPurchase(idx, player) == PurchaseResult::Purchased)
                 {
-                    _dialogue = "You can only hold 3 abilities. Remove one first.";
-                    return false;
-                }
-                if (item.isContract)
-                {
-                    if (_acceptedContract != ShopContractType::Count)
-                    {
-                        _dialogue = "One contract at a time. Finish the work first.";
-                        return false;
-                    }
-                    _acceptedContract = item.contractType;
-                    item.purchased = true;
-                    _purchaseMadeThisVisit = true;
                     _gamepadCursorIdx = 0;
-                    _dialogue = "Contract accepted. It begins in your next fight.";
-                }
-                else if (player.GetGold() >= item.price)
-                {
-                    player.AddGold(-item.price);
-                    if (item.isAbility)
-                    {
-                        if (item.upgradesAbility)
-                            player.UpgradeAbility(item.abilityType);
-                        else
-                            player.LearnAbility(item.abilityType);
-                    }
-                    else
-                    {
-                        if (!ApplyWare(player, item.wareType))
-                        {
-                            player.AddGold(item.price);
-                            _dialogue = "That ware would have no effect right now.";
-                            return false;
-                        }
-                    }
-                    item.purchased = true;
-                    _purchaseMadeThisVisit = true;
-                    _gamepadCursorIdx = 0;
-                    _dialogue      = "Pleasure doing business with you!";
+                    // Purchase feedback by kind: new ability, upgrade, ware, contract.
+                    if (bought.isAbility && bought.upgradesAbility) SfxBank::Get().Play(SfxId::UpgradeBought, 0.6f, false);
+                    else if (bought.isAbility)                      SfxBank::Get().Play(SfxId::AbilityLearn, 0.6f, false);
+                    else if (bought.isContract)                     SfxBank::Get().Play(SfxId::BuffCast, 0.5f, false);
+                    else SfxBank::Get().PlayEither(SfxId::ConsumableA, SfxId::ConsumableB, 0.6f, SfxId::PickupMagic);
                 }
                 else
                 {
-                    _dialogue = "I'm sorry, it seems you're a bit short on gold...";
+                    SfxBank::Get().Play(SfxId::GuiCancel, 0.5f, false);   // refused: price, contract, no effect
                 }
+                return false;
             }
             displayIdx++;
         }
     }
 
     return false;
+}
+
+bool ShopManager::TryReroll(Character& player)
+{
+    if (player.GetGold() < _rerollCost)
+    {
+        _dialogue = "You don't have enough gold for a reroll!";
+        return false;
+    }
+    player.AddGold(-_rerollCost);
+    _rerollCost = NextRerollCost(_rerollCost);
+    RerollInventory(player);
+    return true;
+}
+
+bool ShopManager::TryReserve(int inventoryIndex, Character& player)
+{
+    if (inventoryIndex < 0 || inventoryIndex >= (int)_inventory.size()) return false;
+    ShopItem& item = _inventory[inventoryIndex];
+    bool anotherReserved = false;
+    for (const auto& other : _inventory)
+        if (other.reserved && !other.purchased) { anotherReserved = true; break; }
+    if (item.purchased) return false;
+    if (item.isContract)
+        _dialogue = "Contracts cannot be reserved. The work changes daily.";
+    else if (item.reserved)
+        _dialogue = "That one's already set aside for you.";
+    else if (anotherReserved)
+        _dialogue = "I can only hold ONE item aside at a time.";
+    else if (player.GetGold() >= Balance::Economy::kReserveStockCost)
+    {
+        player.AddGold(-Balance::Economy::kReserveStockCost);
+        item.reserved = true;
+        _dialogue = "Reserved! That one survives any reroll.";
+        return true;
+    }
+    else
+        _dialogue = TextFormat("Reserving costs %d gold, friend.", Balance::Economy::kReserveStockCost);
+    return false;
+}
+
+ShopManager::PurchaseResult ShopManager::TryPurchase(int inventoryIndex, Character& player)
+{
+    if (inventoryIndex < 0 || inventoryIndex >= (int)_inventory.size())
+        return PurchaseResult::Invalid;
+    ShopItem& item = _inventory[inventoryIndex];
+    if (item.purchased)
+        return PurchaseResult::Invalid;
+
+    // Every purchase revalidates against the player's CURRENT kit and price:
+    // the side panel can upgrade or remove an ability after this card was made.
+    RefreshOffers(player);
+    if (item.unavailable)
+    {
+        _dialogue = "That one's no use to you any more, friend.";
+        return PurchaseResult::NoEffect;
+    }
+    if (item.isAbility && !item.upgradesAbility && !player.HasFreeRegularAbilitySlot())
+    {
+        _dialogue = "You can only hold 3 abilities. Remove one first.";
+        return PurchaseResult::SlotsFull;
+    }
+    if (item.isContract)
+    {
+        // One shop contract per fight: also counts a contract taken on an
+        // earlier visit that has not been fought yet (run state).
+        if (_acceptedContract != ShopContractType::Count || _runContractPending)
+        {
+            _dialogue = "One contract at a time. Finish the work first.";
+            return PurchaseResult::ContractPending;
+        }
+        _acceptedContract = item.contractType;
+        item.purchased = true;
+        _purchaseMadeThisVisit = true;
+        _dialogue = "Contract accepted. It begins in your next fight.";
+        return PurchaseResult::Purchased;
+    }
+    if (player.GetGold() < item.price)
+    {
+        _dialogue = "I'm sorry, it seems you're a bit short on gold...";
+        return PurchaseResult::TooExpensive;
+    }
+
+    player.AddGold(-item.price);
+    if (item.isAbility)
+    {
+        bool applied = false;
+        if (item.upgradesAbility)
+        {
+            if (player.HasLearnedAbility(item.abilityType) && player.CanUpgradeAbility(item.abilityType))
+            {
+                player.UpgradeAbility(item.abilityType);
+                applied = true;
+            }
+        }
+        else
+            applied = player.LearnAbility(item.abilityType);
+        if (!applied)
+        {
+            player.AddGold(item.price);   // never charge for nothing
+            item.unavailable = true;
+            _dialogue = "That one's no use to you any more, friend.";
+            return PurchaseResult::NoEffect;
+        }
+    }
+    else if (!ApplyWare(player, item.wareType))
+    {
+        player.AddGold(item.price);
+        _dialogue = "That ware would have no effect right now.";
+        return PurchaseResult::NoEffect;
+    }
+    item.purchased = true;
+    _purchaseMadeThisVisit = true;
+    _dialogue      = "Pleasure doing business with you!";
+    return PurchaseResult::Purchased;
 }
 
 bool ShopManager::UpdateGamepadNav(float dt, const Character& player)
@@ -1219,8 +1346,8 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     // ── Scrolling checkerboard background ────────────────────────────────
     {
         const int   cell   = 80;
-        const Color dark   = Color{ 22, 16, 10, 255 };
-        const Color light  = Color{ 34, 24, 14, 255 };
+        const Color dark   = Color{ 138, 70, 44, 255 };
+        const Color light  = Color{ 160, 88, 56, 255 };
         const int   period = cell * 2;
         float t    = (float)GetTime();
         int   offX = (int)fmodf(t * 22.f, (float)period);
@@ -1251,7 +1378,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     static constexpr float kBorderDst = 32.f;
     const float iPad = kBorderDst;
 
-    const Color kGold       = BLACK;
+    const Color kGold       = GOLD;
     const Color kDim        = Color{160,170,190, 200};
     const Color kSlotBg     = Color{ 20, 20, 30, 160};
     const Color kSlotBgFull = Color{ 30, 40, 60, 200};
@@ -1296,28 +1423,28 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
         float curHp = player.GetHealthValue();
         int hpFs = (int)_uiHpFs;
         const char* hpLbl = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
-        DrawText(hpLbl, (int)(lx + cp + 4.f), (int)cy, hpFs, BLACK);
+        DrawText(hpLbl, (int)(lx + cp + 4.f), (int)cy, hpFs, kGold);
         cy += hpFs + 8.f;
 
         // MP text
         const char* mpLbl = TextFormat("MP  %d / %d", player.GetMana(), player.GetMaxMana());
-        DrawText(mpLbl, (int)(lx + cp + 4.f), (int)cy, hpFs, BLACK);
+        DrawText(mpLbl, (int)(lx + cp + 4.f), (int)cy, hpFs, kGold);
         cy += hpFs + 14.f;
 
         // Stats grid — explicit size avoids MSVC deduction issues with std::string members
         struct StatRow { const char* label; std::string value; };
         StatRow stats[3] = {
             { "ATK",    TextFormat("%.1f", player.GetAttackPowerValue())                               },
-            { "ARMOUR", TextFormat("%d / %d", player.GetArmour(), player.GetMaxArmour())               },
+            { "DEFENSE", TextFormat("%.0f", player.GetDefense())                                       },
             { "GOLD",   std::to_string(player.GetGold())                                               },
         };
         float statFs   = _uiStatFs;
         float statRowH = statFs + 9.f;
         for (int si = 0; si < 3; si++)
         {
-            DrawText(stats[si].label, (int)(lx + cp + 4.f), (int)cy, (int)statFs, BLACK);
+            DrawText(stats[si].label, (int)(lx + cp + 4.f), (int)cy, (int)statFs, kGold);
             int vw = MeasureText(stats[si].value.c_str(), (int)statFs);
-            DrawText(stats[si].value.c_str(), (int)(lx + leftW - cp - vw - 18.f), (int)cy, (int)statFs, BLACK);
+            DrawText(stats[si].value.c_str(), (int)(lx + leftW - cp - vw - 18.f), (int)cy, (int)statFs, kGold);
             cy += statRowH;
         }
         cy += 10.f;
@@ -1420,7 +1547,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
             // ── Upg / Rem buttons — only when slot is occupied ────────────
             if (ab != AbilityType::None)
             {
-                int  upgCost   = lv * 100;
+                int  upgCost   = ShopPricing::AbilityUpgradePrice(lv, _act);
                 bool canUpg    = player.CanUpgradeAbility(ab);
                 bool canAffUpg = player.GetGold() >= upgCost;
                 bool canAffRem = player.GetGold() >= 100;
@@ -1781,13 +1908,14 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
                 // A NEW ability with full slots is blocked (upgrades still fine).
                 bool blocked   = item.isAbility && !item.upgradesAbility && slotsFull;
                 bool canAfford = item.isContract || (player.GetGold() >= item.price);
-                bool canBuy    = canAfford && !blocked;
+                bool canBuy    = canAfford && !blocked && !item.unavailable;
                 Color buyBg = canBuy ? Color{30,90,30,220} : Color{60,30,30,180};
                 Color buyBo = canBuy ? Color{80,200,80,255} : Color{160,60,60,200};
                 Rectangle buyBtn = { ix + 4.f, iy + itemH - buyH - 4.f, itemW - 8.f, buyH };
                 smallBox(buyBtn, buyBg, buyBo);
                 int prFs = (int)_uiPriceFs;
-                const char* prLbl = blocked ? "SLOTS FULL"
+                const char* prLbl = item.unavailable ? "UNAVAILABLE"
+                    : blocked ? "SLOTS FULL"
                     : item.isContract ? "ACCEPT"
                     : (idx == _dailyDealIndex)
                         ? TextFormat("%dg  DEAL", item.price)
@@ -1887,7 +2015,7 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
     smallBox(rerollBtn, rrBg, rrBo);
     {
         // Reroll — shrink font until label fits inside the button
-        const char* rrLabel = TextFormat("REROLL  %dg", _rerollCost);
+        const char* rrLabel = (_rerollCost == 0) ? "REROLL  FREE" : TextFormat("REROLL  %dg", _rerollCost);
         float rFs = std::min(_uiBtnFs, leaveH - 8.f);
         rFs = std::max(8.f, rFs);
         while (rFs > 8.f && MeasureText(rrLabel, (int)rFs) > (int)(rerollW - 16.f))
@@ -2009,6 +2137,28 @@ void ShopManager::Draw(const Character& player, bool debugActive) const
 
 // ── Inventory ─────────────────────────────────────────────────────────────────
 
+void ShopManager::RefreshOffers(const Character& player)
+{
+    // Ability cards follow the live kit: an upgrade card always shows the
+    // price for the ability's CURRENT level, and a card whose effect is no
+    // longer possible (ability removed, maxed, or already learned) is marked
+    // unavailable instead of silently taking gold.
+    for (ShopItem& item : _inventory)
+    {
+        if (item.purchased || !item.isAbility) continue;
+        if (item.upgradesAbility)
+        {
+            const bool ok = player.HasLearnedAbility(item.abilityType) && player.CanUpgradeAbility(item.abilityType);
+            item.unavailable = !ok;
+            if (ok) item.price = ShopPricing::AbilityUpgradePrice(player.GetAbilityLevel(item.abilityType), _act);
+        }
+        else
+        {
+            item.unavailable = player.HasLearnedAbility(item.abilityType);
+        }
+    }
+}
+
 void ShopManager::RerollInventory(Character& player)
 {
     // Reserve Stock: a reserved, unpurchased card survives the reroll. Capture
@@ -2025,6 +2175,7 @@ void ShopManager::RerollInventory(Character& player)
     {
         for (int i = (int)_inventory.size() - 1; i >= 0; --i)
         {
+            if (_inventory[i].isContract) continue;   // the contract slot is never displaced
             if (_inventory[i].isAbility != kept.isAbility) continue;
             _inventory[i] = kept;
             if (_dailyDealIndex == i) _dailyDealIndex = -1;   // keep the locked price honest
@@ -2042,8 +2193,8 @@ void ShopManager::GenerateInventory(const Character& player)
 {
     _inventory.clear();
 
-    const float abilityInflation = 1.0f + Balance::Economy::kActPriceInflation * (float)(_act - 1);
-    const float wareInflation    = 1.0f + 0.15f * (float)(_act - 1);
+    const float abilityInflation = ShopPricing::AbilityInflation(_act);
+    const float wareInflation    = ShopPricing::WareInflation(_act);
 
     // Exactly two class-legal ability offers. Prefer new abilities, then fill
     // from useful upgrades when the class has learned most of its kit.
@@ -2060,13 +2211,13 @@ void ShopManager::GenerateInventory(const Character& player)
         item.abilityType = a;
         if (!player.HasLearnedAbility(a))
         {
-            item.price = (int)(ShopAbilityPrice(a) * abilityInflation + 0.5f);
+            item.price = ShopPricing::Scaled(ShopAbilityPrice(a), abilityInflation);
             newAbilityPool.push_back(item);
         }
         else if (player.CanUpgradeAbility(a))
         {
             item.upgradesAbility = true;
-            item.price = (int)((110 + (player.GetAbilityLevel(a) - 1) * 70) * abilityInflation + 0.5f);
+            item.price = ShopPricing::AbilityUpgradePrice(player.GetAbilityLevel(a), _act);
             upgradePool.push_back(item);
         }
     }
@@ -2078,11 +2229,13 @@ void ShopManager::GenerateInventory(const Character& player)
     shuffleItems(newAbilityPool);
     shuffleItems(upgradePool);
 
-    // Two class-legal ability cards. Act 1 prioritizes assembling a kit; later
-    // acts prioritize upgrades, while the secondary pool fills any open slot.
+    // Two class-legal ability cards. While a regular slot is free Zeph helps
+    // assemble a kit (new abilities first); with a full kit he leads with
+    // upgrades. The secondary pool fills any remaining card.
     int abilityOffers = 0;
-    const std::vector<ShopItem>& primary   = (_act <= 1) ? newAbilityPool : upgradePool;
-    const std::vector<ShopItem>& secondary = (_act <= 1) ? upgradePool    : newAbilityPool;
+    const bool assemblingKit = player.HasFreeRegularAbilitySlot();
+    const std::vector<ShopItem>& primary   = assemblingKit ? newAbilityPool : upgradePool;
+    const std::vector<ShopItem>& secondary = assemblingKit ? upgradePool    : newAbilityPool;
     for (int i = 0; i < (int)primary.size() && abilityOffers < 2; ++i)
     {
         _inventory.push_back(primary[i]);
@@ -2102,8 +2255,7 @@ void ShopManager::GenerateInventory(const Character& player)
         ShopWareType::WardCharm, ShopWareType::GildedCompass,
         ShopWareType::EchoSatchel
     };
-    if (player.GetArmour() < player.GetMaxArmour())
-        warePool.push_back(ShopWareType::IronrootTonic);
+    warePool.push_back(ShopWareType::IronrootTonic);
     if (player.GetHealthValue() < player.GetMaxHealthValue())
         warePool.push_back(ShopWareType::FieldDressing);
     if (player.GetMana() < player.GetMaxMana())
@@ -2115,7 +2267,7 @@ void ShopManager::GenerateInventory(const Character& player)
     auto pushWare = [&](ShopWareType type) {
         ShopItem item;
         item.wareType = type;
-        item.price = (int)(ShopWarePrice(type) * wareInflation + 0.5f);
+        item.price = ShopPricing::Scaled(ShopWarePrice(type), wareInflation);
         _inventory.push_back(item);
     };
     const int wareCount = 5 - abilityOffers; // contract always occupies the sixth slot

@@ -1,0 +1,15 @@
+scale=6.200
+size_set=1
+hurt_pad_x=0.00
+hurt_pad_y=0.00
+anim_0_body_x=10.49
+anim_0_body_y=92.15
+anim_0_body_r=74.47
+anim_2_melee_x=66.39
+anim_2_melee_y=18.70
+anim_2_melee_w=51.06
+anim_2_melee_h=136.60
+anim_2_draw_x=60.11
+anim_2_draw_y=15.48
+anim_3_draw_x=58.18
+anim_3_draw_y=13.54

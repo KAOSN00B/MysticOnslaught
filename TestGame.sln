@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36915.13
@@ -10,7 +10,9 @@ Global
 		Debug|x64 = Debug|x64
 		Debug|x86 = Debug|x86
 		PublicDemo|x64 = PublicDemo|x64
+		Shipping|x64 = Shipping|x64
 		PublicDemo|x86 = PublicDemo|x86
+		Shipping|x86 = Shipping|x86
 		Release|x64 = Release|x64
 		Release|x86 = Release|x86
 	EndGlobalSection
@@ -20,9 +22,13 @@ Global
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Debug|x86.ActiveCfg = Debug|Win32
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Debug|x86.Build.0 = Debug|Win32
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.PublicDemo|x64.ActiveCfg = PublicDemo|x64
+		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Shipping|x64.ActiveCfg = Shipping|x64
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.PublicDemo|x64.Build.0 = PublicDemo|x64
+		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Shipping|x64.Build.0 = Shipping|x64
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.PublicDemo|x86.ActiveCfg = PublicDemo|x64
+		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Shipping|x86.ActiveCfg = Shipping|x64
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.PublicDemo|x86.Build.0 = PublicDemo|x64
+		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Shipping|x86.Build.0 = Shipping|x64
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Release|x64.ActiveCfg = Release|x64
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Release|x64.Build.0 = Release|x64
 		{B4C12470-7F9A-4DC1-8D46-03A861707AB3}.Release|x86.ActiveCfg = Release|Win32

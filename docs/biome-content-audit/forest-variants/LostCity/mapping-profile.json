@@ -1,0 +1,1140 @@
+{
+  "target": "Lost City",
+  "permitted_sheets": [
+    "Lost City",
+    "LostCity_ForestVariants",
+    "FD_Animated_Water",
+    "FD_Animated_Lava"
+  ],
+  "liquid": "water",
+  "structural": {
+    "0,16": {
+      "target": [
+        "Lost City",
+        [
+          64,
+          48,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_main"
+    },
+    "0,32": {
+      "target": [
+        "Lost City",
+        [
+          288,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt2"
+    },
+    "0,112": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring TL"
+    },
+    "0,128": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring L"
+    },
+    "0,144": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring BL"
+    },
+    "0,256": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "0,304": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "0,320": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          96,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "0,416": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring TL"
+    },
+    "0,432": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring L"
+    },
+    "0,448": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring BL"
+    },
+    "16,0": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "path_sand"
+    },
+    "16,16": {
+      "target": [
+        "Lost City",
+        [
+          80,
+          48,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_main_b"
+    },
+    "16,32": {
+      "target": [
+        "Lost City",
+        [
+          288,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt2"
+    },
+    "16,112": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring T"
+    },
+    "16,128": {
+      "target": [
+        "Lost City",
+        [
+          64,
+          48,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring centre -> floor"
+    },
+    "16,144": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring B"
+    },
+    "16,304": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "16,320": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "16,368": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "16,416": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring T"
+    },
+    "16,432": {
+      "target": [
+        "Lost City",
+        [
+          64,
+          48,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring centre -> floor"
+    },
+    "16,448": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring B"
+    },
+    "32,0": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "path_sand"
+    },
+    "32,16": {
+      "target": [
+        "Lost City",
+        [
+          64,
+          64,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_main_b"
+    },
+    "32,32": {
+      "target": [
+        "Lost City",
+        [
+          288,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt2"
+    },
+    "32,112": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring TR"
+    },
+    "32,128": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring R"
+    },
+    "32,144": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring BR"
+    },
+    "32,256": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "32,304": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          128,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "32,320": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "32,336": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          96,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "32,400": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          112,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "32,416": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring TR"
+    },
+    "32,432": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring R"
+    },
+    "32,448": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "fence ring BR"
+    },
+    "48,0": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "path_sand"
+    },
+    "48,16": {
+      "target": [
+        "Lost City",
+        [
+          288,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "patch_a"
+    },
+    "48,32": {
+      "target": [
+        "Lost City",
+        [
+          288,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "patch_a"
+    },
+    "48,256": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          128,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "48,304": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          128,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "48,320": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          128,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "64,0": {
+      "target": [
+        "Lost City",
+        [
+          288,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "patch_a"
+    },
+    "64,16": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt1"
+    },
+    "64,32": {
+      "target": [
+        "Lost City",
+        [
+          48,
+          64,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt3"
+    },
+    "64,112": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring TL"
+    },
+    "64,128": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring L"
+    },
+    "64,144": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring BL"
+    },
+    "64,208": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring TL"
+    },
+    "64,224": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring L"
+    },
+    "64,240": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring BL"
+    },
+    "64,272": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          128,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "64,288": {
+      "target": [
+        "Lost City",
+        [
+          0,
+          96,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "64,320": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          128,
+          16,
+          16
+        ]
+      ],
+      "role": "overlay"
+    },
+    "64,416": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "64,432": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "64,448": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "64,464": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "64,496": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "64,512": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "80,0": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          96,
+          16,
+          16
+        ]
+      ],
+      "role": "path_dirt"
+    },
+    "80,16": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt1"
+    },
+    "80,32": {
+      "target": [
+        "Lost City",
+        [
+          48,
+          64,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt3"
+    },
+    "80,112": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring T"
+    },
+    "80,128": {
+      "target": [
+        "Lost City",
+        [
+          64,
+          48,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring centre -> floor"
+    },
+    "80,144": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring B"
+    },
+    "80,208": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring T"
+    },
+    "80,224": {
+      "target": [
+        "Lost City",
+        [
+          64,
+          48,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring centre -> floor"
+    },
+    "80,240": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring B"
+    },
+    "80,416": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "80,432": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "80,448": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "80,464": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "80,496": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "80,512": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "96,0": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          96,
+          16,
+          16
+        ]
+      ],
+      "role": "path_dirt"
+    },
+    "96,16": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt1"
+    },
+    "96,32": {
+      "target": [
+        "Lost City",
+        [
+          48,
+          64,
+          16,
+          16
+        ]
+      ],
+      "role": "floor_alt3"
+    },
+    "96,112": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring TR"
+    },
+    "96,128": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring R"
+    },
+    "96,144": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring BR"
+    },
+    "96,208": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          144,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring TR"
+    },
+    "96,224": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          160,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring R"
+    },
+    "96,240": {
+      "target": [
+        "Lost City",
+        [
+          32,
+          176,
+          16,
+          16
+        ]
+      ],
+      "role": "cliff ring BR"
+    },
+    "96,416": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "96,432": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "96,448": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "96,464": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "96,496": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "96,512": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "bridge causeway"
+    },
+    "112,0": {
+      "target": [
+        "Lost City",
+        [
+          16,
+          96,
+          16,
+          16
+        ]
+      ],
+      "role": "path_dirt"
+    },
+    "112,16": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "patch_b"
+    },
+    "112,32": {
+      "target": [
+        "Lost City",
+        [
+          192,
+          32,
+          16,
+          16
+        ]
+      ],
+      "role": "patch_b"
+    }
+  }
+}

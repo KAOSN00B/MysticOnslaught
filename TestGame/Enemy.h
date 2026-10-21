@@ -3,9 +3,13 @@
 #include "Character.h"
 #include "NavigationGrid.h"
 #include "GameBalance.h"
+#include "RunProgression.h"
 #include "EliteSignature.h"
 #include "SfxBank.h"
+#include "CharacterTuning.h"
 #include "raymath.h"
+#include <algorithm>
+#include <cmath>
 #include <vector>
 #include <memory>
 #include <cstdint>
@@ -252,6 +256,13 @@ public:
     // difficulty tiers. Called after ApplyEnemyPowerLevel in ConfigureSpawnedEnemy.
     void ApplyDifficultyScaling(float healthMult, float damageMult);
 
+    // Room re-entry: a survivor comes back with the same share of its (freshly
+    // scaled) max HP it had when the player left, never below 1 HP.
+    void RestoreHealthFraction(float fraction)
+    {
+        _health = RunProgression::RestoredSurvivorHealth(_maxHealth, fraction);
+    }
+
     // Shorten the gap between attacks (mult < 1 = more aggressive). Used by the
     // Zeph pressure-debt bargains; a depth-based cadence curve can reuse it.
     void QuickenAttacks(float mult) { if (mult > 0.f) _attackDelay *= mult; }
@@ -354,7 +365,22 @@ public:
     // ── Character Animator (dev tool) + tuning interface ─────────────────────
     // GetTuningName() returns nullptr for types without tuning support; a name
     // enables loading charactertuning_<Name>.txt at the end of ResetForSpawn.
-    virtual const char* GetTuningName() const { return nullptr; }
+    // It is also the stable identifier used for save snapshots, so it must NOT
+    // change for flavour reasons - GetDisplayName() is the human-facing label.
+    // The plain grunt (this class itself, not a subclass) is "Grunt".
+    static constexpr const char* kGruntTuningName = "Grunt";
+    virtual const char* GetTuningName() const { return IsPlainGrunt() ? kGruntTuningName : nullptr; }
+    // True only for the base grunt, never for a specialised subclass.
+    bool IsPlainGrunt() const;
+
+    // Human-facing name (boss callouts, bestiary, dev readouts). Defaults to the
+    // tuning name; a type overrides this when its display name differs from its
+    // internal identifier (e.g. Werewolf -> "Fenrar").
+    virtual const char* GetDisplayName() const
+    {
+        const char* n = GetTuningName();
+        return n != nullptr ? n : "Unknown";
+    }
 
     // Animation preview: the default implementation covers the five standard
     // grunt sheets; bosses override with their own sheet lists.
@@ -364,6 +390,17 @@ public:
     void  TickEditorAnimation(float dt);   // generic looping frame advance
     float GetEditorAnimFrameTime(int index) const;
     void  SetEditorAnimFrameTime(int index, float frameTime);
+    // The playing sheet: frame index/count, the live frame time (the saved
+    // override or the class default), and the sheet itself for measuring.
+    int       GetEditorFrame() const { return _frame; }
+    int       GetEditorFrameCount() const { return _maxFrames; }
+    void      SetEditorFrame(int frame);    // wraps; restarts that frame's timer
+    float     GetEditorPlaybackFrameTime() const { return _updateTime; }
+    void      SetEditorPlaybackFrameTime(float frameTime) { if (frameTime > 0.f) _updateTime = frameTime; }
+    Texture2D GetEditorSheet() const { return _texture; }
+    float     GetEditorFrameWidth() const { return _width; }
+    // The scale the game uses when the animator's Size isn't set (see AutoScale).
+    float     GetAutoScale() const { return _autoScale; }
 
     // Tuned solid hitbox — stored relative to _worldPos so it is convention-free.
     // Every GetCollisionRec override returns this when set.
@@ -397,6 +434,65 @@ public:
     bool    GetAnimDrawSet(int slot)         const { return (slot >= 0 && slot < kAnimSlots) && _animDrawSet[slot]; }
     Vector2 GetAnimDrawOffsetValue(int slot) const { return (slot >= 0 && slot < kAnimSlots) ? _animDrawOffset[slot] : Vector2{}; }
     void    SetAnimDrawOffset(int slot, Vector2 offset);
+    void    ClearAnimDrawOffset(int slot);
+
+    // ── Hit windows + animation events (Character Animator) ──────────────────
+    // A hit window is the frames an animation's melee box is live; events fire
+    // an FX, the attack sound or a screen shake when an animation reaches a frame.
+    static constexpr int kAnimSlotAttack      = 2;   // the shared attack sheet
+    static constexpr int kBaseMeleeHitFrame   = 2;   // grunts strike on frame 2
+    static constexpr int kBossMeleeHitFrame   = 3;   // bosses strike from frame 3
+    static constexpr int kHitThroughLastFrame = 1 << 20;   // "to the animation's end"
+    bool GetAnimHitSet(int slot)   const { return slot >= 0 && slot < kAnimSlots && _animHit[slot].set; }
+    int  GetAnimHitStart(int slot) const { return (slot >= 0 && slot < kAnimSlots) ? _animHit[slot].start : 0; }
+    int  GetAnimHitEnd(int slot)   const { return (slot >= 0 && slot < kAnimSlots) ? _animHit[slot].end : 0; }
+    void SetAnimHit(int slot, int start, int end);
+    void ClearAnimHit(int slot);
+    const std::vector<CharacterTuning::AnimEvent>& GetAnimEvents(int slot) const;
+    void SetAnimEvents(int slot, const std::vector<CharacterTuning::AnimEvent>& events);
+    // The frames this class's own code deals an animation's melee hit on (end
+    // kHitThroughLastFrame = to the end), for the animator to show before any
+    // are set. False = the game reads no melee box on that animation.
+    virtual bool GetDefaultHitWindow(int slot, int& start, int& end) const;
+
+    // Appends the events reached since the last call (Engine plays them).
+    void CollectAnimEvents(std::vector<FiredAnimEvent>& out);
+
+    // ── Hurtbox padding: how far what the player's attacks hit reaches past
+    // the body square, each side (GetHitCollisionRec). ──
+    static constexpr float kDefaultHurtPadX = 28.f;
+    static constexpr float kDefaultHurtPadY = 18.f;
+    float GetHurtPadX() const { return _hurtPadX; }
+    float GetHurtPadY() const { return _hurtPadY; }
+    bool  GetHurtPadSet() const { return _hurtPadSet; }
+    void  SetHurtPad(float x, float y) { _hurtPadX = std::max(0.f, x); _hurtPadY = std::max(0.f, y); _hurtPadSet = true; }
+    void  ClearHurtPad() { _hurtPadX = kDefaultHurtPadX; _hurtPadY = kDefaultHurtPadY; _hurtPadSet = false; }
+    // False when this class's hurtbox ignores the padding (the animator then
+    // offers no padding handles).
+    virtual bool UsesHurtPadding() const { return true; }
+
+    // ── Special moves (boss/elite hit areas, Character Animator) ─────────────
+    // Each move's hit area is saved in attacktuning_<key>.txt; until then it
+    // keeps its coded size. Circle: radius around the attacker (forward ahead
+    // of it); ring: inner to radius; lane: length long, width to each side;
+    // box: centre-relative, facing right.
+    enum class MoveShape { Circle, Ring, Lane, Box };
+    struct MoveInfo
+    {
+        const char* key     = "";
+        const char* name    = "";
+        MoveShape   shape   = MoveShape::Circle;
+        int         animSlot = -1;            // the animation it plays, -1 = none
+        float       radius  = 0.f;
+        float       inner   = 0.f;
+        float       forward = 0.f;
+        float       length  = 0.f;
+        float       width   = 0.f;
+        Rectangle   box{};
+        const char* note    = "";
+    };
+    virtual int      GetEditorMoveCount() const { return 0; }
+    virtual MoveInfo GetEditorMove(int index) const { (void)index; return MoveInfo{}; }
 
     static constexpr int kAnimSlots = 10;
 
@@ -430,6 +526,10 @@ public:
     // the heavy "launch/fling" used by ogre throws. `dir` need not be normalised.
     // Virtual so an immovable type (Bonechill) can refuse the shove entirely.
     virtual void ApplyHitKnockback(Vector2 dir, float speed);
+    // Kill launch (juice): the corpse is thrown along the killing blow, arcing up
+    // and spinning while it flashes and deflates. Visual only: the world
+    // position and collision never move.
+    void LaunchCorpse(Vector2 dir, float distance);
     bool IsHitStaggered() const { return _hitKnockbackTimer > 0.f; }
 
     // ── Shared status effects (ARPG combat-identity pass) ───────────────────────
@@ -503,8 +603,14 @@ public:
     bool IsGraveReviveInvulnerable() const { return _graveReviveInvulTimer > 0.f; }
     void TakeDamage(int damage, Vector2 attackerPos) override;
     // Unblockable variant — identical to TakeDamage for normal enemies, but a
-    // Shieldbearer overrides it to skip its frontal block (Hunter Puncture Shot).
+    // Shieldbearer overrides it to skip its frontal block (Hunter Puncture Shot,
+    // and every damage-over-time tick).
     virtual void TakeDamageUnblockable(int damage, Vector2 attackerPos) { TakeDamage(damage, attackerPos); }
+    // A hit that arrives from somewhere other than the attacker: a shot from the
+    // direction it travelled, a splash or blast from its centre, a chain from
+    // the enemy it jumped off. Shields judge arrivalPos; knockback still uses
+    // attackerPos.
+    void TakeDamageArriving(int damage, Vector2 attackerPos, Vector2 arrivalPos);
 
     // ── Blocked-hit feedback ──────────────────────────────────────────────────
     // When a hit is denied (bodyguard/leap i-frames, or a Shieldbearer's frontal
@@ -551,6 +657,8 @@ public:
     virtual ToxicVermin* AsToxicVermin() { return nullptr; }
     virtual AncientBear* AsAncientBear() { return nullptr; }
     virtual Werewolf* AsWerewolf() { return nullptr; }
+    // Moves the body without a turn of AI (used by the boss intro drop-in).
+    void SetWorldPosition(Vector2 p) { _worldPos = p; }
     virtual Infernal* AsInfernal() { return nullptr; }
     virtual Bonechill* AsBonechill() { return nullptr; }
     virtual Stormclub* AsStormclub() { return nullptr; }
@@ -571,6 +679,22 @@ public:
     virtual bool UsesDirectPursuit() const { return false; }
     virtual bool IgnoresPropCollisions() const { return false; }
     virtual bool IsBoss() const { return false; }
+    // Size relative to the player's height (Balance::Visual). Classes that are
+    // a bit bigger or smaller override this.
+    virtual float VisualSizeMultiplier() const { return 1.f; }
+    // Tallest visible (opaque) art in any frame of an animation sheet, in px.
+    // Cached per texture; used to size standard enemies to the player.
+    static float MeasureVisibleHeight(Texture2D sheet, float frameWidth);
+    // Visible art of a sheet, averaged over its frames, in frame-local px.
+    struct VisibleBox { float height = 0.f; float centerX = 0.f; float bottom = 0.f; };
+    static VisibleBox MeasureVisibleBox(Texture2D sheet, float frameWidth);
+    // False keeps the authored tuning scale (no player-height sizing).
+    virtual bool SizedToPlayer() const { return true; }
+    // The player-height scale for a standard enemy (idle art x its size
+    // multiplier). Called at the end of a reset, while the idle sheet is set.
+    virtual float AutoScale() const;
+    // Base colour of the sprite before status tints are applied.
+    virtual Color BaseTint() const { return WHITE; }
 
     // ── Enemy-identity approach hooks (CombatEngagement / Task 3) ────────────
     // Small, opt-in flags consulted by Enemy::HandleMovement's genuine-Commit
@@ -724,9 +848,7 @@ public:
     virtual Rectangle GetHitCollisionRec() const
     {
         Rectangle r = GetCollisionRec();
-        constexpr float padX = 28.f;
-        constexpr float padY = 18.f;
-        return { r.x - padX, r.y - padY, r.width + padX * 2.f, r.height + padY * 2.f };
+        return { r.x - _hurtPadX, r.y - _hurtPadY, r.width + _hurtPadX * 2.f, r.height + _hurtPadY * 2.f };
     }
 	void PlayAttackSound() override;
     void PlayDeathSound() override;
@@ -742,6 +864,53 @@ protected:
     // Clears all per-anim + whole-character tuning state; tunable classes call
     // this at the start of their ResetForSpawn before re-applying from file.
     void ResetTuningState();
+
+    // An animation's frame time: the animator's saved speed for that slot when
+    // there is one, otherwise the class's own value.
+    // Whether the current frame is inside animation `slot`'s hit window: the
+    // animator's frames when authored, otherwise [fallbackStart, fallbackEnd].
+    bool InHitWindow(int slot, int fallbackStart, int fallbackEnd) const;
+    // A boss swing's hit check. A coded swing tests once, at its first live
+    // frame; an authored window keeps testing every frame until it lands or
+    // ends. `firstCheck` is true on the swing's first live frame (one-time
+    // swing effects). After testing, MeleeCheckDone says whether the swing is
+    // spent.
+    bool MeleeWindowLive(int slot, int fallbackStart, int fallbackEnd, bool& firstCheck);
+    bool MeleeWindowLive(int slot, int fallbackStart, int fallbackEnd)
+    {
+        bool firstCheck = false;
+        return MeleeWindowLive(slot, fallbackStart, fallbackEnd, firstCheck);
+    }
+    bool MeleeCheckDone(int slot, bool hit) const;
+    // The bosses' coded swing: from frame 3 to the end of the attack animation.
+    bool BossHitWindow(int slot, int& start, int& end) const
+    {
+        if (slot != kAnimSlotAttack)
+            return false;
+        start = kBossMeleeHitFrame;
+        end   = kHitThroughLastFrame;
+        return true;
+    }
+    // A world rect as the animator authors it: relative to this enemy, facing right.
+    Rectangle RelativeFacingRight(Rectangle world) const
+    {
+        Rectangle rel{ world.x - _worldPos.x, world.y - _worldPos.y, world.width, world.height };
+        if (_rightLeft < 0.f)
+            rel.x = -(rel.x + rel.width);
+        return rel;
+    }
+    // A box move's hit rect in the world: the animator's box when saved,
+    // otherwise `fallback`.
+    Rectangle TunedMoveBox(const char* key, Rectangle fallback) const;
+    // Refreshes a class's move sizes from their saved hit areas; runs at the
+    // start of ApplyStoredTuning (every spawn).
+    virtual void ApplyMoveTuning() {}
+
+    float TunedFrameTime(int slot, float fallback) const
+    {
+        return (slot >= 0 && slot < kAnimSlots && _editorAnimFrameTimes[slot] > 0.f)
+            ? _editorAnimFrameTimes[slot] : fallback;
+    }
 
     // Gameplay helpers for the per-anim data (current facing applied):
     bool    GetAnimBodyCapsuleWorld(Capsule2D& out) const;    // current slot's circle
@@ -899,6 +1068,11 @@ protected:
     // cleared when the hit code reads it via ConsumeHitBlock(). Subclasses (e.g.
     // Shieldbearer) set this before returning early from their own TakeDamage.
     HitBlockReason _hitBlock = HitBlockReason::None;
+    // Where the hit being taken arrives from (set only for the length of a
+    // TakeDamageArriving call); HitArrivalPos falls back to the attacker.
+    Vector2 _hitArrivalPos{};
+    bool    _hasHitArrival = false;
+    Vector2 HitArrivalPos(Vector2 attackerPos) const { return _hasHitArrival ? _hitArrivalPos : attackerPos; }
 
     bool  _attacking    = false;
     bool  _damageApplied = false;
@@ -979,6 +1153,9 @@ protected:
 
     // Hit knockback (see ApplyHitKnockback). Independent of _velocity/nav so a
     // struck enemy recoils cleanly; decays fast and pauses pursuit while active.
+    Vector2 _corpseLaunchDir   = {};
+    float   _corpseLaunchDist  = 0.f;
+    float   _corpseSpin        = 0.f;   // degrees over the death animation
     Vector2 _hitKnockbackVel   = {};
     float   _hitKnockbackTimer = 0.f;
     static constexpr float kHitKnockbackDuration = 0.14f; // how long the stagger lasts
@@ -1038,6 +1215,7 @@ protected:
     bool      _hasTunedCollision = false;
     Rectangle _tunedCollisionRel{};              // relative to _worldPos
     float     _editorAnimFrameTimes[10] = {};    // per-anim overrides; <=0 = default
+    float     _autoScale = 0.f;                  // scale without the animator's Size (ApplyStoredTuning)
 
     // Per-animation body circle / melee box / draw offset (kAnimSlots entries).
     bool      _animBodySet[10] = {};
@@ -1047,6 +1225,14 @@ protected:
     Rectangle _animMeleeRel[10] = {};            // relative to _worldPos, facing right
     bool      _animDrawSet[10] = {};
     Vector2   _animDrawOffset[10] = {};          // sprite-only shift, facing right
+    CharacterTuning::AnimHit _animHit[10];        // hit windows (frames)
+    std::vector<CharacterTuning::AnimEvent> _animEvents[10];
+    int       _eventSlot  = -1;                  // the animation/frame events last fired for
+    int       _eventFrame = -1;
+    bool      _meleeWindowOpen = false;          // the current swing has had its first check
+    float     _hurtPadX = kDefaultHurtPadX;
+    float     _hurtPadY = kDefaultHurtPadY;
+    bool      _hurtPadSet = false;
 
     static Texture2D _sharedIdleAnim;
     static Texture2D _sharedWalkAnim;

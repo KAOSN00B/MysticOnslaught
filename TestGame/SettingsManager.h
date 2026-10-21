@@ -1,6 +1,8 @@
 #pragma once
 
 class AudioManager;
+struct KeyBindings;
+struct GamepadBindings;
 
 // All persistent player preferences.
 struct GameSettings
@@ -15,16 +17,32 @@ struct GameSettings
     float masterVolume = 1.0f;  // 0.0 - 1.0, applied via Raylib SetMasterVolume()
     float musicVolume  = 1.0f;  // 0.0 - 1.0, scales all music stream volumes
     float sfxVolume    = 1.0f;  // 0.0 - 1.0, applied to Sound objects before play
-    bool  abilityAimToggle = true;  // false: hold/release, true: press/press
+
+    // Comfort (Settings > Comfort). The engine applies these where the effect
+    // is triggered, so every shake, flash and freeze goes through them.
+    float screenShake  = 1.0f;  // 0.0 - 1.0, scales every camera shake
+    int   flashLevel   = 0;     // full-screen flashes: 0 = full, 1 = reduced, 2 = off
+    int   hitStopLevel = 0;     // impact freeze frames: 0 = full, 1 = reduced, 2 = off
+
+    float FlashScale()   const { return flashLevel   == 0 ? 1.f : flashLevel   == 1 ? 0.3f : 0.f; }
+    float HitStopScale() const { return hitStopLevel == 0 ? 1.f : hitStopLevel == 1 ? 0.5f : 0.f; }
 };
 
+// Saves/settings.json and Saves/keybindings.json (SaveFiles.h): plain JSON the
+// player may edit. A field of the wrong type rejects the file (the backup is
+// used, or the defaults); a number out of range is clamped as the menus would;
+// a missing field keeps its default.
 class SettingsManager
 {
 public:
-    // Load from settings.cfg (no-op on web build).
     void Load();
-    // Save to settings.cfg (no-op on web build).
     void Save() const;
+
+    // Keybindings live beside the settings. Load returns false (and leaves
+    // both untouched) when there is no usable file; a key code out of range
+    // keeps that binding's default.
+    static bool LoadKeybindings(KeyBindings& keys, GamepadBindings& pad);
+    static bool SaveKeybindings(const KeyBindings& keys, const GamepadBindings& pad);
 
     // Apply window mode + VSync to the OS window.
     void ApplyWindow() const;

@@ -60,6 +60,18 @@ struct CombatSpawnContext
     std::function<Enemy*(Vector2)> spawnWarchief;         // Support
 };
 
+// Arena Pressure: one volley shot glowing on the room wall before it launches
+// (the ember the player sees). The engine owns the list and draws it; the
+// director queues and launches (Balance::Hazards::kVolley*).
+struct VolleyWindup
+{
+    Vector2 from{};
+    Vector2 dir{ 1.f, 0.f };
+    Color   tint = WHITE;
+    float   delay = 0.f;   // a ripple waits this long before its ember lights
+    float   timer = 0.f;   // ember time left; the shot leaves at 0
+};
+
 struct EliteMechanicsContext
 {
     RoomType currentRoomType = RoomType::Standard;
@@ -71,6 +83,12 @@ struct EliteMechanicsContext
     Character* player = nullptr;
     std::vector<std::unique_ptr<Enemy>>* enemies = nullptr;
     std::vector<LavaBallProjectile>* lavaBalls = nullptr;
+    // Arena Pressure: embers on the walls (may be null: shots then launch at once),
+    // the open floor inside the walls, and whether a launch point is open floor
+    // the player can see (not under the HUD or minimap).
+    std::vector<VolleyWindup>* volleyWindups = nullptr;
+    Rectangle arenaFloor{};
+    std::function<bool(Vector2)> isVolleyLaunchPointClear;
 
     int* eliteMechanic = nullptr;
     Enemy** eliteMinibossPtr = nullptr;
@@ -82,6 +100,8 @@ struct EliteMechanicsContext
 
     std::function<bool(Vector2)> isSpawnPositionValid;
     std::function<void(float, float)> triggerScreenShake;
+    // Names an enemy for the run log (cause of death); see Engine::DamageSourceOf.
+    std::function<DamageSource(Enemy&)> damageSourceOf;
 };
 
 // Boss impact/cast FX ids — map 1:1 to FX_Boss*.png sheets loaded by the Engine.
@@ -124,6 +144,9 @@ struct EnemyRuntimeContext
     // BossFx id (see Engine); lets boss impact/cast moments show real art instead
     // of only procedural rings. Safe no-op if unset.
     std::function<void(Vector2, int)> spawnBossFx;
+    // Plays an animation event (Character Animator) an enemy just reached:
+    // its FX, its attack sound or a screen shake. Safe no-op if unset.
+    std::function<void(const FiredAnimEvent&, Enemy&)> playAnimEvent;
     // Show a floating boss-state word (ENRAGED / PHASE SHIFT / ...) at a world
     // position. Safe no-op if unset. See Enemy::ConsumeBossCallout.
     std::function<void(Vector2, const char*)> spawnBossCallout;
@@ -138,6 +161,9 @@ struct EnemyRuntimeContext
     // A few frames of gameplay freeze on the heaviest impacts (wall crashes,
     // slams) — same juice primitive player hits already use. Safe no-op if unset.
     std::function<void(float)> requestHitStop;
+    // Names an enemy for the run log: every hit during its turn, and every
+    // projectile it spawns, is credited to it. See Engine::DamageSourceOf.
+    std::function<DamageSource(Enemy&)> damageSourceOf;
 };
 
 struct EnemyDeathContext
@@ -156,6 +182,8 @@ struct EnemyDeathContext
     std::function<void(Vector2)> spawnPoisonCloud;   // sporeling death burst
     // Relic on-kill effects: pos + (wasBurning, wasFrozen, wasCharged, eliteOrBoss).
     std::function<void(Vector2, bool, bool, bool, bool)> onEnemyKilled;
+    // The enemy itself, as it dies (the Grimoire's bestiary records its kind).
+    std::function<void(Enemy&)> onEnemySlain;
 };
 
 struct BossSupportContext

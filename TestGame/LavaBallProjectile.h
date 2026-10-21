@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DamageSource.h"
 #include "raylib.h"
 #include <string>
 
@@ -23,15 +24,23 @@ public:
     // Arena Pressure themes the shared shot art per elite archetype (ice blue,
     // storm gold, toxic green); WHITE keeps the normal lava look.
     void SetTint(Color tint) { _tint = tint; }
+    // Draw scale and hitbox (world px) for this shot; Arena Pressure volleys
+    // use a fire bolt's size. Defaults are the boss lava ball's. A tuning key's
+    // hitbox, when set, still wins.
+    void SetSize(float drawScale, float hitSize) { _drawScale = drawScale; _hitSize = hitSize; }
     bool IsFlying() const { return _state == State::Flying; }
     bool HasHitPlayer() const { return _playerHit; }
     void OnPlayerHit() { _playerHit = true; }
+    // Who fired it (the run log's cause of death when it lands).
+    void SetSource(const DamageSource& source) { _source = source; }
+    const DamageSource& GetSource() const { return _source; }
     Vector2 GetWorldPos() const { return _worldPos; }
     Rectangle GetCollisionRec() const;
 
     static void UnloadSharedResources();
 
 private:
+    DamageSource _source;
     enum class State
     {
         Flying,
@@ -56,7 +65,10 @@ private:
 
     static constexpr float _speed = 520.f;
     static constexpr float _maxLife = 6.f;
-    static constexpr float _drawScale = 4.4f;
+    static constexpr float kDefaultDrawScale = 4.4f;
+    static constexpr float kDefaultHitSize = 64.f;
+    float _drawScale = kDefaultDrawScale;
+    float _hitSize = kDefaultHitSize;
     static constexpr int _flyingFrameCount = 8;
     static constexpr int _hitFrameCount = 5;
     static constexpr float _frameTime = 1.f / 12.f;

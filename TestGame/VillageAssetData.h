@@ -38,7 +38,8 @@ enum class VillageBuildCategory { Building, Decor, Path, Utility, Trophy };
 enum class VillageService
 {
     None, Shop, Graveyard, Training, ClassChange,
-    Wardrobe, Cartographer, TrophyHall, DungeonGate, Relic
+    Wardrobe, Cartographer, TrophyHall, DungeonGate, Relic,
+    Armory   // choose the class ability a run starts with (mastery-gated)
 };
 
 // What a press-interact zone does when the player triggers it.

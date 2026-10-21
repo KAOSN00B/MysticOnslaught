@@ -1,7 +1,11 @@
 ﻿#include "Enemy.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "CharacterTuning.h"
+#include "AttackTuning.h"
+#include "RunProgression.h"
+#include "VfxGlow.h"
 #include "VirtualCanvas.h"
 
 #include "raymath.h"
@@ -9,6 +13,8 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <typeinfo>
+#include <unordered_map>
 
 Texture2D Enemy::_sharedIdleAnim{};
 Texture2D Enemy::_sharedWalkAnim{};
@@ -144,12 +150,12 @@ void Enemy::ResetForSpawn(Vector2 pos)
 
     _width = 32.f;
     _height = _texture.height;
-    _scale = 6.f;
+    _scale = Balance::Visual::ScaleForVisibleHeight(MeasureVisibleHeight(_texture, _width), VisualSizeMultiplier());
     _speed = 200.f;
 
-    _health = 3.f;
-    _maxHealth = 3.f;
-    _attackPower = 1.f;
+    _health = 30.f;
+    _maxHealth = 30.f;
+    _attackPower = 10.f;
 
     _maxFrames = (int)(_texture.width / _width);
     _frame = GetRandomValue(0, _maxFrames - 1);
@@ -189,6 +195,9 @@ void Enemy::ResetForSpawn(Vector2 pos)
     _burnSoundTimer = 0.f;
     _takingDamage = false;
     _dying = false;
+    _corpseLaunchDir = Vector2Zero();
+    _corpseLaunchDist = 0.f;
+    _corpseSpin = 0.f;
     _pendingBurns.clear();
     _stuckTimer    = 0.f;
     _stuckCheckPos = _worldPos;
@@ -224,6 +233,11 @@ void Enemy::ResetForSpawn(Vector2 pos)
 
     PickApproachOffset();
     _approachOffsetTimer = (float)GetRandomValue(0, 250) / 100.f;
+
+    // Subclasses apply their own tuning at the end of their reset; the plain
+    // grunt has no subclass, so it applies charactertuning_Grunt.txt here.
+    if (IsPlainGrunt())
+        ApplyStoredTuning();
 }
 
 void Enemy::SetIsEliteMiniboss(bool b)
@@ -326,6 +340,24 @@ void Enemy::PlayEditorAnim(int index)
         _updateTime = frameTimeOverride;
 }
 
+void Enemy::SetEditorFrame(int frame)
+{
+    if (_maxFrames <= 0)
+        return;
+    _frame       = ((frame % _maxFrames) + _maxFrames) % _maxFrames;
+    _runningTime = 0.f;
+}
+
+bool Enemy::IsPlainGrunt() const
+{
+    return typeid(*this) == typeid(Enemy);
+}
+
+float Enemy::AutoScale() const
+{
+    return Balance::Visual::ScaleForVisibleHeight(MeasureVisibleHeight(_idleAnim, _width), VisualSizeMultiplier());
+}
+
 void Enemy::TickEditorAnimation(float dt)
 {
     // Editor-only frame advance: always loops, ignores gameplay state.
@@ -408,6 +440,109 @@ void Enemy::SetAnimDrawOffset(int slot, Vector2 offset)
         return;
     _animDrawSet[slot]    = true;
     _animDrawOffset[slot] = offset;
+}
+
+void Enemy::ClearAnimDrawOffset(int slot)
+{
+    if (slot >= 0 && slot < kAnimSlots)
+        _animDrawSet[slot] = false;
+}
+
+void Enemy::SetAnimHit(int slot, int start, int end)
+{
+    if (slot < 0 || slot >= kAnimSlots)
+        return;
+    _animHit[slot].set   = true;
+    _animHit[slot].start = std::max(0, std::min(start, end));
+    _animHit[slot].end   = std::max(start, end);
+}
+
+void Enemy::ClearAnimHit(int slot)
+{
+    if (slot >= 0 && slot < kAnimSlots)
+        _animHit[slot].set = false;
+}
+
+const std::vector<CharacterTuning::AnimEvent>& Enemy::GetAnimEvents(int slot) const
+{
+    static const std::vector<CharacterTuning::AnimEvent> kNone;
+    return (slot >= 0 && slot < kAnimSlots) ? _animEvents[slot] : kNone;
+}
+
+void Enemy::SetAnimEvents(int slot, const std::vector<CharacterTuning::AnimEvent>& events)
+{
+    if (slot >= 0 && slot < kAnimSlots)
+        _animEvents[slot] = events;
+}
+
+bool Enemy::GetDefaultHitWindow(int slot, int& start, int& end) const
+{
+    // The shared grunt swing (Enemy::Update) strikes on one frame of the attack.
+    if (slot != kAnimSlotAttack)
+        return false;
+    start = end = kBaseMeleeHitFrame;
+    return true;
+}
+
+bool Enemy::InHitWindow(int slot, int fallbackStart, int fallbackEnd) const
+{
+    if (GetAnimHitSet(slot))
+        return _frame >= _animHit[slot].start && _frame <= _animHit[slot].end;
+    return _frame >= fallbackStart && _frame <= fallbackEnd;
+}
+
+bool Enemy::MeleeWindowLive(int slot, int fallbackStart, int fallbackEnd, bool& firstCheck)
+{
+    firstCheck = false;
+    if (!InHitWindow(slot, fallbackStart, fallbackEnd))
+    {
+        _meleeWindowOpen = false;
+        return false;
+    }
+    firstCheck = !_meleeWindowOpen;
+    _meleeWindowOpen = true;
+    return true;
+}
+
+bool Enemy::MeleeCheckDone(int slot, bool hit) const
+{
+    return hit || !GetAnimHitSet(slot) || _frame >= _animHit[slot].end;
+}
+
+Rectangle Enemy::TunedMoveBox(const char* key, Rectangle fallback) const
+{
+    const AttackTuning* area = TunedHitArea(key);
+    if (area == nullptr || area->hitW <= 0.f || area->hitH <= 0.f)
+        return fallback;
+    // Authored facing right around the attacker; mirror with it.
+    const float centreX = _worldPos.x + area->hitX * _rightLeft;
+    const float centreY = _worldPos.y + area->hitY;
+    return Rectangle{ centreX - area->hitW * 0.5f, centreY - area->hitH * 0.5f, area->hitW, area->hitH };
+}
+
+void Enemy::CollectAnimEvents(std::vector<FiredAnimEvent>& out)
+{
+    const int slot  = GetCurrentAnimSlot();
+    const int frame = _frame;
+    if (slot == _eventSlot && frame == _eventFrame)
+        return;
+    const bool sameAnimation = (slot == _eventSlot);
+    const int  lastFrame = _eventFrame;
+    _eventSlot  = slot;
+    _eventFrame = frame;
+    if (slot < 0 || slot >= kAnimSlots)
+        return;
+    for (const CharacterTuning::AnimEvent& event : _animEvents[slot])
+    {
+        if (!AnimEvents::Reached(event.frame, sameAnimation, lastFrame, frame))
+            continue;
+        FiredAnimEvent fired;
+        fired.kind     = event.kind;
+        fired.worldPos = Vector2{ _worldPos.x + event.x * _rightLeft, _worldPos.y + event.y };
+        fired.size     = event.size;
+        fired.fx       = event.fx;
+        out.push_back(fired);
+    }
 }
 
 bool Enemy::GetAnimBodyCapsuleWorld(Capsule2D& out) const
@@ -504,11 +639,70 @@ void Enemy::ResetTuningState()
         _animBodySet[i]  = false;
         _animMeleeSet[i] = false;
         _animDrawSet[i]  = false;
+        _animHit[i]      = CharacterTuning::AnimHit{};
+        _animEvents[i].clear();
     }
+    _eventSlot = _eventFrame = -1;
+    _meleeWindowOpen = false;
+    ClearHurtPad();
+}
+
+Enemy::VisibleBox Enemy::MeasureVisibleBox(Texture2D sheet, float frameWidth)
+{
+    constexpr unsigned char kOpaqueAlpha = 40;   // same threshold the sprite editor uses
+    static std::unordered_map<unsigned int, VisibleBox> cache;
+    if (sheet.id == 0 || frameWidth <= 0.f) return VisibleBox{};
+    const auto found = cache.find(sheet.id);
+    if (found != cache.end()) return found->second;
+
+    Image pixels = LoadImageFromTexture(sheet);
+    const int frameW = (int)frameWidth;
+    const int frames = pixels.width / frameW;
+    VisibleBox box{};
+    int counted = 0;
+    for (int f = 0; f < frames; ++f)
+    {
+        int top = pixels.height, bottom = -1, left = frameW, right = -1;
+        for (int y = 0; y < pixels.height; ++y)
+            for (int x = 0; x < frameW; ++x)
+                if (GetImageColor(pixels, f * frameW + x, y).a > kOpaqueAlpha)
+                {
+                    top = std::min(top, y);
+                    bottom = std::max(bottom, y);
+                    left = std::min(left, x);
+                    right = std::max(right, x);
+                }
+        if (bottom < top) continue;
+        ++counted;
+        box.height = std::max(box.height, (float)(bottom - top + 1));
+        box.centerX += (left + right + 1) * 0.5f;
+        box.bottom  += bottom + 1.f;
+    }
+    UnloadImage(pixels);
+    if (counted > 0)
+    {
+        box.centerX /= counted;
+        box.bottom  /= counted;
+    }
+    cache[sheet.id] = box;
+    return box;
+}
+
+float Enemy::MeasureVisibleHeight(Texture2D sheet, float frameWidth)
+{
+    return MeasureVisibleBox(sheet, frameWidth).height;
 }
 
 void Enemy::ApplyStoredTuning()
 {
+    // Special moves read their own files (attacktuning_<key>.txt).
+    ApplyMoveTuning();
+
+    // The scale the game picks when the animator's Size isn't set: standard
+    // enemies at player height, everything else at its own (or authored) scale.
+    const bool sizedToPlayer = !IsBoss() && SizedToPlayer() && _idleAnim.id > 0;
+    _autoScale = sizedToPlayer ? AutoScale() : _scale;
+
     const char* tuningName = GetTuningName();
     if (tuningName == nullptr)
         return;
@@ -517,22 +711,41 @@ void Enemy::ApplyStoredTuning()
     if (tuning == nullptr)
         return;
 
-    if (tuning->hasScale)
+    // Standard enemies are drawn at player height (Balance::Visual). Every authored
+    // rectangle and offset is in world px at the authored scale, so it grows by the
+    // same ratio as the sprite. Bosses keep their authored scale and rectangles.
+    // A Size set in the animator wins: the game draws exactly what was authored.
+    const float authoredScale = tuning->hasScale ? tuning->scale : _scale;
+    if (!sizedToPlayer && tuning->hasScale)
+        _autoScale = tuning->scale;
+    float k = 1.f;
+    if (tuning->sizeSet && tuning->hasScale)
         _scale = tuning->scale;
+    else if (sizedToPlayer && authoredScale > 0.f)
+    {
+        _scale = _autoScale;
+        k = _scale / authoredScale;
+    }
+    else if (tuning->hasScale)
+        _scale = tuning->scale;
+
     if (tuning->hasCollision)
-        SetCollisionRecWorld(tuning->collisionRel);
+    {
+        const Rectangle r = tuning->collisionRel;
+        SetCollisionRecWorld(Rectangle{ r.x * k, r.y * k, r.width * k, r.height * k });
+    }
     if (tuning->hasCapsule)
     {
-        SetCapsuleRadius(tuning->capsuleRadius);
-        SetCapsuleHalfHeight(tuning->capsuleHalfHeight);
-        SetCapsuleOffset(tuning->capsuleOffset);
+        SetCapsuleRadius(tuning->capsuleRadius * k);
+        SetCapsuleHalfHeight(tuning->capsuleHalfHeight * k);
+        SetCapsuleOffset(Vector2{ tuning->capsuleOffset.x * k, tuning->capsuleOffset.y * k });
     }
     if (tuning->hasAttackBox)
     {
-        SetAttackBoxWidth(tuning->attackBoxWidth);
-        SetAttackBoxHeight(tuning->attackBoxHeight);
-        SetAttackBoxOffsetX(tuning->attackBoxOffsetX);
-        SetAttackBoxOffsetY(tuning->attackBoxOffsetY);
+        SetAttackBoxWidth(tuning->attackBoxWidth * k);
+        SetAttackBoxHeight(tuning->attackBoxHeight * k);
+        SetAttackBoxOffsetX(tuning->attackBoxOffsetX * k);
+        SetAttackBoxOffsetY(tuning->attackBoxOffsetY * k);
     }
     for (int i = 0; i < CharacterTuning::kMaxAnims && i < kAnimSlots; i++)
     {
@@ -541,20 +754,30 @@ void Enemy::ApplyStoredTuning()
         if (tuning->animBody[i].set)
         {
             _animBodySet[i]    = true;
-            _animBodyOffset[i] = Vector2{ tuning->animBody[i].x, tuning->animBody[i].y };
-            _animBodyRadius[i] = tuning->animBody[i].radius;
+            _animBodyOffset[i] = Vector2{ tuning->animBody[i].x * k, tuning->animBody[i].y * k };
+            _animBodyRadius[i] = tuning->animBody[i].radius * k;
         }
         if (tuning->animMelee[i].set)
         {
+            const Rectangle m = tuning->animMelee[i].rect;
             _animMeleeSet[i] = true;
-            _animMeleeRel[i] = tuning->animMelee[i].rect;
+            _animMeleeRel[i] = Rectangle{ m.x * k, m.y * k, m.width * k, m.height * k };
         }
         if (tuning->animDraw[i].set)
         {
             _animDrawSet[i]    = true;
-            _animDrawOffset[i] = Vector2{ tuning->animDraw[i].x, tuning->animDraw[i].y };
+            _animDrawOffset[i] = Vector2{ tuning->animDraw[i].x * k, tuning->animDraw[i].y * k };
+        }
+        _animHit[i] = tuning->animHit[i];
+        _animEvents[i] = tuning->animEvents[i];
+        for (CharacterTuning::AnimEvent& event : _animEvents[i])
+        {
+            event.x *= k;
+            event.y *= k;
         }
     }
+    if (tuning->hasHurtPad)
+        SetHurtPad(tuning->hurtPadX * k, tuning->hurtPadY * k);
 
     // Base grunt behaviour reads _attackUpdateTime directly, so the Attack
     // anim override (slot 2) maps onto it for types using the shared attack.
@@ -564,9 +787,12 @@ void Enemy::ApplyStoredTuning()
 
 Rectangle Enemy::GetAttackCollisionRec() const
 {
-    // Per-animation melee box (Character Animator) wins; slot 2 = Attack.
+    // Per-animation melee box (Character Animator) wins: the playing
+    // animation's own box, then the attack animation's.
     Rectangle animMeleeRect;
-    if (GetAnimMeleeRectWorld(2, animMeleeRect))
+    if (GetAnimMeleeRectWorld(GetCurrentAnimSlot(), animMeleeRect))
+        return animMeleeRect;
+    if (GetAnimMeleeRectWorld(kAnimSlotAttack, animMeleeRect))
         return animMeleeRect;
 
     // Attack box anchored to sprite center (_worldPos), independent of body offset.
@@ -1420,7 +1646,7 @@ void Enemy::HandleAttack(const std::vector<std::unique_ptr<Enemy>>& enemies)
         PlayAttackSound();
     }
 
-    if (_attacking && !_damageApplied && _frame == 2)
+    if (_attacking && !_damageApplied && InHitWindow(kAnimSlotAttack, kBaseMeleeHitFrame, kBaseMeleeHitFrame))
     {
         if (CheckCollisionRecs(GetAttackCollisionRec(), _target->GetCollisionRec()))
         {
@@ -1468,6 +1694,9 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     // instead of a flat death frame that just blinks out. Alpha folds into the
     // sprite tint below.
     float deathAlpha = 1.f;
+    float deathFlash = 0.f;            // white-hot first frames of a kill
+    Vector2 corpseOffset{};            // thrown along the killing blow
+    float corpseRotation = 0.f;
     if (_dying)
     {
         float dp = 1.f - (_deathTimer / kDeathAnimDuration);   // 0 at death start -> 1 at end
@@ -1476,6 +1705,14 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
         w *= deathScale;
         h *= deathScale;
         deathAlpha = 1.f - dp * dp * 0.9f;                     // hold, then fade out late
+        deathFlash = dp < 0.12f ? 1.f - dp / 0.12f : 0.f;   // two or three white-hot frames
+        if (_corpseLaunchDist > 0.f)
+        {
+            const float ease = 1.f - (1.f - dp) * (1.f - dp) * (1.f - dp);
+            corpseOffset = Vector2Scale(_corpseLaunchDir, _corpseLaunchDist * ease);
+            corpseOffset.y -= sinf(dp * 3.14159265f) * _corpseLaunchDist * 0.35f;   // arc up, then land
+            corpseRotation = _corpseSpin * ease;
+        }
     }
 
     Vector2 screenPos = Vector2Subtract(_worldPos, heroWorldPos);
@@ -1491,6 +1728,20 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     visualOffsetX += animDrawOffset.x;
     visualOffsetY += animDrawOffset.y;
+
+    // Each animation sheet draws its art at a different spot inside its frames
+    // (the attack frames are wider and sit further over). Line this sheet's visible
+    // centre and feet up with the idle sheet so the body doesn't jump on a change.
+    if (_idleAnim.id != 0 && _texture.id != _idleAnim.id)
+    {
+        const VisibleBox idle = MeasureVisibleBox(_idleAnim, _width);
+        const VisibleBox cur  = MeasureVisibleBox(_texture, _width);
+        if (idle.height > 0.f && cur.height > 0.f)
+        {
+            visualOffsetX += (idle.centerX - cur.centerX) * _scale * _rightLeft;
+            visualOffsetY += (idle.bottom - cur.bottom) * _scale;
+        }
+    }
 
     Rectangle dest{ screenPos.x - w / 2.f + visualOffsetX, screenPos.y - h / 2.f + visualOffsetY, w, h };
 
@@ -1533,9 +1784,11 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     Color tint = electroStunned   ? Color{ 255, 255,  60, 255 } :   // bright yellow — stunned
                  charged         ? Color{ 220, 220,  80, 255 } :   // dim yellow — charged, not stunned
                  _flickerInWindup ? Color{ 180, 100, 255, 180 } :  // purple + semi-transparent — flicker windup
+                 // First frame of a hurt animation: red, not the white the art opens on.
+                 (_texture.id == _takeDamageAnim.id && _frame == 0) ? Vfx::kHurtFlashTint :
                  frozen          ? Color{ 140, 200, 255, 255 } :
                  burning         ? Color{ 255, 180, 180, 255 } :
-                                   WHITE;
+                                   BaseTint();
 
     if (burning)
     {
@@ -1552,7 +1805,24 @@ void Enemy::DrawEnemy(Vector2 heroWorldPos)
     float shadowY = screenPos.y + launchLift + baseH * 0.5f + visualOffsetY - 2.f;
     DrawEllipse((int)shadowX, (int)shadowY, baseW * 0.28f, baseH * 0.06f, Fade(BLACK, 0.28f));
 
-    DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, _dying ? Fade(tint, deathAlpha) : tint);
+    if (_dying && (_corpseLaunchDist > 0.f || deathFlash > 0.f))
+    {
+        // Rotate about the sprite centre; the additive passes push it white-hot.
+        Rectangle corpse{ dest.x + dest.width * 0.5f + corpseOffset.x, dest.y + dest.height * 0.5f + corpseOffset.y,
+                          dest.width, dest.height };
+        const Vector2 origin{ dest.width * 0.5f, dest.height * 0.5f };
+        DrawTexturePro(_texture, source, corpse, origin, corpseRotation, Fade(tint, deathAlpha));
+        if (deathFlash > 0.f)
+        {
+            Vfx::DrawGlowHalo(Vector2{ corpse.x, corpse.y }, Balance::Vfx::kDeathHaloRadius,
+                              Vfx::kDeathGlow, Balance::Vfx::kDeathHaloStrength * deathFlash);
+            BeginBlendMode(BLEND_ADDITIVE);
+            DrawTexturePro(_texture, source, corpse, origin, corpseRotation, Fade(WHITE, deathFlash * 0.9f));
+            EndBlendMode();
+        }
+    }
+    else
+        DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, _dying ? Fade(tint, deathAlpha) : tint);
 
     // Graveyard revive invincibility window — pulsing green ring so it's obvious when testing.
     if (_graveReviveInvulTimer > 0.f)
@@ -1811,6 +2081,14 @@ void Enemy::TakeDamage(int damage, Vector2 attackerPos)
     BaseCharacter::TakeDamage(damage, attackerPos);
 }
 
+void Enemy::TakeDamageArriving(int damage, Vector2 attackerPos, Vector2 arrivalPos)
+{
+    _hitArrivalPos = arrivalPos;
+    _hasHitArrival = true;
+    TakeDamage(damage, attackerPos);
+    _hasHitArrival = false;
+}
+
 void Enemy::StartFlickerWindup(float duration, Vector2 target)
 {
     _flickerInWindup    = true;
@@ -1932,6 +2210,15 @@ void Enemy::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
     }
 }
 
+void Enemy::LaunchCorpse(Vector2 dir, float distance)
+{
+    const float len = Vector2Length(dir);
+    if (len < 0.001f || distance <= 0.f) return;
+    _corpseLaunchDir = Vector2Scale(dir, 1.f / len);
+    _corpseLaunchDist = distance;
+    _corpseSpin = (float)GetRandomValue(22, 48) * (dir.x >= 0.f ? 1.f : -1.f);
+}
+
 void Enemy::ApplyHitKnockback(Vector2 dir, float speed)
 {
     // Don't shove something the environment already owns (a fall/throw) or that is
@@ -1989,20 +2276,20 @@ void Enemy::ApplyEnemyPowerLevel(int enemyPowerLevel)
     if (enemyPowerLevel <= 1)
         return;
 
-    const float t = (float)(enemyPowerLevel - 1);
-    _maxHealth   = std::ceil(_maxHealth   * (1.f + Balance::Curve::kHealthPerLevel * t));
+    // The curve itself lives in RunProgression.h so tests and the engine share it.
+    const RunProgression::EnemyStatScale scale =
+        RunProgression::StatScaleForPowerLevel(enemyPowerLevel);
+    _maxHealth   = std::ceil(_maxHealth * scale.health);
     _health      = _maxHealth;
-    _attackPower *= (1.f + Balance::Curve::kDamagePerLevel * t);
-    _speed       *= (1.f + Balance::Curve::kSpeedPerLevel  * t);
+    _attackPower *= scale.damage;
+    _speed       *= scale.speed;
 
     // Attack cadence pressure: deeper enemies strike more OFTEN, not just
     // harder — difficulty from tempo instead of ever-spongier HP. Floored so
     // no depth turns an authored rhythm into a blender.
-    const float delayFactor = std::max(Balance::Curve::kMinAttackDelayFactor,
-                                       1.f - Balance::Curve::kAttackDelayPerLevel * t);
-    _attackDelay *= delayFactor;
+    _attackDelay *= scale.attackDelay;
 
-    _expValue    += (enemyPowerLevel - 1);
+    _expValue    += scale.expBonus;
 }
 
 void Enemy::ApplyDifficultyScaling(float healthMult, float damageMult)
@@ -2168,6 +2455,8 @@ void Enemy::ResetStatuses()
 
 void Enemy::UpdateStatuses(float dt)
 {
+    // Damage-over-time ticks are not hits a shield can catch, so they all go
+    // through TakeDamageUnblockable (the same as TakeDamage for everyone else).
     // Poison — stacking DoT.
     if (_poisonTimer > 0.f)
     {
@@ -2176,7 +2465,7 @@ void Enemy::UpdateStatuses(float dt)
         if (_poisonTickTimer <= 0.f && IsAlive() && !_dying)
         {
             _poisonTickTimer += 0.5f;
-            TakeDamage(_poisonPerTick * std::max(1, _poisonStacks), _worldPos);
+            TakeDamageUnblockable(_poisonPerTick * std::max(1, _poisonStacks), _worldPos);
         }
         if (_poisonTimer <= 0.f) { _poisonStacks = 0; _poisonPerTick = 0; }
     }
@@ -2193,7 +2482,7 @@ void Enemy::UpdateStatuses(float dt)
             float dy = _worldPos.y - _worldPosLastFrame.y;
             bool moving = (dx * dx + dy * dy) > 4.f;
             int dmg = moving ? (int)std::ceil(_bleedPerTick * 1.5f) : _bleedPerTick;
-            TakeDamage(std::max(1, dmg), _worldPos);
+            TakeDamageUnblockable(std::max(1, dmg), _worldPos);
         }
         if (_bleedTimer <= 0.f) _bleedPerTick = 0;
     }
@@ -2228,7 +2517,7 @@ void Enemy::UpdateBurns(float dt)
         if (burn.timer <= 0.f)
         {
             if (IsAlive() && !_dying)
-                TakeDamage(burn.damage, burn.sourcePos);
+                TakeDamageUnblockable(burn.damage, burn.sourcePos);
             continue;
         }
 
@@ -2240,7 +2529,7 @@ void Enemy::UpdateBurns(float dt)
 
 void Enemy::PlayAttackSound()
 {
-    float pitch = GetRandomValue(100, 140) / 100.f;
+    float pitch = SoundVariation::VariedPitch(1.200f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.5f);
     PlaySound(_attackSound);
@@ -2256,7 +2545,7 @@ void Enemy::PlayDeathSound()
 
 void Enemy::PlayHurtSound()
 {
-    float pitch = GetRandomValue(140, 180) / 100.f;
+    float pitch = SoundVariation::VariedPitch(1.600f);
     SetSoundPitch(_hurtSound, pitch);
     SetSoundVolume(_hurtSound, 0.85f);
     StopSound(_hurtSound);

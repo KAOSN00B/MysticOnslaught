@@ -1,0 +1,9 @@
+scale=7.000
+size_set=1
+hurt_pad_x=0.00
+hurt_pad_y=0.00
+anim_0_body_x=21.77
+anim_0_body_y=35.21
+anim_0_body_r=74.44
+anim_0_draw_x=16.25
+anim_0_draw_y=-3.94

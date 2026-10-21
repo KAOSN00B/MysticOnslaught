@@ -1,0 +1,213 @@
+{
+  "target": "Jungle",
+  "revision": 1,
+  "source_sha256": "c1ebe0d747bbf8eab9ec2f113be419485df2d4fa543a145783fe0fdab7cb2635",
+  "permitted_sheets": [
+    "Jungle"
+  ],
+  "mappings": {
+    "[\"GROUND\",\"Forest\",\"0\",\"32\",\"0\",\"16\",\"16\"]": {
+      "visual_review": "olive grass path",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            96,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"64\",\"32\",\"16\",\"16\"]": {
+      "visual_review": "continuous green grass floor",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            16,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"96\",\"32\",\"16\",\"16\"]": {
+      "visual_review": "continuous green grass floor; subtle source variation consolidated",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            16,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"80\",\"32\",\"16\",\"16\"]": {
+      "visual_review": "continuous green grass floor; subtle source variation consolidated",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            16,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"64\",\"208\",\"16\",\"16\"]": {
+      "visual_review": "upper left wall corner",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            352,
+            608,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"64\",\"240\",\"16\",\"16\"]": {
+      "visual_review": "lower left wall corner and face",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            352,
+            640,
+            16,
+            32
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"96\",\"240\",\"16\",\"16\"]": {
+      "visual_review": "lower right wall corner and face",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            384,
+            640,
+            16,
+            32
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"96\",\"208\",\"16\",\"16\"]": {
+      "visual_review": "upper right wall corner",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            384,
+            608,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"80\",\"208\",\"16\",\"16\"]": {
+      "visual_review": "upper wall edge",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            368,
+            608,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"96\",\"224\",\"16\",\"16\"]": {
+      "visual_review": "right wall edge",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            384,
+            624,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"64\",\"224\",\"16\",\"16\"]": {
+      "visual_review": "left wall edge",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            352,
+            624,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"80\",\"240\",\"16\",\"16\"]": {
+      "visual_review": "lower wall edge and face",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            368,
+            640,
+            16,
+            32
+          ]
+        }
+      ]
+    },
+    "[\"TILE_TYPE\",\"Forest\",\"0\"]": {
+      "visual_review": "Logical geometry retained; complete authored floor/wall visuals supply target art.",
+      "geometry_review": "Tile enum is unchanged.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "tile_type": 0
+        }
+      ]
+    },
+    "[\"TILE_TYPE\",\"Forest\",\"2\"]": {
+      "visual_review": "Logical geometry retained; complete authored floor/wall visuals supply target art.",
+      "geometry_review": "Tile enum is unchanged.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "tile_type": 2
+        }
+      ]
+    }
+  },
+  "scope": "Forest w.mroom only; no props, animations, custom colliders or falls",
+  "visual_review": "Original Forest.png and Jungle.png visually inspected; see contact.png.",
+  "runtime_status": "Candidate; consult runtime-validation.txt; not enabled in RoomLibrary."
+}

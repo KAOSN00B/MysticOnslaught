@@ -104,7 +104,7 @@ void LavaBallProjectile::Destroy()
 
 Rectangle LavaBallProjectile::GetCollisionRec() const
 {
-    float size = 64.f;
+    float size = _hitSize;
     float offsetX = 0.f;
     float offsetY = 0.f;
 

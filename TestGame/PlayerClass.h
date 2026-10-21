@@ -40,7 +40,7 @@ struct PlayerClassInfo
     int   baseMana;
     float baseAttackPower;
     float baseMoveSpeed;
-    int   startArmour;
+    float startDefense;          // Balance::Stats (replaced the armour pips)
     float manaRegenMult;
 };
 

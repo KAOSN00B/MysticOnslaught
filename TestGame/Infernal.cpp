@@ -1,4 +1,6 @@
 #include "Infernal.h"
+#include "EliteMoveDefs.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "AttackTuning.h"
@@ -78,9 +80,9 @@ void Infernal::ResetForSpawn(Vector2 pos)
     _scale = 5.6f;                 // its body art is narrow, so a higher scale
                                    // is needed to match the Ogre's on-screen mass
 
-    _health      = 12.f;
-    _maxHealth   = 12.f;
-    _attackPower = 3.f;
+    _health      = 120.f;
+    _maxHealth   = 120.f;
+    _attackPower = 30.f;
     _speed       = 150.f;          // heavy, but no longer a crawl
     _expValue    = 8;
 
@@ -113,9 +115,9 @@ void Infernal::SetIdleAnimation(bool resetFrame)
 // =============================================================================
 void Infernal::SetWaveScale(int /*wave*/)
 {
-    _health      = 12.f;
-    _maxHealth   = 12.f;
-    _attackPower = 3.f;
+    _health      = 120.f;
+    _maxHealth   = 120.f;
+    _attackPower = 30.f;
     _speed       = 150.f;
     _expValue    = 8;
 }
@@ -351,9 +353,9 @@ void Infernal::DrawEliteTelegraph() const
             Vector2 fissureDirection = EliteSpreadDirection(
                 _signatureDirection, fissureIndex, 3, 50.f * DEG2RAD);
             Vector2 fissureEnd = Vector2Add(_worldPos,
-                Vector2Scale(fissureDirection, Balance::Elite::kInfernalFissureLength));
+                Vector2Scale(fissureDirection, EliteMoves::InfernalFissureLength()));
             Vector2 side{ -fissureDirection.y, fissureDirection.x };
-            const float halfWidth = Balance::Elite::kInfernalFissureWidth;
+            const float halfWidth = EliteMoves::InfernalFissureWidth();
             Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  halfWidth));
             Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -halfWidth));
             Vector2 cornerC = Vector2Add(fissureEnd, Vector2Scale(side, -halfWidth));
@@ -438,7 +440,7 @@ Capsule2D Infernal::GetCapsule() const
 // =============================================================================
 void Infernal::PlayAttackSound()
 {
-    float pitch = GetRandomValue(70, 95) / 100.f;   // low, heavy
+    float pitch = SoundVariation::VariedPitch(0.825f);   // low, heavy
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.7f);
     PlaySound(_attackSound);
@@ -495,4 +497,29 @@ void Infernal::UnloadSharedResources()
     _sharedHurtSound   = Sound{};
     _sharedDeathSound  = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: the burst's fissures and the march's flame patches.
+// =============================================================================
+int Infernal::GetEditorMoveCount() const { return 2; }
+
+Enemy::MoveInfo Infernal::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index == 0)
+    {
+        move.key = EliteMoves::kInfernalBurstKey; move.name = "Furnace Burst"; move.shape = MoveShape::Lane;
+        move.animSlot = kAnimSlotAttack;
+        move.length = Balance::Elite::kInfernalFissureLength; move.width = Balance::Elite::kInfernalFissureWidth;
+        move.note = "Each of the three fire fissures. Timing rows below.";
+    }
+    else if (index == 1)
+    {
+        move.key = EliteMoves::kInfernalMarchKey; move.name = "Cinder March"; move.shape = MoveShape::Circle;
+        move.animSlot = 1;
+        move.radius = Balance::Elite::kInfernalPatchRadius;
+        move.note = "Each flame patch it leaves along its path. Timing rows below.";
+    }
+    return move;
 }

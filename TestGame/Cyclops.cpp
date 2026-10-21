@@ -1,4 +1,5 @@
 ﻿#include "Cyclops.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
@@ -31,6 +32,8 @@ namespace
     // Idle plays a little slower than walk so the charge pose reads clearly.
     constexpr float kCyclopsIdleFrameTime = 1.f / 10.f;
     constexpr float kCyclopsWalkFrameTime = 1.f / 8.f;
+    constexpr float kCyclopsHurtFrameTime  = 1.f / 12.f;
+    constexpr float kCyclopsDeathFrameTime = 1.f / 4.f;
 
     // The death sound was reading lower than the hurt sound. This slightly
     // higher range keeps the death cue consistent with the cyclops voice.
@@ -72,15 +75,16 @@ void Cyclops::ResetForSpawn(Vector2 pos)
     _homePos           = pos;
     _velocity          = Vector2Zero();
     _isActive          = true;
+    ResetTuningState();   // re-applied from file at the end of the reset
 
     // Spawn starts in the idle sheet so the first rendered frame uses the
     // correct source-rectangle dimensions for the standing pose.
     SetIdleAnimation(false);
-    _scale = 5.0f;
+    _scale = Balance::Visual::ScaleForVisibleHeight(MeasureVisibleHeight(_idleAnim, _width), VisualSizeMultiplier());
 
-    _health      = 6.f;
-    _maxHealth   = 6.f;
-    _attackPower = 2.f;
+    _health      = 60.f;
+    _maxHealth   = 60.f;
+    _attackPower = 20.f;
     _speed       = 200.f;
     _expValue    = 5; // 5 exp — ranged threat, worth more than a regular enemy
 
@@ -117,6 +121,7 @@ void Cyclops::ResetForSpawn(Vector2 pos)
     _scatterRangeInst      = 170.f;
 
     _pendingBurns.clear();
+    ApplyStoredTuning();
 }
 
 void Cyclops::SetIdleAnimation(bool resetFrame)
@@ -127,7 +132,7 @@ void Cyclops::SetIdleAnimation(bool resetFrame)
     _texture    = _idleAnim;
     _width      = kCyclopsIdleFrameWidth;
     _height     = _idleAnim.height;
-    _updateTime = kCyclopsIdleFrameTime;
+    _updateTime = TunedFrameTime(kSlotIdle, kCyclopsIdleFrameTime);
     _maxFrames  = kCyclopsFrameCount;
 
     if (resetFrame)
@@ -145,13 +150,43 @@ void Cyclops::SetWalkAnimation(bool resetFrame)
     _texture    = _walkAnim;
     _width      = kCyclopsWalkFrameWidth;
     _height     = _walkAnim.height;
-    _updateTime = kCyclopsWalkFrameTime;
+    _updateTime = TunedFrameTime(kSlotWalk, kCyclopsWalkFrameTime);
     _maxFrames  = kCyclopsFrameCount;
 
     if (resetFrame)
     {
         _frame       = 0;
         _runningTime = 0.f;
+    }
+}
+
+// =============================================================================
+// Character Animator. Each sheet is six frames across but they differ in width,
+// so editor playback goes through the same setters as the game.
+// =============================================================================
+int Cyclops::GetCurrentAnimSlot() const
+{
+    if (_texture.id == _walkAnim.id)       return kSlotWalk;
+    if (_texture.id == _takeDamageAnim.id) return kSlotHurt;
+    if (_texture.id == _deathAnim.id)      return kSlotDeath;
+    return kSlotIdle;
+}
+
+const char* Cyclops::GetEditorAnimName(int index) const
+{
+    static const char* kNames[kEditorAnimCount] = { "Idle", "Walk", "Hurt", "Death" };
+    return (index >= 0 && index < kEditorAnimCount) ? kNames[index] : "";
+}
+
+void Cyclops::PlayEditorAnim(int index)
+{
+    switch (index)
+    {
+    case kSlotIdle:  SetIdleAnimation(true); break;
+    case kSlotWalk:  SetWalkAnimation(true); break;
+    case kSlotHurt:  SetSpriteSheet(_takeDamageAnim, kCyclopsFrameCount, TunedFrameTime(kSlotHurt, kCyclopsHurtFrameTime), true); break;
+    case kSlotDeath: SetSpriteSheet(_deathAnim, kCyclopsFrameCount, TunedFrameTime(kSlotDeath, kCyclopsDeathFrameTime), true); break;
+    default: break;
     }
 }
 
@@ -506,7 +541,10 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
     }
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
-    Rectangle dest{ screenPos.x - drawWidth / 2.f, screenPos.y - drawHeight / 2.f, drawWidth, drawHeight };
+    // Per-animation sprite offset authored in the Character Animator.
+    const Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
+    Rectangle dest{ screenPos.x - drawWidth / 2.f + animDrawOffset.x,
+                    screenPos.y - drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
 
     DrawEllipse((int)screenPos.x, (int)(screenPos.y + launchLift + drawHeight * 0.18f),
         drawWidth * 0.24f, drawHeight * 0.04f, Fade(BLACK, 0.30f));
@@ -528,6 +566,10 @@ void Cyclops::DrawEnemy(Vector2 cameraRef)
 
 Rectangle Cyclops::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+
     float stableHalfW = kCyclopsIdleFrameWidth * _scale * 0.5f;
     float stableHalfH = (_idleAnim.id > 0 ? (float)_idleAnim.height : _height) * _scale * 0.5f;
 
@@ -546,6 +588,10 @@ Rectangle Cyclops::GetCollisionRec() const
 
 Capsule2D Cyclops::GetCapsule() const
 {
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<Cyclops*>(this);
@@ -564,7 +610,12 @@ Rectangle Cyclops::GetHitCollisionRec() const
 {
     // Wider than the solid collision rect so melee attacks register from any
     // angle including from behind while the narrow solid rect still lets the
-    // player walk close without being blocked.
+    // player walk close without being blocked. An authored body circle (Character
+    // Animator) replaces both, like every other tuned enemy.
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return Enemy::GetHitCollisionRec();
+
     const float width  = _width  * _scale * 0.68f;
     const float height = _height * _scale * 0.55f;
 
@@ -626,7 +677,7 @@ void Cyclops::TakeDamage(int damage, Vector2 attackerPos)
         _frame = 0;
         _runningTime = 0.f;
         _maxFrames = _texture.width / _width;
-        _updateTime = 1.f / 4.f;
+        _updateTime = TunedFrameTime(kSlotDeath, kCyclopsDeathFrameTime);
         PlayDeathSound();
         return;
     }
@@ -648,7 +699,7 @@ void Cyclops::ApplyElectricCharge()
     _texture     = _takeDamageAnim;
     _width       = _takeDamageAnim.width / (float)kCyclopsFrameCount;
     _height      = _takeDamageAnim.height;
-    _updateTime  = 1.f / 12.f;
+    _updateTime  = TunedFrameTime(kSlotHurt, kCyclopsHurtFrameTime);
     _maxFrames   = kCyclopsFrameCount;
     _frame       = 0;
     _runningTime = 0.f;
@@ -688,7 +739,7 @@ void Cyclops::SetWaveScale(int wave)
     _health      = Balance::Elite::kCyclopsHealth;
     _maxHealth   = Balance::Elite::kCyclopsHealth;
     _speed       = 190.f;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 
     int tier = (wave - 1) / 5;
     _chargeDurationInst    = 1.0f;
@@ -701,7 +752,7 @@ void Cyclops::SetWaveScale(int wave)
 void Cyclops::PlayAttackSound()
 {
     SetSoundVolume(_attackSound, 0.75f);
-    PlaySound(_attackSound);
+    SoundVariation::PlayPitchVaried(_attackSound);
 }
 
 void Cyclops::PlayDeathSound()
@@ -714,7 +765,7 @@ void Cyclops::PlayDeathSound()
 
 void Cyclops::PlayHurtSound()
 {
-    float pitch = GetRandomValue(100, 140) / 100.f;
+    float pitch = SoundVariation::VariedPitch(1.200f);
     SetSoundPitch(_hurtSound, pitch);
     SetSoundVolume(_hurtSound, 0.5f);
     PlaySound(_hurtSound);
@@ -736,7 +787,7 @@ void Cyclops::ApplyExternalImpulse(Vector2 impulse, bool cancelLockedAnimation)
     _texture = _takeDamageAnim;
     _width = _takeDamageAnim.width / (float)kCyclopsFrameCount;
     _height = _takeDamageAnim.height;
-    _updateTime = 1.f / 12.f;
+    _updateTime = TunedFrameTime(kSlotHurt, kCyclopsHurtFrameTime);
     _maxFrames = kCyclopsFrameCount;
     _frame = 1;
     _runningTime = 0.f;

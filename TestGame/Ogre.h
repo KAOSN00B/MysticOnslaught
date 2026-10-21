@@ -10,6 +10,7 @@ class Ogre : public Enemy
 public:
     Ogre(Vector2 pos);
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
+    float VisualSizeMultiplier() const override { return Balance::Visual::kEliteSizeMult; }
     ~Ogre() override;
 
     void Init();
@@ -30,6 +31,13 @@ public:
     Capsule2D GetCapsule()      const override;
     Ogre* AsOgre() override { return this; }
     EliteArchetype GetEliteArchetype() const override { return EliteArchetype::Ogre; }
+
+    // ── Character Animator: Idle, Walk, Rush, Hurt, Death ────────────────────
+    const char* GetTuningName() const override { return "Ogre"; }
+    int         GetEditorMoveCount() const override { return 1; }
+    MoveInfo    GetEditorMove(int index) const override;
+    const char* GetEditorAnimName(int index) const override;
+    void        PlayEditorAnim(int index) override;
     void PlayHurtSound() override;
     void PlayDeathSound() override;
 
@@ -57,6 +65,13 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+
+    // Animation slots (the shared Enemy order; the rush plays the attack sheet).
+    static constexpr int kSlotIdle  = 0;
+    static constexpr int kSlotWalk  = 1;
+    static constexpr int kSlotRush  = 2;
+    static constexpr int kSlotHurt  = 3;
+    static constexpr int kSlotDeath = 4;
 
     void SetIdleAnimation(bool resetFrame);
     void SetWalkAnimation(bool resetFrame);
@@ -122,7 +137,7 @@ private:
     float _chargeCooldownDurationInst = 6.0f;
     static constexpr float _stunDuration = 0.6f;
     static constexpr float _playerPushSpeed = 1200.f;
-    static constexpr float _rushDamage = 2.f;
+    static constexpr float _rushDamage = 20.f;
     static constexpr float _walkSpeed = 175.f;
     static constexpr float _scatterImpulse = 1850.f;
 

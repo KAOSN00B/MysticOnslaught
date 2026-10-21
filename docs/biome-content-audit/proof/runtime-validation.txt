@@ -1,0 +1,29 @@
+PASS baseline native load: 55 rooms, no missing asset warnings.
+PASS s: native loaders, 532 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS w: native loaders, 532 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nwe: native loaders, 596 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS 4wayroom: native loaders, 618 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS basicroom3: native loaders, 448 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS basic_room: native loaders, 571 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS e: native loaders, 451 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS east_west: native loaders, 677 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS n: native loaders, 484 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS ne: native loaders, 531 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS ns: native loaders, 441 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nse: native loaders, 649 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nse3: native loaders, 649 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nse_copy: native loaders, 796 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nsw: native loaders, 576 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nsw3: native loaders, 576 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nsw_copy: native loaders, 576 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nw: native loaders, 532 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nwe: native loaders, 596 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nwe2: native loaders, 596 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS nwe3: native loaders, 688 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS s: native loaders, 532 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS se: native loaders, 592 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS sew: native loaders, 532 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS sw: native loaders, 448 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS w: native loaders, 532 Jungle sprites, identical grids and prop hitboxes, 14336 sampled body/fall positions and door clearing.
+PASS staged Jungle pool: 23 authored layouts.
+PASS 1000 seeded authored Jungle dungeons; worst attempts 29/600.

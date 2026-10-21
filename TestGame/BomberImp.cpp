@@ -66,9 +66,9 @@ void BomberImp::ResetForSpawn(Vector2 pos)
     _width  = kImpFrameWidth;
     _scale  = 3.8f;
     _speed  = kMaxFlySpeed;
-    _health = 1.f;         // one hit sets it off — the danger is WHERE it dies
-    _maxHealth = 1.f;
-    _attackPower = 2.f;    // blast damage
+    _health = Balance::Fodder::kBomberImpHealth;         // one hit sets it off — the danger is WHERE it dies
+    _maxHealth = Balance::Fodder::kBomberImpHealth;
+    _attackPower = 20.f;    // blast damage
     _expValue = 3;
 
     _capsuleRadius     = 20.f;
@@ -346,10 +346,10 @@ void BomberImp::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue    = 3;
-    _health      = 1.f;
-    _maxHealth   = 1.f;
+    _health      = Balance::Fodder::kBomberImpHealth;
+    _maxHealth   = Balance::Fodder::kBomberImpHealth;
     _speed       = kMaxFlySpeed;
-    _attackPower = 2.f;
+    _attackPower = 20.f;
 }
 
 void BomberImp::EnsureSharedResourcesLoaded()

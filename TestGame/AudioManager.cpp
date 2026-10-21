@@ -15,11 +15,31 @@ namespace
 
 MusicCue ResolveDungeonRunMusicCue(const AudioContext& ctx)
 {
+    if (ctx.atCrossroads)
+        return MusicCue::WorldMap;
     if (ctx.currentRoomType == RoomType::Boss
         && ctx.bossFightActive
         && !ctx.roomClearPending)
-        return MusicCue::BossBattle;
-    return MusicCue::Dungeon;
+        return ctx.finalDomain ? MusicCue::FinalBoss : MusicCue::BossBattle;
+    return BiomeMusicCue(ctx.currentBiome);
+}
+
+MusicCue BiomeMusicCue(Biome biome)
+{
+    switch (biome)
+    {
+    case Biome::Forest:        return MusicCue::Forest;
+    case Biome::Jungle:        return MusicCue::BiomeJungle;
+    case Biome::Caverns:       return MusicCue::Dungeon;
+    case Biome::LostCity:      return MusicCue::BiomeLostCity;
+    case Biome::Wastelands:    return MusicCue::BiomeWastelands;
+    case Biome::DemonsInsides: return MusicCue::BiomeDark;
+    case Biome::Graveyard:     return MusicCue::BiomeGraveyard;
+    case Biome::AncientCastle: return MusicCue::BiomeGrand;
+    case Biome::TheSanctuary:  return MusicCue::BiomeSanctuary;
+    case Biome::DreamRealm:    return MusicCue::BiomeEthereal;
+    default:                   return MusicCue::Dungeon;
+    }
 }
 
 MusicCue ResolveRoomClearVictoryCue(RoomType roomType)
@@ -42,11 +62,22 @@ void AudioManager::Init()
     _titleThemeMusic = LoadMusicStream(AssetPath("Music/TitleTheme.ogg").c_str());
     _pauseThemeMusic = LoadMusicStream(AssetPath("Music/PauseMenu.ogg").c_str());
     _dungeonThemeMusic = LoadMusicStream(AssetPath("Music/DungeonTheme.ogg").c_str());
-    _forestThemeMusic = LoadMusicStream(AssetPath("Music/ForestTheme.ogg").c_str());
+    // Forest: Mystwood Reverie (Ovani Fantasy Vol. 7). The older ForestTheme.ogg
+    // is kept on disk but no longer routed.
+    _forestThemeMusic = LoadMusicStream(AssetPath("Music/Forest_MystwoodReverie.ogg").c_str());
     // Per-mood biome themes (Synth Fantasy pack, streamed WAV — desktop only).
     _darkBiomeMusic     = LoadMusicStream(AssetPath("Music/BiomeDark.wav").c_str());
     _grandBiomeMusic    = LoadMusicStream(AssetPath("Music/BiomeGrand.wav").c_str());
     _etherealBiomeMusic = LoadMusicStream(AssetPath("Music/BiomeEthereal.wav").c_str());
+    // Ovani Fantasy Vol. 7 seamless loops (tools/audio/make_music_loops.py).
+    _jungleMusic     = LoadMusicStream(AssetPath("Music/Jungle_FeysongFields.ogg").c_str());
+    _lostCityMusic   = LoadMusicStream(AssetPath("Music/LostCity_TombOfKings.ogg").c_str());
+    _wastelandsMusic = LoadMusicStream(AssetPath("Music/Wastelands_EnemyGrounds.ogg").c_str());
+    _graveyardMusic  = LoadMusicStream(AssetPath("Music/Graveyard_BlackDoves.ogg").c_str());
+    _sanctuaryMusic  = LoadMusicStream(AssetPath("Music/Sanctuary_Above.ogg").c_str());
+    _villageMusic    = LoadMusicStream(AssetPath("Music/Village_Denmark.ogg").c_str());
+    _worldMapMusic   = LoadMusicStream(AssetPath("Music/WorldMap_StormbornDestiny.ogg").c_str());
+    _finalBossMusic  = LoadMusicStream(AssetPath("Music/FinalBoss_ElderAwakening.ogg").c_str());
     _bossBattleMusic = LoadMusicStream(AssetPath("Music/BossBattle.ogg").c_str());
     _shopThemeMusic = LoadMusicStream(AssetPath("Music/ZephsShop.ogg").c_str());
     _battleVictoryMusic = LoadMusicStream(AssetPath("Music/BattleVictory.ogg").c_str());
@@ -60,6 +91,12 @@ void AudioManager::Init()
     _darkBiomeMusic.looping = true;
     _grandBiomeMusic.looping = true;
     _etherealBiomeMusic.looping = true;
+    for (Music* music : { &_jungleMusic, &_lostCityMusic, &_wastelandsMusic, &_graveyardMusic,
+                          &_sanctuaryMusic, &_villageMusic, &_worldMapMusic, &_finalBossMusic })
+    {
+        music->looping = true;
+        SetMusicVolume(*music, 0.35f);
+    }
     _bossBattleMusic.looping = true;
     _shopThemeMusic.looping = true;
     _battleVictoryMusic.looping = false;
@@ -82,6 +119,7 @@ void AudioManager::Init()
 
 void AudioManager::Shutdown()
 {
+    Reset();
     UnloadMusicStream(_titleThemeMusic);
     UnloadMusicStream(_pauseThemeMusic);
     UnloadMusicStream(_dungeonThemeMusic);
@@ -89,6 +127,9 @@ void AudioManager::Shutdown()
     UnloadMusicStream(_darkBiomeMusic);
     UnloadMusicStream(_grandBiomeMusic);
     UnloadMusicStream(_etherealBiomeMusic);
+    for (Music* music : { &_jungleMusic, &_lostCityMusic, &_wastelandsMusic, &_graveyardMusic,
+                          &_sanctuaryMusic, &_villageMusic, &_worldMapMusic, &_finalBossMusic })
+        UnloadMusicStream(*music);
     UnloadMusicStream(_bossBattleMusic);
     UnloadMusicStream(_shopThemeMusic);
     UnloadMusicStream(_battleVictoryMusic);
@@ -112,6 +153,14 @@ Music* AudioManager::GetMusicByCue(MusicCue cue)
     case MusicCue::BattleVictory: return &_battleVictoryMusic;
     case MusicCue::BossVictory:   return &_bossVictoryMusic;
     case MusicCue::GameOver:      return &_gameOverMusic;
+    case MusicCue::BiomeJungle:     return &_jungleMusic;
+    case MusicCue::BiomeLostCity:   return &_lostCityMusic;
+    case MusicCue::BiomeWastelands: return &_wastelandsMusic;
+    case MusicCue::BiomeGraveyard:  return &_graveyardMusic;
+    case MusicCue::BiomeSanctuary:  return &_sanctuaryMusic;
+    case MusicCue::Village:         return &_villageMusic;
+    case MusicCue::WorldMap:        return &_worldMapMusic;
+    case MusicCue::FinalBoss:       return &_finalBossMusic;
     default:                      return nullptr;
     }
 }
@@ -126,7 +175,11 @@ bool AudioManager::IsLoopMusicCue(MusicCue cue) const
         || cue == MusicCue::BiomeGrand
         || cue == MusicCue::BiomeEthereal
         || cue == MusicCue::BossBattle
-        || cue == MusicCue::Shop;
+        || cue == MusicCue::Shop
+        || IsBiomeLoopCue(cue)
+        || cue == MusicCue::Village
+        || cue == MusicCue::WorldMap
+        || cue == MusicCue::FinalBoss;
 }
 
 bool AudioManager::IsVictoryMusicCue(MusicCue cue) const
@@ -140,31 +193,17 @@ bool AudioManager::IsBiomeLoopCue(MusicCue cue) const
         || cue == MusicCue::Dungeon
         || cue == MusicCue::BiomeDark
         || cue == MusicCue::BiomeGrand
-        || cue == MusicCue::BiomeEthereal;
+        || cue == MusicCue::BiomeEthereal
+        || cue == MusicCue::BiomeJungle
+        || cue == MusicCue::BiomeLostCity
+        || cue == MusicCue::BiomeWastelands
+        || cue == MusicCue::BiomeGraveyard
+        || cue == MusicCue::BiomeSanctuary;
 }
 
 MusicCue AudioManager::GetBiomeMusicCue(Biome biome) const
 {
-    // 10 biomes grouped into 5 moods so each biome TYPE has its own theme.
-    switch (biome)
-    {
-    case Biome::Forest:
-    case Biome::Jungle:
-        return MusicCue::Forest;        // nature
-    case Biome::DemonsInsides:
-    case Biome::Graveyard:
-        return MusicCue::BiomeDark;      // dark / evil
-    case Biome::AncientCastle:
-    case Biome::TheSanctuary:
-        return MusicCue::BiomeGrand;     // grand / holy
-    case Biome::DreamRealm:
-        return MusicCue::BiomeEthereal;  // dreamlike
-    case Biome::Caverns:
-    case Biome::LostCity:
-    case Biome::Wastelands:
-    default:
-        return MusicCue::Dungeon;        // ruins / underground
-    }
+    return BiomeMusicCue(biome);
 }
 
 bool AudioManager::ShouldHoldSilenceForVictory(const AudioContext& ctx) const
@@ -198,6 +237,14 @@ float AudioManager::GetMusicBaseVolume(MusicCue cue) const
     case MusicCue::BattleVictory: return 0.65f;
     case MusicCue::BossVictory:   return 0.65f;
     case MusicCue::GameOver:      return 0.55f;
+    case MusicCue::BiomeJungle:
+    case MusicCue::BiomeLostCity:
+    case MusicCue::BiomeWastelands:
+    case MusicCue::BiomeGraveyard:
+    case MusicCue::BiomeSanctuary:
+    case MusicCue::Village:
+    case MusicCue::WorldMap:
+    case MusicCue::FinalBoss:     return 0.35f;
     default:                      return 0.f;
     }
 }
@@ -224,10 +271,18 @@ MusicCue AudioManager::GetDesiredLoopMusicCue(const AudioContext& ctx) const
 
     case GameState::Shop:
     case GameState::MetaShop:
+    case GameState::Armory:
         return MusicCue::Shop;
 
     case GameState::Map:
         return GetBiomeMusicCue(ctx.actBiome);
+
+    case GameState::Village:
+    case GameState::CosmeticShop:
+        return MusicCue::Village;
+
+    case GameState::WorldMap:
+        return MusicCue::WorldMap;
 
     case GameState::DungeonRun:
         return ResolveDungeonRunMusicCue(ctx);
@@ -257,44 +312,53 @@ MusicCue AudioManager::GetDesiredLoopMusicCue(const AudioContext& ctx) const
 void AudioManager::StopMusicCue(MusicCue cue)
 {
     Music* music = GetMusicByCue(cue);
-    if (!music || music->ctxData == nullptr)
-        return;
-
-    StopMusicStream(*music);
+    if (music && music->ctxData != nullptr)
+        StopMusicStream(*music);
     if (_currentMusicCue == cue)
         _currentMusicCue = MusicCue::None;
+    if (_outgoingMusicCue == cue)
+        _outgoingMusicCue = MusicCue::None;
+}
+
+void AudioManager::FinishOutgoingMusic()
+{
+    const MusicCue cue = _outgoingMusicCue;
+    _outgoingMusicCue = MusicCue::None;
+    _outgoingFadeTimer = 0.f;
+    Music* music = GetMusicByCue(cue);
+    if (!music || music->ctxData == nullptr)
+        return;
+    if (cue == _suspendedMusicCue)
+        PauseMusicStream(*music);
+    else
+        StopMusicStream(*music);
 }
 
 void AudioManager::StartMusicCue(MusicCue cue, float startTime)
 {
-    if (cue == MusicCue::None)
+    Music* music = GetMusicByCue(cue);
+    if (!music || music->ctxData == nullptr || cue == _currentMusicCue)
         return;
 
-    if (_currentMusicCue != MusicCue::None && _currentMusicCue != cue)
+    FinishOutgoingMusic();
+    const bool crossfade = IsLoopMusicCue(_currentMusicCue) && IsLoopMusicCue(cue);
+    if (crossfade)
+    {
+        _outgoingMusicCue = _currentMusicCue;
+        _outgoingFadeTimer = 0.6f;
+        _outgoingStartGain = _musicFadeInTimer > 0.f
+            ? std::clamp(1.f - _musicFadeInTimer / _musicFadeInDuration, 0.f, 1.f) : 1.f;
+    }
+    else if (_currentMusicCue != MusicCue::None)
         StopMusicCue(_currentMusicCue);
 
-    Music* music = GetMusicByCue(cue);
-    if (!music || music->ctxData == nullptr)
-        return;
-
-    if (IsLoopMusicCue(cue))
-        SetMusicVolume(*music, 0.f);
-    else
-        SetMusicVolume(*music, GetMusicBaseVolume(cue) * _musicVolumeScale);
-
+    SetMusicVolume(*music, IsLoopMusicCue(cue) ? 0.f : GetMusicBaseVolume(cue) * _musicVolumeScale);
     PlayMusicStream(*music);
     if (startTime > 0.f)
         SeekMusicStream(*music, startTime);
     _currentMusicCue = cue;
-    if (IsLoopMusicCue(cue))
-    {
-        _musicFadeInDuration = 2.0f;
-        _musicFadeInTimer = _musicFadeInDuration;
-    }
-    else
-    {
-        _musicFadeInTimer = 0.f;
-    }
+    _musicFadeInDuration = crossfade ? 0.6f : 2.f;
+    _musicFadeInTimer = IsLoopMusicCue(cue) ? _musicFadeInDuration : 0.f;
 }
 
 void AudioManager::SuspendCurrentLoopForCue(MusicCue cue, bool resumeOnMapOnly)
@@ -306,11 +370,17 @@ void AudioManager::SuspendCurrentLoopForCue(MusicCue cue, bool resumeOnMapOnly)
     if (!current || current->ctxData == nullptr)
         return;
 
+    if (_suspendedMusicCue != MusicCue::None && _suspendedMusicCue != _currentMusicCue)
+        StopMusicCue(_suspendedMusicCue);
     _suspendedMusicCue = _currentMusicCue;
     _suspendedMusicTime = GetMusicTimePlayed(*current);
     _resumeSuspendedMusicOnMapOnly = resumeOnMapOnly;
-    PauseMusicStream(*current);
-    _currentMusicCue = MusicCue::None;
+    if (!IsLoopMusicCue(cue))
+    {
+        FinishOutgoingMusic();
+        PauseMusicStream(*current);
+        _currentMusicCue = MusicCue::None;
+    }
 
     StartMusicCue(cue);
 }
@@ -324,14 +394,17 @@ void AudioManager::ResumePausedLoopMusic()
     if (!music || music->ctxData == nullptr)
         return;
 
-    ResumeMusicStream(*music);
-    SetMusicVolume(*music, 0.f);
-    _currentMusicCue = _suspendedMusicCue;
+    const MusicCue cue = _suspendedMusicCue;
+    const float time = _suspendedMusicTime;
+    StartMusicCue(cue, time);
+    if (_outgoingMusicCue == MusicCue::None)
+    {
+        _musicFadeInDuration = 1.5f;
+        _musicFadeInTimer = _musicFadeInDuration;
+    }
     _suspendedMusicCue = MusicCue::None;
     _suspendedMusicTime = 0.f;
     _resumeSuspendedMusicOnMapOnly = false;
-    _musicFadeInDuration = 1.5f;
-    _musicFadeInTimer = _musicFadeInDuration;
 }
 
 void AudioManager::StartBattleVictory()
@@ -348,6 +421,9 @@ void AudioManager::StartBossVictory()
 {
     _activeVictoryCue = MusicCue::BossVictory;
     _silenceAfterVictory = true;
+    FinishOutgoingMusic();
+    if (_suspendedMusicCue != MusicCue::None && _suspendedMusicCue != _currentMusicCue)
+        StopMusicCue(_suspendedMusicCue);
     _suspendedMusicCue = MusicCue::None;
     _suspendedMusicTime = 0.f;
     _resumeSuspendedMusicOnMapOnly = false;
@@ -358,6 +434,10 @@ void AudioManager::StartBossVictory()
 
 void AudioManager::Reset()
 {
+    FinishOutgoingMusic();
+    if (_suspendedMusicCue != MusicCue::None && _suspendedMusicCue != _currentMusicCue)
+        StopMusicCue(_suspendedMusicCue);
+    _combatMix = 1.f;
     if (_currentMusicCue != MusicCue::None)
         StopMusicCue(_currentMusicCue);
 
@@ -387,6 +467,22 @@ void AudioManager::Update(const AudioContext& ctx)
                                            : std::max(target, _combatMix - step);
     }
 
+    if (_outgoingMusicCue != MusicCue::None)
+    {
+        Music* outgoing = GetMusicByCue(_outgoingMusicCue);
+        _outgoingFadeTimer = std::max(0.f, _outgoingFadeTimer - GetFrameTime());
+        if (outgoing && outgoing->ctxData != nullptr)
+        {
+            UpdateMusicStream(*outgoing);
+            float volume = GetMusicBaseVolume(_outgoingMusicCue) * _musicVolumeScale;
+            if (IsBiomeLoopCue(_outgoingMusicCue))
+                volume *= _combatMix;
+            SetMusicVolume(*outgoing, volume * _outgoingStartGain * (_outgoingFadeTimer / 0.6f));
+        }
+        if (_outgoingFadeTimer <= 0.f)
+            FinishOutgoingMusic();
+    }
+
     if (ctx.gameState == GameState::GameOver && _currentMusicCue == MusicCue::None && !_gameOverMusicPlayed)
     {
         _gameOverMusicPlayed = true;
@@ -400,6 +496,8 @@ void AudioManager::Update(const AudioContext& ctx)
         if (current && current->ctxData != nullptr)
         {
             UpdateMusicStream(*current);
+            if (!IsLoopMusicCue(_currentMusicCue))
+                SetMusicVolume(*current, GetMusicBaseVolume(_currentMusicCue) * _musicVolumeScale);
             if (IsLoopMusicCue(_currentMusicCue))
             {
                 float baseVolume = GetMusicBaseVolume(_currentMusicCue) * _musicVolumeScale;
@@ -467,6 +565,7 @@ void AudioManager::Update(const AudioContext& ctx)
 
     if (desiredCue == MusicCue::None)
     {
+        FinishOutgoingMusic();
         if (IsLoopMusicCue(_currentMusicCue))
             StopMusicCue(_currentMusicCue);
         return;
@@ -494,9 +593,6 @@ void AudioManager::Update(const AudioContext& ctx)
         SuspendCurrentLoopForCue(desiredCue, false);
         return;
     }
-
-    if (IsLoopMusicCue(_currentMusicCue) && _currentMusicCue != desiredCue)
-        StopMusicCue(_currentMusicCue);
 
     StartMusicCue(desiredCue);
 }

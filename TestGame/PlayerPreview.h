@@ -19,9 +19,18 @@ public:
     void Init();
 
     const char* GetTuningName() const override { return "Player"; }
+    // The live hero always draws at this scale; it is every size's reference.
+    float AutoScale() const override { return Balance::Visual::kPlayerDrawScale; }
 
     // Editor animation set: 0 Idle, 1 Walk, 2 Swing (attack), 3 Stab.
     int         GetEditorAnimCount() const override { return 4; }
+
+    // As the live hero: Swing and Stab strike on frames 2-4, and what enemies
+    // hit is the Idle body circle's square (else Walk's), unpadded, whatever
+    // animation plays (Character::GetCollisionRec).
+    bool      GetDefaultHitWindow(int slot, int& start, int& end) const override;
+    Rectangle GetHitCollisionRec() const override;
+    bool      UsesHurtPadding() const override { return false; }
     const char* GetEditorAnimName(int index) const override;
     void        PlayEditorAnim(int index) override;
 

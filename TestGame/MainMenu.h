@@ -1,7 +1,6 @@
 ﻿#pragma once
 
 #include "raylib.h"
-#include "WebGamepad.h"
 #include <vector>
 #include <string>
 
@@ -25,6 +24,19 @@ public:
     bool CharacterAnimatorPressed() const;
     bool SettingsPressed()        const;
     void SetDebugUnlocked(bool unlocked);
+    // A saved profile exists: Continue leads the menu and New Game asks for
+    // confirmation before StartPressed() fires (the engine then erases it).
+    void SetHasProfile(bool hasProfile);
+    // Shown under Continue while a run is suspended ("" = none); New Game then
+    // also warns that the suspended run will be lost.
+    void SetRunCaption(const std::string& caption);
+    bool IsConfirmingNewGame() const { return _confirmNewGame; }
+    // Credits overlay (Main Menu > Credits); the engine holds its own menu
+    // input (ascension arrows, dev keys) while it is open.
+    bool IsShowingCredits() const { return _showCredits; }
+    void OpenCredits() { _showCredits = true; _creditsScroll = 0.f; _creditsIdle = 0.f; }
+    void CloseCredits() { _showCredits = false; }
+    void ScrollCredits(float px) { _creditsScroll += px; _creditsIdle = 0.f; }   // clamped on the next Update
 
 private:
 
@@ -37,8 +49,22 @@ private:
     };
     std::vector<Button> _buttons;
 
-    // Gamepad navigation (panel buttons 0-3 only)
+    // Gamepad navigation (panel buttons only; order depends on the profile)
     int   _gpSelected      = -1;
+    int   PanelCount() const;
+    static bool IsPanelLabel(const std::string& text);
+    Rectangle PanelBorderRect() const;
+    bool  _hasProfile      = false;
+    std::string _runCaption;
+    bool  _confirmNewGame  = false;   // "erase progress?" modal open
+    int   _confirmCursor   = 1;       // 0 = erase and start, 1 = cancel (safe default)
+    void  UpdateNewGameConfirm();
+    void  DrawNewGameConfirm() const;
+    bool  _showCredits     = false;
+    float _creditsScroll   = 0.f;    // px scrolled into the credits list
+    float _creditsIdle     = 0.f;    // seconds since the last manual scroll (auto-scroll after a beat)
+    void  UpdateCredits();
+    void  DrawCredits() const;
     float _gpStickCooldown = 0.f;
 
     Texture2D _borderTex{};

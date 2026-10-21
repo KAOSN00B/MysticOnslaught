@@ -2,7 +2,7 @@
 #include "Pickup.h"
 
 // ─────────────────────────────────────────────────────────────
-// HealPickup — restores 1 HP on collect, capped at player max HP.
+// HealPickup — restores 10 HP on collect, capped at player max HP.
 // Uses the world pickup sprite only; the original heal animation still plays
 // on collection through Engine::SpawnHealEffect().
 // Intentionally rare in the drop pool — see Engine::SpawnEnemyDrop().

@@ -4,7 +4,7 @@ size 64 64
 id PoeAltar
 category Building
 service Training
-cost 150
+cost 0
 required 0
 unique 0
 removable 1

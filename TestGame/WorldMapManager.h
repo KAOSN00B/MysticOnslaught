@@ -3,7 +3,6 @@
 #include "GameTypes.h"
 #include "InputPrompts.h"
 #include "raylib.h"
-#include "WebGamepad.h"
 #include <vector>
 
 class Character;

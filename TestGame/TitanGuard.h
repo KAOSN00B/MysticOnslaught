@@ -60,6 +60,11 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: hit window + special moves ───────────────────────
+    bool     GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
 private:
     enum class State
     {
@@ -74,6 +79,7 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+    void ApplyMoveTuning() override;
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
     void TryDealContactDamage();
     Rectangle GetBodyContactRec() const;
@@ -114,12 +120,13 @@ private:
     static constexpr float _meleeRange          = 220.f;
     static constexpr float _meleeCooldownBase   = 2.1f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 0.5f;
+    static constexpr float _bossDamagePerHit    = 5.f;
     static constexpr float _bossPushSpeed       = 1550.f;   // heaviest shove
     static constexpr float _bombCastDuration    = 0.9f;
     static constexpr float _bombCooldownBase    = 4.4f;
     static constexpr float _slamWindupDuration  = 1.0f;
-    static constexpr float _slamRadius          = 330.f;
+    static constexpr float kDefaultSlamRadius = 330.f;
+    float _slamRadius = kDefaultSlamRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr float _staggerDuration     = 2.0f;
     static constexpr float _recoveryDuration    = 0.55f;
     static constexpr int   _bombSalvoCount      = 3;       // bombs per salvo when phase 1+
@@ -127,7 +134,8 @@ private:
     static constexpr float _shieldDownDuration  = 0.6f;    // front-open window after he attacks
     static constexpr float _chargeSpeed         = 620.f;   // Shield Charge travel speed
     static constexpr float _chargeMaxDistance   = 900.f;
-    static constexpr float _chargeContactRadius = 150.f;   // charge run-over hit radius
+    static constexpr float kDefaultChargeContactRadius = 150.f;   // charge run-over hit radius
+    float _chargeContactRadius = kDefaultChargeContactRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr int   _bossBaseExpValue    = 15;
 
     static Texture2D _sharedIdleAnim;

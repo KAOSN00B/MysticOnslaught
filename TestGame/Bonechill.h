@@ -35,6 +35,10 @@ public:
     int         GetSpawnCost()     const override { return 4; }
     const char* GetTuningName()    const override { return "Bonechill"; }
 
+    // ── Character Animator: special moves ────────────────────────────────────
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
     // Ice identity: every landed melee hit chills (slows) the player.
     void OnMeleeHitPlayer(Character* target) override;
 

@@ -2,6 +2,7 @@
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
+#include "VfxGlow.h"
 
 #include <cmath>
 
@@ -16,7 +17,7 @@ void CellPickup::Init(Vector2 spawnPos, CellDenomination denomination)
     _worldPos     = spawnPos;
     _denomination = denomination;
     _isActive     = true;
-    _bobTimer     = (float)GetRandomValue(0, 628) / 100.f;   // desync the float cycle
+    _bobPhase     = (float)GetRandomValue(0, 628) / 100.f;   // desync the float cycle
 }
 
 void CellPickup::Draw(Vector2 worldOffset)
@@ -34,10 +35,14 @@ void CellPickup::Draw(Vector2 worldOffset)
     screenPos.x += kVirtualWidth  / 2.f;
     screenPos.y += kVirtualHeight / 2.f;
 
+    Vfx::DrawGlowHalo(screenPos, Balance::Vfx::kPickupHaloRadius, Vfx::kCellGlow, Balance::Vfx::kPickupHaloStrength);
+
     // Cells float and pulse so they read as magical, distinct from gold coins.
-    _bobTimer += GetFrameTime() * 3.f;
-    const float bobOffset = sinf(_bobTimer) * 4.f;
-    const float scale     = 4.0f + sinf(_bobTimer * 0.7f) * 0.25f;
+    // The cycle comes from the clock, so drawing never changes the pickup.
+    static constexpr float kBobRadiansPerSecond = 3.f;
+    const float bob       = (float)GetTime() * kBobRadiansPerSecond + _bobPhase;
+    const float bobOffset = sinf(bob) * 4.f;
+    const float scale     = 4.0f + sinf(bob * 0.7f) * 0.25f;
 
     Rectangle source{ 0.f, 0.f, (float)tex.width, (float)tex.height };
     Rectangle dest{

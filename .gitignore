@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # Local isolated feature worktrees
 .worktrees/
+
+# Discontinued web build output (files over GitHub's 100 MB limit)
+web_build/

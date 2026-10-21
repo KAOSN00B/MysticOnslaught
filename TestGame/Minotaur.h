@@ -51,6 +51,11 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: hit window + special moves ───────────────────────
+    bool     GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
     bool ConsumeImpactShakeRequest();
 
     // ── Hybrid encounter pattern: Labyrinth Charge ───────────────────────────
@@ -76,6 +81,7 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+    void ApplyMoveTuning() override;
 
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
     void HandleChasing(float dt, Vector2 heroWorldPos);
@@ -119,14 +125,15 @@ private:
     static constexpr float _meleeRange          = 220.f;
     static constexpr float _meleeCooldownBase   = 1.8f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 0.5f;
+    static constexpr float _bossDamagePerHit    = 5.f;
     static constexpr float _bossPushSpeed       = 1500.f;
     static constexpr float _rushWindupDuration  = 0.8f;
     static constexpr float _rushSpeed           = 980.f;
     static constexpr float _rushMaxDistance     = 1500.f;
     static constexpr float _rushCooldownBase    = 5.5f;
     static constexpr float _stompWindupDuration = 0.55f;
-    static constexpr float _stompRadius         = 300.f;
+    static constexpr float kDefaultStompRadius = 300.f;
+    float _stompRadius = kDefaultStompRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr float _stompCooldownBase   = 6.5f;
     static constexpr float _recoveryDuration    = 0.6f;
     static constexpr int   _bossBaseExpValue    = 15;

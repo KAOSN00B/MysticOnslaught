@@ -1,4 +1,11 @@
 scale=5.000
-anim_0_body_x=12.00
-anim_0_body_y=81.00
+hurt_pad_x=0.00
+hurt_pad_y=0.00
+anim_frametime_0=0.1670
+anim_0_body_x=9.66
+anim_0_body_y=81.39
 anim_0_body_r=121.00
+anim_2_melee_x=78.18
+anim_2_melee_y=-45.33
+anim_2_melee_w=109.82
+anim_2_melee_h=245.93

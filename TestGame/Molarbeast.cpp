@@ -1,4 +1,6 @@
 #include "Molarbeast.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "EncounterPattern.h"
@@ -10,6 +12,12 @@
 
 #include <algorithm>
 #include <cmath>
+
+namespace
+{
+    // Special move (Character Animator).
+    constexpr const char* kDashKey = "Molarbeast_Dash_Charge";
+}
 
 Texture2D Molarbeast::_sharedIdleAnim{};
 Texture2D Molarbeast::_sharedMeleeAnim{};
@@ -65,6 +73,7 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _homePos = pos;
     _velocity = Vector2Zero();
     _isActive = true;
+    ResetTuningState();   // re-applied from file at the end of the reset
     _dying = false;
     _takingDamage = false;
     _attacking = false;
@@ -78,13 +87,14 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     _launchHoldingHurtPose = false;
     _runningTime = 0.f;
     _frame = 0;
+    _finalForm = false;
     _scale = _bossScale;
     _speed = _moveSpeed;
     _expValue = _bossBaseExpValue;
     _rightLeft = 1.f;
-    _health = 9.f;
-    _maxHealth = 9.f;
-    _attackPower = 1.f;
+    _health = 90.f;
+    _maxHealth = 90.f;
+    _attackPower = 10.f;
     _attackRange = _attackRangeBase;
     _state = State::Chasing;
     _specialTimer = 10.0f;
@@ -128,6 +138,9 @@ void Molarbeast::ResetForSpawn(Vector2 pos)
     // don't circle in sync.
     _orbitAngle = (float)GetRandomValue(0, 628) / 100.f;
     SetIdleAnimation(true);
+
+    ApplyStoredTuning();
+    _spawnScale = _scale;
 }
 
 void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
@@ -221,6 +234,12 @@ void Molarbeast::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget
     HandleAnimation(dt);
 }
 
+void Molarbeast::SetFinalForm(bool finalForm)
+{
+    _finalForm = finalForm;
+    _scale = _spawnScale * (finalForm ? _finalFormScale : 1.f);
+}
+
 void Molarbeast::SetWaveScale(int wave)
 {
     // Fixed first-boss profile. Boss progression now follows the same global
@@ -232,7 +251,7 @@ void Molarbeast::SetWaveScale(int wave)
     _maxHealth   = Balance::Boss::kMolarbeastHealth;
     _enrageThreshold = 0.30f;   // speeds up below this HP fraction
     _speed       = _moveSpeed;
-    _attackPower = 2.f;
+    _attackPower = 20.f;
 
     _attackRange = _attackRangeBase;
     ResetSpecialCooldown();
@@ -278,12 +297,24 @@ void Molarbeast::DrawEnemy(Vector2 cameraRef)
     }
 
     Rectangle source{ _frame * _width, 0.f, _rightLeft * _width, _height };
+    // Per-animation sprite offset authored in the Character Animator.
+    const Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
     Rectangle dest{
-        screenPos.x + drawJitter.x,
-        screenPos.y + drawJitter.y,
+        screenPos.x + drawJitter.x + animDrawOffset.x,
+        screenPos.y + drawJitter.y + animDrawOffset.y,
         drawWidth,
         drawHeight
     };
+
+    if (_finalForm && !_dying)
+    {
+        // Final form: a molten glow beneath the body, and the hide runs hot.
+        const float pulse = 0.5f + 0.5f * sinf((float)GetTime() * 3.f);
+        DrawCircleGradient((int)dest.x, (int)(dest.y - drawHeight * 0.20f), drawWidth * 0.42f,
+                           Fade(Color{ 255, 110, 30, 255 }, 0.20f + 0.10f * pulse), Fade(Color{ 255, 60, 0, 255 }, 0.f));
+        if (tint.r == 255 && tint.g == 255 && tint.b == 255)
+            tint = Color{ 255, 205, 175, 255 };
+    }
 
     DrawTexturePro(_texture, source, dest, Vector2{ drawWidth * 0.5f, drawHeight * 0.78f }, 0.f, tint);
 
@@ -389,7 +420,7 @@ void Molarbeast::TakeDamage(int damage, Vector2 attackerPos)
 
 void Molarbeast::PlayHurtSound()
 {
-    SetSoundPitch(_sharedHurtSound, 0.28f);
+    SetSoundPitch(_sharedHurtSound, SoundVariation::VariedPitch(0.28f));
     SetSoundVolume(_sharedHurtSound, 0.5f);
     StopSound(_sharedHurtSound);
     PlaySound(_sharedHurtSound);
@@ -414,6 +445,10 @@ void Molarbeast::ApplyElectricCharge()
 
 Rectangle Molarbeast::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+
     float stableHalfW = _stableFrameW * _scale * 0.5f;
     float stableHalfH = _stableFrameH * _scale * 0.5f;
 
@@ -432,6 +467,10 @@ Rectangle Molarbeast::GetCollisionRec() const
 
 Capsule2D Molarbeast::GetCapsule() const
 {
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<Molarbeast*>(this);
@@ -461,6 +500,11 @@ Rectangle Molarbeast::GetBodyContactRec() const
 
 Rectangle Molarbeast::GetThreatCollisionRec() const
 {
+    // A melee box authored in the Character Animator is the swing's reach.
+    Rectangle meleeRec;
+    if (GetAnimMeleeRectWorld(kSlotMelee, meleeRec))
+        return meleeRec;
+
     Rectangle bodyRec = GetCollisionRec();
     bodyRec.width += _attackFrontPadding;
     if (_rightLeft > 0.f)
@@ -560,7 +604,7 @@ void Molarbeast::SetIdleAnimation(bool resetFrame)
     _texture = _idleAnim;
     _width = _idleAnim.width / (float)_sheetFrameCount;
     _height = _idleAnim.height;
-    _updateTime = 1.f / 8.f;
+    _updateTime = TunedFrameTime(kSlotIdle, 1.f / 8.f);
     _maxFrames = _sheetFrameCount;
 
     if (resetFrame)
@@ -602,7 +646,7 @@ void Molarbeast::BuildBehaviourTree()
             ResetMeleeCooldown();
             SetSoundVolume(_attackSound, 0.35f);
             StopSound(_attackSound);
-            PlaySound(_attackSound);
+            SoundVariation::PlayPitchVaried(_attackSound);
         }
         HandleMelee();
         return (_state == State::MeleeAttacking) ? BTStatus::RUNNING : BTStatus::SUCCESS;
@@ -711,7 +755,7 @@ void Molarbeast::SetMeleeAnimation(bool resetFrame)
     _height = _attackAnim.height;
     // The boss melee should read slowly enough that the player can react and
     // dash away from the enlarged attack range.
-    _updateTime = 1.f / 5.f;
+    _updateTime = TunedFrameTime(kSlotMelee, 1.f / 5.f);
     _maxFrames = _sheetFrameCount;
 
     if (resetFrame)
@@ -726,7 +770,7 @@ void Molarbeast::SetRangedAnimation(bool resetFrame)
     _texture = _sharedRangedAnim;
     _width = _sharedRangedAnim.width / (float)_sheetFrameCount;
     _height = _sharedRangedAnim.height;
-    _updateTime = 1.f / 9.f;
+    _updateTime = TunedFrameTime(kSlotRanged, 1.f / 9.f);
     _maxFrames = _sheetFrameCount;
 
     if (resetFrame)
@@ -741,7 +785,7 @@ void Molarbeast::SetDashAnimation(bool resetFrame)
     _texture = _sharedDashAnim;
     _width = _sharedDashAnim.width / (float)_sheetFrameCount;
     _height = _sharedDashAnim.height;
-    _updateTime = 1.f / 12.f;
+    _updateTime = TunedFrameTime(kSlotDash, 1.f / 12.f);
     _maxFrames = _sheetFrameCount;
 
     if (resetFrame)
@@ -756,7 +800,7 @@ void Molarbeast::SetHurtAnimation(bool resetFrame)
     _texture = _takeDamageAnim;
     _width = _takeDamageAnim.width / (float)_sheetFrameCount;
     _height = _takeDamageAnim.height;
-    _updateTime = 1.f / 12.f;
+    _updateTime = TunedFrameTime(kSlotHurt, 1.f / 12.f);
     _maxFrames = _sheetFrameCount;
 
     if (resetFrame)
@@ -771,13 +815,45 @@ void Molarbeast::SetDeathAnimation(bool resetFrame)
     _texture = _deathAnim;
     _width = _deathAnim.width / (float)_sheetFrameCount;
     _height = _deathAnim.height;
-    _updateTime = 1.f / 8.f;
+    _updateTime = TunedFrameTime(kSlotDeath, 1.f / 8.f);
     _maxFrames = _sheetFrameCount;
 
     if (resetFrame)
     {
         _frame = 0;
         _runningTime = 0.f;
+    }
+}
+
+// Character Animator: the boss's sheets differ in size, so editor playback goes
+// through the same setters as the game.
+int Molarbeast::GetCurrentAnimSlot() const
+{
+    if (_texture.id == _sharedDashAnim.id)   return kSlotDash;
+    if (_texture.id == _attackAnim.id)       return kSlotMelee;
+    if (_texture.id == _takeDamageAnim.id)   return kSlotHurt;
+    if (_texture.id == _deathAnim.id)        return kSlotDeath;
+    if (_texture.id == _sharedRangedAnim.id) return kSlotRanged;
+    return kSlotIdle;
+}
+
+const char* Molarbeast::GetEditorAnimName(int index) const
+{
+    static const char* kNames[kEditorAnimCount] = { "Idle", "Dash", "Melee", "Hurt", "Death", "Ranged" };
+    return (index >= 0 && index < kEditorAnimCount) ? kNames[index] : "";
+}
+
+void Molarbeast::PlayEditorAnim(int index)
+{
+    switch (index)
+    {
+    case kSlotIdle:   SetIdleAnimation(true);   break;
+    case kSlotDash:   SetDashAnimation(true);   break;
+    case kSlotMelee:  SetMeleeAnimation(true);  break;
+    case kSlotHurt:   SetHurtAnimation(true);   break;
+    case kSlotDeath:  SetDeathAnimation(true);  break;
+    case kSlotRanged: SetRangedAnimation(true); break;
+    default: break;
     }
 }
 
@@ -923,20 +999,21 @@ void Molarbeast::HandleMelee()
     // The boss swing should only become active once the animation reaches its
     // fourth frame so the player gets a readable telegraph before the hitbox
     // actually applies damage and knockback.
-    if (_damageApplied || _frame < 3)
+    if (_damageApplied || !MeleeWindowLive(kSlotMelee, kBossMeleeHitFrame, kHitThroughLastFrame))
         return;
 
     // GetThreatCollisionRec already extends the hurtbox forward by
     // _attackFrontPadding � use it directly as the melee swing hitbox.
     Rectangle attackRec = GetThreatCollisionRec();
 
-    if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+    const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+    if (hit)
     {
         _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
         _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
     }
 
-    _damageApplied = true;
+    _damageApplied = MeleeCheckDone(kSlotMelee, hit);
 }
 
 void Molarbeast::HandleDashCharge(float dt)
@@ -978,13 +1055,13 @@ void Molarbeast::HandleDash(float dt, const std::vector<std::unique_ptr<Enemy>>&
 
     if (_target != nullptr && _target->IsAlive() &&
         !_target->IsBeingForcedPushed() &&
-        CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
+        CheckCollisionRecs(TunedMoveBox(kDashKey, GetCollisionRec()), _target->GetCollisionRec()))
     {
         _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
         _target->StartForcedPush(_dashDirection, 1200.f);
         SetSoundVolume(_attackSound, 0.45f);
         StopSound(_attackSound);
-        PlaySound(_attackSound);
+        SoundVariation::PlayPitchVaried(_attackSound);
         FinishDash(false);
     }
 }
@@ -1020,7 +1097,7 @@ void Molarbeast::HandleRangedVolley(float dt)
         --_volleyShotsRemaining;
         SetSoundVolume(_attackSound, 0.35f);
         StopSound(_attackSound);
-        PlaySound(_attackSound);
+        SoundVariation::PlayPitchVaried(_attackSound);
     }
 
     // Transition to Recovery is handled in HandleAnimation once the ranged
@@ -1346,10 +1423,10 @@ void Molarbeast::UpdateSetPiece(float dt, const std::vector<std::unique_ptr<Enem
         _setPieceTimer -= dt;
         if (_setPieceTimer <= 0.f)
         {
-            QueueLavaFan(GetPhase() >= 2 ? 5 : 3);
+            QueueLavaFan((GetPhase() >= 2 ? 5 : 3) + (_finalForm ? _finalFormExtraFanShots : 0));
             SetSoundVolume(_attackSound, 0.4f);
             StopSound(_attackSound);
-            PlaySound(_attackSound);
+            SoundVariation::PlayPitchVaried(_attackSound);
             _setPieceStep = SetPieceStep::Punish;
             _setPieceTimer = 1.2f + 0.3f * (float)GetPhase();
             _state = State::Recovery;
@@ -1552,16 +1629,30 @@ float Molarbeast::GetSpecialCooldownMin() const
     // dash/fireball spam.
     // Cadence tightens by phase (and further when enraged at 30%).
     float base = (GetPhase() >= 2) ? 3.6f : (GetPhase() >= 1 ? 4.1f : 4.5f);
-    return IsEnraged() ? std::min(base, 3.5f) : base;
+    base = IsEnraged() ? std::min(base, 3.5f) : base;
+    return _finalForm ? base * _finalFormCadence : base;
 }
 
 float Molarbeast::GetSpecialCooldownMax() const
 {
     float base = (GetPhase() >= 2) ? 4.2f : (GetPhase() >= 1 ? 4.9f : 5.5f);
-    return IsEnraged() ? std::min(base, 4.0f) : base;
+    base = IsEnraged() ? std::min(base, 4.0f) : base;
+    return _finalForm ? base * _finalFormCadence : base;
 }
 
 float Molarbeast::GetChargeDuration() const
 {
     return 1.25f;
+}
+
+// Character Animator: the dash's hit box.
+Enemy::MoveInfo Molarbeast::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index != 0)
+        return move;
+    move.key = kDashKey; move.name = "Dash Charge"; move.shape = MoveShape::Box;
+    move.animSlot = kSlotDash; move.box = RelativeFacingRight(GetCollisionRec());
+    move.note = "Hits whatever this box touches during the dash.";
+    return move;
 }

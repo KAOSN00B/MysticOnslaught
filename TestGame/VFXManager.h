@@ -5,12 +5,14 @@
 #include <string>
 
 // ── VFXManager ────────────────────────────────────────────────────────────────
-// Owns all animated sprite effects and floating damage/heal numbers.
+// Owns all animated sprite effects and floating word labels (damage numbers
+// live in DamageNumberManager).
 // Engine owns the textures; VFXManager holds non-owning pointers to them.
 // Engine calls:
 //   _vfx.Init(...)                 once after textures are loaded
 //   _vfx.Update(dt)                every frame from UpdateGamePlay
 //   _vfx.Draw(offset, pos, cast)   every frame from DrawWorld
+//   _vfx.DrawSparks(offset)        every frame from DrawDungeonRun, over the enemies
 //   _vfx.DrawFloatingTexts(offset) every frame from DrawWorld (after Draw)
 //   _vfx.Clear()                   on run reset / room change
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,7 +32,18 @@ public:
     // playerWorldPos / playerCastOrigin are the live positions for follow-player effects.
     void Draw(Vector2 worldOffset, Vector2 playerWorldPos, Vector2 playerCastOrigin);
 
-    // Cull expired floating numbers then render remaining.
+    // Impact sparks and smoke puffs as chunky pixel streaks (with a slight glow).
+    void DrawSparks(Vector2 worldOffset) const;
+
+    // Muzzle flash where a shot leaves: a small Hit03 burst along HeatRamp in
+    // `color`, plus a few sparks kicked forward.
+    void SpawnMuzzleFlash(Vector2 worldPos, Vector2 direction, Color color);
+
+    // Dust kicked up by a dash: a burst when it starts, then a trail of puffs.
+    // Call every frame with the player's feet and whether they are dashing.
+    void UpdateDashDust(Vector2 feetWorldPos, bool dashing, float dt);
+
+    // Cull expired floating labels then render the rest.
     void DrawFloatingTexts(Vector2 worldOffset);
 
     // Discard all active effects and floating texts (room reset / run reset).
@@ -47,16 +60,10 @@ public:
     // Heal animation that follows the player's center.
     void SpawnHealEffect();
 
-    // Floating damage number that rises and fades. `scale` enlarges crits/big
-    // hits; the displayed value is cosmetically multiplied (see .cpp) so single-
-    // digit balance still reads as satisfying RPG-sized numbers.
-    void SpawnFloatingText(Vector2 worldPos, int value, Color color, float scale = 1.f);
-
-    // Floating WORD label (e.g. "IMMUNE", "BLOCKED", "SHIELDED", "CRIT!").
-    // Same rise-and-fade behaviour as a damage number, but shows text verbatim
-    // and is NOT multiplied by the cosmetic damage-number scale. This is the
-    // primitive that combat-readability callouts (blocked-damage feedback,
-    // boss-state labels) are built on.
+    // Floating WORD label (e.g. "IMMUNE", "BLOCKED", "SHIELDED", "CRIT!") that
+    // rises and fades, shown verbatim. This is the primitive that
+    // combat-readability callouts (blocked-damage feedback, boss-state labels)
+    // are built on.
     void SpawnFloatingLabel(Vector2 worldPos, const char* text, Color color, float scale = 1.f);
 
     // A short burst of impact sparks flying out from a hit/kill.
@@ -75,6 +82,16 @@ public:
     // SpawnImpactBurst above.
     void SpawnSmokeBurst(Vector2 worldPos, Color color);
 
+    // Enemy death payoff: a white flash disc and shockwave ring, chunky gore
+    // thrown along the killing blow (arcing and bouncing to the floor).
+    // `heavy` = crit/elite kill.
+    void SpawnDeathBurst(Vector2 worldPos, Vector2 direction, Color gore, bool heavy);
+    // Ground-level gore that has landed. Draw under enemies/props.
+    void DrawGroundDecals(Vector2 worldOffset) const;
+
+    // Short local contact slash/ring: no textures, collision changes, or camera flash.
+    void SpawnContactAccent(Vector2 worldPos, Vector2 direction, Color color, bool heavy);
+
     // Generic one-shot sprite FX from any 64px-cell horizontal strip (boss impacts,
     // ground bursts, etc.). Plays once and removes itself. The reusable path the FX
     // pass is built on — callers just hand it a loaded strip.
@@ -92,8 +109,6 @@ public:
                           float scale, float duration, Color tint = WHITE,
                           float frameTime = 1.f / 12.f);
 
-    // Cosmetic damage-number multiplier (tuned live via the debug juice panel).
-    void SetDamageNumberScale(int s) { _damageNumberScale = (s > 0) ? s : 1; }
 
 private:
     struct AnimatedEffect
@@ -117,13 +132,17 @@ private:
         // duration instead of playing once. lifeRemaining drives cull + fade-out.
         bool       looping        = false;
         float      lifeRemaining  = 0.f;
+        // Strength of this effect's light in the glow layer (VfxGlow.h); 0 = no glow.
+        float      glowStrength   = 0.f;
+        // One-colour art redrawn by the silhouette shader, its colour following
+        // Vfx::HeatRamp(tint) over the animation.
+        bool       silhouette     = false;
     };
 
     struct FloatingText
     {
         Vector2     worldPos  = {};
-        int         value     = 0;
-        std::string label;                 // when non-empty, drawn instead of `value`
+        std::string label;
         Color       color     = WHITE;
         float       spawnTime = 0.f;
         float       scale     = 1.f;
@@ -138,12 +157,53 @@ private:
         Color   color = WHITE;
         float   timer = 0.f;
         float   life  = 0.35f;
+        bool    smoke = false;   // a growing, fading puff instead of a hot streak
     };
 
+    struct ContactAccent
+    {
+        Vector2 pos;
+        Vector2 direction;
+        Color color;
+        float age = 0.f;
+        float lifetime = 0.16f;
+        bool heavy = false;
+    };
+    std::vector<ContactAccent> _contactAccents;
+
+    struct Shockwave
+    {
+        Vector2 pos{};
+        Color   color = WHITE;
+        float   age = 0.f;
+        float   life = 0.30f;
+        float   radius = 90.f;
+    };
+    struct GoreChunk
+    {
+        Vector2 pos{};
+        Vector2 vel{};
+        float   lift = 0.f;       // height above the floor (drawn upward)
+        float   liftVel = 0.f;
+        float   size = 6.f;
+        float   spin = 0.f;
+        float   age = 0.f;
+        float   life = 1.6f;
+        Color   color = RED;
+    };
+    std::vector<Shockwave> _shockwaves;
+    std::vector<GoreChunk> _gore;
     std::vector<AnimatedEffect> _effects;
     std::vector<FloatingText>   _floatingTexts;
     std::vector<Spark>          _sparks;
-    int                         _damageNumberScale = 25;
+
+    // Dash dust (UpdateDashDust): whether the current dash already burst, the
+    // trail timer, and last frame's feet position (for the dash direction).
+    bool    _dashDustActive = false;
+    float   _dashDustTimer  = 0.f;
+    Vector2 _dashDustLastFeet{};
+    // `count` dust puffs at worldPos, each drifting by `drift` on top of its spread.
+    void SpawnDustPuffs(Vector2 worldPos, Vector2 drift, int count);
 
     // Non-owning pointers — Engine is responsible for load/unload.
     Texture2D* _fireballCastTex  = nullptr;

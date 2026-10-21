@@ -34,6 +34,17 @@ public:
     Capsule2D GetCapsule()      const override;
 
     Molarbeast* AsMolarbeast() override { return this; }
+
+    // ── Character Animator: Idle, Dash, Melee, Hurt, Death, Ranged ───────────
+    const char* GetTuningName() const override { return "Molarbeast"; }
+    int         GetEditorAnimCount() const override { return kEditorAnimCount; }
+    const char* GetEditorAnimName(int index) const override;
+    void        PlayEditorAnim(int index) override;
+    int         GetCurrentAnimSlot() const override;
+    bool        GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+    int         GetEditorMoveCount() const override { return 1; }
+    MoveInfo    GetEditorMove(int index) const override;
+
     bool IgnoresPropCollisions() const override { return false; }
     bool IsBoss() const override { return true; }
     bool UsesAttackLunge() const override { return false; }  // ranged lava-ball thrower
@@ -50,6 +61,11 @@ public:
     void OnLavaBallSpawned();
 
     bool IsDashing() const { return _state == State::Dashing; }
+
+    // Final form (the final boss in Demon's Insides): bigger, molten-lit, wider
+    // lava fans and quicker specials. ResetForSpawn clears it.
+    void SetFinalForm(bool finalForm);
+    bool IsFinalForm() const { return _finalForm; }
     void OnDashBlocked();
     bool ConsumeImpactShakeRequest();
 
@@ -75,6 +91,16 @@ private:
 
     static void EnsureSharedResourcesLoaded();
     void BuildBehaviourTree();
+
+    // Animation slots: the shared Enemy order (2 = the melee swing), with the
+    // ranged throw after it. Walking reuses the idle sheet.
+    static constexpr int kSlotIdle   = 0;
+    static constexpr int kSlotDash   = 1;
+    static constexpr int kSlotMelee  = 2;
+    static constexpr int kSlotHurt   = 3;
+    static constexpr int kSlotDeath  = 4;
+    static constexpr int kSlotRanged = 5;
+    static constexpr int kEditorAnimCount = 6;
 
     void SetIdleAnimation(bool resetFrame);
     void SetWalkAnimation(bool resetFrame);
@@ -165,13 +191,19 @@ private:
     int   _previousCardId = -1;
     float _cardGroupCooldowns[2] = { 0.f, 0.f };
 
+    bool _finalForm = false;
+    float _spawnScale = _bossScale;   // after tuning; final form grows from this
+    static constexpr float _finalFormScale = 1.18f;
+    static constexpr float _finalFormCadence = 0.85f;   // special cooldowns x this
+    static constexpr int   _finalFormExtraFanShots = 2;
+
     static constexpr int _sheetFrameCount = 6;
     static constexpr float _bossScale = 7.0f;
     static constexpr float _moveSpeed = 250.f;
     static constexpr float _attackRangeBase = 84.f;
     static constexpr float _attackCooldownBase = 2.0f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit = 0.5f;
+    static constexpr float _bossDamagePerHit = 5.f;
     static constexpr float _bossPushSpeed = 1450.f;
     static constexpr float _dashSpeed = 750.f;
     static constexpr float _chargeTintStrength = 220.f;

@@ -1,0 +1,16 @@
+scale=4.068
+size_set=1
+hurt_pad_x=0.00
+hurt_pad_y=0.00
+anim_0_body_x=6.54
+anim_0_body_y=10.22
+anim_0_body_r=35.31
+anim_0_draw_x=-3.69
+anim_0_draw_y=2.79
+anim_1_draw_x=23.72
+anim_1_draw_y=0.93
+anim_3_body_x=3.74
+anim_3_body_y=1.39
+anim_3_body_r=36.70
+anim_3_draw_x=14.89
+anim_3_draw_y=-14.40

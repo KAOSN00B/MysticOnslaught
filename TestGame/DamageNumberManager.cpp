@@ -6,6 +6,55 @@
 #include <cstdio>
 #include <limits>
 
+namespace
+{
+    // The life of a number (t = age / lifetime, 0..1): it spawns oversized and
+    // settles fast (pop), rises with an ease-out, holds full opacity, then fades
+    // smoothly. Crits are bigger, flash white then settle to gold, and shake
+    // while they flash. Hits on the hero are red.
+    constexpr float kPopDuration        = 0.16f;   // share of the life spent settling
+    constexpr float kPopNormal          = 0.40f;   // extra size at spawn
+    constexpr float kPopCritical        = 0.85f;
+    constexpr float kPopDamageOverTime  = 0.15f;
+    constexpr float kPopKillingBlow     = 0.20f;   // added on a kill
+    constexpr float kCritSize           = 1.40f;
+    constexpr float kKillingBlowSize    = 1.12f;
+    constexpr float kDamageOverTimeSize = 0.85f;
+    constexpr float kSizeCap            = 1.55f;   // x maxFontSize
+    constexpr float kCritSizeCap        = 2.10f;
+    constexpr float kCritRise           = 1.20f;
+    constexpr float kFadeStart          = 0.55f;   // full opacity until here
+    constexpr float kCritFlash          = 0.22f;   // share of the life spent going white -> gold
+    constexpr float kCritShakePixels    = 3.f;
+    constexpr float kCritShakeSpeed     = 70.f;    // radians per second
+    constexpr float kShadowAlpha        = 0.8f;
+
+    constexpr Color kNormalColor   = { 255, 248, 235, 255 };   // warm white
+    constexpr Color kCriticalColor = { 255, 205, 45, 255 };    // gold
+    constexpr Color kFlashColor    = { 255, 255, 255, 255 };
+    constexpr Color kIncomingColor = { 235, 55, 50, 255 };     // hits on the hero
+    constexpr Color kStatusColor   = { 195, 205, 225, 255 };   // BLOCKED, IMMUNE, ...
+
+    float EaseOutCubic(float x)
+    {
+        const float u = 1.f - x;
+        return 1.f - u * u * u;
+    }
+
+    float SmoothStep(float x) { return x * x * (3.f - 2.f * x); }
+
+    unsigned char LerpChannel(unsigned char a, unsigned char b, float t)
+    {
+        return (unsigned char)std::lround(a + (b - a) * t);
+    }
+
+    Color LerpColor(Color a, Color b, float t)
+    {
+        return Color{ LerpChannel(a.r, b.r, t), LerpChannel(a.g, b.g, t),
+                      LerpChannel(a.b, b.b, t), LerpChannel(a.a, b.a, t) };
+    }
+}
+
 void DamageNumberManager::Init(Font font)
 {
     _font = font;
@@ -159,7 +208,6 @@ const char* DamageNumberManager::FormatSlot(const Slot& slot, char (&buffer)[32]
     case DamageNumberOutcome::Immune:       label = "IMMUNE"; break;
     case DamageNumberOutcome::Invulnerable: label = "INVULNERABLE"; break;
     case DamageNumberOutcome::Dodge:        label = "DODGE"; break;
-    case DamageNumberOutcome::Armour:       label = "ARMOUR"; break;
     case DamageNumberOutcome::Airborne:     label = "AIRBORNE"; break;
     case DamageNumberOutcome::Underground:  label = "UNDERGROUND"; break;
     default: break;
@@ -171,6 +219,8 @@ const char* DamageNumberManager::FormatSlot(const Slot& slot, char (&buffer)[32]
     }
     if (slot.backstab)
         std::snprintf(buffer, sizeof(buffer), "%d BACKSTAB", slot.value);
+    else if (slot.outcome == DamageNumberOutcome::Critical)
+        std::snprintf(buffer, sizeof(buffer), "%d!", slot.value);
     else
         std::snprintf(buffer, sizeof(buffer), "%d", slot.value);
     return buffer;
@@ -180,16 +230,15 @@ Color DamageNumberManager::ColorFor(const Slot& slot) const
 {
     switch (slot.outcome)
     {
-    case DamageNumberOutcome::Critical:     return Color{ 255, 205, 45, 255 };
-    case DamageNumberOutcome::Incoming:     return Color{ 255, 175, 195, 255 };
-    case DamageNumberOutcome::Armour:       return Color{ 130, 205, 255, 255 };
+    case DamageNumberOutcome::Critical:     return kCriticalColor;
+    case DamageNumberOutcome::Incoming:     return kIncomingColor;
     case DamageNumberOutcome::Blocked:
     case DamageNumberOutcome::Immune:
     case DamageNumberOutcome::Invulnerable:
     case DamageNumberOutcome::Dodge:
     case DamageNumberOutcome::Airborne:
-    case DamageNumberOutcome::Underground:  return Color{ 195, 205, 225, 255 };
-    default:                                return Color{ 230, 45, 50, 255 };
+    case DamageNumberOutcome::Underground:  return kStatusColor;
+    default:                                return kNormalColor;
     }
 }
 
@@ -212,33 +261,49 @@ void DamageNumberManager::Draw(Vector2 worldOffset) const
     for (int order = 0; order < visible; ++order)
     {
         const Slot& slot = _slots[ordered[order]];
-        float life = std::max(0.01f, _settings.lifetime);
-        float t = std::clamp(slot.age / life, 0.f, 1.f);
-        float damageT = std::clamp(slot.value / std::max(1.f, _settings.damageReference), 0.f, 1.f);
+        const bool crit = slot.outcome == DamageNumberOutcome::Critical;
+        const float life = std::max(0.01f, _settings.lifetime);
+        const float t = std::clamp(slot.age / life, 0.f, 1.f);
+        const float damageT = std::clamp(slot.value / std::max(1.f, _settings.damageReference), 0.f, 1.f);
         float size = _settings.minFontSize + (_settings.maxFontSize - _settings.minFontSize) * damageT;
-        if (slot.outcome == DamageNumberOutcome::Critical) size *= 1.25f;
-        if (slot.killingBlow) size *= 1.12f;
-        float punch = t < 0.16f ? 1.f + (0.16f - t) / 0.16f * (slot.killingBlow ? 0.55f : 0.35f) : 1.f;
-        size = std::min(size * punch, _settings.maxFontSize * 1.55f);
+        if (crit) size *= kCritSize;
+        if (slot.killingBlow) size *= kKillingBlowSize;
+        if (slot.damageOverTime) size *= kDamageOverTimeSize;
 
-        float rise = _settings.riseSpeed * t * (slot.outcome == DamageNumberOutcome::Critical ? 1.2f : 1.f);
-        float drift = slot.driftSign * _settings.horizontalDrift * t;
+        // Pop: spawn oversized, settle with an ease-out.
+        float pop = slot.damageOverTime ? kPopDamageOverTime : crit ? kPopCritical : kPopNormal;
+        if (slot.killingBlow) pop += kPopKillingBlow;
+        const float settle = EaseOutCubic(std::min(1.f, t / kPopDuration));
+        size = std::min(size * (1.f + pop * (1.f - settle)), _settings.maxFontSize * (crit ? kCritSizeCap : kSizeCap));
+
+        // Rise fast then hang; hold full opacity, then fade out smoothly.
+        const float travel = EaseOutCubic(t);
+        const float rise = _settings.riseSpeed * travel * (crit ? kCritRise : 1.f);
+        const float drift = slot.driftSign * _settings.horizontalDrift * travel;
+        const float alpha = 1.f - SmoothStep(std::clamp((t - kFadeStart) / (1.f - kFadeStart), 0.f, 1.f));
+
+        // Crits flash white, settle to gold, and shake while they flash.
+        const float flash = crit ? std::min(1.f, t / kCritFlash) : 1.f;
+        const float shake = (flash < 1.f) ? std::sin(slot.age * kCritShakeSpeed) * kCritShakePixels * (1.f - flash) : 0.f;
+        Color color = ColorFor(slot);
+        if (crit) color = LerpColor(kFlashColor, color, flash);
+
         Vector2 pos{
-            slot.worldPos.x + worldOffset.x + kVirtualWidth * 0.5f + drift,
+            slot.worldPos.x + worldOffset.x + kVirtualWidth * 0.5f + drift + shake,
             slot.worldPos.y + worldOffset.y + kVirtualHeight * 0.5f - rise
         };
         char buffer[32]{};
         const char* text = FormatSlot(slot, buffer);
         Vector2 measured = MeasureTextEx(font, text, size, 0.f);
         pos.x -= measured.x * 0.5f;
-        float alpha = 1.f - t * t;
+        pos.y -= measured.y * 0.5f;   // grow from the centre, not the top edge
         float outline = std::max(1.f, _settings.outlineOffset);
-        Color shadow = Fade(BLACK, alpha * 0.8f);
+        Color shadow = Fade(BLACK, alpha * kShadowAlpha);
         DrawTextEx(font, text, { pos.x - outline, pos.y }, size, 0.f, shadow);
         DrawTextEx(font, text, { pos.x + outline, pos.y }, size, 0.f, shadow);
         DrawTextEx(font, text, { pos.x, pos.y - outline }, size, 0.f, shadow);
         DrawTextEx(font, text, { pos.x, pos.y + outline }, size, 0.f, shadow);
-        DrawTextEx(font, text, pos, size, 0.f, Fade(ColorFor(slot), alpha));
+        DrawTextEx(font, text, pos, size, 0.f, Fade(color, alpha));
     }
 }
 

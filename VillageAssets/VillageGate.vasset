@@ -6,6 +6,6 @@ category Utility
 service DungeonGate
 cost 0
 required 1
-unique 1
+unique 0
 removable 0
 interact 0.00 0.00 64.00 16.00 type=StartRun

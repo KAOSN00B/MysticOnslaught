@@ -1,4 +1,5 @@
 ﻿#include "WorldMapManager.h"
+#include "DevTools.h"   // MO_ITCH_DEMO
 #include "VirtualCanvas.h"
 #include "Character.h"
 #include "VirtualCanvas.h"
@@ -233,11 +234,31 @@ void WorldMapManager::Generate(
             }
             else if (tier == nextZone)
             {
+#if MO_ITCH_DEMO
+                // Demo: the world map is shown for flavour, but Caverns (centre
+                // node) is the only real, selectable destination - the side
+                // nodes stay hollow "?" placeholders.
+                if (nextZone == 1 && i == 1)
+                {
+                    n.biome       = Biome::Caverns;
+                    n.hasBiome    = true;
+                    n.isLocked    = false;
+                    n.isReachable = true;
+                }
+                else if (nextZone == 1)
+                {
+                    n.isLocked = true;
+                    n.hasBiome = false;
+                }
+                else
+#endif
+                {
                 // Current choice tier
                 n.biome      = choicesBiomes[i];
                 n.hasBiome   = true;
                 n.isLocked   = false;
                 n.isReachable = reachable[i];
+                }
             }
             else
             {
@@ -559,8 +580,8 @@ void WorldMapManager::DrawLeftPanel(const Character& player) const
     statRow("Attack",
             TextFormat("%d", (int)std::ceil((float)player.GetMeleeDamage())));
 
-    statRow("Armour",
-            TextFormat("%d / %d", player.GetArmour(), player.GetMaxArmour()),
+    statRow("Defense",
+            TextFormat("%.0f", player.GetDefense()),
             Color{120, 180, 255, 255});
 
     if (player.GetLevel() < player.GetMaxLevel())

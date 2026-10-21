@@ -21,6 +21,7 @@ public:
 
     Cyclops(Vector2 pos);
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
+    float VisualSizeMultiplier() const override { return Balance::Visual::kEliteSizeMult; }
     ~Cyclops() override;
 
     void Init();
@@ -51,6 +52,13 @@ public:
     EnemyRole GetEncounterRole() const override { return EnemyRole::HeavyRanged; }
     int       GetSpawnCost()     const override { return 4; }
 
+    // ── Character Animator: Idle, Walk, Hurt, Death (the laser has no sheet) ──
+    const char* GetTuningName() const override { return "Cyclops"; }
+    int         GetEditorAnimCount() const override { return kEditorAnimCount; }
+    const char* GetEditorAnimName(int index) const override;
+    void        PlayEditorAnim(int index) override;
+    int         GetCurrentAnimSlot() const override;
+
     // Laser firing interface (read by Engine after Update)
     bool    WantsToFire()      const { return _wantsToFire; }
     Vector2 GetFireDirection() const { return _fireDirection; }
@@ -70,6 +78,12 @@ protected:
 private:
 
     static void EnsureSharedResourcesLoaded();
+
+    static constexpr int kSlotIdle  = 0;
+    static constexpr int kSlotWalk  = 1;
+    static constexpr int kSlotHurt  = 2;
+    static constexpr int kSlotDeath = 3;
+    static constexpr int kEditorAnimCount = 4;
 
     // Applies the idle sprite sheet and its frame metadata.
     // This keeps all idle-state setup in one place so the charge logic,

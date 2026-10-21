@@ -190,27 +190,18 @@ void NavigationGrid::TickRefresh(float dt, Vector2 playerFeetWorldPos)
         int   rows     = _rows;
         float cellSize = _cellSize;
 
-#ifdef __EMSCRIPTEN__
-        RefreshResult result = BuildDistanceField(blockedCopy, cols, rows, cellSize, playerFeetWorldPos);
-        _distance           = std::move(result.distanceField);
-        _lastPlayerNavIndex = result.playerNavIndex;
-#else
         _refreshJob = std::async(std::launch::async,
             [blockedCopy = std::move(blockedCopy), cols, rows, cellSize, playerFeetWorldPos]() mutable
             {
                 return BuildDistanceField(blockedCopy, cols, rows, cellSize, playerFeetWorldPos);
             });
         _refreshInFlight = true;
-#endif
         _refreshTimer = _refreshInterval;
     }
 }
 
 void NavigationGrid::ApplyPendingRefresh()
 {
-#ifdef __EMSCRIPTEN__
-    return;
-#else
     if (!_refreshInFlight || !_refreshJob.valid())
         return;
     if (_refreshJob.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
@@ -220,7 +211,6 @@ void NavigationGrid::ApplyPendingRefresh()
     _distance           = std::move(result.distanceField);
     _lastPlayerNavIndex = result.playerNavIndex;
     _refreshInFlight    = false;
-#endif
 }
 
 void NavigationGrid::RefreshSync(Vector2 playerFeetWorldPos)

@@ -3,6 +3,7 @@
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
 #include "Character.h"
+#include "VfxGlow.h"
 #include "VirtualCanvas.h"
 
 Texture2D GoldPickup::_texSingle{};
@@ -32,6 +33,8 @@ void GoldPickup::Draw(Vector2 worldOffset)
     Vector2 screenPos{ _worldPos.x + worldOffset.x, _worldPos.y + worldOffset.y };
     screenPos.x += kVirtualWidth  / 2.f;
     screenPos.y += kVirtualHeight / 2.f;
+
+    Vfx::DrawGlowHalo(screenPos, Balance::Vfx::kPickupHaloRadius, Vfx::kGoldGlow, Balance::Vfx::kPickupHaloStrength);
 
     const float scale = 4.0f;
     Rectangle source{ 0.f, 0.f, (float)tex.width, (float)tex.height };

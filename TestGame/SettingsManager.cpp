@@ -1,76 +1,199 @@
-#pragma warning(disable: 4996)  // fopen/fscanf/fprintf are safe here; paths are internal constants
-
 #include "SettingsManager.h"
 #include "AudioManager.h"
+#include "GamepadInput.h"
+#include "KeyBindings.h"
+#include "SaveFiles.h"
+#include "SaveStore.h"
 #include "VirtualCanvas.h"
 #include "raylib.h"
 
-#include <cstdio>
-#include <cstring>
-#include <cstdlib>
 #include <algorithm>
+#include <cstring>
 
-static const char* kSettingsPath = "settings.cfg";
+namespace
+{
+    // Window modes by name, in GameSettings::WindowMode order.
+    constexpr const char* kWindowModeNames[] = { "fullscreen", "borderless", "windowed" };
+    constexpr int    kMinWindowSize   = 320;
+    constexpr int    kMaxWindowSize   = 16384;
+    constexpr int    kMaxComfortLevel = 2;     // full / reduced / off
+    constexpr double kAnyNumber       = 1.0e9; // read wide, then clamp to the real range
+
+    SaveFile SettingsFile()    { return SaveFile(SaveFiles::SettingsPath(), SaveKind::Settings, SaveFiles::kMaxSettingsBytes); }
+    SaveFile KeybindingsFile() { return SaveFile(SaveFiles::KeybindingsPath(), SaveKind::Keybindings, SaveFiles::kMaxSettingsBytes); }
+
+    float ReadClamped(const JsonReader& section, const char* key, float fallback, float min, float max)
+    {
+        return std::clamp(section.FloatOr(key, fallback, -(float)kAnyNumber, (float)kAnyNumber), min, max);
+    }
+
+    int ReadClamped(const JsonReader& section, const char* key, int fallback, int min, int max)
+    {
+        return (int)std::clamp(section.IntOr(key, fallback, -(long long)kAnyNumber, (long long)kAnyNumber),
+                               (long long)min, (long long)max);
+    }
+
+    JsonValue SettingsToJson(const GameSettings& s)
+    {
+        JsonValue doc = JsonValue::MakeObject();
+        doc.Set("schema", JsonValue::MakeInt(SaveFiles::kSettingsSchema));
+        JsonValue& display = doc.Set("display", JsonValue::MakeObject());
+        display.Set("windowMode", JsonValue::MakeString(kWindowModeNames[(int)s.windowMode]));
+        display.Set("windowedWidth", JsonValue::MakeInt(s.windowedWidth));
+        display.Set("windowedHeight", JsonValue::MakeInt(s.windowedHeight));
+        display.Set("vsync", JsonValue::MakeBool(s.vsync));
+        JsonValue& audio = doc.Set("audio", JsonValue::MakeObject());
+        audio.Set("master", JsonValue::MakeFloat(s.masterVolume));
+        audio.Set("music", JsonValue::MakeFloat(s.musicVolume));
+        audio.Set("sfx", JsonValue::MakeFloat(s.sfxVolume));
+        JsonValue& comfort = doc.Set("comfort", JsonValue::MakeObject());
+        comfort.Set("screenShake", JsonValue::MakeFloat(s.screenShake));
+        comfort.Set("screenFlashes", JsonValue::MakeInt(s.flashLevel));
+        comfort.Set("hitStop", JsonValue::MakeInt(s.hitStopLevel));
+        return doc;
+    }
+
+    bool SettingsFromJson(const JsonValue& document, GameSettings& out, std::string& error)
+    {
+        JsonReadErrors errors;
+        const JsonReader root(document, errors);
+        root.Int("schema", SaveFiles::kSettingsSchema, SaveFiles::kSettingsSchema);
+        GameSettings s;   // anything missing keeps its default
+        JsonReader section;
+        if (root.OptionalObject("display", section))
+        {
+            const std::string mode = section.StringOr("windowMode", kWindowModeNames[(int)s.windowMode], SaveFiles::kMaxIdLength);
+            for (int i = 0; i < (int)std::size(kWindowModeNames); ++i)
+                if (mode == kWindowModeNames[i]) s.windowMode = (GameSettings::WindowMode)i;
+            s.windowedWidth = ReadClamped(section, "windowedWidth", s.windowedWidth, kMinWindowSize, kMaxWindowSize);
+            s.windowedHeight = ReadClamped(section, "windowedHeight", s.windowedHeight, kMinWindowSize, kMaxWindowSize);
+            s.vsync = section.BoolOr("vsync", s.vsync);
+        }
+        if (root.OptionalObject("audio", section))
+        {
+            s.masterVolume = ReadClamped(section, "master", s.masterVolume, 0.f, 1.f);
+            s.musicVolume = ReadClamped(section, "music", s.musicVolume, 0.f, 1.f);
+            s.sfxVolume = ReadClamped(section, "sfx", s.sfxVolume, 0.f, 1.f);
+        }
+        if (root.OptionalObject("comfort", section))
+        {
+            s.screenShake = ReadClamped(section, "screenShake", s.screenShake, 0.f, 1.f);
+            s.flashLevel = ReadClamped(section, "screenFlashes", s.flashLevel, 0, kMaxComfortLevel);
+            s.hitStopLevel = ReadClamped(section, "hitStop", s.hitStopLevel, 0, kMaxComfortLevel);
+        }
+        if (!errors.Ok()) { error = errors.first; return false; }
+        out = s;
+        return true;
+    }
+
+    // Raylib key and button codes; anything outside keeps the default.
+    void ReadKey(const JsonReader& section, const char* key, KeyboardKey& value)
+    {
+        const long long code = section.IntOr(key, value, -(long long)kAnyNumber, (long long)kAnyNumber);
+        if (code >= KEY_NULL && code <= KEY_KB_MENU) value = (KeyboardKey)code;
+    }
+
+    void ReadButton(const JsonReader& section, const char* key, GamepadButton& value)
+    {
+        const long long code = section.IntOr(key, value, -(long long)kAnyNumber, (long long)kAnyNumber);
+        if (code >= GAMEPAD_BUTTON_UNKNOWN && code <= GAMEPAD_BUTTON_RIGHT_THUMB) value = (GamepadButton)code;
+    }
+
+    template <typename Code, std::size_t N, typename Read>
+    void ReadCodeList(const JsonReader& section, const char* key, Code (&values)[N], Read read)
+    {
+        JsonReader list;
+        if (!section.OptionalArray(key, N, list)) return;
+        for (std::size_t i = 0; i < list.Count(); ++i)
+        {
+            const long long code = list.Item(i).AsInt(-(long long)kAnyNumber, (long long)kAnyNumber);
+            read(code, values[i]);
+        }
+    }
+
+    template <typename Code, std::size_t N>
+    JsonValue CodeList(const Code (&values)[N])
+    {
+        JsonValue list = JsonValue::MakeArray();
+        for (Code value : values) list.Push(JsonValue::MakeInt((int)value));
+        return list;
+    }
+}
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 void SettingsManager::Load()
 {
-#ifdef PLATFORM_WEB
-    return;  // no persistent file system on web; use defaults every session
-#else
-    FILE* f = fopen(kSettingsPath, "r");
-    if (!f) return;
-
-    char key[64], val[64];
-    while (fscanf(f, " %63[^=]=%63s", key, val) == 2)
-    {
-        if      (strcmp(key, "window_mode") == 0)
-        {
-            if      (strcmp(val, "fullscreen") == 0) _settings.windowMode = GameSettings::WindowMode::Fullscreen;
-            else if (strcmp(val, "borderless") == 0) _settings.windowMode = GameSettings::WindowMode::Borderless;
-            else                                     _settings.windowMode = GameSettings::WindowMode::Windowed;
-        }
-        else if (strcmp(key, "windowed_width")  == 0) _settings.windowedWidth  = atoi(val);
-        else if (strcmp(key, "windowed_height") == 0) _settings.windowedHeight = atoi(val);
-        else if (strcmp(key, "vsync")           == 0) _settings.vsync          = (atoi(val) != 0);
-        else if (strcmp(key, "master_volume")   == 0) _settings.masterVolume   = (float)atof(val);
-        else if (strcmp(key, "music_volume")    == 0) _settings.musicVolume    = (float)atof(val);
-        else if (strcmp(key, "sfx_volume")      == 0) _settings.sfxVolume      = (float)atof(val);
-        else if (strcmp(key, "ability_aim_toggle") == 0) _settings.abilityAimToggle = (atoi(val) != 0);
-    }
-    fclose(f);
-
-    // Clamp volumes to valid range after loading
-    auto clamp01 = [](float v) { return v < 0.f ? 0.f : v > 1.f ? 1.f : v; };
-    _settings.masterVolume = clamp01(_settings.masterVolume);
-    _settings.musicVolume  = clamp01(_settings.musicVolume);
-    _settings.sfxVolume    = clamp01(_settings.sfxVolume);
-#endif
+    SettingsFile().Load([this](const JsonValue& document, std::string& error) {
+        return SettingsFromJson(document, _settings, error);
+    });
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 void SettingsManager::Save() const
 {
-#ifdef PLATFORM_WEB
-    return;
-#else
-    FILE* f = fopen(kSettingsPath, "w");
-    if (!f) return;
+    SettingsFile().Save(SettingsToJson(_settings), [](const JsonValue& document, std::string& error) {
+        GameSettings check;
+        return SettingsFromJson(document, check, error);
+    });
+}
 
-    const char* modeStr = "windowed";
-    if      (_settings.windowMode == GameSettings::WindowMode::Fullscreen) modeStr = "fullscreen";
-    else if (_settings.windowMode == GameSettings::WindowMode::Borderless)  modeStr = "borderless";
+// ── Keybindings ───────────────────────────────────────────────────────────────
+bool SettingsManager::SaveKeybindings(const KeyBindings& keys, const GamepadBindings& pad)
+{
+    JsonValue doc = JsonValue::MakeObject();
+    doc.Set("schema", JsonValue::MakeInt(SaveFiles::kKeybindingsSchema));
+    JsonValue& keyboard = doc.Set("keyboard", JsonValue::MakeObject());
+    keyboard.Set("moveUp", JsonValue::MakeInt(keys.moveUp));
+    keyboard.Set("moveDown", JsonValue::MakeInt(keys.moveDown));
+    keyboard.Set("moveLeft", JsonValue::MakeInt(keys.moveLeft));
+    keyboard.Set("moveRight", JsonValue::MakeInt(keys.moveRight));
+    keyboard.Set("dash", JsonValue::MakeInt(keys.dash));
+    keyboard.Set("attack", JsonValue::MakeInt(keys.attack));
+    keyboard.Set("ability", CodeList(keys.ability));
+    JsonValue& gamepad = doc.Set("gamepad", JsonValue::MakeObject());
+    gamepad.Set("attack", JsonValue::MakeInt(pad.attack));
+    gamepad.Set("dash", JsonValue::MakeInt(pad.dash));
+    gamepad.Set("ability", CodeList(pad.ability));
+    gamepad.Set("pause", JsonValue::MakeInt(pad.pause));
+    return KeybindingsFile().Save(doc);
+}
 
-    fprintf(f, "window_mode=%s\n",     modeStr);
-    fprintf(f, "windowed_width=%d\n",  _settings.windowedWidth);
-    fprintf(f, "windowed_height=%d\n", _settings.windowedHeight);
-    fprintf(f, "vsync=%d\n",           _settings.vsync ? 1 : 0);
-    fprintf(f, "master_volume=%.3f\n", _settings.masterVolume);
-    fprintf(f, "music_volume=%.3f\n",  _settings.musicVolume);
-    fprintf(f, "sfx_volume=%.3f\n",    _settings.sfxVolume);
-    fprintf(f, "ability_aim_toggle=%d\n", _settings.abilityAimToggle ? 1 : 0);
-    fclose(f);
-#endif
+bool SettingsManager::LoadKeybindings(KeyBindings& keys, GamepadBindings& pad)
+{
+    const SaveLoadResult result = KeybindingsFile().Load([&](const JsonValue& document, std::string& error) {
+        JsonReadErrors errors;
+        const JsonReader root(document, errors);
+        root.Int("schema", SaveFiles::kKeybindingsSchema, SaveFiles::kKeybindingsSchema);
+        KeyBindings k = keys;
+        GamepadBindings g = pad;
+        JsonReader section;
+        if (root.OptionalObject("keyboard", section))
+        {
+            ReadKey(section, "moveUp", k.moveUp);
+            ReadKey(section, "moveDown", k.moveDown);
+            ReadKey(section, "moveLeft", k.moveLeft);
+            ReadKey(section, "moveRight", k.moveRight);
+            ReadKey(section, "dash", k.dash);
+            ReadKey(section, "attack", k.attack);
+            ReadCodeList(section, "ability", k.ability, [](long long code, KeyboardKey& value) {
+                if (code >= KEY_NULL && code <= KEY_KB_MENU) value = (KeyboardKey)code;
+            });
+        }
+        if (root.OptionalObject("gamepad", section))
+        {
+            ReadButton(section, "attack", g.attack);
+            ReadButton(section, "dash", g.dash);
+            ReadButton(section, "pause", g.pause);
+            ReadCodeList(section, "ability", g.ability, [](long long code, GamepadButton& value) {
+                if (code >= GAMEPAD_BUTTON_UNKNOWN && code <= GAMEPAD_BUTTON_RIGHT_THUMB) value = (GamepadButton)code;
+            });
+        }
+        if (!errors.Ok()) { error = errors.first; return false; }
+        keys = k;
+        pad = g;
+        return true;
+    });
+    return result == SaveLoadResult::Loaded || result == SaveLoadResult::RestoredBackup;
 }
 
 // ── ApplyWindow ───────────────────────────────────────────────────────────────

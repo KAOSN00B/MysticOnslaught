@@ -1,6 +1,7 @@
 #include "RoomLibrary.h"
 
 #include <cassert>
+#include <chrono>
 #include <filesystem>
 #include <string>
 
@@ -63,6 +64,40 @@ int main()
     assert(library.SaveRoom(treasureFallback, false, error));
     library.Refresh(root);
     assert(library.Rooms().size() == 8);
+
+    // Refreshing an unchanged library re-parses nothing.
+    library.Refresh(root);
+    assert(library.Rooms().size() == 8);
+    assert(library.ParsedOnLastRefresh() == 0);
+
+    // A file written again later is re-parsed, alone. (The test pushes its
+    // write time forward: both writes here land within the same clock tick,
+    // which a person saving in the editor never does.)
+    {
+        RoomBlueprint editedCorner = corner;
+        editedCorner.hasWest = true;
+        assert(library.SaveRoom(editedCorner, true, error));
+        bool touched = false;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root))
+        {
+            if (entry.path().filename().string().find("corner") == std::string::npos) continue;
+            std::filesystem::last_write_time(entry.path(),
+                std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2));
+            touched = true;
+        }
+        assert(touched);
+        library.Refresh(root);
+        assert(library.ParsedOnLastRefresh() == 1);
+        assert(library.Rooms().size() == 8);
+        assert(library.FindById("corner") != nullptr && library.FindById("corner")->hasWest);
+        assert(library.SaveRoom(corner, true, error));   // back to the original shape
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root))
+            if (entry.path().filename().string().find("corner") != std::string::npos)
+                std::filesystem::last_write_time(entry.path(),
+                    std::filesystem::file_time_type::clock::now() + std::chrono::seconds(4));
+        library.Refresh(root);
+        assert(!library.FindById("corner")->hasWest);
+    }
 
     const auto cavernRooms = library.RoomsFor(Biome::Caverns, "Caverns");
     assert(cavernRooms.size() == 6);

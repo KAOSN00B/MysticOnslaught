@@ -1,4 +1,6 @@
 #include "AbyssSlime.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -79,9 +81,9 @@ void AbyssSlime::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health      = 60.f;
-    _maxHealth   = 60.f;
-    _attackPower = 1.f;
+    _health      = 600.f;
+    _maxHealth   = 600.f;
+    _attackPower = 10.f;
     _speed       = _moveSpeed;
     _expValue    = _bossBaseExpValue;
 
@@ -317,7 +319,7 @@ void AbyssSlime::HandleChasing(float dt, Vector2 heroWorldPos, const std::vector
         _stateTimer = 0.f;
         _acidBurstFired = false;
         SetAnimation(_sharedMagicAnim, _acidBurstDuration / (float)_sheetFrameCount, true);
-        PlaySound(_attackSound);
+        SoundVariation::PlayPitchVaried(_attackSound);
         return;
     }
 
@@ -327,7 +329,7 @@ void AbyssSlime::HandleChasing(float dt, Vector2 heroWorldPos, const std::vector
         _state = State::MeleeAttacking;
         _damageApplied = false;
         SetAnimation(_sharedMeleeAnim, 1.f / 10.f, true);
-        PlaySound(_attackSound);
+        SoundVariation::PlayPitchVaried(_attackSound);
         return;
     }
 
@@ -393,7 +395,8 @@ void AbyssSlime::HandleMelee()
     _velocity = Vector2Zero();
 
     // Swing becomes live on frame 3 for a readable telegraph.
-    if (!_damageApplied && _frame >= 3 && _target != nullptr)
+    if (!_damageApplied && _target != nullptr &&
+        MeleeWindowLive(kAnimSlotAttack, kBossMeleeHitFrame, kHitThroughLastFrame))
     {
         // Per-animation melee box (Character Animator, slot 2) wins.
         Rectangle attackRec;
@@ -404,12 +407,13 @@ void AbyssSlime::HandleMelee()
             attackRec.width += 80.f; attackRec.height += 60.f;
         }
 
-        if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+        const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+        if (hit)
         {
             _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
             ApplyShortPlayerShove();
         }
-        _damageApplied = true;
+        _damageApplied = MeleeCheckDone(kAnimSlotAttack, hit);
     }
 
     if (_frame >= _maxFrames - 1)
@@ -559,7 +563,7 @@ void AbyssSlime::HandleLanding(float dt)
         float distToPlayer = Vector2Distance(_worldPos, _target->GetFeetWorldPos());
         if (distToPlayer < _landingRadius)
         {
-            _target->TakeFractionalDamage(1.0f, _worldPos);
+            _target->TakeFractionalDamage(10.f, _worldPos);
             ApplyShortPlayerShove();
         }
         _landingDamageApplied = true;
@@ -974,7 +978,7 @@ void AbyssSlime::SetWaveScale(int wave)
     _enrageThreshold = 0.33f;
     SetPhaseThresholds({ 0.66f, 0.33f });
     _speed       = _moveSpeed;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 }
 
 // =============================================================================
@@ -1035,4 +1039,41 @@ void AbyssSlime::UnloadSharedResources()
     _sharedDeathSound  = Sound{};
     _sharedLandSound   = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: special moves.
+// =============================================================================
+namespace
+{
+    constexpr const char* kJumpSlamKey  = "AbyssSlime_Jump_Slam";
+    constexpr const char* kAcidBurstKey = "AbyssSlime_Acid_Burst";
+    constexpr int kJumpSlamAnimSlot  = 5;   // Fall: the landing
+    constexpr int kAcidBurstAnimSlot = 3;   // Magic
+}
+
+int AbyssSlime::GetEditorMoveCount() const { return 2; }
+
+Enemy::MoveInfo AbyssSlime::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index == 0)
+    {
+        move.key = kJumpSlamKey; move.name = "Jump Slam"; move.shape = MoveShape::Circle;
+        move.animSlot = kJumpSlamAnimSlot; move.radius = kDefaultLandingRadius;
+        move.note = "Hits around it where it lands.";
+    }
+    else if (index == 1)
+    {
+        move.key = kAcidBurstKey; move.name = "Acid Burst"; move.shape = MoveShape::Circle;
+        move.animSlot = kAcidBurstAnimSlot; move.radius = kDefaultAcidBurstShockRadius;
+        move.note = "The close-range shockwave when it casts (the puddles are separate).";
+    }
+    return move;
+}
+
+void AbyssSlime::ApplyMoveTuning()
+{
+    _landingRadius        = TunedHitRadius(kJumpSlamKey, kDefaultLandingRadius);
+    _acidBurstShockRadius = TunedHitRadius(kAcidBurstKey, kDefaultAcidBurstShockRadius);
 }

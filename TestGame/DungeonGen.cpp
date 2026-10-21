@@ -1,7 +1,20 @@
 #include "DungeonGen.h"
+#include "GameBalance.h"
 #include <algorithm>
 #include <queue>
 #include <limits>
+
+DungeonGen::Plan DungeonGen::PlanForDomain(int domainIndex)
+{
+    // The per-domain tables live in GameBalance.h (Balance::Pacing). Each row is
+    // checked against the 15-minute budget by DungeonGenEntranceTests.
+    const int d = std::clamp(domainIndex, 0, 5);
+    Plan plan;
+    plan.rooms     = Balance::Pacing::kRoomsByDomain[d];
+    plan.elites    = Balance::Pacing::kElitesByDomain[d];
+    plan.treasures = Balance::Pacing::kTreasuresByDomain[d];
+    return plan;
+}
 
 void DungeonGen::Generate()
 {
@@ -15,6 +28,37 @@ void DungeonGen::Generate()
     GrowRooms();
     BuildConnections();
     AssignSpecialRooms();
+}
+
+bool DungeonGen::Restore(const std::vector<DungeonRoom>& rooms, int startIdx, int bossIdx, int keyIdx)
+{
+    const int count = (int)rooms.size();
+    if (count <= 0 || startIdx < 0 || startIdx >= count || bossIdx < 0 || bossIdx >= count ||
+        keyIdx < -1 || keyIdx >= count)
+        return false;
+    int grid[kGridSize][kGridSize];
+    for (auto& row : grid) for (int& cell : row) cell = -1;
+    for (int i = 0; i < count; ++i)
+    {
+        const DungeonRoom& room = rooms[i];
+        if (room.col < 0 || room.col >= kGridSize || room.row < 0 || room.row >= kGridSize) return false;
+        if (grid[room.row][room.col] != -1) return false;
+        grid[room.row][room.col] = i;
+    }
+    _rooms = rooms;
+    for (int r = 0; r < kGridSize; ++r)
+        for (int c = 0; c < kGridSize; ++c)
+            _grid[r][c] = grid[r][c];
+    _startIdx = startIdx;
+    _bossIdx = bossIdx;
+    _keyIdx = keyIdx;
+    return true;
+}
+
+void DungeonGen::ForceRoomType(int roomIdx, RoomType type)
+{
+    if (roomIdx >= 0 && roomIdx < (int)_rooms.size())
+        _rooms[roomIdx].type = type;
 }
 
 void DungeonGen::GenerateEditorPlaytest()
@@ -49,6 +93,34 @@ void DungeonGen::GeneratePrologue()
         _grid[room.row][room.col] = index;
         _rooms.push_back(room);
     }
+}
+
+void DungeonGen::GenerateCrossroads(bool west, bool north, bool east)
+{
+    _rooms.clear();
+    _startIdx = 0;
+    _bossIdx = -1;
+    _keyIdx = -1;
+    for (int r = 0; r < kGridSize; ++r)
+        for (int c = 0; c < kGridSize; ++c)
+            _grid[r][c] = -1;
+
+    const int row = kGridSize / 2, col = kGridSize / 2;
+    auto add = [&](int r, int c)
+    {
+        DungeonRoom room;
+        room.row = r;
+        room.col = c;
+        room.type = RoomType::Standard;
+        room.startsEmpty = true;   // peaceful: no encounter, doors open
+        _grid[r][c] = (int)_rooms.size();
+        _rooms.push_back(room);
+    };
+    add(row, col);
+    if (west)  add(row, col - 1);
+    if (north) add(row - 1, col);
+    if (east)  add(row, col + 1);
+    BuildConnections();
 }
 
 void DungeonGen::GrowRooms()
@@ -101,7 +173,8 @@ void DungeonGen::GrowRooms()
 
     // Grow outward by randomly picking an existing room and trying to add a neighbour.
     int attempts = 0;
-    while ((int)_rooms.size() < kTargetRooms && attempts < 2000)
+    const int targetRooms = std::clamp(_plan.rooms, kMinRooms, kMaxRooms);
+    while ((int)_rooms.size() < targetRooms && attempts < 2000)
     {
         attempts++;
 
@@ -208,24 +281,31 @@ void DungeonGen::AssignSpecialRooms()
     // Treasure prefers a deep dead end, giving side branches an intentional
     // payoff. Elite pressure sits deep in the route, but does not compete with
     // the boss or treasure room for the same graph slot.
-    const int treasure = takeBest([&](int roomIdx)
+    // Bigger (deeper-domain) dungeons hold a second treasure and elite.
+    for (int n = 0; n < std::max(1, _plan.treasures); ++n)
     {
-        return _rooms[roomIdx].depth * 10 + (degree(roomIdx) == 1 ? 24 : 0);
-    });
-    if (treasure >= 0)
-    {
-        _rooms[treasure].type = RoomType::Treasure;
-        _rooms[treasure].encounterProfile = EncounterProfile::Skirmish;
+        const int treasure = takeBest([&](int roomIdx)
+        {
+            return _rooms[roomIdx].depth * 10 + (degree(roomIdx) == 1 ? 24 : 0);
+        });
+        if (treasure >= 0)
+        {
+            _rooms[treasure].type = RoomType::Treasure;
+            _rooms[treasure].encounterProfile = EncounterProfile::Skirmish;
+        }
     }
 
-    const int elite = takeBest([&](int roomIdx)
+    for (int n = 0; n < std::max(1, _plan.elites); ++n)
     {
-        return _rooms[roomIdx].depth * 10 + (degree(roomIdx) >= 2 ? 4 : 0);
-    });
-    if (elite >= 0)
-    {
-        _rooms[elite].type = RoomType::Elite;
-        _rooms[elite].encounterProfile = EncounterProfile::Assault;
+        const int elite = takeBest([&](int roomIdx)
+        {
+            return _rooms[roomIdx].depth * 10 + (degree(roomIdx) >= 2 ? 4 : 0);
+        });
+        if (elite >= 0)
+        {
+            _rooms[elite].type = RoomType::Elite;
+            _rooms[elite].encounterProfile = EncounterProfile::Assault;
+        }
     }
 
     if (_bossIdx >= 0)

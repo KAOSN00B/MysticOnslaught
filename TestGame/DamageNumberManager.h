@@ -20,7 +20,6 @@ enum class DamageNumberOutcome : unsigned char
     Immune,
     Invulnerable,
     Dodge,
-    Armour,
     Airborne,
     Underground,
     Incoming
@@ -47,7 +46,7 @@ struct DamageNumberSettings
     int visibleCap = 32;
     int minFontSize = 20;
     int maxFontSize = 42;
-    float damageReference = 12.f;
+    float damageReference = 120.f;
     float riseSpeed = 92.f;
     float horizontalDrift = 22.f;
     float lifetime = 0.90f;

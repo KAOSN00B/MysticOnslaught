@@ -1,12 +1,11 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "DevTools.h"
 #include "Engine.h"
+#include "ClassAbilityBalance.h"
+#include "UserDataPath.h"
+#include "DamagePolicy.h"
 #include "VillageAssetData.h"
 #include "VirtualCanvas.h"
-
-#ifdef PLATFORM_WEB
-#include <emscripten.h>
-#endif
 
 #include "AnimationUtils.h"
 #include "VirtualCanvas.h"
@@ -24,9 +23,14 @@
 #include "VirtualCanvas.h"
 #include "RoomLayout.h"
 #include "RoomCollision.h"
+#include "RoomEvents.h"
 #include "VirtualCanvas.h"
 #include "raymath.h"
 #include "rlgl.h"
+#include "VfxGlow.h"
+#include "VfxNight.h"
+#include "VfxPixel.h"
+#include "DayNight.h"
 #include "VirtualCanvas.h"
 
 #include <algorithm>
@@ -138,9 +142,6 @@ namespace
     };
     constexpr int kPoeGreetingCount = (int)(sizeof(kPoeGreetings) / sizeof(kPoeGreetings[0]));
 
-    constexpr float kBiomeFadeOutDuration = 3.f;
-    constexpr float kBiomeFadeInDuration = 1.f;
-
     // Spawn protection gives the player time to reposition if a wave enters on
     // top of them or very near the player after pathing/spawn validation.
     constexpr float kWaveSpawnProtectionDuration = 2.f;
@@ -226,6 +227,10 @@ Engine::Engine()
 
 Engine::~Engine()
 {
+#if MO_DEV_TOOLS
+    LogFrameTimingSummary();
+#endif
+    _meta.SaveIfDirty();   // deferred room-clear mastery progress
     _nav.CancelAndReset();
 
     Enemy::UnloadSharedResources();
@@ -276,6 +281,9 @@ Engine::~Engine()
     }
     for (Texture2D& bf : _bossFx)
         if (bf.id != 0) UnloadTexture(bf);
+    for (auto& entry : _eventFxSheets)
+        if (entry.second.texture.id != 0) UnloadTexture(entry.second.texture);
+    _eventFxSheets.clear();
     if (_audioInitialised)
     {
         UnloadSound(_pickupSound);
@@ -288,13 +296,6 @@ Engine::~Engine()
         _audio.Shutdown();
     }
     UnloadTexture(_map);
-    UnloadTexture(_pillarTex);
-    UnloadTexture(_torchTex);
-    UnloadTexture(_pillarTorchTex);
-    UnloadTexture(_treeTex);
-    UnloadTexture(_smallTreeTex);
-    UnloadTexture(_rockTex);
-    UnloadTexture(_bigRockTex);
     UnloadTexture(_fireballCastTex);
     UnloadTexture(_fireballHitTex);
     UnloadTexture(_genericHitTex);
@@ -324,14 +325,16 @@ Engine::~Engine()
     UnloadTexture(_magicGemTex);
     UnloadTexture(_bossBarrierTex);
     UnloadTexture(_swordCursorTex);
+    UnloadHudArt();
     _tileRenderer.Unload();
     _dungeonScrollTileRenderer.Unload();
     _pauseUI.Unload();
     UnloadTexture(_settingsBorderTex);
+    Vfx::Glow().Unload();
+    Vfx::Night().Unload();
+    Vfx::Silhouette().Unload();
     UnloadRenderTexture(_virtualCanvas);
-    if (_audioInitialised)
-        CloseAudioDevice();
-    CloseWindow();
+    // main closes the devices after member destructors release their resources.
 }
 
 // -- Cutscene definitions ------------------------------------------------------
@@ -403,6 +406,10 @@ static const CutsceneAction kZone5ArrivalCutscene[] =
 
 void Engine::Init()
 {
+#if MO_DEV_TOOLS
+    if (FlowSelfTestRequested())
+        SetConfigFlags(FLAG_WINDOW_HIDDEN);   // automated flow test runs unattended
+#endif
     InitWindow(_windowWidth, _windowHeight, "Mystic Onslaught");
     SetTargetFPS(60);
 
@@ -412,18 +419,17 @@ void Engine::Init()
 
     // Load meta progression (banked cells + permanent unlocks) from disk.
     _meta.Load();
+    if (_meta.GetLoadResult() == SaveLoadResult::RestoredBackup)
+        TraceLog(LOG_WARNING, "Profile: restored from backup (%s)", _meta.GetLoadProblem().c_str());
+    else if (_meta.GetLoadResult() == SaveLoadResult::Rejected)
+        TraceLog(LOG_WARNING, "Profile: no usable save, starting fresh (%s)", _meta.GetLoadProblem().c_str());
+    if (_meta.HasClock()) _clockHours = _meta.GetClockHours();   // the time of day carries on
 
     // Virtual 1920x1080 canvas - everything draws here, then it is letterboxed onto the real window.
     _virtualCanvas = LoadRenderTexture(kVirtualWidth, kVirtualHeight);
-
-#ifdef PLATFORM_WEB
-    {
-        int mobile = emscripten_run_script_int(
-            "(/android|iphone|ipad|mobile/i.test(navigator.userAgent)) ? 1 : 0"
-        );
-        _touchModeActive = (mobile > 0);
-    }
-#endif
+    Vfx::Glow().Prepare(kVirtualWidth, kVirtualHeight);   // compile glow shaders now, not mid-fight
+    Vfx::Night().Prepare(kVirtualWidth, kVirtualHeight);  // and the time-of-day look's
+    Vfx::Silhouette().Prepare();                          // recolours one-colour effect art (Hit03)
 
     EnsureAudioInitialized();
 
@@ -434,13 +440,6 @@ void Engine::Init()
 
     _menu.Init();
 
-    _pillarTex      = LoadTexture(AssetPath("TileSet/Pillar.png").c_str());
-    _torchTex       = LoadTexture(AssetPath("TileSet/Torch.png").c_str());
-    _pillarTorchTex = LoadTexture(AssetPath("TileSet/PillarTorch.png").c_str());
-    _treeTex        = LoadTexture(AssetPath("ForestLevel/Tree.png").c_str());
-    _smallTreeTex   = LoadTexture(AssetPath("ForestLevel/SmallTree.png").c_str());
-    _rockTex        = LoadTexture(AssetPath("ForestLevel/Rock.png").c_str());
-    _bigRockTex     = LoadTexture(AssetPath("ForestLevel/BigRock.png").c_str());
     _fireballCastTex = LoadTexture(AssetPath("PowerUps/Fireball_Cast.png").c_str());
     _fireballHitTex  = LoadTexture(AssetPath("PowerUps/Fireball_Hit.png").c_str());
     _genericHitTex   = LoadTexture(AssetPath("PowerUps/Hit03.png").c_str());
@@ -476,6 +475,7 @@ void Engine::Init()
     _magicGemTex            = LoadTexture(AssetPath("TileSet/Key.png").c_str());
     _bossBarrierTex         = LoadTexture(AssetPath("TileSet/Barrier.png").c_str());
     _swordCursorTex         = LoadTexture(AssetPath("UI/CursorSword.png").c_str());
+    LoadHudArt();   // top-left HUD panel and minimap frame (UI/HUD/)
     if (_swordCursorTex.id != 0)
         SetTextureFilter(_swordCursorTex, TEXTURE_FILTER_POINT); // crisp pixels: the sprite is 32x32 pixel art scaled up
     _shop.Init(ShopTextures{
@@ -567,6 +567,7 @@ void Engine::Init()
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
     _lavaBalls.clear();
+    _volleyWindups.clear();
     _enemyProjectiles.clear();
     _poisonClouds.clear();
     _vfx.Clear();
@@ -576,6 +577,10 @@ void Engine::Init()
     _pickupSpawnTimer = kDefaultTimedPickupInterval;
 
     ResetRunState();
+#if MO_DEV_TOOLS
+    if (FlowSelfTestRequested())
+        InitFlowSelfTest();
+#endif
 }
 
 void Engine::EnsureAudioInitialized()
@@ -666,69 +671,15 @@ void Engine::UpdateMusicSystem()
                    && GetActiveEnemyCount() > 0;
     ctx.actBiome = GetBiomeForAct(_currentAct);
     ctx.currentBiome = _currentBiome;
+    ctx.finalDomain = _isMainGameRun && _worldZone >= RunProgression::kFinalZone;
+    ctx.atCrossroads = _atCrossroads;
     _audio.Update(ctx);
-}
-
-// -- Room progression ? replaces the old SpawnWave() system -------------------
-// Called whenever the player is about to enter a specific room type.
-// Handles act advancement, biome transitions, and encounter setup.
-void Engine::StartNextRoom(RoomType type)
-{
-    _currentRoom++;
-    if (_currentRoom > 6)
-    {
-        _currentRoom = 1;
-        _currentAct++;
-    }
-    _wave++;  // _wave = total rooms entered ? feeds GetEnemyPowerLevelForWave()
-    _currentRoomType = type;
-
-    // Non-combat rooms get a rest timer before the choice screen appears.
-    if (type == RoomType::Rest || type == RoomType::Store)
-        _roomClearTimer = 5.0f;
-    else
-        _roomClearTimer = 0.f;
-
-    _eliteRewardGranted      = false;
-    // Clear all elite-room systems before room setup/spawns so the new room can
-    // repopulate them correctly. Doing this after SpawnEnemies() breaks the
-    // main-game elite flow by wiping the miniboss pointer/mechanic state while
-    // leaving the spawned elite invulnerability intact.
-    _eliteMechanic           = -1;
-    _eliteMinibossPtr        = nullptr;
-    _eliteCageRadius         = 0.f;
-    _eliteEnrageWarningTimer = 0.f;
-    _eliteHazardSpawnTimer   = 0.f;
-
-    // Store room ? place Zeph at map centre and stock the shop
-    if (type == RoomType::Store)
-    {
-        float mapW = _map.width  * _mapScale;
-        float mapH = _map.height * _mapScale;
-        _shop.Enter({ mapW * 0.5f, mapH * 0.40f }, _player, _currentAct);
-    }
-
-    std::string actName = GetBiomeName(GetBiomeForAct(_currentAct));
-    _message = "Act " + std::to_string(_currentAct) + " - " + actName;
-
-    _waveStarting   = true;
-    _waveIntroTimer = 0.f;
-
-    // Biome transition when the act changes
-    Biome nextBiome = GetBiomeForAct(_currentAct);
-    if (nextBiome != _currentBiome)
-    {
-        _pendingBiome              = nextBiome;
-        _biomeTransitionActive     = true;
-        _biomeTransitionSwapped    = false;
-        _biomeTransitionTimer      = kBiomeFadeOutDuration + kBiomeFadeInDuration;
-    }
 }
 
 void Engine::DebugStartRun()
 {
     ResetRunState();
-#if MO_DEV_TOOLS
+#if MO_DEV_TOOLS || MO_ITCH_DEMO
     _debug.Activate();
 #endif
     _awaitingStartingAbility = false;
@@ -739,6 +690,7 @@ void Engine::DebugStartRun()
     _levelUpReturnState = GameState::DungeonRun;
     _message = "Debug Dungeon";
 
+    _dungeonGen.SetPlan(DungeonGen::Plan{});   // debug tools use the default size
     _dungeonGen.Generate();
     _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
     _pendingBiome = _currentBiome;
@@ -751,6 +703,183 @@ void Engine::DebugStartRun()
     _fadeInDuration = 1.0f;
 }
 
+// ── Trailer / showcase debug helpers ─────────────────────────────────────────
+// These only ever run from the debug-command dispatch (i.e. _debug.IsActive()),
+// which never happens in the MO_DEV_TOOLS=0 PublicDemo build.
+
+void Engine::DebugApplyClass(PlayerClass cls, bool randomizeAbilities)
+{
+    const int walletGold = _player.GetGold();
+    _player.SetClass(cls);
+    _player.Init();                 // re-reads kClassTable stats + class sprites, clears abilities
+    _player.SetGold(walletGold);
+
+    // Build the class's legal ability pool, split ultimate vs the rest.
+    std::vector<AbilityType> ults;
+    std::vector<AbilityType> rest;
+    for (int i = 0; i < kAllAbilityCount; ++i)
+    {
+        AbilityType a = kAllAbilities[i];
+        if (!_player.ClassAllows(a)) continue;
+        (IsUltimateAbility(a) ? ults : rest).push_back(a);
+    }
+
+    auto pick = [&](std::vector<AbilityType>& pool) -> AbilityType
+    {
+        if (pool.empty()) return AbilityType::None;
+        int idx = randomizeAbilities ? GetRandomValue(0, (int)pool.size() - 1) : 0;
+        AbilityType a = pool[(std::size_t)idx];
+        pool.erase(pool.begin() + idx);
+        return a;
+    };
+
+    // One ultimate + three other abilities = a full 4-slot bar.
+    if (AbilityType ult = pick(ults); ult != AbilityType::None)
+    {
+        _player.RemoveUltimateIfPresent();
+        _player.LearnAbility(ult);
+    }
+    for (int n = 0; n < 3; ++n)
+        if (AbilityType a = pick(rest); a != AbilityType::None)
+            _player.LearnAbility(a);
+
+    _player.Heal(9999);
+    _player.RestoreMana(9999);
+}
+
+void Engine::DebugLoadBiome(Biome biome)
+{
+    _currentBiome = biome;
+    _pendingBiome = biome;
+    _useHandcraftedDungeonRooms = true;   // every biome has a complete authored library
+    _handcraftedDungeonRoomIds.clear();
+    LoadTilesetForBiome(biome);
+
+    bool handcraftedOk = true;
+    _dungeonGen.SetPlan(DungeonGen::Plan{});   // debug tools use the default size
+    if (_useHandcraftedDungeonRooms)
+    {
+        RefreshHandcraftedRooms();
+        handcraftedOk = GenerateHandcraftedDungeon(biome, _handcraftedDungeonRoomIds);
+        if (!handcraftedOk)
+        {
+            _useHandcraftedDungeonRooms = false;
+            _handcraftedDungeonRoomIds.clear();
+            _dungeonGen.Generate();
+        }
+    }
+    else
+    {
+        _dungeonGen.Generate();
+    }
+
+    int startIdx = _dungeonGen.GetStartIndex();
+    EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonEntranceSpawnPos(), true);
+    _fadeInTimer = 0.6f;
+    _fadeInDuration = 0.6f;
+    _message = handcraftedOk ? "" : "Handcrafted rooms unavailable - procedural fallback";
+}
+
+void Engine::DebugCycleVariantTier()
+{
+    _debugForcedVariantTier = (_debugForcedVariantTier >= 3) ? -1 : _debugForcedVariantTier + 1;
+}
+
+// ── In-dungeon action-gated tutorial ────────────────────────────────────────
+// Replaces the old scripted prologue. Armed in StartMainRun; each step clears
+// the moment the player performs that action, then the whole thing retires and
+// marks onboarding complete.
+void Engine::UpdateDungeonTutorial()
+{
+    if (_dungeonTutStep == DungeonTutStep::Done) return;
+    if (_gameState != GameState::DungeonRun || _awaitingStartingAbility) return;
+    if (_dungeonTutFlash > 0.f) _dungeonTutFlash -= GetFrameTime();
+
+    const KeyBindings& b = _player.GetBindings();
+    const bool pad = IsGamepadAvailable(0);
+    bool cleared = false;
+
+    switch (_dungeonTutStep)
+    {
+    case DungeonTutStep::Move:
+        cleared = IsKeyDown(b.moveUp) || IsKeyDown(b.moveDown) ||
+                  IsKeyDown(b.moveLeft) || IsKeyDown(b.moveRight) ||
+                  (pad && (fabsf(GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_X)) > 0.4f ||
+                           fabsf(GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y)) > 0.4f));
+        break;
+    case DungeonTutStep::Attack:
+        cleared = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+                  (b.attack != KEY_NULL && IsKeyPressed(b.attack)) ||
+                  (pad && IsGamepadButtonPressed(0, _gamepadBindingsEdit.attack));
+        break;
+    case DungeonTutStep::Dash:
+        cleared = IsKeyPressed(b.dash) ||
+                  (pad && IsGamepadButtonPressed(0, _gamepadBindingsEdit.dash));
+        break;
+    case DungeonTutStep::Ability:
+        cleared = _player.GetLearnedCount() > 0 &&
+                  (IsKeyPressed(b.ability[0]) ||
+                   (pad && IsGamepadButtonPressed(0, _gamepadBindingsEdit.ability[0])));
+        break;
+    default:
+        break;
+    }
+
+    if (cleared)
+    {
+        _dungeonTutStep = (DungeonTutStep)((int)_dungeonTutStep + 1);
+        _dungeonTutFlash = 0.4f;
+        if (_dungeonTutStep == DungeonTutStep::Done)
+            _meta.SetOnboardingComplete();
+    }
+}
+
+void Engine::DrawDungeonTutorial() const
+{
+    if (_dungeonTutStep == DungeonTutStep::Done) return;
+
+    const KeyBindings& b = _player.GetBindings();
+    const char* action = "";
+    const char* keys   = "";
+    switch (_dungeonTutStep)
+    {
+    case DungeonTutStep::Move:
+        action = "MOVE";
+        keys = TextFormat("%s %s %s %s", GetKeyName(b.moveUp), GetKeyName(b.moveLeft),
+                          GetKeyName(b.moveDown), GetKeyName(b.moveRight));
+        break;
+    case DungeonTutStep::Attack:
+        action = "ATTACK";
+        keys = (b.attack != KEY_NULL) ? GetKeyName(b.attack) : "LEFT MOUSE";
+        break;
+    case DungeonTutStep::Dash:
+        action = "DASH";
+        keys = GetKeyName(b.dash);
+        break;
+    case DungeonTutStep::Ability:
+        action = "ABILITY";
+        keys = GetKeyName(b.ability[0]);
+        break;
+    default:
+        return;
+    }
+
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+    const char* line = TextFormat("%s      press  [ %s ]", action, keys);
+    const int fs = 30;
+    const int tw = MeasureText(line, fs);
+    const float baseY = sh * 0.72f;   // clear of the class resource bar and ability row
+    const float pad = 24.f;
+    Rectangle box{ sw * 0.5f - tw * 0.5f - pad, baseY - fs * 0.5f - 12.f,
+                   (float)tw + pad * 2.f, (float)fs + 24.f };
+    const bool flash = _dungeonTutFlash > 0.f;
+    DrawRectangleRounded(box, 0.32f, 8, Fade(Color{ 18, 14, 24, 255 }, 0.84f));
+    DrawRectangleRoundedLines(box, 0.32f, 8, Fade(Color{ 170, 140, 230, 255 }, flash ? 1.f : 0.7f));
+    DrawText(line, (int)(sw * 0.5f - tw * 0.5f), (int)(baseY - fs * 0.5f), fs,
+             flash ? Color{ 150, 255, 170, 255 } : RAYWHITE);
+}
+
 
 Vector2 Engine::GetDungeonEntranceSpawnPos() const
 {
@@ -760,8 +889,11 @@ Vector2 Engine::GetDungeonEntranceSpawnPos() const
     float cellH = sh / (float)RoomLayout::kRows;
     const int startIdx = _dungeonGen.GetStartIndex();
     const auto& rooms = _dungeonGen.GetRooms();
+    // A south entrance spawns a little further in so the player starts above the
+    // ability bar / resource HUD instead of underneath it.
+    constexpr float kSouthEntranceCells = 4.2f;
     if (startIdx < 0 || startIdx >= (int)rooms.size())
-        return { sw * 0.5f, sh - cellH * 2.2f };
+        return { sw * 0.5f, sh - cellH * kSouthEntranceCells };
 
     const DungeonRoom& entrance = rooms[(std::size_t)startIdx];
     if (entrance.row == 0)
@@ -770,7 +902,7 @@ Vector2 Engine::GetDungeonEntranceSpawnPos() const
         return { cellW * 2.2f, sh * 0.5f };
     if (entrance.col == DungeonGen::kGridSize - 1)
         return { sw - cellW * 2.2f, sh * 0.5f };
-    return { sw * 0.5f, sh - cellH * 2.2f };
+    return { sw * 0.5f, sh - cellH * kSouthEntranceCells };
 }
 
 void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
@@ -778,9 +910,41 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
     if (room.type != RoomType::Store)
         return;
 
+    // Zeph's camp (the entrance of every domain after the Forest). Zeph, Poe's
+    // altar and the wager shrine stand on safe floor of whatever layout this
+    // room uses, so an authored room's props never bury them.
     float sw = (float)kVirtualWidth;
     float sh = (float)kVirtualHeight;
-    _shop.Enter({ sw * 0.5f, sh * 0.42f }, _player, _currentAct);
+    const float cellW = sw / (float)RoomLayout::kCols;
+    const float cellH = sh / (float)RoomLayout::kRows;
+    auto safeAnchor = [&](Vector2 desired) {
+        return _dungeonRoomLayout.handcrafted
+            ? FindNearestSafeRoomPosition(_dungeonRoomLayout, desired, cellW, cellH)
+            : desired;
+    };
+    _campZephPos   = safeAnchor({ sw * 0.50f, sh * 0.42f });
+    _campAltarPos  = safeAnchor({ sw * 0.30f, sh * 0.42f });
+    _campShrinePos = safeAnchor({ sw * 0.70f, sh * 0.42f });
+
+    // Stock, heal and banking happen once per camp. Walking back into the camp
+    // later only finds Zeph where he was (no restock, heal or reroll reset).
+    const bool firstVisit = _dungeonRoomIdx < 0 || !_dungeonRoomStates[_dungeonRoomIdx].visited;
+    if (!firstVisit)
+    {
+        if (_campNeedsRestock)
+        {
+            // Resumed run: the shop's stock isn't part of the save, so Zeph
+            // restocks once. No second heal or Echo banking.
+            _campNeedsRestock = false;
+            _shop.Enter(_campZephPos, _player, GetShopTier());
+            _shopStockZone = _worldZone;
+        }
+        else
+            _shop.Relocate(_campZephPos);
+        return;
+    }
+    _shop.Enter(_campZephPos, _player, GetShopTier());
+    _shopStockZone = _worldZone;
 
     // Zeph stabilizes a bad run, but does not erase the damage taken to get here.
     float maxHp = _player.GetMaxHealthValue();
@@ -801,53 +965,61 @@ void Engine::EnterDungeonShopIfNeeded(const DungeonRoom& room)
         _cellsBankedToastTimer  = 4.f;
     }
 
-    // New biome reached: the previous Cursed Wager expires and the shrine re-arms
-    // so a fresh wager can be placed for the rooms ahead.
+    // New domain reached: the previous Cursed Wager expires and the shrine re-arms
+    // so a fresh wager can be placed for the domain ahead (camps after the Forest).
     _wagerTier = 0;
     _player.SetWagerRewardMult(1.f);
     _curseShrineUsed = false;
+    _wagerAccessGranted = _worldZone >= 1;
 }
 
 void Engine::RefreshHandcraftedRooms()
 {
+    [[maybe_unused]] const double started = GetTime();
     _roomLibrary.Refresh(AssetFolderPath("Rooms"));
+    [[maybe_unused]] const double libraryDone = GetTime();
     _roomAssetCatalog.Refresh(AssetFolderPath("MapTilesets"));
+    [[maybe_unused]] const double catalogDone = GetTime();
     _tileRenderer.LoadRoomAssetCatalog(_roomAssetCatalog);
     _lastHandcraftedRoomId.clear();
+#if MO_DEV_TOOLS
+    TraceLog(LOG_INFO, "JOURNEY detail: room library %.1f ms (%d rooms, %d parsed), asset catalog %.1f ms, renderer catalog %.1f ms",
+             (libraryDone - started) * 1000.0, (int)_roomLibrary.Rooms().size(), _roomLibrary.ParsedOnLastRefresh(),
+             (catalogDone - libraryDone) * 1000.0, (GetTime() - catalogDone) * 1000.0);
+#endif
 }
 
 bool Engine::GenerateHandcraftedDungeon(Biome biome,
                                         std::vector<std::string>& roomIds,
-                                        int maxAttempts)
+                                        int maxAttempts, bool zephCampEntrance)
 {
     roomIds.clear();
+    [[maybe_unused]] const double started = GetTime();
     for (int attempt = 0; attempt < maxAttempts; ++attempt)
     {
         _dungeonGen.Generate();
+        if (zephCampEntrance)
+            _dungeonGen.ForceRoomType(_dungeonGen.GetStartIndex(), RoomType::Store);
+        // Every graph room gets an authored layout of its biome, role and door
+        // shape, avoiding repeats within the dungeon (RoomLibrary::AssignLayouts).
         const auto& rooms = _dungeonGen.GetRooms();
-        std::vector<std::string> candidateIds(rooms.size());
-        bool complete = true;
-        for (int i = 0; i < (int)rooms.size(); ++i)
-        {
-            const DungeonRoom& room = rooms[(std::size_t)i];
-            const unsigned char mask = RoomDoorMask(
-                room.hasNorth, room.hasSouth, room.hasEast, room.hasWest);
-            std::vector<const RoomBlueprint*> candidates =
-                _roomLibrary.PlaytestCandidates(biome, room.type, mask);
-            if (candidates.empty())
-            {
-                complete = false;
-                break;
-            }
-            const int pick = GetRandomValue(0, (int)candidates.size() - 1);
-            candidateIds[(std::size_t)i] = candidates[(std::size_t)pick]->id;
-        }
-        if (complete)
+        std::vector<LayoutSlot> slots;
+        slots.reserve(rooms.size());
+        for (const DungeonRoom& room : rooms)
+            slots.push_back({ room.type, RoomDoorMask(room.hasNorth, room.hasSouth, room.hasEast, room.hasWest) });
+        std::vector<std::string> candidateIds = _roomLibrary.AssignDungeonLayouts(
+            biome, slots, [](int count) { return GetRandomValue(0, count - 1); });
+        if (!candidateIds.empty())
         {
             roomIds = std::move(candidateIds);
+#if MO_DEV_TOOLS
+            TraceLog(LOG_INFO, "JOURNEY detail: dungeon layout %.1f ms, %d attempt(s), %d rooms",
+                     (GetTime() - started) * 1000.0, attempt + 1, (int)roomIds.size());
+#endif
             return true;
         }
     }
+    TraceLog(LOG_WARNING, "DUNGEON: no handcrafted layout after %d attempts; using generated rooms", maxAttempts);
     return false;
 }
 
@@ -917,6 +1089,7 @@ RoomLayout Engine::BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definit
             }
         }
 
+        TraceLog(LOG_WARNING, "ROOM: handcrafted room %d fell back to a generated room", roomIdx);
         std::string mapperStem = GetBiomeName(_currentBiome);
         if (visualVariant >= 0 && visualVariant < (int)_dungeonVisualVariants.size())
             mapperStem = _dungeonVisualVariants[(std::size_t)visualVariant].mapperStem;
@@ -977,6 +1150,10 @@ RoomLayout Engine::BuildDungeonRoomLayout(int roomIdx, const TileDefSet& definit
     return generated;
 }
 
+// TEMP DUNGEON TIMER (remove when the first-dungeon timing task is complete):
+// times domain 1 from its start room to the domain clear and prints the result.
+static double s_tempDomainOneStart = -1.0;
+
 void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector2 playerSpawnPos, bool resetRoomStates)
 {
     const auto& rooms = _dungeonGen.GetRooms();
@@ -985,6 +1162,8 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
 
     const DungeonRoom& room = rooms[roomIdx];
     _dungeonRoomIdx = roomIdx;
+    // TEMP DUNGEON TIMER: restart the clock when domain 1's start room is entered.
+    if (_worldZone == 0 && roomIdx == _dungeonGen.GetStartIndex()) s_tempDomainOneStart = GetTime();
     _dungeonEntryDoorSide = entryDoorSide;
     int visualVariant = GetDungeonVisualVariantForRoom(roomIdx);
     if (visualVariant != _currentDungeonVisualVariant)
@@ -1007,7 +1186,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _magicGemCollected = false;
         _bossBarrierUnlocked = false;
         _bossBarrierMessageTimer = 0.f;
-        if (!_prologueActive && !_editorPlaytestActive)
+        if (!_prologueActive && !_editorPlaytestActive && !_atCrossroads)
             RollDungeonRoomSpecials();   // tag decision rooms for this fresh dungeon
     }
 
@@ -1023,7 +1202,12 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
         _roomObjectiveTimer = objectiveState.holdoutTimeRemaining;
         _roomObjectiveComplete = _roomObjectiveTimer <= 0.f;
     }
-    _currentRoom = (_currentRoomType == RoomType::Boss) ? 6 : std::max(1, _currentRoom + 1);
+    // Count each room once: walking back through rooms already visited must not
+    // raise reward rarity or the encounter tier (both read _currentRoom).
+    const auto previousVisit = _dungeonRoomStates.find(_dungeonRoomIdx);
+    const bool firstVisit = previousVisit == _dungeonRoomStates.end() || !previousVisit->second.visited;
+    if (_currentRoomType == RoomType::Boss) _currentRoom = 6;
+    else if (firstVisit)                    _currentRoom = std::max(1, _currentRoom + 1);
     if (resetRoomStates)
         _currentRoom = 1;
 
@@ -1038,7 +1222,6 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _gameState = GameState::DungeonRun;
     _roomClearPending = false;
     _waveStarting = false;
-    _waveIntroTimer = 0.f;
 
     ApplyDungeonRoomDoorState(_dungeonRoomLayout, _dungeonRoomIdx, _dungeonEntryDoorSide);
     _roomCombatCapacity = RoomCapacityAnalyzer::Analyze(_dungeonRoomLayout, _tileDefs);
@@ -1067,6 +1250,8 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
                                       roomCellW, roomCellH)
         : playerSpawnPos;
     _dungeonFallRecoveryCooldown = 0.f;
+    _dungeonClearEffects.clear();     // the last room's door-open bursts stay behind
+    _lastStandUsedThisRoom = false;   // Last Stand recharges in every room
     _dungeonLastSafePos = _dungeonRoomEntrySpawnPos;   // edge-respawn seed
     _pitDragTimer = 0.f;
     _player.EndPitFall();   // never carry a fall between rooms
@@ -1081,6 +1266,7 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     _roomHealDrops       = 0;
     // Telemetry: stamp the room so the clear block can measure it.
     _roomEnterTime = GetTime();
+    _roomCombatSeconds = 0.f;   // active fight time only (no menus/pauses/reward screens)
     _roomEnterGold = _player.GetGold();
     _player.ResetTelemetryCounters();
     _cameraPos = { (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.5f };
@@ -1100,20 +1286,18 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
     SpawnDungeonRoomEnemies();
     if (!_prologueActive) InitBiomeModifierRoom();
 
-    // First visit: the map remembers this room's type, and special rooms
-    // announce themselves with a temporary intro banner (standard rooms stay
-    // silent — the HUD only speaks up for exceptions).
-    bool firstVisitToRoom = !_dungeonRoomStates[_dungeonRoomIdx].visited;
+    // The map remembers this room's type, and special rooms announce themselves
+    // with the intro banner on every entry (standard rooms stay silent — the HUD
+    // only speaks up for exceptions). The room holds still while it plays.
     _dungeonRoomStates[_dungeonRoomIdx].visited = true;
     _roomIntroTimer = 0.f;
-    if (firstVisitToRoom)
-        QueueRoomIntroBanner();
+    QueueRoomIntroBanner();
 
     if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
         ApplyDungeonBossExitTiles(TileType::DoorLocked);
 
     // -- Cutscene triggers -----------------------------------------------------
-    if (room.type == RoomType::Store)
+    if (room.type == RoomType::Store && resetRoomStates)
     {
         if (!_cutsceneIntroPlayed)
         {
@@ -1138,18 +1322,10 @@ void Engine::EnterDungeonRoom(int roomIdx, DungeonDoorSide entryDoorSide, Vector
             if (seq && cnt > 0)
                 _cutscene.Play(seq, cnt);
         }
-        else
-        {
-            // Returning after death - short respawn scene.
-            _cutscene.Play(kRespawnCutscene, (int)(sizeof(kRespawnCutscene) / sizeof(kRespawnCutscene[0])));
-        }
+        // (Deaths return the player to the village now, so the old "respawn in
+        // Zeph's shop" scene no longer has a moment to play.)
     }
-}
-
-void Engine::DebugSetEliteMechanic(int mechanic)
-{
-    _debug.SetForcedEliteMechanic(mechanic);
-    DebugRestartRoomAs(RoomType::Elite);
+    SaveRunCheckpoint();   // a fresh room is a calm checkpoint
 }
 
 
@@ -1161,8 +1337,6 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     _roomClearPending = false;
     _pendingExp = 0.f;
     _expTallyAccum = 0.f;
-    _expTallyDone = false;
-    _tallyChoiceChaining = false;
     _eliteRewardGranted = false;
     ResetEliteRoomRuntime();
     _dungeonClearEffects.clear();
@@ -1245,114 +1419,6 @@ void Engine::DebugRestartDungeonRoomAs(RoomType type)
     _dungeonView = DungeonView::Play;
     _gameState = GameState::DungeonRun;
 }
-void Engine::DebugRestartRoomAs(RoomType type)
-{
-    if (_gameState == GameState::DungeonRun)
-    {
-        DebugRestartDungeonRoomAs(type);
-        return;
-    }
-    for (auto& enemy : _enemies)
-    {
-        enemy->SetActive(false);
-        enemy->Teleport(Vector2{ -5000.f, -5000.f });
-    }
-
-    _pickups.clear();
-    _spreadProjectiles.clear();
-    _ultimateBlasts.clear();
-    _vfx.Clear();
-    _damageNumbers.Clear();
-    _cyclopsLasers.clear();
-    _lavaBalls.clear();
-    _enemyProjectiles.clear();
-    _poisonClouds.clear();
-    ClearBossSupportAdds();
-    _bossCyclopsSupport.enemy = nullptr;
-    _bossCyclopsSupport.respawnTimer = 0.f;
-    _bossOgreSupport.enemy = nullptr;
-    _bossOgreSupport.respawnTimer = 0.f;
-
-    _roomClearPending = false;
-    _pendingExp = 0.f;
-    _expTallyAccum = 0.f;
-    _expTallyDone = false;
-    _tallyChoiceChaining = false;
-    _eliteRewardGranted = false;
-    ResetEliteRoomRuntime();
-
-    _currentRoomType = type;
-    _currentRoom = (_currentRoom % 5) + 1;
-    if (type == RoomType::Boss)
-        _currentRoom = 6;
-    _wave = std::max(1, _wave + 1);
-
-    Biome nextBiome = GetBiomeForAct(_currentAct);
-    _currentBiome = nextBiome;
-    _pendingBiome = nextBiome;
-    _biomeTransitionActive = false;
-    _biomeTransitionSwapped = false;
-    _biomeTransitionTimer = 0.f;
-    ApplyBiome(nextBiome);
-    PopulatePropsForBiome(nextBiome);
-    {
-        std::vector<Rectangle> propRects;
-        propRects.reserve(_props.size() + 1);
-        for (auto& prop : _props)
-            propRects.push_back(prop.GetCollisionRec());
-        // Block the bottom boundary zone so A* never routes waypoints into it.
-        {
-            const float navMapW = _map.width  * _mapScale;
-            const float navMapH = _map.height * _mapScale;
-            const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 160.f : 220.f;
-            propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
-        }
-        _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
-    }
-
-    _waveStarting = false;
-    _waveIntroTimer = 0.f;
-    _fadeInTimer = 0.6f;
-    _fadeInDuration = 0.6f;
-    _pickupSpawnTimer = kDefaultTimedPickupInterval;
-    _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
-
-    _message = std::string("Debug - ") + GetDebugRoomTypeName(type) + " Area";
-
-    if (type == RoomType::Treasure)
-    {
-        _roomClearPending = true;
-        const float mapW = _map.width * _mapScale;
-        const float mapH = _map.height * _mapScale;
-        const Vector2 centre{ mapW * 0.5f, mapH * 0.5f };
-        auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
-        {
-            auto g = std::make_unique<GoldPickup>();
-            g->Init(Vector2{ centre.x + ox, centre.y + oy }, denom);
-            _pickups.push_back(std::move(g));
-        };
-        spawnGold(GoldDenomination::Ten, 0.f, 0.f);
-        spawnGold(GoldDenomination::Five, -60.f, 24.f);
-        spawnGold(GoldDenomination::Five, 60.f, 24.f);
-    }
-    else if (type == RoomType::Store)
-    {
-        _roomClearPending = true;
-        float mapW = _map.width  * _mapScale;
-        float mapH = _map.height * _mapScale;
-        _shop.Enter({ mapW * 0.5f, mapH * 0.40f }, _player, _currentAct);
-    }
-    else if (type == RoomType::Rest)
-    {
-        _roomClearPending = true;
-    }
-    else
-    {
-        SpawnEnemies();
-    }
-
-    _gameState = GameState::Play;
-}
 
 // (ShowRoomChoiceScreen / GenerateRoomChoices removed ? replaced by map system)
 
@@ -1364,332 +1430,6 @@ Biome Engine::GetBiomeForAct(int act) const
     // Fallback if sequence not generated yet
     bool isDungeon = _startBiomeDungeon ? ((act % 2) == 1) : ((act % 2) == 0);
     return isDungeon ? Biome::Caverns : Biome::Forest;
-}
-
-
-// -- GenerateActMap ------------------------------------------------------------
-// Builds a 6-row branching DAG for the current act.
-// Row 0 = entry (Standard), rows 1-4 = branching, row 5 = Boss.
-//
-// Special room guarantee:
-//   Combat/reward rooms appear early, with recovery available later:
-//     Row 2 (early)  - Elite + Treasure
-//     Row 3 (late)   - Standard + Rest (Zeph is no longer a dungeon room)
-//   Each row has 4 nodes: 2 specials + 2 Standard fillers.
-//   The 2 special positions are chosen independently per row (out of 4 slots)
-//   so the rewarded lanes shift each run and force different routing decisions.
-//
-//   A path visits exactly one node per row ? at most 2 specials per run.
-//   Rows 1 and 4 are all Standard (2?4 nodes) for additional branching variety.
-void Engine::GenerateActMap()
-{
-    _actMap.clear();
-    _currentMapNodeIdx = -1;
-    _mapOpenTimer = 0.f;
-
-    // -- 1. Assign specials to rows by type -------------------------------
-    // Row 2 keeps Elite + Treasure. Row 3 offers Rest beside another
-    // Standard route; Zeph is no longer generated inside dungeons.
-    // Each pair is randomly swapped so which side of the row each appears on
-    // is still unpredictable.
-    RoomType row2Pair[2] = { RoomType::Elite,    RoomType::Treasure };
-    RoomType row3Pair[2] = { RoomType::Standard,  RoomType::Rest     };
-    if (GetRandomValue(0, 1)) std::swap(row2Pair[0], row2Pair[1]);
-    if (GetRandomValue(0, 1)) std::swap(row3Pair[0], row3Pair[1]);
-
-    // -- 2. Pick special positions in each 4-node special row -------------
-    // Each special row has 4 nodes: 2 specials + 2 Standard fillers.
-    // Pick 2 distinct positions (0-3) for the specials; the other 2 are Standard.
-    // Chosen independently per row so the "empty lanes" shift each run.
-    auto pickTwoDistinct = [](int& a, int& b, int max) {
-        a = GetRandomValue(0, max);
-        do { b = GetRandomValue(0, max); } while (b == a);
-    };
-
-    int sp2a, sp2b;   // special positions in row 2
-    int sp3a, sp3b;   // special positions in row 3
-    pickTwoDistinct(sp2a, sp2b, 3);
-    pickTwoDistinct(sp3a, sp3b, 3);
-
-    // Build the 4-element type arrays for rows 2 and 3
-    RoomType row2Types[4], row3Types[4];
-    {
-        int si = 0;
-        for (int i = 0; i < 4; i++)
-            row2Types[i] = (i == sp2a || i == sp2b) ? row2Pair[si++] : RoomType::Standard;
-        si = 0;
-        for (int i = 0; i < 4; i++)
-            row3Types[i] = (i == sp3a || i == sp3b) ? row3Pair[si++] : RoomType::Standard;
-    }
-
-    // -- 3. Decide per-row node counts -------------------------------------
-    // Rows 2 and 3 are fixed at 4 (needed for special placement).
-    // Rows 1 and 4 vary (2-4) for additional graph shape variety.
-    int rowCounts[6];
-    rowCounts[0] = 1;
-    rowCounts[1] = GetRandomValue(2, 4);
-    rowCounts[2] = 4;
-    rowCounts[3] = 4;
-    rowCounts[4] = GetRandomValue(2, 4);
-    rowCounts[5] = 1;
-
-    // -- 4. Create nodes ---------------------------------------------------
-    int rowStart[6];
-    for (int r = 0; r < 6; r++)
-    {
-        rowStart[r] = (int)_actMap.size();
-        for (int i = 0; i < rowCounts[r]; i++)
-        {
-            MapNode n;
-            n.row   = r;
-            // normX: single-node rows centre at 0.5; multi-node rows spread 0.2?0.8
-            n.normX = (rowCounts[r] == 1) ? 0.5f
-                    : 0.2f + (float)i / (rowCounts[r] - 1) * 0.6f;
-
-            if      (r == 0) n.type = RoomType::Standard;
-            else if (r == 5) n.type = RoomType::Boss;
-            else if (r == 2) n.type = row2Types[i];
-            else if (r == 3) n.type = row3Types[i];
-            else             n.type = RoomType::Standard;   // rows 1 and 4
-
-            n.available = (r == 0);
-            n.completed = false;
-            _actMap.push_back(n);
-        }
-    }
-
-    // -- 5. Build connections ----------------------------------------------
-    for (int r = 0; r < 5; r++)
-    {
-        int sR  = rowStart[r],     cR  = rowCounts[r];
-        int sR1 = rowStart[r + 1], cR1 = rowCounts[r + 1];
-
-        // Primary: map each row-r node proportionally to a row-(r+1) node
-        for (int i = 0; i < cR; i++)
-        {
-            float t = (cR > 1) ? (float)i / (cR - 1) : 0.5f;
-            int j = (int)roundf(t * (float)(cR1 - 1));
-            j = std::max(0, std::min(cR1 - 1, j));
-            int src = sR + i, dst = sR1 + j;
-            auto& nxt = _actMap[src].nextNodes;
-            if (std::find(nxt.begin(), nxt.end(), dst) == nxt.end())
-                nxt.push_back(dst);
-        }
-
-        // Guarantee every row-(r+1) node has at least one incoming connection
-        for (int j = 0; j < cR1; j++)
-        {
-            int dst = sR1 + j;
-            bool found = false;
-            for (int i = 0; i < cR && !found; i++)
-            {
-                auto& nxt = _actMap[sR + i].nextNodes;
-                found = std::find(nxt.begin(), nxt.end(), dst) != nxt.end();
-            }
-            if (!found)
-            {
-                float dX = _actMap[dst].normX;
-                int bestSrc = sR;
-                float bestD = 999.f;
-                for (int i = 0; i < cR; i++)
-                {
-                    float d = fabsf(_actMap[sR + i].normX - dX);
-                    if (d < bestD) { bestD = d; bestSrc = sR + i; }
-                }
-                _actMap[bestSrc].nextNodes.push_back(dst);
-            }
-        }
-
-        // Optional extra branches (~30% chance) for wider path variety
-        for (int i = 0; i < cR; i++)
-        {
-            if (cR1 > 1 && GetRandomValue(0, 9) < 3)
-            {
-                auto& nxt = _actMap[sR + i].nextNodes;
-                if (nxt.empty()) continue;
-                int baseJ = nxt[0] - sR1;
-                int altJ  = (baseJ > 0) ? baseJ - 1 : baseJ + 1;
-                altJ = std::max(0, std::min(cR1 - 1, altJ));
-                int alt = sR1 + altJ;
-                if (std::find(nxt.begin(), nxt.end(), alt) == nxt.end())
-                    nxt.push_back(alt);
-            }
-        }
-    }
-
-    // -- 6. Compute draw positions -----------------------------------------
-    // Boss (row 5) sits at the top; entry (row 0) at the bottom.
-    // Graph sits between the left stats panel and the right journey panel.
-    const float mapTop  = 130.f;
-    const float mapBot  = (float)_windowHeight - 110.f;
-    const float rowH    = (mapBot - mapTop) / 5.f;
-    const float mapLeft = (float)_windowWidth  * 0.30f;
-    const float mapRight= (float)_windowWidth  * 0.76f;  // right side reserved for journey panel
-
-    for (auto& node : _actMap)
-    {
-        float y = mapBot - node.row * rowH;
-        float x = mapLeft + node.normX * (mapRight - mapLeft);
-        node.drawPos = { x, y };
-    }
-}
-
-// -- EnterMapRoom --------------------------------------------------------------
-// Called when the player clicks an available map node.
-// Sets up the room state and transitions to Play.
-void Engine::EnterMapRoom(int idx)
-{
-    if (idx < 0 || idx >= (int)_actMap.size()) return;
-
-    _roomClearPending = false;
-
-    // Lock all nodes at or behind the entered row so the player can never go backward.
-    int enteredRow = _actMap[idx].row;
-    for (auto& n : _actMap)
-        if (n.row <= enteredRow)
-            n.available = false;
-
-    _currentMapNodeIdx = idx;
-
-    // Row 0 = Room 1, Row 5 = Room 6 (Boss)
-    _currentRoom     = _actMap[idx].row + 1;
-    _wave++;
-    _currentRoomType = _actMap[idx].type;
-
-    if (_currentRoomType == RoomType::Rest || _currentRoomType == RoomType::Store)
-        _roomClearTimer = 5.0f;
-    else
-        _roomClearTimer = 0.f;
-
-    // Store room ? place Zeph at map centre and stock the shop
-    if (_currentRoomType == RoomType::Store)
-    {
-        float mapW = _map.width  * _mapScale;
-        float mapH = _map.height * _mapScale;
-        _shop.Enter({ mapW * 0.5f, mapH * 0.40f }, _player, _currentAct);
-    }
-
-    _message = "Act " + std::to_string(_currentAct) + " - " + GetBiomeName(GetBiomeForAct(_currentAct));
-
-    _waveStarting   = true;
-    _waveIntroTimer = 0.f;
-
-    Biome nextBiome = GetBiomeForAct(_currentAct);
-    if (nextBiome != _currentBiome)
-    {
-        _pendingBiome           = nextBiome;
-        _biomeTransitionActive  = true;
-        _biomeTransitionSwapped = false;
-        _biomeTransitionTimer   = kBiomeFadeOutDuration + kBiomeFadeInDuration;
-    }
-    else
-    {
-        // Same biome ? re-randomise prop layout so every room feels distinct.
-        PopulatePropsForBiome(_currentBiome);
-        {
-            std::vector<Rectangle> propRects;
-            propRects.reserve(_props.size() + 1);
-            for (auto& prop : _props)
-                propRects.push_back(prop.GetCollisionRec());
-            // Block the bottom boundary zone so A* never routes waypoints into it.
-            {
-                const float navMapW = _map.width  * _mapScale;
-                const float navMapH = _map.height * _mapScale;
-                const float navBot  = (_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle) ? 160.f : 220.f;
-                propRects.push_back({ 0.f, navMapH - navBot, navMapW, navBot });
-            }
-            _nav.Rebuild(_map.width * _mapScale, _map.height * _mapScale, propRects);
-        }
-
-        // Most room-to-room transitions should feel immediate. For same-biome
-        // rooms we start the encounter right away instead of pausing behind
-        // the intro banner.
-        _waveStarting = false;
-        if (_currentRoomType == RoomType::Treasure)
-        {
-            _roomClearPending = true;
-
-            // Spawn a pile of gold coins at the centre of the map.
-            const float mapW = _map.width  * _mapScale;
-            const float mapH = _map.height * _mapScale;
-            const Vector2 centre{ mapW * 0.5f, mapH * 0.5f };
-            const float spread = 60.f;
-
-            auto spawnGold = [&](GoldDenomination denom, float ox, float oy)
-            {
-                auto g = std::make_unique<GoldPickup>();
-                g->Init(Vector2{ centre.x + ox, centre.y + oy }, denom);
-                _pickups.push_back(std::move(g));
-            };
-
-            // 1 ten-gold in the middle, 2 five-golds, and 3 singles scattered around
-            spawnGold(GoldDenomination::Ten,    0.f,     0.f);
-            spawnGold(GoldDenomination::Five,  -spread,  spread * 0.5f);
-            spawnGold(GoldDenomination::Five,   spread,  spread * 0.5f);
-            spawnGold(GoldDenomination::Single, 0.f,    -spread);
-            spawnGold(GoldDenomination::Single,-spread * 0.6f, -spread * 0.6f);
-            spawnGold(GoldDenomination::Single, spread * 0.6f, -spread * 0.6f);
-        }
-        else
-        {
-            SpawnEnemies();
-            _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
-        }
-    }
-
-    // Fade in from black each time a room is entered.
-    _fadeInTimer    = 1.2f;
-    _fadeInDuration = 1.2f;
-    _gameState = GameState::Play;
-}
-
-void Engine::CompleteCurrentMapNode()
-{
-    if (_currentMapNodeIdx < 0 || _currentMapNodeIdx >= (int)_actMap.size())
-        return;
-
-    _actMap[_currentMapNodeIdx].completed = true;
-    for (int next : _actMap[_currentMapNodeIdx].nextNodes)
-        if (next >= 0 && next < (int)_actMap.size())
-            _actMap[next].available = true;
-}
-
-void Engine::HandleRoomContinueAction()
-{
-    _roomClearPending = false;
-
-    if (_currentRoomType == RoomType::Treasure)
-    {
-        CompleteCurrentMapNode();
-        GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
-        _levelUpReturnState = GameState::Map;
-        _levelUpOpenTimer   = 0.25f;
-        _gameState          = GameState::LevelUpChoice;
-        return;
-    }
-
-    if (_currentRoomType == RoomType::Boss)
-    {
-        CompleteCurrentMapNode();
-
-        if (_bossesDefeated >= 2)
-        {
-            _gameState = GameState::DemoEnd;
-            return;
-        }
-
-        _currentAct++;
-        GenerateActMap();
-        _mapKeySelectedIdx = -1;
-        _mapOpenTimer = 0.4f;
-        _gameState = GameState::Map;
-        return;
-    }
-
-    CompleteCurrentMapNode();
-    _mapKeySelectedIdx = -1;
-    _mapOpenTimer = 0.4f;
-    _gameState = GameState::Map;
 }
 
 void Engine::SpawnEnemies()
@@ -1726,22 +1466,54 @@ void Engine::SpawnEnemies()
 
 void Engine::Run()
 {
-    while (!WindowShouldClose() && !_shouldClose)
-        RunFrame();
+    for (;;)
+    {
+        while (!WindowShouldClose() && !_shouldClose)
+            RunFrame();
+        // Closing mid-run suspends it (no-op otherwise). Pause > Quit only
+        // closes after a successful save, so only a window close can still
+        // lose the run: if that write fails, the first one is refused with a
+        // notice; a second close quits anyway. Programmatic exits never wait.
+        const bool windowClosed = !_shouldClose;
+        if (SaveRunCheckpoint() || !windowClosed || _closeRefusedForFailedSave) break;
+        _closeRefusedForFailedSave = true;
+        NotifyRunSaveFailed();
+    }
 }
 
 void Engine::RunFrame()
 {
     float dt = GetFrameTime();
 
+#if MO_DEV_TOOLS
+    if (_flowTest.phase != 0)
+        UpdateFlowSelfTest(dt);
+#endif
+    [[maybe_unused]] const double updateStarted = GetTime();
+    if (_gameState != GameState::Menu) _menuRunCaptionFresh = false;   // re-read on the next menu visit
+    if (_runSaveFailedTimer > 0.f) _runSaveFailedTimer = std::max(0.f, _runSaveFailedTimer - dt);
     Update(dt);
     UpdateMusicSystem();
+    [[maybe_unused]] const double updateFinished = GetTime();
+    [[maybe_unused]] double drawSeconds = 0.0;
 
     // Draw everything to the fixed 1920x1080 virtual canvas.
-    BeginTextureMode(_virtualCanvas);
-    ClearBackground(WHITE);
-    Draw();
-    EndTextureMode();
+    // Keep the last complete scene during departure/preparation: state is mid-
+    // change there, and a few presentation timers (room intro banner, pickup
+    // bob, shield flash) still advance per draw.
+    if (!_journey.Active() || _journey.Revealing())
+    {
+        // HUD counters, toasts and editor input advance once per presented frame
+        // (including the journey reveal, which Update skips); Draw only reads them.
+        if (IsHudDrawnThisFrame()) UpdateHudPresentation(dt);
+        const double drawStarted = GetTime();
+        BeginTextureMode(_virtualCanvas);
+        ClearBackground(WHITE);
+        Draw();
+        Vfx::Glow().Composite(_virtualCanvas);   // light a screen recorded but did not add itself
+        EndTextureMode();
+        drawSeconds = GetTime() - drawStarted;
+    }
 
     // Scale the virtual canvas onto the real window with letterboxing.
     // Black bars appear on wider/taller windows; nothing in the game changes.
@@ -1755,9 +1527,74 @@ void Engine::RunFrame()
             { lb.offsetX, lb.offsetY, (float)kVirtualWidth * lb.scale, (float)kVirtualHeight * lb.scale },
             { 0.f, 0.f }, 0.f, WHITE);
     }
+    DrawJourneyOverlay();
     UpdateSwordCursor(); // custom sword cursor over the letterboxed game (drawn in real window space)
     EndDrawing();
+    _journey.Presented();
+#if MO_DEV_TOOLS
+    constexpr float kMsPerSecond = 1000.f;
+    RecordFrameTiming((float)(updateFinished - updateStarted) * kMsPerSecond,
+                      (float)drawSeconds * kMsPerSecond, dt * kMsPerSecond);
+#endif
 }
+
+#if MO_DEV_TOOLS
+namespace
+{
+    // Lowest active-enemy count of each FRAMETIME bucket, and its label.
+    constexpr int kFrameTimingBucketMinEnemies[] = { 0, 1, 10, 25, 50 };
+    constexpr const char* kFrameTimingBucketLabels[] = { "0", "1-9", "10-24", "25-49", "50+" };
+    constexpr std::size_t kFrameTimingMaxSamples = 216000;   // one hour at 60 FPS per bucket
+}
+
+void Engine::RecordFrameTiming(float updateMs, float drawMs, float intervalMs)
+{
+    static_assert(sizeof(kFrameTimingBucketMinEnemies) / sizeof(kFrameTimingBucketMinEnemies[0]) == kFrameTimingBucketCount,
+                  "one minimum per bucket");
+    // Live combat only: not journey/loading frames or room-scroll transitions.
+    if (_gameState != GameState::DungeonRun || _journey.Active() || _dungeonScrolling) return;
+    const int enemies = GetActiveEnemyCount();
+    int bucket = 0;
+    for (int i = 0; i < kFrameTimingBucketCount; ++i)
+        if (enemies >= kFrameTimingBucketMinEnemies[i]) bucket = i;
+    if (_frameTiming[bucket].size() < kFrameTimingMaxSamples)
+        _frameTiming[bucket].push_back({ updateMs, drawMs, intervalMs });
+}
+
+void Engine::LogFrameTimingSummary() const
+{
+    auto percentile = [](std::vector<float> values, float fraction)
+    {
+        const std::size_t index = std::min(values.size() - 1, (std::size_t)(fraction * (float)values.size()));
+        std::nth_element(values.begin(), values.begin() + (std::ptrdiff_t)index, values.end());
+        return values[index];
+    };
+    for (int b = 0; b < kFrameTimingBucketCount; ++b)
+    {
+        const std::vector<FrameTimingSample>& samples = _frameTiming[b];
+        if (samples.empty()) continue;
+        std::vector<float> update, draw, cpu, interval;
+        for (const FrameTimingSample& s : samples)
+        {
+            update.push_back(s.updateMs);
+            draw.push_back(s.drawMs);
+            cpu.push_back(s.updateMs + s.drawMs);
+            interval.push_back(s.intervalMs);
+        }
+        auto stats = [&](const std::vector<float>& v)
+        {
+            return TextFormat("p50 %.2f p95 %.2f p99 %.2f max %.2f",
+                              percentile(v, 0.50f), percentile(v, 0.95f), percentile(v, 0.99f),
+                              *std::max_element(v.begin(), v.end()));
+        };
+        TraceLog(LOG_INFO, "FRAMETIME enemies %s: %d frames", kFrameTimingBucketLabels[b], (int)samples.size());
+        TraceLog(LOG_INFO, "FRAMETIME   update   ms %s", stats(update));
+        TraceLog(LOG_INFO, "FRAMETIME   draw     ms %s", stats(draw));
+        TraceLog(LOG_INFO, "FRAMETIME   cpu      ms %s", stats(cpu));
+        TraceLog(LOG_INFO, "FRAMETIME   interval ms %s", stats(interval));
+    }
+}
+#endif
 
 void Engine::UpdateSwordCursor()
 {
@@ -1767,7 +1604,7 @@ void Engine::UpdateSwordCursor()
         _gameState == GameState::TileMapper ||
         _gameState == GameState::NineSliceEditor ||
         _gameState == GameState::TouchButtonMapping ||
-        _hudEditorActive || _mapEditorActive ||
+        _hudEditorActive ||
         _isHitboxEditorActive || _isDlgEditorActive;
 
     // No cursor texture, an editor, or the mouse left the window -> normal cursor.
@@ -1819,6 +1656,11 @@ void Engine::UpdateInputPromptMode()
     }
 
     Vector2 mouseDelta = GetMouseDelta();
+    // Mouse movement or a click makes the mouse the aim source.
+    static constexpr float kMouseAimMoveSqr = 4.f;
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) ||
+        Vector2LengthSqr(mouseDelta) > kMouseAimMoveSqr)
+        _aimSource = AimSource::Mouse;
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) ||
         IsMouseButtonPressed(MOUSE_MIDDLE_BUTTON) || fabsf(GetMouseWheelMove()) > 0.01f ||
         (mouseDelta.x * mouseDelta.x + mouseDelta.y * mouseDelta.y > 4.f))
@@ -1841,11 +1683,34 @@ void Engine::UpdateInputPromptMode()
             _inputPromptMode = InputPromptMode::Gamepad;
     }
 
+    // The right stick makes the stick the aim source and remembers its last direction.
+    if (_gamepad.isActive && Vector2LengthSqr(_gamepad.aimDir) > 0.f)
+    {
+        _aimSource = AimSource::Stick;
+        _lastStickAim = Vector2Normalize(_gamepad.aimDir);
+    }
+
     if (GetTouchPointCount() > 0)
         _inputPromptMode = InputPromptMode::Touch;
 }
 void Engine::Update(float dt)
 {
+    if (_journey.Active())
+    {
+        _journey.Update(dt);
+        // Return even on the handoff frame: a confirm/click from travel never
+        // becomes a destination action, and no enemy moves behind the reveal.
+        return;
+    }
+    if (_dungeonFadeState == DungeonFadeState::FadingOut && _dungeonFadePendingAction)
+    {
+        auto action = std::move(_dungeonFadePendingAction);
+        _dungeonFadePendingAction = nullptr;
+        _dungeonFadeState = DungeonFadeState::None;
+        _dungeonFadeAlpha = 0.f;
+        QueueJourney(_currentRoomType == RoomType::Boss ? "The journey continues" : "Into the depths", {std::move(action)});
+        return;
+    }
     // A real run always launches from the menu, so clear the playtest flag there —
     // guarantees the Back-to-Editor overlay can never leak into a normal game.
     if (_gameState == GameState::Menu)
@@ -1877,10 +1742,16 @@ void Engine::Update(float dt)
             SetPlaytestEnemies(!_editorPlaytestEnemiesOn);
     }
 
+    if (_isMainGameRun && _gameState == GameState::DungeonRun) _runTimer += dt;
+    UpdateDayNightClock(dt);
+    if (_featToastTimer > 0.f) _featToastTimer -= dt;
+    if (_gameState == GameState::DungeonRun && _player.GetGold() >= kHoarderGold) EarnFeat(Feat::Hoarder);
+
     // Juice timers tick in real time (slow-mo only scales the gameplay sim).
     if (_critFocusTimer   > 0.f) _critFocusTimer   -= dt;
     if (_screenFlashTimer > 0.f) _screenFlashTimer -= dt;
     if (_slowMoTimer      > 0.f) _slowMoTimer      -= dt;
+    if (_secondWindToastTimer > 0.f) _secondWindToastTimer -= dt;
     // Gold flash + a satisfying micro-pause on level-up (applied silently in AddExp).
     int lvl = _player.GetLevel();
     if (lvl > _lastPlayerLevel)
@@ -1898,14 +1769,16 @@ void Engine::Update(float dt)
     if (_debug.IsActive() && IsKeyPressed(KEY_J)) _juicePanelOpen = !_juicePanelOpen;
     if (_juicePanelOpen) UpdateJuicePanel();
 
-    // Debug [F6]: turn the current dungeon room into a Risk Shrine on the spot
-    // (clears enemies, spawns the shrine) so the room-events flow is testable.
+    // Debug [F6]: turn the current dungeon room into the next decision-room event
+    // (Risk Shrine, Cursed Cache, ... Rest Site; each press moves on) so every
+    // room event is testable on the spot. Clears enemies, spawns the shrine.
     if (_debug.IsActive() && _gameState == GameState::DungeonRun && IsKeyPressed(KEY_F6))
     {
+        static int s_debugEvent = 0;
+        s_debugEvent = s_debugEvent % ((int)RoomSpecialType::Count - 1) + 1;
         DungeonRoomState& st = _dungeonRoomStates[_dungeonRoomIdx];
-        st.special = RoomSpecialType::RiskShrine;
-        st.specialOptions[0] = 0; st.specialOptions[1] = 1; st.specialOptions[2] = 2;
-        st.specialClaimed = false; st.specialChoice = -1;
+        TagRoomSpecial(st, (RoomSpecialType)s_debugEvent);
+        _message = std::string("Debug: ") + GetRoomEventPresentation(st.special).title;
         st.cleared = true;
         ClearDungeonEnemies();
         _dungeonEnemiesSpawned = false;
@@ -1925,31 +1798,67 @@ void Engine::Update(float dt)
         _vfx.SpawnFloatingLabel({ p.x, p.y - 120.f }, "HAZARD PREVIEW [F7]", Color{ 255, 180, 70, 255 }, 2.0f);
     }
     float hpNow = _player.GetHealthValue();
-    if (hpNow < _lastPlayerHp - 0.01f) _playerHurtTimer = 0.4f;   // hurt SFX already handled by the damage source
+    if (hpNow < _lastPlayerHp - 0.01f)
+    {
+        constexpr std::uint32_t kPlayerHurtNumberId = 9001u;   // attack id of the hero's red numbers
+        DamageNumberEvent hurt{};
+        hurt.attackId    = kPlayerHurtNumberId;
+        hurt.worldPos    = _player.GetWorldPos();
+        hurt.finalDamage = CalculateActualDamage(_lastPlayerHp, hpNow);
+        hurt.outcome     = DamageNumberOutcome::Incoming;
+        if (hurt.finalDamage > 0) _damageNumbers.Submit(hurt);
+        _playerHurtTimer = 0.4f;   // hurt SFX already handled by the damage source
+        _player.NotifyHurt();      // Retaliation
+        if (hpNow > 0.f && _player.HasRelic(RelicType::SpikedPauldrons)) ApplySpikedPauldrons();
+    }
     _lastPlayerHp = hpNow;
 
     UpdateInputPromptMode();
     _shop.SetPromptMode(GetPromptModeForUi());
     _worldMap.SetPromptMode(GetPromptModeForUi());
 
-#if MO_DEV_TOOLS
-    // Secret unlock: F12 or \ to enable debug mode access.
+#if MO_DEV_TOOLS || MO_ITCH_DEMO
+    // Secret unlock: F12 or \ to enable debug mode access. Also honoured in the
+    // itch.io demo build (MO_DEV_TOOLS=0) as a hidden backdoor so the shipped
+    // demo can still be debugged in place.
     if (IsKeyPressed(KEY_F12) || IsKeyPressed(KEY_BACKSLASH))
         _demoCompleted = true;
+    // Once debug is running, \ also toggles the on-screen debug chrome so trailer
+    // captures stay clean (the panel, tab, room label, telemetry all hide).
+    if (IsKeyPressed(KEY_BACKSLASH) && _debug.IsActive())
+        _debugChromeHidden = !_debugChromeHidden;
 #endif
+
+    // Retired legacy states (act map / wave mode / old game-over / boss choice)
+    // have no update loop any more. If a stale path ever lands in one, recover
+    // into the real flow instead of freezing or reviving the old systems.
+    if (IsRetiredGameState(_gameState))
+    {
+        TraceLog(LOG_WARNING, "Recovered from retired game state %d", (int)_gameState);
+        RecoverFromRetiredState();
+        return;
+    }
 
     switch (_gameState)
     {
     case GameState::Menu:
     {
-        if (IsKeyPressed(KEY_F1)) _menu.ToggleBorderEditor();
-#if MO_DEV_TOOLS
+        if (MO_DEV_TOOLS && IsKeyPressed(KEY_F1)) _menu.ToggleBorderEditor();
+#if MO_DEV_TOOLS || MO_ITCH_DEMO
         _menu.SetDebugUnlocked(_demoCompleted);
 #endif
+        if (!_menuRunCaptionFresh)   // read the run file once per visit to the menu
+        {
+            _menuRunCaption = DescribeSuspendedRun();
+            _menuRunCaptionFresh = true;
+        }
+        _menu.SetRunCaption(_menuRunCaption);
+        // A suspended first run counts as a profile: Continue must be offered.
+        _menu.SetHasProfile(_meta.HasAnyProgress() || !_menuRunCaption.empty());
         _menu.Update();
 
         // Ascension selector — clickable arrows to pick the run's difficulty.
-        if (_meta.GetMaxAscensionUnlocked() > 0)
+        if (_meta.GetMaxAscensionUnlocked() > 0 && !_menu.IsShowingCredits())
         {
             Vector2 mouse = GetVirtualMousePos();
             float sw = (float)kVirtualWidth;
@@ -1964,29 +1873,52 @@ void Engine::Update(float dt)
             }
             if (IsKeyPressed(KEY_LEFT_BRACKET))  _meta.SetSelectedAscension(_meta.GetSelectedAscension() - 1);
             if (IsKeyPressed(KEY_RIGHT_BRACKET)) _meta.SetSelectedAscension(_meta.GetSelectedAscension() + 1);
+            // Controller: the shoulder buttons (the d-pad already moves through the menu).
+            if (IsGamepadAvailable(GamepadInput::kGamepad))
+            {
+                if (IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_LEFT_TRIGGER_1))
+                    _meta.SetSelectedAscension(_meta.GetSelectedAscension() - 1);
+                if (IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_RIGHT_TRIGGER_1))
+                    _meta.SetSelectedAscension(_meta.GetSelectedAscension() + 1);
+            }
         }
 
         if (_menu.StartPressed())
         {
-            // New Game is the repeatable onboarding path while the tutorial is
-            // being tuned. Saved onboarding progress is deliberately untouched.
+            // New Game: a fresh profile. With existing progress the menu has
+            // already asked "Erase and start?" before reporting the press.
+            if (HasResumableRun())
+                EndRunCheckpoint();
+            if (_meta.HasAnyProgress())
+            {
+                _meta.ResetProfile();
+                _villagePlacedObjects.clear();
+                _villageLayoutLoaded = false;
+                _villageUseAuthoredLayout = true;   // never re-import an old layout file
+                _player.SetGold(0);
+                _nextRunPrepared = false;
+            }
             _prologueEntryMode = PrologueEntryMode::NewGame;
             _classSelectCursor = (int)_player.GetClass();
             ReloadAppearancePortrait();
             _classSelectReturnState = GameState::Menu;
             _gameState = GameState::ClassSelect;
         }
-        if (_menu.ContinuePressed())
+        if (_menu.ContinuePressed() && HasResumableRun() && ResumeSavedRun())
         {
-            // Continue is the testing shortcut into the established village
-            // flow. Hero selection still makes class and appearance explicit.
+            // A suspended run waits: Continue drops straight back into it.
+        }
+        else if (_menu.ContinuePressed())
+        {
+            // Continue: back to your village with your profile, choosing the
+            // class and look for the next run.
             _prologueEntryMode = PrologueEntryMode::Continue;
             _classSelectCursor = (int)_player.GetClass();
             ReloadAppearancePortrait();
             _classSelectReturnState = GameState::Menu;
             _gameState = GameState::ClassSelect;
         }
-#if MO_DEV_TOOLS
+#if MO_DEV_TOOLS || MO_ITCH_DEMO
         if (_menu.DebugPressed() && _demoCompleted)
         {
             DebugStartRun();
@@ -1994,7 +1926,7 @@ void Engine::Update(float dt)
 #endif
         if (_menu.QuitPressed())
             _shouldClose = true;
-#if MO_DEV_TOOLS
+#if MO_DEV_TOOLS || MO_ITCH_DEMO
         if (_menu.DungeonRunPressed())
         {
             _isMainGameRun = false;
@@ -2005,7 +1937,8 @@ void Engine::Update(float dt)
             // Pick a random available biome and load its tileset.
             _currentBiome = kTilesetBiomes[GetRandomValue(0, kTilesetBiomeCount - 1)];
             _pendingBiome = _currentBiome;
-            _useHandcraftedDungeonRooms = _currentBiome == Biome::Forest;
+            _dungeonGen.SetPlan(DungeonGen::Plan{});   // dev Dungeon Run: default size
+            _useHandcraftedDungeonRooms = true;
             _handcraftedDungeonRoomIds.clear();
             if (_useHandcraftedDungeonRooms)
             {
@@ -2035,14 +1968,14 @@ void Engine::Update(float dt)
             _charAnimator.Init();
             _gameState = GameState::CharacterAnimator;
         }
-        if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_K))
+        if (!_menu.IsShowingCredits() && (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_K)))
         {
             // Both shortcuts now enter the same authoritative animator. Its
             // start screen contains live character tuning and the FX library.
             _charAnimator.Init();
             _gameState = GameState::CharacterAnimator;
         }
-        if (IsKeyPressed(KEY_V))   // dev: open the Village Asset Adjuster
+        if (!_menu.IsShowingCredits() && IsKeyPressed(KEY_V))   // dev: open the Village Asset Adjuster
         {
             _mapEditor.Init();
             _gameState = GameState::MapEditor;
@@ -2070,6 +2003,10 @@ void Engine::Update(float dt)
 
     case GameState::MetaShop:
         UpdateMetaShop(dt);
+        break;
+
+    case GameState::Armory:
+        UpdateArmory(dt);
         break;
 
     case GameState::CurseShrine:
@@ -2362,31 +2299,47 @@ void Engine::Update(float dt)
                 _htpGpCooldown = 0.22f;
             }
         }
+        if (_gameState == GameState::HowToPlay) UpdateHowToPlayMouse(dt);
         break;
     }
 
     case GameState::Keybindings:
+        _stateBeforeSettings = GameState::Pause;
+        _settingsTab         = 2;
+        _settingsDragSlider  = -1;
+        _settingsRebindSlot  = -1;
+        _keybindingsEdit     = _player.GetBindings();
+        _gameState           = GameState::Settings;
+        break;
+
     case GameState::TouchButtonMapping:
-        // Navigation handled in the Draw case (Back/Save/Default buttons)
+        ApplyTouchButtonMappingAction(UpdateTouchButtonMapping());
         break;
 
     case GameState::Pause:
     {
-        if (IsKeyPressed(KEY_F1))     _pauseUI.ToggleBorderEditor();
-        if (IsKeyPressed(KEY_ESCAPE)) _gameState = _stateBeforePause;
+        if (MO_DEV_TOOLS && IsKeyPressed(KEY_F1)) _pauseUI.ToggleBorderEditor();
+        if (IsKeyPressed(KEY_ESCAPE)) { _gameState = _stateBeforePause; break; }
 
+        // Menu input and its actions live here; the Draw case only renders.
+        ApplyPauseAction(_pauseUI.UpdatePause());
         break;
     }
-
-    case GameState::GameOver:
-        break;
 
     case GameState::DeathRevive:
         UpdateDeathRevive();
         break;
 
-    case GameState::BossChoice:
-        UpdateBossChoice();
+    case GameState::RunSummary:
+        UpdateRunSummary(dt);
+        break;
+
+    case GameState::Grimoire:
+        UpdateGrimoire(dt);
+        break;
+
+    case GameState::CharacterSheet:
+        UpdateCharacterSheet(dt);
         break;
 
     case GameState::DemoEnd:
@@ -2398,6 +2351,13 @@ void Engine::Update(float dt)
             _ascensionRecorded = true;
             _meta.RecordAscensionCleared(_ascensionTier);
             _meta.RecordGameCompleted();
+        }
+        // Never let the input that finished the fight skip the victory screen.
+        if (_victoryInputLock > 0.f)
+        {
+            _victoryInputLock -= dt;
+            while (GetKeyPressed() != 0) {}   // drain queued presses
+            break;
         }
 
         bool anyKey   = (GetKeyPressed() != 0);
@@ -2417,11 +2377,7 @@ void Engine::Update(float dt)
         }
 
         if (anyKey || anyMouse || touchTap || anyGamepad)
-        {
-            ResetRunState();
-            _menu.Init();
-            _gameState = GameState::Menu;
-        }
+            LeaveVictoryScreen();
         break;
     }
 
@@ -2450,6 +2406,7 @@ void Engine::Update(float dt)
             if (navUp   && showUlt && _levelUpGpRow == 1) { _levelUpGpRow = 0; _levelUpGpCooldown = 0.18f; }
             if (navDown && showReg && _levelUpGpRow == 0) { _levelUpGpRow = 1; _levelUpGpCooldown = 0.18f; }
         }
+        UpdateLevelUpChoiceInput();
         break;
     }
 
@@ -2471,485 +2428,35 @@ void Engine::Update(float dt)
             if (navLeft  && _abilityChoiceGpCursor > 0)         { --_abilityChoiceGpCursor; _abilityChoiceGpCooldown = 0.18f; }
             if (navRight && _abilityChoiceGpCursor < count - 1) { ++_abilityChoiceGpCursor; _abilityChoiceGpCooldown = 0.18f; }
         }
+        UpdateAbilityChoiceInput();
         break;
     }
 
     case GameState::Shop:
     {
         _gamepad.Update(_gamepadBindingsEdit);
+        {
+            // One shop contract per fight, judged on run state (not the shop's
+            // per-visit memory), so reopening/rerolling can't stack another.
+            bool contractPending = false;
+            for (const RunModifier& m : _runModifiers)
+                if (m.shopContract != ShopContractType::Count) { contractPending = true; break; }
+            _shop.SetRunContractPending(contractPending);
+        }
         bool gpLeave = _shop.UpdateGamepadNav(GetFrameTime(), _player);
         if (gpLeave || _shop.Update(_player, _debug.IsActive()))
         {
-            ShopContractType accepted = _shop.ConsumeAcceptedContract();
-            if (accepted != ShopContractType::Count)
-            {
-                RunModifier contract;
-                contract.shopContract = accepted;
-                contract.active = false;
-                contract.roomsRemaining = 1;
-                contract.tint = Color{ 215, 155, 70, 255 };
-                switch (accepted)
-                {
-                case ShopContractType::Untouched:       contract.label = "UNTOUCHED"; break;
-                case ShopContractType::ArcaneRestraint: contract.label = "ARCANE RESTRAINT"; break;
-                case ShopContractType::AgainstTheClock: contract.label = "AGAINST THE CLOCK"; break;
-                default: break;
-                }
-                _runModifiers.push_back(contract);
-                _contractToastText = contract.label + " ARMED FOR NEXT FIGHT";
-                _contractToastTimer = 3.f;
-            }
+            CommitShopContract();
 
-            if (_levelUpReturnState == GameState::DungeonRun)
-                _gameState = GameState::DungeonRun;
-            else if (_levelUpReturnState == GameState::Village)   // Zeph in the village
-                _gameState = _levelUpReturnState;
-            else
-                _gameState = GameState::Play;
-            if (_currentRoomType == RoomType::Store && _gameState == GameState::Play)
-                _roomClearPending = true;
+            // The shop has its own return state (set where it opens), so a level-up
+            // or other screen can never redirect it into a retired state.
+            _gameState = (_shopReturnState == GameState::Village) ? GameState::Village
+                                                                  : GameState::DungeonRun;
         }
         break;
     }
 
     default: break;
-    }
-}
-
-void Engine::UpdateGamePlay(float dt)
-{
-    // Hit-stop: freeze the simulation for a few frames so impacts land hard.
-    if (_hitStopTimer > 0.f) { _hitStopTimer -= GetFrameTime(); return; }
-    // Slow-mo (crit / boss death): scale the gameplay sim (timer ticks in Update).
-    if (_slowMoTimer > 0.f) dt *= _slowMoScale;
-
-    if (_debug.IsActive())
-    {
-        if (HandleDebugToggleTabInput())
-            return;
-
-        if (_debug.IsGodMode())
-            _player.GrantInvulnerability(0.2f);
-
-        DebugCommand cmd = _debug.Update();
-        if (cmd.issued)
-        {
-            Vector2 spawnBase = _player.GetWorldPos();
-            switch (cmd.action)
-            {
-            case DebugActionKind::GrantInvuln:
-                _player.GrantInvulnerability(5.f); break;
-            case DebugActionKind::ClearEnemiesContinue:
-                for (auto& e : _enemies) { e->SetActive(false); e->Teleport(Vector2{ -5000.f, -5000.f }); }
-                _roomClearPending = true; break;
-            case DebugActionKind::RestartRoom:
-                DebugRestartRoomAs((RoomType)cmd.value); break;
-            case DebugActionKind::SetEliteMechanic:
-                _debug.SetForcedEliteMechanic(cmd.value);
-                DebugRestartRoomAs(RoomType::Elite); break;
-            case DebugActionKind::SetEliteType:
-                _debug.SetForcedEliteType(cmd.value);
-                DebugRestartRoomAs(RoomType::Elite); break;
-            case DebugActionKind::ForceEliteSignature:
-                if (Enemy* encounter = FindEncounterDebugTarget())
-                    encounter->DebugForceEliteSignature();
-                break;
-            case DebugActionKind::ForceElitePhaseTwo:
-                if (Enemy* encounter = FindEncounterDebugTarget())
-                    encounter->DebugForceElitePhaseTwo();
-                break;
-            case DebugActionKind::SpawnGrunt:
-                SpawnBasicEnemy(Vector2Add(spawnBase, Vector2{ 220.f, 40.f })); break;
-            case DebugActionKind::SpawnCyclops:
-                SpawnCyclops(Vector2Add(spawnBase, Vector2{ 260.f, -60.f })); break;
-            case DebugActionKind::SpawnOgre:
-                SpawnOgre(Vector2Add(spawnBase, Vector2{ -240.f, 50.f })); break;
-            case DebugActionKind::SpawnBoss:
-                SpawnMolarbeast(Vector2Add(spawnBase, Vector2{ 0.f, -260.f })); break;
-            case DebugActionKind::SpawnNewEnemy:
-                DebugSpawnNewEnemy(cmd.value, Vector2Add(spawnBase, Vector2{ 260.f, -40.f })); break;
-            case DebugActionKind::SpawnNewBoss:
-                DebugSpawnNewBoss(cmd.value, Vector2Add(spawnBase, Vector2{ 0.f, -300.f })); break;
-            case DebugActionKind::GrantRandomRelic:
-                GrantRelic(RollRandomRelic()); break;
-            case DebugActionKind::GrantAllRelics:
-                for (int i = 0; i < (int)RelicType::Count; i++) _player.AddRelic((RelicType)i); break;
-            case DebugActionKind::UnlockAscension:
-                _meta.RecordAscensionCleared(_meta.GetMaxAscensionUnlocked());
-                _meta.SetSelectedAscension(_meta.GetMaxAscensionUnlocked()); break;
-            case DebugActionKind::Heal:
-                _player.Heal(cmd.value); break;
-            case DebugActionKind::RestoreMana:
-                _player.RestoreMana(cmd.value); break;
-            case DebugActionKind::AddGold:
-                _player.AddGold(cmd.value); break;
-            case DebugActionKind::SpawnLoot:
-                DebugSpawnLoot(); break;
-            case DebugActionKind::ForceLevelUp:
-                _player.AddExp(60); break;
-            case DebugActionKind::AddExp:
-                _player.AddExp(cmd.value); break;
-            case DebugActionKind::TreasureCards:
-                GenerateLevelUpOptions(LevelUpOfferContext::TreasureBasic);
-                _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f;
-                _gameState = GameState::LevelUpChoice; break;
-            case DebugActionKind::EliteReward:
-                GenerateLevelUpOptions(LevelUpOfferContext::EliteReward);
-                _levelUpReturnState = GameState::Play; _levelUpOpenTimer = 0.1f;
-                _gameState = GameState::LevelUpChoice; break;
-            case DebugActionKind::AbilityReward:
-                GenerateAbilityChoiceOptions(); _abilityChoiceOpenTimer = 0.1f;
-                _pendingRoomChoice = false; _gameState = GameState::AbilityChoice; break;
-            case DebugActionKind::ApplyUpgrade:
-                _player.ApplyUpgrade((UpgradeType)cmd.value); break;
-            default: break;
-            }
-        }
-    }
-
-    // Hitbox editor toggle - 0 key while debug panel is active
-    if (_debug.IsActive() && IsKeyPressed(KEY_ZERO))
-    {
-        _isHitboxEditorActive = !_isHitboxEditorActive;
-        _hitboxSelectedEntity = nullptr;
-        _hitboxEditAttack     = false;
-        _hitboxNudgeAccum     = -kHitboxNudgeInitDelay;
-        if (_isHitboxEditorActive)
-            _debug.SetOpen(false);  // hide panel while editing
-    }
-    // Safety: auto-exit editor if debug is deactivated from outside
-    if (_isHitboxEditorActive && !_debug.IsActive())
-    {
-        _isHitboxEditorActive = false;
-        _hitboxSelectedEntity = nullptr;
-    }
-    if (_isHitboxEditorActive)
-    {
-        UpdateHitboxEditor();
-        return;
-    }
-
-    if (IsKeyPressed(KEY_ESCAPE))
-    {
-        _stateBeforePause = GameState::Play;
-        _gameState = GameState::Pause;
-        return;
-    }
-
-    // M key confirms the current room's continue action.
-    if (_roomClearPending && IsKeyPressed(KEY_M))
-    {
-        HandleRoomContinueAction();
-        return;
-    }
-
-    if (_fadeInTimer > 0.f)
-        _fadeInTimer -= dt;
-    if (_bossWarningTimer > 0.f)
-        _bossWarningTimer -= dt;
-    if (_biomeTransitionActive)
-        UpdateBiomeTransition(dt);
-
-    // Block attacks during room intro and ultimate cinematic.
-    // Also lock combat in non-combat rooms (rest/store) so the player
-    // can't accidentally trigger the attack animation while browsing.
-    bool inNonCombatRoom = (_currentRoomType == RoomType::Rest  ||
-                            _currentRoomType == RoomType::Store ||
-                            _debug.IsOpen());
-    const bool ultActive = (_ultimatePhase != UltimatePhase::None);
-    _player.SetCombatLocked(_waveStarting || ultActive || inNonCombatRoom);
-    _player.SetManaRegenPaused(ultActive);
-
-    // Touch controls - must be set on player before Update() consumes them
-    _player.SetTouchModeEnabled(_touchModeActive);
-    if (_touchModeActive)
-        UpdateTouchControls();
-
-    // Gamepad input - works alongside keyboard and touch on all platforms
-    _gamepad.Update(_gamepadBindingsEdit);
-    if (_gamepad.isActive)
-    {
-        // Always push the direction (including zero) so releasing the stick
-        // clears _touchMoveDir and the player stops instead of drifting.
-        _player.SetTouchDirection(_gamepad.moveDir);
-        if (_gamepad.attackPressed)  _player.SetTouchAttack();
-        if (_gamepad.dashPressed)    _player.SetTouchDash();
-        if (_gamepad.pausePressed)
-        {
-            _stateBeforePause = GameState::Play;
-            _gameState = GameState::Pause;
-            return;
-        }
-    }
-
-    UpdateAbilityAiming();
-
-    _player.Update(dt);
-
-    // During the cinematic ultimate sequence everything except the player
-    // animation is frozen. Drain any pending cast request so it doesn't fire
-    // twice when play resumes.
-    if (_ultimatePhase != UltimatePhase::None)
-    {
-        _player.ConsumeCastRequest();
-        UpdateUltimateSequence(dt);
-        return;
-    }
-
-    HandlePlayerCastRequest();
-
-    if (_player.GetHealthValue() <= 0.f && !_playerDying)
-    {
-        if (_secondWindAvailable)
-        {
-            // Second Wind meta unlock: revive once at 40% HP with brief i-frames.
-            _secondWindAvailable = false;
-            _player.Heal((int)ceilf(_player.GetMaxHealthValue() * 0.4f));
-            _player.GrantInvulnerability(2.0f);
-            TriggerScreenShake(12.f, 0.5f);
-            _secondWindToastTimer = 2.5f;
-            StopSound(_explosionSound);
-            PlaySound(_explosionSound);
-        }
-        else
-        {
-            _playerDying = true;
-            _gameOverTimer = _gameOverDelay;
-            TriggerSlowMo(1.2f, 0.35f);   // death slow-mo
-            _deathVignette = 1.2f;         // dark-red overlay (decays in Update)
-            // TODO(SFX): player-death sting.
-        }
-    }
-
-    if (_playerDying)
-    {
-        _gameOverTimer -= dt;
-
-        if (_gameOverTimer <= 0.f)
-        {
-            HandlePlayerDeathMetaPenalty();
-            _gameState = GameState::GameOver;
-        }
-
-        return;
-    }
-
-    if (_waveStarting)
-    {
-        _waveIntroTimer -= dt;
-
-        if (!_biomeTransitionActive && _waveIntroTimer <= 0.f)
-        {
-            _waveStarting = false;
-
-            // Treasure rooms wait for the same explicit Continue input as every
-            // other room. Pressing Continue opens the free upgrade screen.
-            if (_currentRoomType == RoomType::Treasure)
-            {
-                _roomClearPending = true;
-                return;
-            }
-
-            SpawnEnemies();
-            _player.GrantInvulnerability(kWaveSpawnProtectionDuration);
-        }
-    }
-    else
-    {
-        _gameTimer += dt;
-        _nav.ApplyPendingRefresh();
-
-        // Timed heal drops - boss fights and non-combat rooms suppress this.
-        if (_currentRoomType != RoomType::Rest  &&
-            _currentRoomType != RoomType::Store)
-        {
-            _pickupSpawnTimer -= dt;
-            if (_pickupSpawnTimer <= 0.f)
-            {
-                SpawnTimedPickup();
-                _pickupSpawnTimer = kDefaultTimedPickupInterval;
-            }
-        }
-
-        EliteMechanicsContext eliteCtx{};
-        eliteCtx.currentRoomType = _currentRoomType;
-        eliteCtx.map = &_map;
-        eliteCtx.mapScale = _mapScale;
-        eliteCtx.player = &_player;
-        eliteCtx.enemies = &_enemies;
-        eliteCtx.lavaBalls = &_lavaBalls;
-        eliteCtx.eliteMechanic = &_eliteMechanic;
-        eliteCtx.eliteMinibossPtr = &_eliteMinibossPtr;
-        eliteCtx.eliteCageCenter = &_eliteCageCenter;
-        eliteCtx.eliteCageRadius = &_eliteCageRadius;
-        eliteCtx.eliteCageDamageTimer = &_eliteCageDamageTimer;
-        eliteCtx.eliteEnrageWarningTimer = &_eliteEnrageWarningTimer;
-        eliteCtx.eliteHazardSpawnTimer = &_eliteHazardSpawnTimer;
-        eliteCtx.isSpawnPositionValid = [&](Vector2 pos) { return IsSpawnPositionValid(pos); };
-        eliteCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
-        _combatDirector.UpdateEliteMechanics(eliteCtx, dt);
-
-        // Rest areas complete immediately once their intro ends. Store areas
-        // wait until the player actually leaves Zeph's shop before showing the
-        // continue prompt.
-        if (_currentRoomType == RoomType::Rest)
-        {
-            _roomClearPending = true;
-        }
-
-        // -- Store room - Zeph NPC logic -----------------------------------
-        if (_currentRoomType == RoomType::Store)
-        {
-            Vector2 shopWorldOffset = { -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
-            bool gamepadInteract = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
-            if (_shop.UpdateNpc(_player, shopWorldOffset, _touchModeActive, gamepadInteract)) { _levelUpReturnState = GameState::Play; _gameState = GameState::Shop; }
-        }
-        else if (!_roomClearPending && GetActiveEnemyCount() == 0 && !_debug.IsActive())
-        {
-            // Elite clear bonus: scatter some gold near the player's position.
-            if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
-            {
-                _eliteRewardGranted = true;
-                const Vector2 dropAnchor = _player.GetWorldPos();
-                auto dropGold = [&](GoldDenomination denom, float ox, float oy)
-                {
-                    auto g = std::make_unique<GoldPickup>();
-                    g->Init(Vector2{ dropAnchor.x + ox, dropAnchor.y + oy }, denom);
-                    _pickups.push_back(std::move(g));
-                };
-                dropGold(GoldDenomination::Ten,    0.f,   -50.f);
-                dropGold(GoldDenomination::Five,  -55.f,   20.f);
-                dropGold(GoldDenomination::Five,   55.f,   20.f);
-            }
-
-            if (_currentRoomType == RoomType::Boss)
-                StartVictoryMusic(MusicCue::BossVictory);
-            else if (_currentRoomType == RoomType::Standard || _currentRoomType == RoomType::Elite)
-                StartVictoryMusic(MusicCue::BattleVictory);
-
-            // Transition to post-battle EXP tally.
-            // Boss AbilityChoice is triggered from UpdateExpTally once the tally finishes.
-            _expTallyDone           = false;
-            _expTallyAccum          = 0.f;
-            _tallyStartLevel        = _player.GetLevel();
-            _tallyLevelUpsRemaining = 0;
-            _tallyChoiceChaining    = false;
-            _gameState              = GameState::ExpTally;
-        }
-
-        Vector2 playerFeet = _player.GetFeetWorldPos();
-        _nav.TickRefresh(dt, playerFeet);
-
-        EnemyRuntimeContext enemyRuntimeCtx{};
-        enemyRuntimeCtx.player = &_player;
-        enemyRuntimeCtx.nav = &_nav;
-        enemyRuntimeCtx.props = &_props;
-        enemyRuntimeCtx.enemies = &_enemies;
-        enemyRuntimeCtx.cyclopsLasers = &_cyclopsLasers;
-        enemyRuntimeCtx.lavaBalls = &_lavaBalls;
-        enemyRuntimeCtx.enemyProjectiles = &_enemyProjectiles;
-        enemyRuntimeCtx.triggerScreenShake = [&](float strength, float duration) { TriggerScreenShake(strength, duration); };
-        enemyRuntimeCtx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
-        enemyRuntimeCtx.spawnBasicEnemy = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
-        enemyRuntimeCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
-        enemyRuntimeCtx.spawnBossFx = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
-        enemyRuntimeCtx.spawnBossCallout = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
-        enemyRuntimeCtx.spawnEliteFx = [&](Vector2 pos, int fxId, float scale, Color tint)
-            { SpawnEliteFx(pos, fxId, scale, tint); };
-        enemyRuntimeCtx.spawnEliteHazardFx = [&](Vector2 pos, int fxId, float scale, float duration, Color tint)
-            { SpawnEliteHazardFx(pos, fxId, scale, duration, tint); };
-        enemyRuntimeCtx.triggerScreenFlash = [&](Color color, float duration)
-            { TriggerScreenFlash(color, duration); };
-        enemyRuntimeCtx.requestHitStop = [&](float seconds) { RequestHitStop(seconds); };
-        RebuildEnemyHazardZones();
-        enemyRuntimeCtx.hazards = &_enemyHazardZones;
-        _combatDirector.UpdateEnemyRuntime(enemyRuntimeCtx, dt);
-
-        HandlePlayerMeleeDamage();
-        UpdateWarriorEffects(dt);
-        UpdateMageSpells(dt);
-        if (_secondWindToastTimer > 0.f) _secondWindToastTimer -= dt;
-
-        // Relic reward: once the room is clear of enemies, present the 3-card pick.
-        if (_pendingRelicChoices > 0 && _gameState == GameState::DungeonRun &&
-            _currentRoomType != RoomType::Store && GetActiveEnemyCount() == 0 &&
-            _dungeonFadeState == DungeonFadeState::None && !_awaitingStartingAbility)
-        {
-            OpenRelicChoice();
-        }
-        UpdateSpreadProjectiles(dt);
-        UpdateLavaBallProjectiles(dt);
-        UpdateEnemyProjectiles(dt);
-        ApplyPendingReflect();
-        UpdateWarlockMinions(dt);
-        UpdatePoisonClouds(dt);
-        _vfx.Update(dt);
-        _damageNumbers.Update(dt);
-        UpdateDungeonClearEffects(dt);
-        UpdateEnemyCount(dt);
-        UpdateBossSupportRespawns(dt);
-        UpdateCyclopsLasers(dt);
-    }
-
-    Vector2 lootCentre = _player.GetWorldPos();
-    for (auto& pickup : _pickups)
-    {
-        if (!pickup->IsActive())
-            continue;
-
-        Vector2 pp = pickup->GetWorldPos();
-        float dx = lootCentre.x - pp.x, dy = lootCentre.y - pp.y;
-        if (dx * dx + dy * dy < 210.f * 210.f)
-            pickup->Magnetize(lootCentre, std::min(1.f, GetFrameTime() * 9.f));
-
-        if (CheckCollisionRecs(_player.GetCollisionRec(), pickup->GetCollisionRec()))
-        {
-            switch (pickup->GetType())
-            {
-            case PickupType::Gold: SfxBank::Get().Play(SfxId::PickupGold,  0.5f); break;
-            case PickupType::Cell: SfxBank::Get().Play(SfxId::PickupCell,  0.6f); break;
-            default:               SfxBank::Get().Play(SfxId::PickupMagic, 0.5f); break;   // Heal / Mana
-            }
-            _vfx.SpawnImpactBurst(pickup->GetWorldPos(), Color{ 255, 220, 120, 255 }, 5, 170.f);
-            pickup->OnCollect(_player);
-        }
-    }
-
-    _pickups.erase(
-        std::remove_if(_pickups.begin(), _pickups.end(),
-            [](const std::unique_ptr<Pickup>& pickup) { return !pickup->IsActive(); }),
-        _pickups.end());
-
-    int healEffectsToSpawn = _player.ConsumeHealEffectRequests();
-    for (int i = 0; i < healEffectsToSpawn; ++i)
-        _vfx.SpawnHealEffect();
-
-    HandleCollisions();
-
-    {
-        // WorldConfig::ClampCamera handles both the scroll-clamp (world > screen)
-        // and the centring case (world = screen - e.g. FitToScreen on a large monitor).
-        // GetMapScreenPos converts the clamped world-pos to a screen-space top-left
-        // for the map texture draw call. Using the live screen size here means
-        // a window resize mid-session (or a phone rotation) adapts automatically.
-        const int sw = kVirtualWidth;
-        const int sh = kVirtualHeight;
-
-        _cameraPos = _worldConfig.ClampCamera(_player.GetWorldPos(), sw, sh);
-        _mapPos    = _worldConfig.GetMapScreenPos(_cameraPos, sw, sh);
-    }
-
-    if (_shakeTimer > 0.f)
-    {
-        _shakeTimer -= dt;
-
-        float x = GetRandomValue(-100, 100) / 50.f * _shakeStrength;
-        float y = GetRandomValue(-100, 100) / 50.f * _shakeStrength;
-        _shakeOffset = Vector2{ x, y };
-    }
-    else
-    {
-        _shakeOffset = Vector2Zero();
     }
 }
 
@@ -3017,6 +2524,7 @@ namespace
     // VillageGraveyard.vasset markers for Poe and the player respawn point.
     constexpr float kVillageGraveyardAssetScale = 2.f;
     constexpr float kVillageZephShopAssetScale = 2.f;
+    constexpr float kVillageCoreTownAssetScale = 2.6f;   // matches Zeph's shop and Poe's graveyard
     constexpr float kVillageGraveyardAssetW = 196.f;
     constexpr float kVillageGraveyardAssetH = 132.f;
     constexpr float kVillageGraveyardX = 310.f;
@@ -3091,6 +2599,25 @@ namespace
         return Rectangle{ position.x - 12.f, position.y - 16.f, 24.f, 36.f };
     }
 
+    // Resident looks: Hero sheets (6 frames of 32x32) the player is unlikely
+    // to be wearing. Tints are the fallback if a sheet fails to load.
+    constexpr int kVillageResidentSkins[] = { 4, 9, 14, 19, 24, 7, 12, 17, 22, 27 };
+    constexpr int kVillageResidentSkinCount = (int)(sizeof(kVillageResidentSkins) / sizeof(kVillageResidentSkins[0]));
+    constexpr int kVillageFoundingResidents = 3;
+    constexpr float kVillageResidentBarkRange = 130.f;
+    // Ambient resident lines. Deliberately neutral: the story pass rewrites them.
+    const char* kVillageResidentLines[] = {
+        "Back again? The gate never stays quiet for long.",
+        "Zeph says prices climb the deeper you go.",
+        "Keep your coin pouch close in the square.",
+        "Bring back something shiny next time.",
+        "The roofs held up nicely this season.",
+        "Mind the north gate. It hums at night.",
+        "I swept the square this morning. You're welcome.",
+        "Folk sleep easier with you around.",
+    };
+    constexpr int kVillageResidentLineCount = (int)(sizeof(kVillageResidentLines) / sizeof(kVillageResidentLines[0]));
+
     // Placeholder clothing colours until real villager art exists.
     constexpr Color kVillageCitizenTints[] = {
         Color{ 178,  98,  70, 255 }, Color{  92, 128, 168, 255 }, Color{ 122, 152,  86, 255 },
@@ -3101,20 +2628,58 @@ namespace
 
 }
 
-void Engine::EnterVillage() { EnterVillageShared(); }
+void Engine::EnterVillage()
+{
+    if (_journeyExecuting) { EnterVillageShared(); return; }
+    QueueJourney("Home, once more", {[this] { EnterVillageShared(); }});
+}
 
 void Engine::EnterVillageShared()
 {
+    // Arriving home. A paused run (safe return after a domain boss) banks the
+    // Echoes it carried — the "made it to the Collector" moment. Otherwise no
+    // run is active, so the next run's character is prepared now: anything
+    // bought from Zeph or Poe before leaving rides along into that run.
+    // Hades-style: the village is reached only after a run ends (death,
+    // victory, abandon) or from the menu, so the next run is always prepared
+    // here. Echoes bank at Zeph's camps and on victory.
+    if (!_nextRunPrepared)
+        PrepareNextRun();
+    // Gold in the village is safe and persists across sessions.
+    _meta.SetVillageWallet(_player.GetGold());
+    ++_villageVisitId;   // Zeph restocks once per arrival (PlaceVillageZeph)
+    _meta.SaveIfDirty();   // runs under the journey cover, so the disk flush is hidden
     LoadVillagePlaygroundSheets();
     LoadVillagePlaygroundCatalog();
+    SfxBank::Get().SetFootSurface(FootSurface::Grass);
     _villageShopNpcActive = false;
     _villageInsideInterior = false;
     _villageBuildMode = false;
-    LoadVillageLayout();
+    if (!_villageLayoutLoaded)
+    {
+        LoadVillageLayout();
+        _villageLayoutLoaded = true;
+    }
+    else
+    {
+        // The in-memory layout is authoritative for the rest of the session: a
+        // failed save must never resurrect a building that was already refunded.
+        for (VillagePlacedObject& placed : _villagePlacedObjects)
+        {
+            placed.defIndex = FindVillageObjectDefIndex(placed.defName);
+            placed.placedThisVisit = false;
+        }
+        if (_villageLayoutSavePending) SaveVillageLayout();
+        SyncVillageCoreBuildings();
+        RefreshVillageShopNpc();
+    }
+    SyncVillageCitizenCount();
     _villageCatalogScroll = 0.f;
     _villageActiveObjectIndex = _villageObjectCatalog.empty() ? -1 : 0;
     _villagePlaygroundMessage = _firstVillageVisit ? "Find Zeph at the shop." : "Welcome back to the village";
     _villagePlaygroundMessageTimer = 4.f;
+    if (!_firstVillageVisit)
+        AnnounceVillageUnlocks();
     _player.Revive();
     _player.RestoreMana(_player.GetMaxMana());
     _player.SetCombatLocked(true);
@@ -3143,6 +2708,10 @@ void Engine::UnloadVillagePlayground()
     if (_villageFieldGroundSheet.id != 0) { UnloadTexture(_villageFieldGroundSheet); _villageFieldGroundSheet = {}; }
     if (_villageGraveyardTex.id != 0) { UnloadTexture(_villageGraveyardTex); _villageGraveyardTex = {}; }
     if (_villageZephShopTex.id != 0) { UnloadTexture(_villageZephShopTex); _villageZephShopTex = {}; }
+    for (Texture2D& tex : _villageResidentIdle) if (tex.id != 0) UnloadTexture(tex);
+    for (Texture2D& tex : _villageResidentWalk) if (tex.id != 0) UnloadTexture(tex);
+    _villageResidentIdle.clear();
+    _villageResidentWalk.clear();
 }
 
 void Engine::LoadVillagePlaygroundSheets()
@@ -3180,6 +2749,17 @@ void Engine::LoadVillagePlaygroundSheets()
     _villageTileDefs.LoadFromFile(AssetPath("tilemapper_Forest.txt").c_str());
     _villageFieldSheet = LoadTexture(AssetPath("MapTilesets/Forest.png").c_str());
     _villageFieldGroundSheet = LoadTexture(AssetPath("MapTilesets/Ground TIles.png").c_str());
+    _villageResidentIdle.clear();
+    _villageResidentWalk.clear();
+    for (int skin : kVillageResidentSkins)
+    {
+        Texture2D idle = LoadTexture(AssetPath(TextFormat("Hero/Hero%02d_Idle.png", skin)).c_str());
+        Texture2D walk = LoadTexture(AssetPath(TextFormat("Hero/Hero%02d_Walk.png", skin)).c_str());
+        if (idle.id != 0) SetTextureFilter(idle, TEXTURE_FILTER_POINT);
+        if (walk.id != 0) SetTextureFilter(walk, TEXTURE_FILTER_POINT);
+        _villageResidentIdle.push_back(idle);
+        _villageResidentWalk.push_back(walk);
+    }
 
     _villageGraveyardPoeLocal = Vector2{ 30.90f, 123.72f };
     _villageGraveyardRespawnLocal = Vector2{ 104.76f, 117.84f };
@@ -3279,7 +2859,9 @@ bool Engine::LoadVillageRuntimeAssetObject(const std::string& path, VillageRunti
     outDef.service = data.service;
     outDef.markers = data.markers;
     outDef.interactions = data.interactions;
-    outDef.pngScale = (outDef.name == "ZephsShop") ? kVillageZephShopAssetScale : 3.f;
+    outDef.coreTown = IsVillageCoreBuilding(outDef.name);
+    outDef.pngScale = (outDef.name == "ZephsShop") ? kVillageZephShopAssetScale
+                    : outDef.coreTown ? kVillageCoreTownAssetScale : 3.f;
     outDef.pngAnimated = data.animation.enabled;
     outDef.pngAnimCols = std::max(1, data.animation.columns);
     outDef.pngAnimRows = std::max(1, data.animation.rows);
@@ -3310,41 +2892,134 @@ int Engine::FindVillageObjectDefIndex(const std::string& defName) const
     return -1;
 }
 
-void Engine::SaveVillageLayout() const
+// Shipping keeps the player's village beside their profile (per-user, always
+// writable); authoring builds keep the in-repo save so designers see it.
+// Legacy location of the player's village before it moved into the profile.
+// Read once for migration, never written again.
+static std::string LegacyVillageLayoutSavePath()
 {
-    VillageLayout layout;   // defaults: 1920x1080, spawn=VillageGraveyard/Respawn, standard exit rect
+#if defined(_WIN32) && !MO_DEV_TOOLS && !MO_ITCH_DEMO
+    return UserDataPath("VillageLayoutSave.vlayout");
+#else
+    return AssetPath("VillageAssets/VillageLayoutSave.vlayout");
+#endif
+}
+
+std::vector<MetaProgressionManager::VillagePlacement> Engine::BuildVillagePlacements() const
+{
+    std::vector<MetaProgressionManager::VillagePlacement> placements;
+    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    {
+        if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+        if (_villageObjectCatalog[placed.defIndex].coreTown) continue;   // re-placed from the authored plots
+        MetaProgressionManager::VillagePlacement p;
+        p.asset = placed.defName;
+        p.x = (int)std::lround(placed.cellCol * kVillagePlaygroundTilePx);
+        p.y = (int)std::lround(placed.cellRow * kVillagePlaygroundTilePx);
+        placements.push_back(p);
+    }
+    return placements;
+}
+
+void Engine::CommitVillageEconomy()
+{
+    // Buildings and wallet go to disk in ONE profile write (atomic temp+rename,
+    // backup, checksum), so a building and the gold paid/refunded for it can
+    // never disagree after a failed save or a relaunch.
+    _meta.SetVillageState(BuildVillagePlacements(), _player.GetGold());
+    _villageLayoutSavePending = !_meta.DidLastSaveSucceed();
+    if (_villageLayoutSavePending)
+        TraceLog(LOG_WARNING, "Village could not be saved; the change is kept in memory and retried");
+}
+
+void Engine::ExportVillageLayout()
+{
+    // One line per placed building, in the same format the layout file reads, so the
+    // layout can be hardcoded into VillageLayout.vlayout.
+    const std::string path = AssetPath("VillageAssets/VillageLayoutExport.vlayout");
+    FILE* file = std::fopen(path.c_str(), "w");
+    if (file == nullptr)
+    {
+        _villagePlaygroundMessage = "Export failed: could not write the layout file.";
+        _villagePlaygroundMessageTimer = 3.f;
+        return;
+    }
+    std::fprintf(file, "# Exported from village build mode (F9). Lines: object name x y scale rule.\n");
+    std::fprintf(file, "size %d %d\n", kVirtualWidth, kVirtualHeight);
+    int written = 0;
     for (const VillagePlacedObject& placed : _villagePlacedObjects)
     {
         if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
         const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
-        VillageLayoutObject object;
-        object.assetName = placed.defName;
-        object.worldOrigin = Vector2{ placed.cellCol * kVillagePlaygroundTilePx, placed.cellRow * kVillagePlaygroundTilePx };
-        object.scale = def.pngScale;
-        object.permanent = !def.removable;
-        layout.objects.push_back(object);
+        std::fprintf(file, "object %s %d %d %.2f permanent\n", def.name.c_str(),
+                     placed.cellCol * (int)kVillagePlaygroundTilePx, placed.cellRow * (int)kVillagePlaygroundTilePx,
+                     def.pngScale);
+        ++written;
     }
-    VillageLayoutLoader::Save(AssetPath("VillageAssets/VillageLayoutSave.vlayout"), layout);
+    std::fclose(file);
+    _villagePlaygroundMessage = TextFormat("Exported %d objects to VillageLayoutExport.vlayout", written);
+    _villagePlaygroundMessageTimer = 3.f;
+}
+
+bool Engine::SaveVillageLayout() const
+{
+    // Layout-only save path (no wallet change): same single profile write.
+    const_cast<Engine*>(this)->CommitVillageEconomy();
+    return !_villageLayoutSavePending;
 }
 
 void Engine::LoadVillageLayout()
 {
     _villagePlacedObjects.clear();
 
-    // Prefer the player's own save; fall back to the authored "factory
-    // defaults" layout if it doesn't exist yet (first launch) or was deleted.
-    std::string savePath = AssetPath("VillageAssets/VillageLayoutSave.vlayout");
-    FILE* saveProbe = fopen(savePath.c_str(), "r");
-    bool hasSave = saveProbe != nullptr;
-    if (saveProbe) fclose(saveProbe);
-    VillageLayout layout = hasSave
-        ? VillageLayoutLoader::Load(savePath)
-        : VillageLayoutLoader::Load(AssetPath("VillageAssets/VillageLayout.vlayout"));
+    // Source order: the profile (authoritative, written together with the
+    // wallet) -> a pre-profile save file (migrated once) -> the authored
+    // "factory default" layout for a brand-new village.
+    std::vector<VillageLayoutObject> objects;
+    bool migrateLegacy = false;
+    if (_meta.HasVillageLayout())
+    {
+        for (const MetaProgressionManager::VillagePlacement& p : _meta.GetVillagePlacements())
+        {
+            VillageLayoutObject object;
+            object.assetName = p.asset;
+            object.worldOrigin = Vector2{ (float)p.x, (float)p.y };
+            objects.push_back(object);
+        }
+    }
+    else
+    {
+        const std::string legacyPath = LegacyVillageLayoutSavePath();
+        FILE* probe = _villageUseAuthoredLayout ? nullptr : fopen(legacyPath.c_str(), "r");
+        const bool hasLegacy = probe != nullptr;
+        if (probe) fclose(probe);
+        _villageUseAuthoredLayout = false;
+        VillageLayout layout = hasLegacy
+            ? VillageLayoutLoader::Load(legacyPath)
+            : VillageLayoutLoader::Load(AssetPath("VillageAssets/VillageLayout.vlayout"));
+        objects = layout.objects;
+        migrateLegacy = true;
+    }
+
+    // Core town plots always come from the authored layout, so every profile
+    // (including ones saved before a building existed) gets the same town.
+    _villageCorePlots.clear();
+    const VillageLayout authored = VillageLayoutLoader::Load(AssetPath("VillageAssets/VillageLayout.vlayout"));
+    for (const VillageLayoutObject& object : authored.objects)
+    {
+        if (!IsVillageCoreBuilding(object.assetName)) continue;
+        VillageCorePlot plot;
+        plot.defName = object.assetName;
+        plot.cellCol = (int)std::round(object.worldOrigin.x / kVillagePlaygroundTilePx);
+        plot.cellRow = (int)std::round(object.worldOrigin.y / kVillagePlaygroundTilePx);
+        _villageCorePlots.push_back(plot);
+    }
 
     bool hasGate = false;
-    for (const VillageLayoutObject& object : layout.objects)
+    for (const VillageLayoutObject& object : objects)
     {
         if (object.assetName == "VillageGraveyard") continue; // drawn by its dedicated runtime path
+        if (IsVillageCoreBuilding(object.assetName)) continue; // placed from _villageCorePlots
         if (object.assetName == "VillageGate") hasGate = true;
         VillagePlacedObject placed{};
         placed.defName = object.assetName;
@@ -3368,18 +3043,12 @@ void Engine::LoadVillageLayout()
         gate.cellCol = 18; gate.cellRow = 0;
         if (gate.defIndex >= 0) _villagePlacedObjects.push_back(gate);
     }
+    // First load of a profile without a stored village: write it (with the
+    // current wallet) so every later change is one consistent profile write.
+    SyncVillageCoreBuildings();
+    if (migrateLegacy)
+        CommitVillageEconomy();
     RefreshVillageShopNpc();
-}
-
-bool Engine::VillageObjectHasSolidAt(const VillageRuntimeObjectDef& def, int localCol, int localRow) const
-{
-    for (const VillageRuntimeSolid& solid : def.solids)
-    {
-        if (localCol >= solid.localCol && localCol < solid.localCol + solid.w &&
-            localRow >= solid.localRow && localRow < solid.localRow + solid.h)
-            return true;
-    }
-    return false;
 }
 
 bool Engine::VillageObjectIsOneTimeService(const VillageRuntimeObjectDef& def)
@@ -3394,6 +3063,7 @@ bool Engine::VillageObjectIsPermanentService(const VillageRuntimeObjectDef& def)
 
 const char* Engine::VillageObjectRuleLabel(const VillageRuntimeObjectDef& def)
 {
+    if (def.coreTown) return "town";
     if (VillageObjectIsPermanentService(def)) return "one-time service";
     if (def.isDecoration) return "decor";
     return "buildable";
@@ -3417,6 +3087,7 @@ bool Engine::VillagePlaygroundCanPlace(int defIndex, int cellCol, int cellRow) c
 {
     if (defIndex < 0 || defIndex >= (int)_villageObjectCatalog.size()) return false;
     const VillageRuntimeObjectDef& def = _villageObjectCatalog[defIndex];
+    if (def.coreTown) return false;   // fixed authored plot, opens with progression
     if (VillageObjectIsOneTimeService(def) && VillageHasPlacedObject(def.name)) return false;
 
     Rectangle footprint{ cellCol * kVillagePlaygroundTilePx, cellRow * kVillagePlaygroundTilePx,
@@ -3425,6 +3096,18 @@ bool Engine::VillagePlaygroundCanPlace(int defIndex, int cellCol, int cellRow) c
     if (footprint.x < walk.x || footprint.y < walk.y ||
         footprint.x + footprint.width > walk.x + walk.width ||
         footprint.y + footprint.height > walk.y + walk.height) return false;
+
+    // Core town plots stay reserved before their building opens, so an unlock
+    // can never land on top of something the player built.
+    for (const VillageCorePlot& plot : _villageCorePlots)
+    {
+        const int coreIndex = FindVillageObjectDefIndex(plot.defName);
+        if (coreIndex < 0) continue;
+        const VillageRuntimeObjectDef& core = _villageObjectCatalog[coreIndex];
+        const Rectangle plotRect{ plot.cellCol * kVillagePlaygroundTilePx, plot.cellRow * kVillagePlaygroundTilePx,
+                                  core.cols * kVillagePlaygroundTilePx, core.rows * kVillagePlaygroundTilePx };
+        if (CheckCollisionRecs(footprint, plotRect)) return false;
+    }
 
     auto objectBlockingRects = [&](const VillageRuntimeObjectDef& objectDef, int col, int row)
     {
@@ -3508,6 +3191,13 @@ bool Engine::VillageCitizenSpotIsClear(Vector2 position) const
     {
         if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
         const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+        for (const Rectangle& collider : def.pngColliders)
+        {
+            const Rectangle world{ placed.cellCol * kVillagePlaygroundTilePx + collider.x * def.pngScale,
+                                   placed.cellRow * kVillagePlaygroundTilePx + collider.y * def.pngScale,
+                                   collider.width * def.pngScale, collider.height * def.pngScale };
+            if (CheckCollisionRecs(rect, world)) return false;
+        }
         for (const VillageRuntimeSolid& solid : def.solids)
             if (CheckCollisionRecs(rect, VillagePlacedObjectWorldRect(placed, &solid))) return false;
     }
@@ -3528,13 +3218,20 @@ Vector2 Engine::VillageRandomStandablePoint() const
 
 void Engine::SyncVillageCitizenCount()
 {
+    // A founding household, one more resident per class brought home, and
+    // more as the player builds (town and service buildings don't count).
     int buildingCount = 0;
     for (const VillagePlacedObject& placed : _villagePlacedObjects)
     {
-        if (placed.defIndex >= 0 && placed.defIndex < (int)_villageObjectCatalog.size() && !_villageObjectCatalog[placed.defIndex].isDecoration)
+        if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+        const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+        if (!def.isDecoration && !def.coreTown && !VillageObjectIsPermanentService(def))
             ++buildingCount;
     }
-    int wanted = std::min(kVillageCitizenCap, buildingCount / kVillageBuildingsPerCitizen);
+    const int classResidents = (_meta.IsRogueUnlocked() ? 1 : 0) + (_meta.IsWarlockUnlocked() ? 1 : 0) +
+                               (_meta.IsPaladinUnlocked() ? 1 : 0);
+    int wanted = std::min(kVillageCitizenCap,
+                          kVillageFoundingResidents + classResidents + buildingCount / kVillageBuildingsPerCitizen);
     while ((int)_villageCitizens.size() < wanted)
     {
         VillageCitizen c{};
@@ -3543,6 +3240,8 @@ void Engine::SyncVillageCitizenCount()
         c.behaviour = GetRandomValue(0, 1);
         c.behaviourTimer = (float)GetRandomValue(60, 180) / 30.f;
         c.tint = kVillageCitizenTints[_villageCitizens.size() % (sizeof(kVillageCitizenTints) / sizeof(kVillageCitizenTints[0]))];
+        c.skin = (int)(_villageCitizens.size() % kVillageResidentSkinCount);
+        c.barkCooldown = (float)GetRandomValue(2, 8);
         _villageCitizens.push_back(c);
     }
     while ((int)_villageCitizens.size() > wanted) _villageCitizens.pop_back();
@@ -3550,8 +3249,26 @@ void Engine::SyncVillageCitizenCount()
 
 void Engine::UpdateVillageCitizens(float deltaTime)
 {
+    bool someoneTalking = false;
+    for (const VillageCitizen& c : _villageCitizens) someoneTalking = someoneTalking || c.barkTimer > 0.f;
     for (VillageCitizen& c : _villageCitizens)
     {
+        c.animTime += deltaTime;
+        if (c.barkTimer > 0.f) c.barkTimer -= deltaTime;
+        if (c.barkCooldown > 0.f) c.barkCooldown -= deltaTime;
+        // Walk up to a resident and they greet you (one speaker at a time).
+        if (!someoneTalking && c.barkCooldown <= 0.f &&
+            Vector2Distance(c.position, _player.GetWorldPos()) < kVillageResidentBarkRange)
+        {
+            someoneTalking = true;
+            c.barkLine = GetRandomValue(0, kVillageResidentLineCount - 1);
+            c.barkTimer = 3.5f;
+            c.barkCooldown = 25.f;
+            c.behaviour = 1;                 // stop and face the player
+            c.behaviourTimer = 3.5f;
+            c.chatPartnerIndex = -1;
+            c.facingLeft = _player.GetWorldPos().x < c.position.x;
+        }
         if (c.chatCooldown > 0.f) c.chatCooldown -= deltaTime;
         if (c.behaviour != 0)
         {
@@ -3604,17 +3321,56 @@ void Engine::UpdateVillageCitizens(float deltaTime)
     }
 }
 
-void Engine::DrawVillageCitizens(Vector2 worldOffset) const
+void Engine::DrawVillageCitizenSprite(const VillageCitizen& c, Vector2 worldOffset) const
 {
-    for (const VillageCitizen& c : _villageCitizens)
+    Vector2 p{ worldOffset.x + c.position.x, worldOffset.y + c.position.y };
+    const bool walking = c.behaviour == 0;
+    const std::vector<Texture2D>& sheets = walking ? _villageResidentWalk : _villageResidentIdle;
+    const Texture2D* sheet = (c.skin >= 0 && c.skin < (int)sheets.size() && sheets[(std::size_t)c.skin].id != 0)
+        ? &sheets[(std::size_t)c.skin] : nullptr;
+    if (sheet)
     {
-        Vector2 p{ worldOffset.x + c.position.x, worldOffset.y + c.position.y };
-        float bob = (c.behaviour == 0) ? sinf(c.walkBobPhase) * 2.f : 0.f;
+        // Same frame size, scale and anchoring as the player sprite.
+        constexpr float kFrame = 32.f, kScale = 4.f;
+        const int frames = std::max(1, sheet->width / (int)kFrame);
+        const int frame = (int)(c.animTime * (walking ? 10.f : 6.f)) % frames;
+        const float size = kFrame * kScale;
+        DrawEllipse((int)p.x, (int)(p.y + size * 0.5f - 2.f), size * 0.4f, size * 0.05f, Color{ 0, 0, 0, 70 });
+        Rectangle src{ frame * kFrame, 0.f, c.facingLeft ? -kFrame : kFrame, kFrame };
+        Rectangle dst{ p.x - size * 0.5f, p.y - size * 0.5f, size, size };
+        DrawTexturePro(*sheet, src, dst, Vector2{}, 0.f, WHITE);
+    }
+    else
+    {
+        float bob = walking ? sinf(c.walkBobPhase) * 2.f : 0.f;
         DrawCircle((int)p.x, (int)(p.y + 18.f), 11.f, Fade(BLACK, 0.25f));
         DrawRectangle((int)(p.x - 9.f), (int)(p.y - 10.f + bob), 18, 24, c.tint);
         DrawCircle((int)p.x, (int)(p.y - 17.f + bob), 10.f, Color{ 226, 184, 140, 255 });
         DrawRectangle((int)(p.x + (c.facingLeft ? -7.f : 4.f)), (int)(p.y - 19.f + bob), 3, 3, BLACK);
-        if (c.behaviour == 2) DrawText("...", (int)(p.x - 10.f), (int)(p.y - 44.f), 18, RAYWHITE);
+    }
+}
+
+void Engine::DrawVillageCitizenBubbles(Vector2 worldOffset) const
+{
+    for (const VillageCitizen& c : _villageCitizens)
+    {
+        Vector2 p{ worldOffset.x + c.position.x, worldOffset.y + c.position.y };
+        const float headY = p.y - 34.f;   // top of the sprite's head
+        if (c.barkTimer > 0.f)
+        {
+            const char* line = kVillageResidentLines[std::clamp(c.barkLine, 0, kVillageResidentLineCount - 1)];
+            const int fs = 20;
+            const int w = MeasureText(line, fs);
+            const float alpha = std::clamp(c.barkTimer / 0.4f, 0.f, 1.f);
+            Rectangle bubble{ p.x - w * 0.5f - 12.f, headY - 44.f, (float)w + 24.f, 34.f };
+            DrawRectangleRounded(bubble, 0.4f, 6, Fade(Color{ 250, 244, 228, 255 }, 0.92f * alpha));
+            DrawRectangleRoundedLines(bubble, 0.4f, 6, Fade(Color{ 90, 70, 50, 255 }, alpha));
+            DrawText(line, (int)(bubble.x + 12.f), (int)(bubble.y + 7.f), fs, Fade(Color{ 50, 40, 30, 255 }, alpha));
+        }
+        else if (c.behaviour == 2)
+        {
+            DrawText("...", (int)(p.x - 10.f), (int)(headY - 30.f), 18, RAYWHITE);
+        }
     }
 }
 
@@ -3634,6 +3390,31 @@ bool Engine::VillageDoorIsOpen(const VillagePlacedObject& placed, const VillageR
     return CheckCollisionPointRec(_player.GetWorldPos(), trigger);
 }
 
+int Engine::GetShopTier() const
+{
+    // Shops price and stock for the domain the player is about to fight in:
+    // the current one during a run, the next one while a run waits in the
+    // village, and the opening tier when no run is active.
+    if (_runSessionData.IsPausedInVillage())
+        return RunProgression::ShopTierForZone(_worldZone + 1);
+    if (_runSessionData.IsActive())
+        return RunProgression::ShopTierForZone(_worldZone);
+    return RunProgression::ShopTierForZone(RunProgression::kFirstZone);
+}
+
+void Engine::PlaceVillageZeph(Vector2 npcPos)
+{
+    // Zeph restocks once per village arrival. Moving or rebuilding the shop
+    // only moves him, so village edits can't be used as free rerolls.
+    if (_villageShopStockVisit == _villageVisitId)
+    {
+        _shop.Relocate(npcPos);
+        return;
+    }
+    _shop.Enter(npcPos, _player, GetShopTier());
+    _villageShopStockVisit = _villageVisitId;
+}
+
 void Engine::RefreshVillageShopNpc()
 {
     _villageShopNpcActive = false;
@@ -3649,14 +3430,14 @@ void Engine::RefreshVillageShopNpc()
         if (def.name == "ZephsShop" && _villageZephShopTex.id != 0)
         {
             Vector2 npcPos = VillageZephShopLocalToWorld(placed.cellCol, placed.cellRow, _villageZephShopZephLocal);
-            _shop.Enter(npcPos, _player, _currentAct);
+            PlaceVillageZeph(npcPos);
             _villageShopNpcActive = true;
             return;
         }
         if (const VAssetMarker* zeph = FindVillageMarker(def.markers, VillageMarkerType::Zeph))
         {
             Vector2 npcPos = VillageObjectMarkerWorldPos(*zeph, placed.cellCol, placed.cellRow, def.pngScale);
-            _shop.Enter(npcPos, _player, _currentAct);
+            PlaceVillageZeph(npcPos);
             _villageShopNpcActive = true;
             return;
         }
@@ -3665,7 +3446,7 @@ void Engine::RefreshVillageShopNpc()
             if (npc.npcName != "Zeph") continue;
             Vector2 npcPos{ (placed.cellCol + npc.localCol + 0.5f) * kVillagePlaygroundTilePx,
                             (placed.cellRow + npc.localRow + 0.9f) * kVillagePlaygroundTilePx };
-            _shop.Enter(npcPos, _player, _currentAct);
+            PlaceVillageZeph(npcPos);
             _villageShopNpcActive = true;
             return;
         }
@@ -3678,14 +3459,11 @@ void Engine::RefreshVillageShopNpc()
 // their own dedicated flows (NPC proximity, hardcoded respawn) and are skipped
 // here; DungeonGate triggers on simple overlap rather than a key press and is
 // handled by TriggerVillageDungeonGate() instead.
-void Engine::UpdateVillagePlacedObjectServices(float dt)
+int Engine::VillageServiceInRange() const
 {
-    (void)dt;
-    bool gamepadInteract = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
-    bool interactPressed = IsKeyPressed(KEY_E) || gamepadInteract;
-
-    for (const VillagePlacedObject& placed : _villagePlacedObjects)
+    for (int i = 0; i < (int)_villagePlacedObjects.size(); ++i)
     {
+        const VillagePlacedObject& placed = _villagePlacedObjects[i];
         if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
         const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
         if (def.service == VillageService::None || def.service == VillageService::Shop ||
@@ -3704,11 +3482,48 @@ void Engine::UpdateVillagePlacedObjectServices(float dt)
             triggerRect.x -= kMargin; triggerRect.y -= kMargin;
             triggerRect.width += kMargin * 2.f; triggerRect.height += kMargin * 2.f;
         }
-        if (!CheckCollisionPointRec(_player.GetWorldPos(), triggerRect)) continue;
-        if (!VillageServiceTriggersOnEnter(def.service) && !interactPressed) continue;
+        if (CheckCollisionPointRec(_player.GetWorldPos(), triggerRect)) return i;
+    }
+    return -1;
+}
+
+void Engine::UpdateVillagePlacedObjectServices(float dt)
+{
+    (void)dt;
+    bool gamepadInteract = _gamepad.isActive && (_gamepad.attackPressed || _gamepad.dashPressed);
+    bool interactPressed = IsKeyPressed(KEY_E) || gamepadInteract;
+
+    const int serviceIndex = VillageServiceInRange();
+    if (serviceIndex >= 0)
+    {
+        const VillagePlacedObject& placed = _villagePlacedObjects[serviceIndex];
+        const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+        if (!VillageServiceTriggersOnEnter(def.service) && !interactPressed) return;
 
         switch (def.service)
         {
+        case VillageService::TrophyHall:
+            // The mastery journal, on its own: no unlock cards here.
+            _metaShopCursor      = 0;
+            _metaShopOpenTimer   = 0.25f;
+            _metaShopReturnState = _gameState;
+            _metaShopJournal     = true;
+            _metaShopTrophyHall  = true;
+            _gameState           = GameState::MetaShop;
+            return;
+        case VillageService::Armory:
+        {
+            const std::vector<AbilityType> options = GetArmoryOptions(_player.GetClass());
+            const AbilityType current = GetRunStarterAbility(_player.GetClass());
+            _armoryCursor = 0;
+            for (int i = 0; i < (int)options.size(); ++i)
+                if (options[(std::size_t)i] == current) _armoryCursor = i;
+            _armoryOpenTimer    = 0.25f;
+            _armoryNavCooldown  = 0.f;
+            _armoryMessageTimer = 0.f;
+            _gameState          = GameState::Armory;
+            return;
+        }
         case VillageService::Training:
             // Same entry sequence as Poe's fixed altar (Engine.cpp, near
             // VillageGraveyardLocalToWorld) — proves meta-progression access
@@ -3736,6 +3551,69 @@ void Engine::UpdateVillagePlacedObjectServices(float dt)
     }
 }
 
+bool Engine::IsVillageCoreBuilding(const std::string& name)
+{
+    return name == "VillageCottageA"   || name == "VillageCottageB"   ||
+           name == "VillageTownhouseA" || name == "VillageTownhouseB" ||
+           name == "VillageTrophyHall" || name == "VillageArmory";
+}
+
+bool Engine::IsVillageCoreBuildingUnlocked(const std::string& name) const
+{
+    if (name == "VillageTrophyHall")
+        return _meta.GetTotalBossesDefeated() >= 1;          // the first domain boss
+    if (name == "VillageArmory")
+    {
+        for (int i = 0; i < (int)PlayerClass::Count; ++i)    // first mastery rank, any class
+            if (_meta.GetClassMasteryTier((PlayerClass)i) >= 1) return true;
+        return false;
+    }
+    return true;   // homes stand from the first visit
+}
+
+void Engine::SyncVillageCoreBuildings()
+{
+    // Core buildings follow the profile's unlocks (a New Game removes them).
+    for (const VillageCorePlot& plot : _villageCorePlots)
+    {
+        const bool wanted = IsVillageCoreBuildingUnlocked(plot.defName);
+        auto it = std::find_if(_villagePlacedObjects.begin(), _villagePlacedObjects.end(),
+                               [&](const VillagePlacedObject& p) { return p.defName == plot.defName; });
+        if (wanted && it == _villagePlacedObjects.end())
+        {
+            VillagePlacedObject placed{};
+            placed.defName  = plot.defName;
+            placed.defIndex = FindVillageObjectDefIndex(plot.defName);
+            placed.cellCol  = plot.cellCol;
+            placed.cellRow  = plot.cellRow;
+            if (placed.defIndex >= 0) _villagePlacedObjects.push_back(placed);
+        }
+        else if (!wanted && it != _villagePlacedObjects.end())
+        {
+            _villagePlacedObjects.erase(it);
+        }
+    }
+}
+
+void Engine::AnnounceVillageUnlocks()
+{
+    struct Notice { const char* building; unsigned bit; const char* text; };
+    static const Notice kNotices[] = {
+        { "VillageTrophyHall", MetaProgressionManager::kSeenTrophyHall,
+          "The Trophy Hall has opened. Your victories are recorded there." },
+        { "VillageArmory", MetaProgressionManager::kSeenArmory,
+          "The Armory has opened. Choose the ability each class starts with." },
+    };
+    for (const Notice& notice : kNotices)
+    {
+        if (!IsVillageCoreBuildingUnlocked(notice.building) || _meta.HasSeenVillageUnlock(notice.bit)) continue;
+        _meta.MarkVillageUnlockSeen(notice.bit);
+        _villagePlaygroundMessage = notice.text;
+        _villagePlaygroundMessageTimer = 6.f;
+        return;   // one per arrival; another waits for the next visit
+    }
+}
+
 void Engine::TriggerVillageDungeonGate()
 {
     if (_firstVillageVisit)
@@ -3745,16 +3623,8 @@ void Engine::TriggerVillageDungeonGate()
         return;
     }
     _villagePlaygroundMessage = "";
-    if (_runSessionData.IsPausedInVillage())
-    {
-        _runSessionData.Resume();
-        OpenWorldMap();
-    }
-    else
-    {
-        _pendingNewRunFromVillage = false;
-        StartMainRun();
-    }
+    _pendingNewRunFromVillage = false;
+    StartMainRun();
 }
 
 void Engine::ResolveVillagePlaygroundCollision(Vector2 beforePos)
@@ -3853,7 +3723,9 @@ namespace
 void Engine::UpdateVillageInterior(float dt)
 {
     Vector2 before = _player.GetWorldPos();
+    _player.SetAttackClickConsumed(false);   // interiors draw no ability bar
     _player.Update(dt);
+    PlayPlayerAnimEvents();
     Vector2 pos = _player.GetWorldPos();
     pos.x = Clamp(pos.x, 96.f, (float)kVirtualWidth - 96.f);
     pos.y = Clamp(pos.y, 120.f, (float)kVirtualHeight - 72.f);
@@ -3895,7 +3767,18 @@ void Engine::UpdateVillagePlayground(float dt)
         return;
     }
 
+#if MO_ITCH_DEMO
+    // Demo: keep the "spend at Zeph's" cue on screen for the whole village stop.
+    if (_runSessionData.IsPausedInVillage())
+    {
+        _villagePlaygroundMessage =
+            "Spend your gold at Zeph's Shop, then head through the Dungeon Gate.";
+        _villagePlaygroundMessageTimer = 5.f;
+    }
+#endif
+
     if (_villagePlaygroundMessageTimer > 0.f) _villagePlaygroundMessageTimer -= dt;
+#if MO_DEV_TOOLS
     if (IsKeyPressed(KEY_B))
     {
         _villageBuildMode = !_villageBuildMode;
@@ -3909,12 +3792,28 @@ void Engine::UpdateVillagePlayground(float dt)
             SyncVillageCitizenCount();
         }
     }
+#endif
 
     bool tutorialLockActive = false;
     int zephShopDefIndex = FindVillageObjectDefIndex("ZephsShop");
     if (_villageBuildMode)
     {
         float wheel = GetMouseWheelMove();
+        // F9 exports the layout; F10 clears every placed building (developer use).
+        if (IsKeyPressed(KEY_F9)) ExportVillageLayout();
+        if (IsKeyPressed(KEY_F10))
+        {
+            _villagePlacedObjects.clear();
+            _villageIsRelocating = false;
+            CommitVillageEconomy();
+            RefreshVillageShopNpc();
+            SyncVillageCitizenCount();
+            _villagePlaygroundMessage = "Cleared every placed building.";
+            _villagePlaygroundMessageTimer = 2.f;
+        }
+        // Dragging: a catalog row armed on press drops on the map at release.
+        const bool dropped = _villageDragArmed && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) _villageDragArmed = false;
         if (fabsf(wheel) > 0.01f) _villageCatalogScroll = std::max(0.f, _villageCatalogScroll - wheel * 44.f);
         if (IsKeyPressed(KEY_DOWN)) _villageActiveObjectIndex = std::min((int)_villageObjectCatalog.size() - 1, _villageActiveObjectIndex + 1);
         if (IsKeyPressed(KEY_UP)) _villageActiveObjectIndex = std::max(0, _villageActiveObjectIndex - 1);
@@ -3929,7 +3828,11 @@ void Engine::UpdateVillagePlayground(float dt)
                 Rectangle row{ panel.x + 8.f, y, panel.width - 16.f, 38.f };
                 if (CheckCollisionPointRec(mouse, row) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
                 {
-                    if (!tutorialLockActive || i == zephShopDefIndex) _villageActiveObjectIndex = i;
+                    if (!tutorialLockActive || i == zephShopDefIndex)
+                    {
+                        _villageActiveObjectIndex = i;
+                        _villageDragArmed = true;
+                    }
                 }
             }
         }
@@ -3983,17 +3886,7 @@ void Engine::UpdateVillagePlayground(float dt)
                     if (CheckCollisionPointRec(mouseWorld, rect))
                     {
                         removedSomething = true;
-                        if (VillageObjectIsPermanentService(def))
-                        {
-                            _villagePlaygroundMessage = "This service building cannot be removed.";
-                            _villagePlaygroundMessageTimer = 2.f;
-                            break;
-                        }
-                        if (def.costGold > 0) _player.AddGold(def.costGold);
-                        _villagePlacedObjects.erase(_villagePlacedObjects.begin() + i);
-                        SaveVillageLayout();
-                        RefreshVillageShopNpc();
-                        SyncVillageCitizenCount();
+                        RemoveVillageObject(i);
                         break;
                     }
                 }
@@ -4002,7 +3895,7 @@ void Engine::UpdateVillagePlayground(float dt)
                 // double as a cancel key here).
                 if (!removedSomething) _villageActiveObjectIndex = -1;
             }
-            else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && _villageActiveObjectIndex >= 0)
+            else if ((IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || dropped) && _villageActiveObjectIndex >= 0)
             {
                 if (tutorialLockActive && _villageActiveObjectIndex != zephShopDefIndex)
                 {
@@ -4020,42 +3913,25 @@ void Engine::UpdateVillagePlayground(float dt)
                         _villagePlacedObjects.push_back(placed);
                         _villageIsRelocating = false;
                         _villageActiveObjectIndex = -1;
-                        SaveVillageLayout();
+                        CommitVillageEconomy();
                         RefreshVillageShopNpc();
                         SyncVillageCitizenCount();
                         _villagePlaygroundMessage = "Moved.";
                         _villagePlaygroundMessageTimer = 1.5f;
                     }
-                    else if (_player.GetGold() < def.costGold)
-                    {
-                        _villagePlaygroundMessage = "Not enough gold";
-                        _villagePlaygroundMessageTimer = 2.f;
-                    }
                     else
                     {
-                        if (def.costGold > 0) _player.AddGold(-def.costGold);
-                        VillagePlacedObject placed{};
-                        placed.defName = def.name;
-                        placed.defIndex = _villageActiveObjectIndex;
-                        placed.cellCol = cellCol;
-                        placed.cellRow = cellRow;
-                        _villagePlacedObjects.push_back(placed);
-                        SaveVillageLayout();
-                        RefreshVillageShopNpc();
-                        SyncVillageCitizenCount();
-                        if (def.name == "ZephsShop")
-                        {
-                            _villageBuildMode = false;
-                            _villagePlaygroundMessage = "Zeph has opened shop in the village.";
-                            _villagePlaygroundMessageTimer = 3.f;
-                        }
+                        BuyVillageObject(_villageActiveObjectIndex, cellCol, cellRow);
                     }
                 }
                 else
                 {
                     const VillageRuntimeObjectDef& def = _villageObjectCatalog[_villageActiveObjectIndex];
-                    if (VillageObjectIsOneTimeService(def) && VillageHasPlacedObject(def.name))
-                        _villagePlaygroundMessage = "Zeph's shop is already built.";
+                    if (def.coreTown)
+                        _villagePlaygroundMessage = "Town buildings have their own plots.";
+                    else if (VillageObjectIsOneTimeService(def) && VillageHasPlacedObject(def.name))
+                        _villagePlaygroundMessage = def.name == "ZephsShop" ? "Zeph's shop is already built."
+                                                                            : "Only one of those per village.";
                     else
                         _villagePlaygroundMessage = "That spot is blocked.";
                     _villagePlaygroundMessageTimer = 1.5f;
@@ -4068,7 +3944,9 @@ void Engine::UpdateVillagePlayground(float dt)
         if (!_villageIntroDialogueActive)
         {
             Vector2 before = _player.GetWorldPos();
+            _player.SetAttackClickConsumed(ClickLandsOnAbilityBar());
             _player.Update(dt);
+            PlayPlayerAnimEvents();
             ResolveVillagePlaygroundCollision(before);
         }
         UpdateVillageCitizens(dt);
@@ -4087,11 +3965,7 @@ void Engine::UpdateVillagePlayground(float dt)
                         ++_villageIntroDialogueLine;
                     else
                     {
-                        _villageIntroDialogueActive = false;
-                        _firstVillageVisit = false;
-                        _meta.SetOnboardingComplete();
-                        _villagePlaygroundMessage = "Head north when you are ready.";
-                        _villagePlaygroundMessageTimer = 5.f;
+                        FinishVillageIntro();
                     }
                 }
             }
@@ -4105,6 +3979,7 @@ void Engine::UpdateVillagePlayground(float dt)
                 else
                 {
                     _levelUpReturnState = _gameState;
+                    _shopReturnState = GameState::Village;
                     _gameState = GameState::Shop;
                 }
                 return;
@@ -4377,7 +4252,54 @@ void Engine::DrawVillagePlayground()
         DrawText(poePrompt, (int)(poeScreen.x - promptW * 0.5f), (int)(poeScreen.y + 78.f + poeBob), promptFs, Color{ 212, 194, 255, 255 });
     }
 
-    drawPlacedLayer(VillageObjectLayer::Objects);
+    // Depth order: buildings, residents, Zeph and the player sort by the y of
+    // their base, so someone walking behind a house is hidden by it instead of
+    // standing on its roof. Decor lies flat under everything.
+    {
+        struct VillageDrawable { float baseY; int kind; int index; };   // kind: 0 object, 1 resident, 2 Zeph, 3 player
+        constexpr float kCharacterFeet = 64.f;   // 32px frame at scale 4, centred on the world position
+        std::vector<VillageDrawable> drawables;
+        for (int i = 0; i < (int)_villagePlacedObjects.size(); ++i)
+        {
+            const VillagePlacedObject& placed = _villagePlacedObjects[i];
+            if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+            const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+            const float baseY = def.isDecoration ? -1.f : (placed.cellRow + def.rows) * kVillagePlaygroundTilePx;
+            drawables.push_back({ baseY, 0, i });
+        }
+        for (int i = 0; i < (int)_villageCitizens.size(); ++i)
+            drawables.push_back({ _villageCitizens[i].position.y + kCharacterFeet, 1, i });
+        if (_villageShopNpcActive)
+            drawables.push_back({ _shop.GetNpcPos().y + kCharacterFeet, 2, 0 });
+        drawables.push_back({ _player.GetWorldPos().y + kCharacterFeet, 3, 0 });
+        std::stable_sort(drawables.begin(), drawables.end(),
+                         [](const VillageDrawable& a, const VillageDrawable& b) { return a.baseY < b.baseY; });
+        for (const VillageDrawable& d : drawables)
+        {
+            switch (d.kind)
+            {
+            case 0:
+            {
+                const VillagePlacedObject& placed = _villagePlacedObjects[d.index];
+                DrawVillageRuntimeObject(_villageObjectCatalog[placed.defIndex], placed.cellCol, placed.cellRow,
+                                         worldOffset, WHITE, VillageObjectLayer::Objects);
+                break;
+            }
+            case 1: DrawVillageCitizenSprite(_villageCitizens[d.index], worldOffset); break;
+            case 2: _shop.DrawNpc(Vector2{ -_cameraPos.x, -_cameraPos.y }); break;
+            default: _player.DrawPlayer(_cameraPos); break;
+            }
+        }
+    }
+
+    // Roofs and canopies finish the world; then the time of day goes over it
+    // (EngineDayNight.cpp), so the labels, doors and build ghost below stay
+    // readable at night.
+    drawPlacedLayer(VillageObjectLayer::Overhead);
+    {
+        const Vector2 playerScreen{ _player.GetWorldPos().x + worldOffset.x, _player.GetWorldPos().y + worldOffset.y };
+        ApplyTimeOfDay(true, &playerScreen);
+    }
 
     for (const VillagePlacedObject& placed : _villagePlacedObjects)
     {
@@ -4399,8 +4321,30 @@ void Engine::DrawVillagePlayground()
         }
     }
 
-    DrawVillageCitizens(worldOffset);
-    if (_villageShopNpcActive) _shop.DrawNpc(Vector2{ -_cameraPos.x, -_cameraPos.y });
+    // Service building names; the name becomes the interact prompt in reach.
+    {
+        const int serviceInRange = (!_villageBuildMode && !_villageIntroDialogueActive) ? VillageServiceInRange() : -1;
+        for (int i = 0; i < (int)_villagePlacedObjects.size(); ++i)
+        {
+            const VillagePlacedObject& placed = _villagePlacedObjects[i];
+            if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) continue;
+            const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+            const bool inReach = i == serviceInRange;
+            const char* label = def.service == VillageService::TrophyHall ? "Trophy Hall"
+                              : def.service == VillageService::Armory     ? "Armory"
+                              : (inReach && def.service == VillageService::Training) ? "Poe"
+                              : nullptr;
+            if (!label) continue;
+            const char* text = inReach ? TextFormat("[E] %s", label) : label;
+            const int fs = inReach ? 26 : 22;
+            const Rectangle r = VillagePlacedObjectWorldRect(placed, nullptr);
+            const int x = (int)(worldOffset.x + r.x + r.width * 0.5f - MeasureText(text, fs) * 0.5f);
+            const int y = (int)(worldOffset.y + r.y - 30.f);
+            DrawText(text, x + 2, y + 2, fs, Fade(BLACK, 0.6f));
+            DrawText(text, x, y, fs, inReach ? GOLD : Color{ 245, 230, 200, 220 });
+        }
+    }
+    DrawVillageCitizenBubbles(worldOffset);
 
     auto drawVillageIntroDialogue = [&]()
     {
@@ -4451,9 +4395,6 @@ void Engine::DrawVillagePlayground()
     Vector2 mouseWorld{ mouse.x - worldOffset.x, mouse.y - worldOffset.y };
     bool mouseOverUi = _villageBuildMode && CheckCollisionPointRec(mouse, Rectangle{ kVirtualWidth - 448.f, 88.f, 430.f, 430.f });
     if (_villageBuildMode && !mouseOverUi) DrawVillagePlacementGhost(worldOffset, mouseWorld);
-
-    _player.DrawPlayer(_cameraPos);
-    drawPlacedLayer(VillageObjectLayer::Overhead);
 
     if (!_villageBuildMode && CheckCollisionPointRec(_player.GetWorldPos(), VillageGateApproachRect()))
         DrawText("Head north when you are ready", 24, 92, 24, GOLD);
@@ -4545,6 +4486,7 @@ void Engine::DrawVillagePlayground()
 
 void Engine::Draw()
 {
+    Vfx::Glow().Discard();   // effects record this frame's light as they draw
     switch (_gameState)
     {
     case GameState::Menu:
@@ -4552,7 +4494,7 @@ void Engine::Draw()
         _menu.Draw();
 
         // Ascension selector overlay (only once the player has unlocked tier 1+).
-        if (_meta.GetMaxAscensionUnlocked() > 0)
+        if (_meta.GetMaxAscensionUnlocked() > 0 && !_menu.IsShowingCredits())
         {
             float sw = (float)kVirtualWidth;
             int tier = _meta.GetSelectedAscension();
@@ -4571,6 +4513,18 @@ void Engine::Draw()
             int efs = 20;
             int ew = MeasureText(effect, efs);
             DrawText(effect, (int)(sw * 0.5f - ew * 0.5f), 166, efs, Color{ 200, 200, 214, 220 });
+
+            // How to change it without the mouse (touch players tap the arrows).
+            static constexpr int kAscensionHintFs = 16;
+            static constexpr int kAscensionHintY  = 194;
+            const InputPromptMode prompt = GetPromptModeForUi();
+            if (prompt != InputPromptMode::Touch)
+            {
+                const char* hint = (prompt == InputPromptMode::Gamepad) ? "LB / RB: change difficulty"
+                                                                         : "[ / ]: change difficulty";
+                DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, kAscensionHintFs) * 0.5f), kAscensionHintY,
+                         kAscensionHintFs, Color{ 170, 170, 186, 200 });
+            }
 
             Rectangle leftArrow{ sw * 0.5f - 190.f, 118.f, 44.f, 44.f };
             Rectangle rightArrow{ sw * 0.5f + 146.f, 118.f, 44.f, 44.f };
@@ -4601,57 +4555,29 @@ void Engine::Draw()
                 float scaleY = (float)kVirtualHeight / (RoomLayout::kRows * 16.f);
                 if (_tileRenderer.IsLoaded())
                     _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+                ApplyTimeOfDay(_stateBeforePause == GameState::DungeonRun &&
+                               DayNight::IsOutdoorBiome(_currentBiome), nullptr);
             }
         }
 
-        int pauseResult = _pauseUI.DrawPause(GetPromptModeForUi());
-        if (pauseResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-        if (pauseResult == 1)
-            _gameState = _stateBeforePause;
-        else if (pauseResult == 2)
-        {
-            _runState.OpenHowToPlay(GameState::Pause, _touchModeActive);
-        }
-        else if (pauseResult == 3)
-            _shouldClose = true;
-        else if (pauseResult == 4)
-        {
-            if (_touchModeActive)
-            {
-                EnterTouchButtonMapping();
-                _gameState = GameState::TouchButtonMapping;
-            }
-            else
-            {
-                _stateBeforeSettings = GameState::Pause;
-                _settingsTab         = 2;
-                _settingsDragSlider  = -1;
-                _settingsRebindSlot  = -1;
-                _keybindingsEdit     = _player.GetBindings();
-                _gameState           = GameState::Settings;
-            }
-        }
-        else if (pauseResult == 5)
-        {
-            ResetRunState();
-            _menu.Init();
-            _gameState = GameState::Menu;
-        }
-        else if (pauseResult == 6)
-        {
-            _stateBeforeSettings = GameState::Pause;
-            _settingsTab         = 0;
-            _settingsDragSlider  = -1;
-            _settingsRebindSlot  = -1;
-            _keybindingsEdit     = _player.GetBindings();
-            _gameState           = GameState::Settings;
-        }
-
+        _pauseUI.DrawPause(GetPromptModeForUi(), IsRunSaveable());
         break;
     }
 
     case GameState::DemoEnd:
         DrawDemoEnd();
+        break;
+
+    case GameState::RunSummary:
+        DrawRunSummary();
+        break;
+
+    case GameState::Grimoire:
+        DrawGrimoire();
+        break;
+
+    case GameState::CharacterSheet:
+        DrawCharacterSheet();
         break;
 
     case GameState::DungeonRun:
@@ -4672,6 +4598,10 @@ void Engine::Draw()
 
     case GameState::MetaShop:
         DrawMetaShop();
+        break;
+
+    case GameState::Armory:
+        DrawArmory();
         break;
 
     case GameState::CurseShrine:
@@ -4710,31 +4640,8 @@ void Engine::Draw()
         DrawVillagePlayground();
         break;
 
-    case GameState::GameOver:
-    {
-        int goResult = _pauseUI.DrawGameOver(GetPromptModeForUi());
-        if (goResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
-        if (goResult == 1)
-        {
-            // Death sends the player back to the village, waking up at Poe's
-            // Graveyard. No ResetRunState here — retained gold (Deep Pockets)
-            // stays spendable on buildings; the next run resets at the gate.
-            EnterVillage();
-
-            _fadeInTimer    = 2.0f;
-            _fadeInDuration = 2.0f;
-        }
-        else if (goResult == 2) { ResetRunState(); _menu.Init(); _gameState = GameState::Menu; }
-        else if (goResult == 3) _shouldClose = true;
-        break;
-    }
-
     case GameState::DeathRevive:
         DrawDeathRevive();
-        break;
-
-    case GameState::BossChoice:
-        DrawBossChoice();
         break;
 
     case GameState::HowToPlay:
@@ -4744,46 +4651,12 @@ void Engine::Draw()
     }
 
     case GameState::Keybindings:
-        // Legacy path: redirect straight into the Settings KEYBINDINGS tab
-        _stateBeforeSettings = GameState::Pause;
-        _settingsTab         = 2;
-        _settingsDragSlider  = -1;
-        _settingsRebindSlot  = -1;
-        _keybindingsEdit     = _player.GetBindings();
-        _gameState           = GameState::Settings;
+        // Update redirects this legacy entry point; rendering never navigates.
         break;
 
     case GameState::TouchButtonMapping:
-    {
-        int r = DrawTouchButtonMapping();
-        if (r == 1)  // Save
-        {
-            for (int i = 0; i < 6; i++) _touchCustomPos[i] = _touchMappingPos[i];
-            _touchLayoutCustom = true;
-            ApplyTouchCustomLayout();
-            _gameState = GameState::Pause;
-        }
-        else if (r == 2)  // Back
-        {
-            _gameState = GameState::Pause;
-        }
-        else if (r == 3)  // Default
-        {
-            // Restore everything to the original baked values captured on first open
-            if (_touchDefaults.captured)
-            {
-                _hudCfg.touchAtkPadR    = _touchDefaults.atkPadR;
-                _hudCfg.touchAtkPadB    = _touchDefaults.atkPadB;
-                _hudCfg.touchDashOffset = _touchDefaults.dashOffset;
-                _hudCfg.touchDashBotPad = _touchDefaults.dashBotPad;
-                for (int s = 0; s < 4; s++) _touchSlotOffset[s] = _touchDefaults.slotOffset[s];
-                for (int i = 0; i < 6; i++) _touchMappingPos[i] = _touchDefaults.pos[i];
-            }
-            _touchLayoutCustom   = false;
-            _touchMappingDragIdx = -1;
-        }
+        DrawTouchButtonMapping();
         break;
-    }
 
     case GameState::LevelUpChoice:
     {
@@ -4819,6 +4692,8 @@ void Engine::Draw()
     }
 
     DrawScreenFx();   // crit spotlight + level-up/ultimate flash, over the whole canvas
+    DrawFeatToast();
+    DrawRunSaveFailedNotice();
 
     // Playtest overlay: a clear way back to the map editor (input handled in Update).
     if (_editorPlaytestActive)
@@ -4845,144 +4720,6 @@ void Engine::Draw()
     }
 }
 
-void Engine::HandleCollisions()
-{
-    float mapW = _map.width  * _mapScale;
-    float mapH = _map.height * _mapScale;
-
-    // Per-side player boundaries
-    const float marginLeft   = 76.f;
-    const float marginRight  = 96.f;
-    const float marginTop    = 42.f;   // let the player go a little higher
-    const float marginBottom = ((_currentBiome == Biome::Forest || _currentBiome == Biome::Jungle)) ? 160.f : 220.f;
-
-    Vector2 pos = _player.GetWorldPos();
-    if (pos.x < marginLeft  || pos.x > mapW - marginRight
-     || pos.y < marginTop   || pos.y > mapH - marginBottom)
-    {
-        if (_player.IsBeingForcedPushed())
-            _player.OnForcedPushCollision();
-
-        // Always clamp - stops forced pushes and normal movement at the boundary
-        pos.x = std::max(marginLeft,        std::min(pos.x, mapW - marginRight));
-        pos.y = std::max(marginTop,         std::min(pos.y, mapH - marginBottom));
-        _player.SetWorldPos(pos);
-    }
-
-    for (auto& prop : _props)
-    {
-        Vector2 mtv{};
-        if (CheckCapsuleRect(_player.GetCapsule(), prop.GetCollisionRec(), mtv))
-        {
-            if (_player.IsBeingForcedPushed())
-                _player.OnForcedPushCollision();
-
-            Vector2 ppos = _player.GetWorldPos();
-            _player.SetWorldPos({ ppos.x + mtv.x, ppos.y + mtv.y });
-        }
-
-        for (auto& enemy : _enemies)
-        {
-            if (!enemy->IsActive() || enemy->IsPitFalling())
-                continue;
-            if (enemy->IgnoresPropCollisions())
-                continue;
-            if (CheckCollisionCircleRec(prop.GetEnemyCollisionCenter(), prop.GetEnemyCollisionRadius(), enemy->GetCollisionRec()))
-            {
-                if (enemy->IsBeingForcedPushed())
-                {
-                    enemy->OnForcedPushCollision();
-                    continue;
-                }
-
-                if (Ogre* ogre = enemy->AsOgre())
-                {
-                    if (ogre->IsRushing())
-                        ogre->OnRushBlocked();
-                }
-                else if (Molarbeast* molarbeast = enemy->AsMolarbeast())
-                {
-                    if (molarbeast->IsDashing())
-                        molarbeast->OnDashBlocked();
-                }
-
-                // Eject the enemy via capsule MTV
-                Vector2 eMtv{};
-                if (CheckCapsuleRect(enemy->GetCapsule(), prop.GetCollisionRec(), eMtv))
-                {
-                    Vector2 epos = enemy->GetWorldPos();
-                    enemy->Teleport({ epos.x + eMtv.x, epos.y + eMtv.y });
-                }
-                else
-                {
-                    enemy->UndoMovement();
-                }
-            }
-        }
-
-    }
-
-      // Enemies should obey the same arena rectangle as the player. Using the
-      // shared per-side margins keeps all actors inside the intended playable
-      // space instead of letting special enemies, like the ogre, rush beyond
-      // the lower boundary.
-      for (auto& enemy : _enemies)
-      {
-          if (!enemy->IsActive() || enemy->IsPitFalling())
-              continue;
-          if (enemy->IsDying()) continue;
-          Vector2 pos = enemy->GetWorldPos();
-          if (pos.x < marginLeft  || pos.x > mapW - marginRight ||
-              pos.y < marginTop   || pos.y > mapH - marginBottom)
-          {
-              if (enemy->IsBeingForcedPushed())
-                  enemy->OnForcedPushCollision();
-              else if (Ogre* ogre = enemy->AsOgre())
-              {
-                  if (ogre->IsRushing())
-                      ogre->OnRushBlocked();
-                  else
-                      enemy->UndoMovement();
-              }
-              else if (Molarbeast* molarbeast = enemy->AsMolarbeast())
-              {
-                  if (molarbeast->IsDashing())
-                      molarbeast->OnDashBlocked();
-                  else
-                      enemy->UndoMovement();
-              }
-              else
-              {
-                  enemy->UndoMovement();
-              }
-        }
-    }
-
-
-    // Player vs enemy solid collision - dash passes straight through.
-    // After the dash ends, eject the player if they landed inside an enemy.
-    if (!_player.IsDashing())
-    {
-        for (auto& enemy : _enemies)
-        {
-            if (!enemy->IsActive() || !enemy->IsAlive() || enemy->IsPitFalling())
-                continue;
-
-            Vector2 peMtv{};
-            if (!CheckCapsuleCapsule(_player.GetCapsule(), enemy->GetCapsule(), peMtv))
-                continue;
-
-            if (_player.IsBeingForcedPushed())
-                continue;
-
-            // Apply MTV directly without undoing movement - lateral motion is preserved
-            // giving a natural slide around enemy capsules instead of a hard stop.
-            Vector2 pos = _player.GetWorldPos();
-            _player.SetWorldPos({ pos.x + peMtv.x, pos.y + peMtv.y });
-        }
-    }
-}
-
 void Engine::UpdateEnemyCount(float dt)
 {
     EnemyDeathContext ctx{};
@@ -4999,14 +4736,17 @@ void Engine::UpdateEnemyCount(float dt)
         if (!_prologueActive) SpawnEnemyDrop(worldPos, isOgre, isBoss);
     };
     ctx.spawnSmallSlime = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
-    ctx.spawnPoisonCloud = [&](Vector2 pos) { SpawnPoisonCloud(pos, Sporeling::kPoisonCloudRadius); };
+    ctx.spawnPoisonCloud = [&](Vector2 pos) {
+        SpawnPoisonCloud(pos, Sporeling::kPoisonCloudRadius, DamageSource::FromEnemy("Sporeling", false, false));
+    };
+    ctx.onEnemySlain = [&](Enemy& enemy) { RecordCreatureSlain(enemy); };
     ctx.onEnemyKilled = [&](Vector2 pos, bool burning, bool frozen, bool charged, bool eliteOrBoss) {
         if (_prologueActive) return;
         _player.OnEnemyKilled(eliteOrBoss);
         ApplyRelicOnKill(pos, burning, frozen, charged, eliteOrBoss);
         // Volatile room affix — the corpse erupts into a lingering toxic cloud.
         if (GetRoomAffixDef(_currentRoomAffix).volatileDeath)
-            SpawnPoisonCloud(pos, Sporeling::kPoisonCloudRadius);
+            SpawnPoisonCloud(pos, Sporeling::kPoisonCloudRadius, DamageSource::FromHazard(DamageNames::kVolatileCorpse));
         // Elites and bosses owe a relic — deferred to a 3-card pick once the room
         // is clear (see the trigger in the gameplay update).
         if (eliteOrBoss)
@@ -5017,11 +4757,128 @@ void Engine::UpdateEnemyCount(float dt)
 
 void Engine::TriggerScreenShake(float strength, float duration)
 {
-    _shakeStrength = strength * _juiceShakeMult;   // global multiplier (debug juice panel)
+    const float requested = strength * _juiceShakeMult * _settingsMgr.Get().screenShake;
+    const float current = _shakeStrength * ImpactShakeEnvelope(_shakeTimer, _shakeDuration);
+    if (requested <= 0.f || duration <= 0.f || requested < current) return;
+    _shakeStrength = requested;
+    _shakeDuration = duration;
     _shakeTimer = duration;
 }
 
-void Engine::DrawHUD(bool villageMode)
+const Engine::HudEditorField Engine::kHudEditorFields[Engine::kHudEditorFieldCount] = {
+    { "0  HUD Panel X",     &HUDConfig::panelX },      { "1  HUD Panel Y",     &HUDConfig::panelY },
+    { "2  Act Offset X",    &HUDConfig::actOffsetX },  { "3  Act Y",           &HUDConfig::actY },
+    { "4  Act Font",        &HUDConfig::actFs },
+    { "5  Mini X",          &HUDConfig::miniX },       { "6  Mini Y",          &HUDConfig::miniY },
+    { "7  Mini Width",      &HUDConfig::miniW },
+    { "8  Dot Boss",        &HUDConfig::miniDotBoss }, { "9  Dot Elite",       &HUDConfig::miniDotElite },
+    { "10 Dot Enemy",       &HUDConfig::miniDotEnemy },{ "11 Dot Prop",        &HUDConfig::miniDotProp },
+    { "12 Dot Pickup",      &HUDConfig::miniDotPickup },{ "13 Dot Player",     &HUDConfig::miniDotPlayer },
+    { "14 Joy Radius",      &HUDConfig::touchJoyR },   { "15 Atk Radius",      &HUDConfig::touchAtkR },
+    { "16 Dash Radius",     &HUDConfig::touchDashR },
+    { "17 Atk Pad Right",   &HUDConfig::touchAtkPadR },{ "18 Atk Pad Bot",     &HUDConfig::touchAtkPadB },
+    { "19 Dash Offset",     &HUDConfig::touchDashOffset },
+    { "20 Pause Width",     &HUDConfig::touchPauseW }, { "21 Pause Height",    &HUDConfig::touchPauseH },
+    { "22 Pause Pad",       &HUDConfig::touchPausePad },
+    { "23 Atk Label Font",  &HUDConfig::touchAtkFs },  { "24 Dash Label Font", &HUDConfig::touchDashFs },
+    { "25 Touch Slot Size", &HUDConfig::touchSlotSz }, { "26 Touch Slot Gap",  &HUDConfig::touchSlotGap },
+    { "27 Slot Right Pad",  &HUDConfig::touchSlotRightPad }, { "28 Slot Y Offset", &HUDConfig::touchSlotYOff },
+    { "29 EXP Bar Height",  &HUDConfig::expBarH },     { "30 EXP Bar Gap",     &HUDConfig::expBarGap },
+    { "31 EXP Label Font",  &HUDConfig::expLabelFs },
+};
+
+bool Engine::IsHudDrawnThisFrame() const
+{
+    switch (_gameState)
+    {
+    case GameState::Village:            return !_villageInsideInterior;   // DrawVillagePlayground
+    case GameState::Pause:              return _stateBeforePause == GameState::Village && !_villageInsideInterior;
+    case GameState::DungeonRun:         return !_dungeonScrolling;        // DrawDungeonRun
+    case GameState::LevelUpChoice:
+    case GameState::AbilityChoice:
+    case GameState::TouchButtonMapping: return true;
+    default:                            return false;
+    }
+}
+
+void Engine::UpdateHudPresentation(float frameDt)
+{
+    // Counters tick smoothly toward the real value (satisfying loot feel).
+    float ctrK = std::min(1.f, frameDt * 10.f);
+    _displayGold  += ((float)_player.GetGold()  - _displayGold)  * ctrK;
+    _displayCells += ((float)_player.GetCells() - _displayCells) * ctrK;
+    if (fabsf(_displayGold  - _player.GetGold())  < 0.6f) _displayGold  = (float)_player.GetGold();
+    if (fabsf(_displayCells - _player.GetCells()) < 0.6f) _displayCells = (float)_player.GetCells();
+
+    if (_cellsBankedToastTimer > 0.f) _cellsBankedToastTimer -= frameDt;
+    if (_contractToastTimer    > 0.f) _contractToastTimer    -= frameDt;
+    if (_relicToastTimer       > 0.f) _relicToastTimer       -= frameDt;
+    // The room intro banner is drawn with the dungeon HUD, so it ticks here too.
+    if (_gameState == GameState::DungeonRun && _roomIntroTimer > 0.f) _roomIntroTimer -= frameDt;
+
+    // Orb fill slides toward the true value instead of snapping.
+    float maxHp = _player.GetMaxHealthValue();
+    float hpPct = (maxHp > 0.f) ? (_player.GetHealthValue() / maxHp) : 0.f;
+    int maxMana = _player.GetMaxMana();
+    float manaPct = (maxMana > 0) ? (float)_player.GetMana() / (float)maxMana : 0.f;
+    float orbK = std::min(1.f, frameDt * 8.f);
+    _displayHpPct   += (hpPct   - _displayHpPct)   * orbK;
+    _displayManaPct += (manaPct - _displayManaPct) * orbK;
+
+    UpdateHudCover(frameDt);
+
+    // The dungeon map shows while its key or controller button is held, unless
+    // the player has bound that button to an action of their own.
+    const GamepadBindings& pad = _gamepadBindingsEdit;
+    bool mapButtonBound = pad.attack == kDungeonMapPadButton || pad.dash == kDungeonMapPadButton ||
+                          pad.pause == kDungeonMapPadButton;
+    for (GamepadButton button : pad.ability) mapButtonBound = mapButtonBound || button == kDungeonMapPadButton;
+    const bool padMapHeld = _gamepad.isActive && !mapButtonBound &&
+                            IsGamepadButtonDown(GamepadInput::kGamepad, kDungeonMapPadButton);
+    _dungeonMapHeld = _gameState == GameState::DungeonRun && (IsKeyDown(kDungeonMapKey) || padMapHeld);
+
+    // -- HUD debug editor --------------------------------------------------
+#if MO_DEV_TOOLS
+    if (IsKeyPressed(KEY_NINE))
+        _hudEditorActive = !_hudEditorActive;
+#endif
+    if (!_hudEditorActive) return;
+
+    constexpr int kN = kHudEditorFieldCount;
+    if (IsKeyPressed(KEY_UP))
+        _hudEditorSelIdx = (_hudEditorSelIdx - 1 + kN) % kN;
+    if (IsKeyPressed(KEY_DOWN))
+        _hudEditorSelIdx = (_hudEditorSelIdx + 1) % kN;
+    float& selected = _hudCfg.*kHudEditorFields[_hudEditorSelIdx].value;
+    if (IsKeyDown(KEY_RIGHT)) selected += 1.f;
+    if (IsKeyDown(KEY_LEFT))  selected -= 1.f;
+
+    if (IsKeyPressed(KEY_S))
+    {
+        const HUDConfig& hc = _hudCfg;
+        TraceLog(LOG_INFO, "=== HUD Editor Export ===");
+        TraceLog(LOG_INFO, "panelX=%g panelY=%g", hc.panelX, hc.panelY);
+        TraceLog(LOG_INFO, "actOffsetX=%g actY=%g actFs=%g", hc.actOffsetX, hc.actY, hc.actFs);
+        TraceLog(LOG_INFO, "miniX=%g miniY=%g miniW=%g", hc.miniX, hc.miniY, hc.miniW);
+        TraceLog(LOG_INFO, "miniDots: boss=%g elite=%g enemy=%g prop=%g pickup=%g player=%g",
+            hc.miniDotBoss, hc.miniDotElite, hc.miniDotEnemy, hc.miniDotProp, hc.miniDotPickup, hc.miniDotPlayer);
+        TraceLog(LOG_INFO, "touchJoyR=%g atkR=%g dashR=%g atkPadR=%g atkPadB=%g dashOff=%g",
+            hc.touchJoyR, hc.touchAtkR, hc.touchDashR, hc.touchAtkPadR, hc.touchAtkPadB, hc.touchDashOffset);
+        TraceLog(LOG_INFO, "pauseW=%g pauseH=%g pausePad=%g atkFs=%g dashFs=%g",
+            hc.touchPauseW, hc.touchPauseH, hc.touchPausePad, hc.touchAtkFs, hc.touchDashFs);
+        TraceLog(LOG_INFO, "touchSlotSz=%g touchSlotGap=%g touchSlotRightPad=%g touchSlotYOff=%g",
+            hc.touchSlotSz, hc.touchSlotGap, hc.touchSlotRightPad, hc.touchSlotYOff);
+        TraceLog(LOG_INFO, "expBarH=%g expBarGap=%g expLabelFs=%g",
+            hc.expBarH, hc.expBarGap, hc.expLabelFs);
+        TraceLog(LOG_INFO, "touchSlotOffsets: [0]=(%.1f,%.1f) [1]=(%.1f,%.1f) [2]=(%.1f,%.1f) [3]=(%.1f,%.1f)",
+            _touchSlotOffset[0].x, _touchSlotOffset[0].y,
+            _touchSlotOffset[1].x, _touchSlotOffset[1].y,
+            _touchSlotOffset[2].x, _touchSlotOffset[2].y,
+            _touchSlotOffset[3].x, _touchSlotOffset[3].y);
+    }
+}
+
+void Engine::DrawHUD(bool villageMode) const
 {
     {
     const HUDConfig& hc = _hudCfg;
@@ -5037,135 +4894,62 @@ void Engine::DrawHUD(bool villageMode)
         DrawText(text, (int)x, (int)y, fontSize, textColor);
     };
 
-    // Counters tick smoothly toward the real value (satisfying loot feel).
-    float ctrK = std::min(1.f, GetFrameTime() * 10.f);
-    _displayGold  += ((float)_player.GetGold()  - _displayGold)  * ctrK;
-    _displayCells += ((float)_player.GetCells() - _displayCells) * ctrK;
-    if (fabsf(_displayGold  - _player.GetGold())  < 0.6f) _displayGold  = (float)_player.GetGold();
-    if (fabsf(_displayCells - _player.GetCells()) < 0.6f) _displayCells = (float)_player.GetCells();
+    // The top-left panel: HP, MP, the class mechanic, ability slots, gold,
+    // Echoes, level/XP and relics (EngineHud.cpp). The same in the village.
+    (void)villageMode;
+    DrawHudPanel();
 
-    drawLabelBox(("Gold: " + std::to_string((int)(_displayGold + 0.5f))).c_str(),
-        hc.goldX, hc.goldY, (int)hc.goldFs, GOLD);
-    if (!villageMode && _currentRoomType != RoomType::Store)
-        drawLabelBox(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(),
-            hc.enemiesX, hc.enemiesY, (int)hc.enemiesFs, RAYWHITE);
-
-    // Carried Echoes - pink to match the pickup orbs; lost on death.
-    float echoesY = villageMode ? hc.enemiesY : hc.enemiesY + hc.enemiesFs + 24.f;
-    drawLabelBox(("Echoes: " + std::to_string((int)(_displayCells + 0.5f))).c_str(),
-        hc.goldX, echoesY, (int)hc.goldFs, Color{ 255, 120, 210, 255 });
+    // Top-centre toasts stack downward in this order, so several landing on
+    // the same frame (camp arrival: banked Echoes + domain bounty + relic)
+    // never overlap.
+    float toastY = 150.f;
+    constexpr float kToastGap = 14.f;
 
     // "+N Echoes banked" toast after reaching Zeph with carried cells.
     if (_cellsBankedToastTimer > 0.f)
     {
-        _cellsBankedToastTimer -= GetFrameTime();
         float toastAlpha = std::min(1.f, _cellsBankedToastTimer / 0.75f);
         const char* toastText = TextFormat("+%d Echoes banked with Zeph", _cellsBankedToastAmount);
         int toastFontSize = 40;
         int toastWidth = MeasureText(toastText, toastFontSize);
         float toastX = (float)kVirtualWidth * 0.5f - toastWidth * 0.5f;
-        float toastY = 150.f;
         DrawRectangleRounded(
             Rectangle{ toastX - 18.f, toastY - 10.f, toastWidth + 36.f, toastFontSize + 20.f },
             0.3f, 6, Fade(BLACK, 0.55f * toastAlpha));
         DrawText(toastText, (int)toastX, (int)toastY, toastFontSize,
             Fade(Color{ 255, 120, 210, 255 }, toastAlpha));
+        toastY += toastFontSize + 20.f + kToastGap;
     }
 
     // "CONTRACT HONORED +N gold +N XP" toast when a Risk Shrine contract resolves.
     if (_contractToastTimer > 0.f)
     {
-        _contractToastTimer -= GetFrameTime();
         float toastAlpha = std::min(1.f, _contractToastTimer / 0.75f);
         int toastFontSize = 38;
         int toastWidth = MeasureText(_contractToastText.c_str(), toastFontSize);
         float toastX = (float)kVirtualWidth * 0.5f - toastWidth * 0.5f;
-        float toastY = 200.f;
         DrawRectangleRounded(
             Rectangle{ toastX - 18.f, toastY - 10.f, toastWidth + 36.f, toastFontSize + 20.f },
             0.3f, 6, Fade(BLACK, 0.55f * toastAlpha));
         DrawText(_contractToastText.c_str(), (int)toastX, (int)toastY, toastFontSize,
             Fade(Color{ 255, 200, 110, 255 }, toastAlpha));
+        toastY += toastFontSize + 20.f + kToastGap;
     }
 
-    // Owned relics strip + "New Relic!" toast.
-    DrawOwnedRelics();
+    // "New Relic!" toast (the owned relics sit beside the panel).
     if (_relicToastTimer > 0.f)
     {
-        _relicToastTimer -= GetFrameTime();
         float toastAlpha = std::min(1.f, _relicToastTimer / 0.75f);
-        const char* toastText = TextFormat("New Relic:  %s", _relicToastName.c_str());
+        const char* toastText = _relicToastName.c_str();   // full line (relic or class unlock)
         int toastFontSize = 44;
         int toastWidth = MeasureText(toastText, toastFontSize);
         float toastX = (float)kVirtualWidth * 0.5f - toastWidth * 0.5f;
-        float toastY = 220.f;
+        toastY += 2.f;   // its box pads 2px more than the others
         DrawRectangleRounded(
             Rectangle{ toastX - 20.f, toastY - 12.f, toastWidth + 40.f, toastFontSize + 24.f },
             0.3f, 6, Fade(BLACK, 0.6f * toastAlpha));
         DrawText(toastText, (int)toastX, (int)toastY, toastFontSize,
             Fade(Color{ 255, 220, 120, 255 }, toastAlpha));
-    }
-
-
-    auto drawOrb = [&](Vector2 centre, float radius, float pct, Color fill, const char* label)
-    {
-        pct = std::clamp(pct, 0.f, 1.f);
-        DrawCircleV(centre, radius + 8.f, Fade(BLACK, 0.55f));
-        DrawCircleV(centre, radius, Fade(BLACK, 0.82f));
-        float fillRadius = radius - 4.f;
-        float fillH = fillRadius * 2.f * pct;
-        BeginScissorMode(
-            (int)(centre.x - fillRadius),
-            (int)(centre.y + fillRadius - fillH),
-            (int)(fillRadius * 2.f),
-            (int)std::ceil(fillH));
-        DrawCircleV(centre, fillRadius, fill);
-        EndScissorMode();
-        DrawCircleLinesV(centre, radius, Fade(WHITE, 0.45f));
-        DrawCircleLinesV(centre, radius - 7.f, Fade(WHITE, 0.38f));
-
-        int fs = (int)hc.barLabelFs + 4;
-        int labelW = MeasureText(label, fs);
-        DrawText(label, (int)(centre.x - labelW * 0.5f), (int)(centre.y - fs * 0.5f), fs, RAYWHITE);
-    };
-
-    {        float orbR = std::max(24.f, hc.statOrbR);
-
-        Vector2 hpOrbCentre{ hc.hpOrbX, hc.hpOrbY };
-        Vector2 mpOrbCentre{ hc.mpOrbX, hc.mpOrbY };
-        if (_touchModeActive)
-        {
-            orbR *= 1.25f;
-            const float centreX = kVirtualWidth * 0.5f;
-            const float centreGap = orbR * 2.f + 48.f;
-            const float maxY = kVirtualHeight - orbR - 10.f;
-            hpOrbCentre.x = centreX - centreGap * 0.5f;
-            mpOrbCentre.x = centreX + centreGap * 0.5f;
-            hpOrbCentre.y = std::min(hpOrbCentre.y, maxY);
-            mpOrbCentre.y = std::min(mpOrbCentre.y, maxY);
-        }
-
-        float maxHp = _player.GetMaxHealthValue();
-        float curHp = _player.GetHealthValue();
-        float hpPct = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
-        Color hpFill = (hpPct > 0.30f) ? Color{190, 25, 30, 235} : Color{255, 45, 40, 245};
-        if (hpPct <= 0.30f)
-        {
-            float pulse = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
-            DrawCircleV(hpOrbCentre, orbR + 16.f, Fade(RED, 0.22f * pulse));
-        }
-        // Orb fill slides toward the true value instead of snapping.
-        float orbK = std::min(1.f, GetFrameTime() * 8.f);
-        _displayHpPct += (hpPct - _displayHpPct) * orbK;
-        drawOrb(hpOrbCentre, orbR, _displayHpPct,
-            hpFill, TextFormat("HP %.0f", curHp));
-
-        int curMana = _player.GetMana();
-        int maxMana = _player.GetMaxMana();
-        float manaPct = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
-        _displayManaPct += (manaPct - _displayManaPct) * orbK;
-        drawOrb(mpOrbCentre, orbR, _displayManaPct,
-            Color{245, 205, 45, 235}, TextFormat("MP %d", curMana));
     }
 
     if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
@@ -5227,103 +5011,12 @@ void Engine::DrawHUD(bool villageMode)
             (int)(pauseRec.y + pauseRec.height / 2.f - 13.f),
             26, RAYWHITE);
     }
-    else
-    {
-        DrawAbilityBar();
-    }
+    // (PC ability slots are part of the top-left panel.)
 
-    // -- HUD debug editor --------------------------------------------------
-#if MO_DEV_TOOLS
-    if (IsKeyPressed(KEY_NINE))
-        _hudEditorActive = !_hudEditorActive;
-#endif
-
+    // -- HUD debug editor panel (input lives in UpdateHudPresentation) -----
     if (_hudEditorActive)
     {
-        constexpr int kN = 54;
-        const char* varNames[kN] = {
-            "0  Bar Width",       "1  Bar Height",      "2  Bar Gap",
-            "3  Bar Top Pad",     "4  Bar Label Font",
-            "5  Gold X",          "6  Gold Y",          "7  Gold Font",
-            "8  Enemies X",       "9  Enemies Y",       "10 Enemies Font",
-            "11 Act Offset X",    "12 Act Y",            "13 Act Font",
-            "14 Mini X",          "15 Mini Y",           "16 Mini Width",
-            "17 Dot Boss",        "18 Dot Elite",        "19 Dot Enemy",
-            "20 Dot Prop",        "21 Dot Pickup",       "22 Dot Player",
-            "23 Slot Size",       "24 Slot Gap",         "25 Slot Bot Pad",
-            "26 Key Label Font",  "27 Name Font",
-            "28 Joy Radius",      "29 Atk Radius",       "30 Dash Radius",
-            "31 Atk Pad Right",   "32 Atk Pad Bot",      "33 Dash Offset",
-            "34 Pause Width",     "35 Pause Height",     "36 Pause Pad",
-            "37 Atk Label Font",  "38 Dash Label Font",
-            "39 Touch Slot Size", "40 Touch Slot Gap",
-            "41 Slot Right Pad",  "42 Slot Y Offset",
-            "43 EXP Bar Height",  "44 EXP Bar Gap",      "45 EXP Label Font",
-            "46 HP Orb X",        "47 HP Orb Y",         "48 MP Orb X",
-            "49 MP Orb Y",        "50 HP/MP Orb Size",
-            "51 Armour X",        "52 Armour Y",        "53 Armour Size",
-        };
-        float* vars[kN] = {
-            &_hudCfg.barW,        &_hudCfg.barH,        &_hudCfg.barGap,
-            &_hudCfg.barTopPad,   &_hudCfg.barLabelFs,
-            &_hudCfg.goldX,       &_hudCfg.goldY,       &_hudCfg.goldFs,
-            &_hudCfg.enemiesX,    &_hudCfg.enemiesY,    &_hudCfg.enemiesFs,
-            &_hudCfg.actOffsetX,  &_hudCfg.actY,        &_hudCfg.actFs,
-            &_hudCfg.miniX,       &_hudCfg.miniY,       &_hudCfg.miniW,
-            &_hudCfg.miniDotBoss, &_hudCfg.miniDotElite,&_hudCfg.miniDotEnemy,
-            &_hudCfg.miniDotProp, &_hudCfg.miniDotPickup,&_hudCfg.miniDotPlayer,
-            &_hudCfg.slotSz,      &_hudCfg.slotGap,     &_hudCfg.slotBotPad,
-            &_hudCfg.slotKeyFs,   &_hudCfg.slotNameFs,
-            &_hudCfg.touchJoyR,   &_hudCfg.touchAtkR,   &_hudCfg.touchDashR,
-            &_hudCfg.touchAtkPadR,&_hudCfg.touchAtkPadB,&_hudCfg.touchDashOffset,
-            &_hudCfg.touchPauseW, &_hudCfg.touchPauseH, &_hudCfg.touchPausePad,
-            &_hudCfg.touchAtkFs,  &_hudCfg.touchDashFs,
-            &_hudCfg.touchSlotSz, &_hudCfg.touchSlotGap,
-            &_hudCfg.touchSlotRightPad, &_hudCfg.touchSlotYOff,
-            &_hudCfg.expBarH, &_hudCfg.expBarGap, &_hudCfg.expLabelFs,
-            &_hudCfg.hpOrbX, &_hudCfg.hpOrbY, &_hudCfg.mpOrbX,
-            &_hudCfg.mpOrbY, &_hudCfg.statOrbR,
-            &_hudCfg.armourX, &_hudCfg.armourY, &_hudCfg.armourSize,
-        };
-
-        if (IsKeyPressed(KEY_UP))
-            _hudEditorSelIdx = (_hudEditorSelIdx - 1 + kN) % kN;
-        if (IsKeyPressed(KEY_DOWN))
-            _hudEditorSelIdx = (_hudEditorSelIdx + 1) % kN;
-        if (IsKeyDown(KEY_RIGHT)) *vars[_hudEditorSelIdx] += 1.f;
-        if (IsKeyDown(KEY_LEFT))  *vars[_hudEditorSelIdx] -= 1.f;
-
-        if (IsKeyPressed(KEY_S))
-        {
-            TraceLog(LOG_INFO, "=== HUD Editor Export ===");
-            TraceLog(LOG_INFO, "barW=%g barH=%g barGap=%g barTopPad=%g barLabelFs=%g",
-                hc.barW, hc.barH, hc.barGap, hc.barTopPad, hc.barLabelFs);
-            TraceLog(LOG_INFO, "goldX=%g goldY=%g goldFs=%g", hc.goldX, hc.goldY, hc.goldFs);
-            TraceLog(LOG_INFO, "enemiesX=%g enemiesY=%g enemiesFs=%g", hc.enemiesX, hc.enemiesY, hc.enemiesFs);
-            TraceLog(LOG_INFO, "actOffsetX=%g actY=%g actFs=%g", hc.actOffsetX, hc.actY, hc.actFs);
-            TraceLog(LOG_INFO, "miniX=%g miniY=%g miniW=%g", hc.miniX, hc.miniY, hc.miniW);
-            TraceLog(LOG_INFO, "miniDots: boss=%g elite=%g enemy=%g prop=%g pickup=%g player=%g",
-                hc.miniDotBoss, hc.miniDotElite, hc.miniDotEnemy, hc.miniDotProp, hc.miniDotPickup, hc.miniDotPlayer);
-            TraceLog(LOG_INFO, "slotSz=%g slotGap=%g slotBotPad=%g slotKeyFs=%g slotNameFs=%g",
-                hc.slotSz, hc.slotGap, hc.slotBotPad, hc.slotKeyFs, hc.slotNameFs);
-            TraceLog(LOG_INFO, "touchJoyR=%g atkR=%g dashR=%g atkPadR=%g atkPadB=%g dashOff=%g",
-                hc.touchJoyR, hc.touchAtkR, hc.touchDashR, hc.touchAtkPadR, hc.touchAtkPadB, hc.touchDashOffset);
-            TraceLog(LOG_INFO, "pauseW=%g pauseH=%g pausePad=%g atkFs=%g dashFs=%g",
-                hc.touchPauseW, hc.touchPauseH, hc.touchPausePad, hc.touchAtkFs, hc.touchDashFs);
-            TraceLog(LOG_INFO, "touchSlotSz=%g touchSlotGap=%g touchSlotRightPad=%g touchSlotYOff=%g",
-                hc.touchSlotSz, hc.touchSlotGap, hc.touchSlotRightPad, hc.touchSlotYOff);
-            TraceLog(LOG_INFO, "expBarH=%g expBarGap=%g expLabelFs=%g",
-                hc.expBarH, hc.expBarGap, hc.expLabelFs);
-            TraceLog(LOG_INFO, "hpOrbX=%g hpOrbY=%g mpOrbX=%g mpOrbY=%g statOrbR=%g",
-                hc.hpOrbX, hc.hpOrbY, hc.mpOrbX, hc.mpOrbY, hc.statOrbR);
-            TraceLog(LOG_INFO, "armourX=%g armourY=%g armourSize=%g",
-                hc.armourX, hc.armourY, hc.armourSize);
-            TraceLog(LOG_INFO, "touchSlotOffsets: [0]=(%.1f,%.1f) [1]=(%.1f,%.1f) [2]=(%.1f,%.1f) [3]=(%.1f,%.1f)",
-                _touchSlotOffset[0].x, _touchSlotOffset[0].y,
-                _touchSlotOffset[1].x, _touchSlotOffset[1].y,
-                _touchSlotOffset[2].x, _touchSlotOffset[2].y,
-                _touchSlotOffset[3].x, _touchSlotOffset[3].y);
-        }
+        constexpr int kN = kHudEditorFieldCount;
 
         // Two-column panel
         constexpr int   kHalf = (kN + 1) / 2;  // 20
@@ -5355,439 +5048,38 @@ void Engine::DrawHUD(bool villageMode)
 
             if (sel)
                 DrawText("->", (int)(cx+4.f), (int)(ry+rowH*0.5f-7.f), 13, YELLOW);
-            DrawText(varNames[i], (int)(cx+26.f), (int)(ry+rowH*0.5f-7.f), 13, col_c);
+            DrawText(kHudEditorFields[i].label, (int)(cx+26.f), (int)(ry+rowH*0.5f-7.f), 13, col_c);
 
-            const char* valStr = TextFormat("%.1f", *vars[i]);
+            const char* valStr = TextFormat("%.1f", hc.*kHudEditorFields[i].value);
             int valW = MeasureText(valStr, 13);
             DrawText(valStr, (int)(cx+colW-valW-6.f), (int)(ry+rowH*0.5f-7.f), 13, col_c);
         }
     }
 
     }
-    return;
-
-    // -- Shared bottom-bar layout constants (mirrored in DrawAbilityBar) -------
-    static constexpr float kBarW   = 400.f;
-    static constexpr float kBarH   = 28.f;
-    static constexpr float kBarGap = 8.f;
-    static constexpr float kBotPad = 12.f;
-
-    const float expBarY  = (float)kVirtualHeight - kBotPad - kBarH;
-    const float manaBarY = expBarY - kBarGap - kBarH;
-    const float hpBarY   = manaBarY - kBarGap - kBarH;
-    const float barX     = (float)kVirtualWidth / 2.f - kBarW / 2.f;
-
-    // -- Top banner ------------------------------------------------------------
-    DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight / 8, Fade(BLACK, 0.6f));
-
-    DrawText(TextFormat("Time: %.1f", _gameTimer), 85 + kVirtualWidth / 2 - 150, 60, 30, RAYWHITE);
-    DrawText(("Gold: " + std::to_string(_player.GetGold())).c_str(), 20, 10, 30, GOLD);
-    DrawText(("Enemies Left: " + std::to_string(GetActiveEnemyCount())).c_str(), 20, 60, 30, RAYWHITE);
-
-    // -- Wave display - top right ----------------------------------------------
-    {
-        bool isBoss = (_wave > 0 && _wave % 5 == 0);
-        const char* waveLabel = isBoss
-            ? TextFormat("Wave %d  - BOSS", _wave)
-            : TextFormat("Wave %d", _wave);
-        int waveLabelW = MeasureText(waveLabel, 32);
-        DrawText(waveLabel, kVirtualWidth - waveLabelW - 20, 20, 32,
-            isBoss ? ORANGE : RAYWHITE);
-    }
-
-    // -- HP bar (bottom, above EXP) --------------------------------------------
-    {
-        float maxHp = _player.GetMaxHealthValue();
-        float curHp = _player.GetHealthValue();
-        float hpPct = (maxHp > 0.f) ? (curHp / maxHp) : 0.f;
-
-        Color fillColor = (hpPct > 0.70f) ? GREEN :
-                          (hpPct > 0.30f) ? YELLOW : RED;
-
-        if (hpPct <= 0.30f)
-        {
-            float pulse    = (sinf((float)GetTime() * (2.f * PI / 3.f)) + 1.f) * 0.5f;
-            float exps[]   = { 4.f, 9.f, 15.f };
-            float alphas[] = { 0.45f, 0.28f, 0.13f };
-            for (int i = 0; i < 3; i++)
-            {
-                float e = exps[i];
-                DrawRectangleRounded(
-                    { barX - e, hpBarY - e, kBarW + e * 2.f, kBarH + e * 2.f },
-                    0.35f, 6, Fade(RED, alphas[i] * pulse));
-            }
-        }
-
-        DrawRectangleRounded({ barX, hpBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
-        DrawRectangleRounded({ barX, hpBarY, kBarW * hpPct, kBarH }, 0.3f, 6, fillColor);
-        DrawRectangleRoundedLines({ barX, hpBarY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
-
-        const char* hpLabel = TextFormat("HP  %.0f / %.0f", curHp, maxHp);
-        int labelW = MeasureText(hpLabel, 18);
-        DrawText(hpLabel,
-            (int)(barX + kBarW / 2.f - labelW / 2.f),
-            (int)(hpBarY + kBarH / 2.f - 9.f),
-            18, BLACK);
-    }
-
-    // -- Mana bar (middle) -----------------------------------------------------
-    {
-        int   curMana  = _player.GetMana();
-        int   maxMana  = _player.GetMaxMana();
-        float manaPct  = (maxMana > 0) ? (float)curMana / (float)maxMana : 0.f;
-
-        static const Color kManaFill = { 60, 120, 255, 230 };
-
-        DrawRectangleRounded({ barX, manaBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
-        DrawRectangleRounded({ barX, manaBarY, kBarW * manaPct, kBarH }, 0.3f, 6, kManaFill);
-        DrawRectangleRoundedLines({ barX, manaBarY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
-
-        const char* manaLabel = TextFormat("MP  %d / %d", curMana, maxMana);
-        int manaLabelW = MeasureText(manaLabel, 18);
-        DrawText(manaLabel,
-            (int)(barX + kBarW / 2.f - manaLabelW / 2.f),
-            (int)(manaBarY + kBarH / 2.f - 9.f),
-            18, BLACK);
-    }
-
-    // -- EXP bar (very bottom) -------------------------------------------------
-    {
-        int   level    = _player.GetLevel();
-        int   exp      = _player.GetExp();
-        int   expToNext= _player.GetExpToNext();
-        int   maxLevel = _player.GetMaxLevel();
-        float expPct   = (level < maxLevel && expToNext > 0) ? (float)exp / (float)expToNext : 1.f;
-
-        static const Color kExpFill = { 255, 210, 0, 230 };
-
-        DrawRectangleRounded({ barX, expBarY, kBarW, kBarH }, 0.3f, 6, Fade(BLACK, 0.75f));
-        if (level < maxLevel)
-            DrawRectangleRounded({ barX, expBarY, kBarW * expPct, kBarH }, 0.3f, 6, kExpFill);
-        DrawRectangleRoundedLines({ barX, expBarY, kBarW, kBarH }, 0.3f, 6, Fade(WHITE, 0.25f));
-
-        const char* levelText = (level < maxLevel)
-            ? TextFormat("Lv.%d  %d/%d EXP", level, exp, expToNext)
-            : "Lv.MAX";
-        int textW = MeasureText(levelText, 18);
-        DrawText(levelText,
-            (int)(barX + kBarW / 2.f - textW / 2.f),
-            (int)(expBarY + kBarH / 2.f - 9.f),
-            18, kExpFill);
-    }
-
-    DrawAbilityBar();
-
-    if (_bossWarningTimer > 0.f)
-    {
-        const char* warning = "DON'T GET TOO CLOSE";
-        int warningSize = 34;
-        int warningWidth = MeasureText(warning, warningSize);
-        DrawText(warning,
-            kVirtualWidth / 2 - warningWidth / 2,
-            96,
-            warningSize,
-            ORANGE);
-    }
 }
 
-void Engine::DrawAbilityBar()
+bool Engine::ClickLandsOnAbilityBar() const
 {
-    {
-    const HUDConfig& hc = _hudCfg;
-    const int   totalSlots = _player.GetMaxAbilitySlots();
-    const float slotSize   = hc.slotSz;
-    const float slotGap    = hc.slotGap;
-    const float slotY      = (float)kVirtualHeight - hc.slotBotPad - slotSize;
-    const float totalW     = totalSlots * slotSize + (totalSlots - 1) * slotGap;
-    const float startX     = kVirtualWidth / 2.f - totalW / 2.f;
-    const int   keyFs      = (int)hc.slotKeyFs;
-    const int   nameFs     = (int)hc.slotNameFs;
-
-
-    {
-        int curExp = _player.GetExp();
-        int maxExp = _player.GetExpToNext();
-        float expPct = (maxExp > 0) ? std::min((float)curExp / (float)maxExp, 1.f) : 0.f;
-        const float expBarW = totalW;
-        const float expBarX = startX;
-        const float expBarY = slotY - hc.expBarGap - hc.expBarH;
-        static const Color kExpFill = { 160, 60, 255, 220 };
-
-        DrawRectangleRounded({ expBarX, expBarY, expBarW, hc.expBarH }, 0.3f, 4, Fade(BLACK, 0.65f));
-        DrawRectangleRounded({ expBarX, expBarY, expBarW * expPct, hc.expBarH }, 0.3f, 4, kExpFill);
-        DrawRectangleRoundedLines({ expBarX, expBarY, expBarW, hc.expBarH }, 0.3f, 4, Fade(WHITE, 0.22f));
-
-        int eFs = (int)hc.expLabelFs;
-        const char* expLabel = (_player.GetLevel() >= _player.GetMaxLevel())
-            ? TextFormat("LVL MAX")
-            : TextFormat("LVL %d   EXP  %d / %d", _player.GetLevel(), curExp, maxExp);
-        int eLW = MeasureText(expLabel, eFs);
-        DrawText(expLabel,
-            (int)(expBarX + expBarW / 2.f - eLW / 2.f),
-            (int)(expBarY + hc.expBarH / 2.f - eFs / 2.f),
-            eFs, WHITE);
-
-        const int armour = _player.GetArmour();
-        const int maxArmour = _player.GetMaxArmour();
-        const float armourIconH = std::max(1.f, hc.armourSize);
-        const float armourScale = (_upgradeDefenseTex.height > 0)
-            ? armourIconH / (float)_upgradeDefenseTex.height : 1.f;
-        const float armourIconW = (_upgradeDefenseTex.width > 0)
-            ? _upgradeDefenseTex.width * armourScale : armourIconH;
-        const float armourGap = armourIconH * 0.35f;
-        const float armourRight = maxArmour > 0
-            ? hc.armourX + maxArmour * armourIconW + (maxArmour - 1) * armourGap
-            : hc.armourX;
-
-        if (_upgradeDefenseTex.id != 0)
-        {
-            float iconX = hc.armourX;
-            const float iconY = hc.armourY;
-
-            for (int i = 0; i < maxArmour; i++)
-            {
-                Color tint = (i < armour) ? WHITE : Fade(WHITE, 0.38f);
-                DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, armourScale, tint);
-                iconX += armourIconW + armourGap;
-            }
-        }
-
-        bool showMechanic = true;
-        float progress = 0.f;
-        Color classColor = WHITE;
-        const char* mechanicLabel = "";
-        bool primed = false;
-
-        switch (_player.GetClass())
-        {
-        case PlayerClass::Warrior:
-            progress = std::clamp(_player.GetRagePercent(), 0.f, 1.f);
-            classColor = Color{ 255, 120, 30, 255 };
-            mechanicLabel = TextFormat("RAGE  %d%%", (int)std::round(progress * 100.f));
-            primed = progress >= 1.f;
-            break;
-        case PlayerClass::Rogue:
-        {
-            const int current = _player.GetComboPoints();
-            const int maximum = std::max(1, _player.GetMaxComboPoints());
-            progress = (float)current / (float)maximum;
-            classColor = Color{ 235, 65, 85, 255 };
-            mechanicLabel = TextFormat("COMBO  %d / %d", current, maximum);
-            primed = current >= maximum;
-            break;
-        }
-        case PlayerClass::Hunter:
-        {
-            const int required = std::max(1, _player.GetHunterMarkEvery());
-            const int current = std::clamp(_hunterShotsSinceMark, 0, required);
-            progress = (float)current / (float)required;
-            classColor = Color{ 95, 210, 105, 255 };
-            mechanicLabel = TextFormat("MARK  %d / %d", current, required);
-            primed = current == required - 1;
-            break;
-        }
-        case PlayerClass::Paladin:
-            progress = std::clamp(_player.GetFaithPercent(), 0.f, 1.f);
-            classColor = Color{ 240, 205, 85, 255 };
-            mechanicLabel = TextFormat("FAITH  %d%%", (int)std::round(progress * 100.f));
-            primed = progress >= 1.f;
-            break;
-        default:
-            showMechanic = false;
-            break;
-        }
-
-        const float mechanicH = std::max(28.f, armourIconH);
-        const float mechanicY = expBarY - mechanicH - 10.f;
-        const float mechanicX = armourRight + 18.f;
-        const float mechanicRight = expBarX + expBarW;
-        const float mechanicW = mechanicRight - mechanicX;
-        if (showMechanic && mechanicW >= 180.f)
-        {
-            Color pulseColor = classColor;
-            if (primed)
-            {
-                const float pulse = sinf((float)GetTime() * 8.f) * 0.5f + 0.5f;
-                pulseColor = ColorLerp(classColor, WHITE, pulse * 0.35f);
-            }
-
-            Rectangle mechanicRect{ mechanicX, mechanicY, mechanicW, mechanicH };
-            DrawRectangleRounded(mechanicRect, 0.22f, 6, Color{ 8, 10, 14, 235 });
-            if (progress > 0.f)
-                DrawRectangleRounded({ mechanicX, mechanicY, mechanicW * progress, mechanicH },
-                                     0.22f, 6, Fade(pulseColor, 0.88f));
-            DrawRectangleRoundedLines(mechanicRect, 0.22f, 6, pulseColor);
-
-            const int mechanicFs = 18;
-            const int labelW = MeasureText(mechanicLabel, mechanicFs);
-            const int labelX = (int)(mechanicX + mechanicW * 0.5f - labelW * 0.5f);
-            const int labelY = (int)(mechanicY + mechanicH * 0.5f - mechanicFs * 0.5f);
-            DrawText(mechanicLabel, labelX - 2, labelY, mechanicFs, BLACK);
-            DrawText(mechanicLabel, labelX + 2, labelY, mechanicFs, BLACK);
-            DrawText(mechanicLabel, labelX, labelY - 2, mechanicFs, BLACK);
-            DrawText(mechanicLabel, labelX, labelY + 2, mechanicFs, BLACK);
-            DrawText(mechanicLabel, labelX, labelY, mechanicFs, WHITE);
-        }
-    }
-    Vector2 mouse = GetVirtualMousePos();
-
-    for (int i = 0; i < totalSlots; i++)
-    {
-        AbilityType ability = _player.GetLearnedAbility(i);
-        bool isEmpty = (ability == AbilityType::None);
-        bool onCooldown = !isEmpty && _player.IsSlotOnCooldown(i);
-        bool canCast = !isEmpty && !onCooldown
-                    && _player.GetMana() >= _player.GetAbilityCost(ability);   // includes Overload surcharge
-        float x = startX + i * (slotSize + slotGap);
-        Rectangle slot{ x, slotY, slotSize, slotSize };
-        bool hovered = !isEmpty && CheckCollisionPointRec(mouse, slot);
-
-        Color bgColor     = isEmpty ? Fade(BLACK, 0.30f) : (hovered ? Fade(BLACK, 0.80f) : Fade(BLACK, 0.55f));
-        Color borderColor = isEmpty ? Fade(WHITE, 0.12f) :
-            hovered ? Fade(GOLD, 0.70f) :
-            canCast ? Fade(LIGHTGRAY, 0.35f) : Fade(RED, 0.40f);
-        DrawRectangleRounded(slot, 0.18f, 6, bgColor);
-        DrawRectangleRoundedLines(slot, 0.18f, 6, borderColor);
-
-        if (isEmpty)
-        {
-            DrawText(PromptAbilitySlot(GetPromptModeForUi(), i),
-                (int)(x + 6.f), (int)(slotY + 6.f), keyFs, Fade(WHITE, 0.25f));
-            continue;
-        }
-
-        DrawText(PromptAbilitySlot(GetPromptModeForUi(), i),
-            (int)(x + 6.f), (int)(slotY + 6.f), keyFs, Fade(WHITE, 0.6f));
-
-        if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-            BeginAbilityInput(i);
-            if (_pendingAbilityAim.active && _pendingAbilityAim.slot == i)
-                _pendingAbilityAim.commitOnMouseRelease = true;
-
-        const Texture2D* iconTex = GetAbilityIcon(ability);
-        if (!iconTex || iconTex->id == 0) iconTex = &_abilityIconFireTex;
-
-        Color iconTint    = canCast ? WHITE : Fade(WHITE, 0.35f);
-        float maxIconSize = slotSize * 0.55f;
-        float iconScale   = std::min(maxIconSize / (float)iconTex->width, maxIconSize / (float)iconTex->height);
-        float iw = iconTex->width  * iconScale;
-        float ih = iconTex->height * iconScale;
-        float cx = x + slotSize * 0.5f;
-        float cy = slotY + slotSize * 0.42f;
-        DrawTextureEx(*iconTex, { cx - iw * 0.5f, cy - ih * 0.5f }, 0.f, iconScale, iconTint);
-
-        // Cooldown sweep: a dark fill that drains downward as the slot recovers,
-        // with the seconds remaining in the middle of the slot.
-        if (onCooldown)
-        {
-            float fraction = _player.GetSlotCooldownFraction(i);
-            float sweepH   = slotSize * fraction;
-            DrawRectangleRec({ x, slotY, slotSize, sweepH }, Fade(BLACK, 0.62f));
-            const char* cdText = TextFormat("%.1f", _player.GetSlotCooldownRemaining(i));
-            int cdFs = 26;
-            DrawText(cdText,
-                (int)(cx - MeasureText(cdText, cdFs) * 0.5f),
-                (int)(slotY + slotSize * 0.42f - cdFs * 0.5f),
-                cdFs, RAYWHITE);
-        }
-
-        const char* abilityName = GetAbilityName(ability);
-        int nameW = MeasureText(abilityName, nameFs);
-        DrawText(abilityName,
-            (int)(x + slotSize / 2.f - nameW / 2.f),
-            (int)(slotY + slotSize - nameFs - 6.f),
-            nameFs, canCast ? RAYWHITE : Fade(GRAY, 0.6f));
-
-        int abilityLv = _player.GetAbilityLevel(ability);
-        if (abilityLv > 1)
-        {
-            const char* badge = TextFormat("Lv%d", abilityLv);
-            int badgeW = MeasureText(badge, nameFs);
-            Color badgeColor = (abilityLv >= 3) ? GOLD : Fade(SKYBLUE, 0.9f);
-            DrawText(badge,
-                (int)(x + slotSize - badgeW - 4.f),
-                (int)(slotY + slotSize - nameFs - 4.f),
-                nameFs, badgeColor);
-        }
-    }
-
-    }
+    if (_touchModeActive || !IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) return false;
+    const Vector2 mouse = GetVirtualMousePos();
+    for (int i = 0; i < _player.GetMaxAbilitySlots(); ++i)
+        if (CheckCollisionPointRec(mouse, AbilitySlotRect(i))) return true;
+    return false;
 }
 
-void Engine::DrawWaveIntro()
+void Engine::UpdateAbilityBarInput()
 {
-    if (!_waveStarting)
+    if (_touchModeActive || !IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) return;
+    const int count = _player.GetMaxAbilitySlots();
+    for (int i = 0; i < count; ++i)
+    {
+        if (_player.GetLearnedAbility(i) == AbilityType::None) continue;
+        if (!CheckCollisionPointRec(GetVirtualMousePos(), AbilitySlotRect(i))) continue;
+        BeginAbilityInput(i);
+        if (_abilityHold.active && _abilityHold.slot == i)
+            _abilityHold.fromBar = true;
         return;
-
-    DrawRectangle(0, kVirtualHeight / 2 - 80, kVirtualWidth, 160, Fade(BLACK, 0.7f));
-
-    int sw = kVirtualWidth;
-    int sh = kVirtualHeight;
-    int fontSize = 60;
-    int midY     = sh / 2;
-
-    // -- Room type label (center, primary) ------------------------------------
-    const char* roomLabel = nullptr;
-    Color       roomColor = YELLOW;
-
-    switch (_currentRoomType)
-    {
-    case RoomType::Boss:
-        roomLabel = "- Boss Area -";
-        roomColor = RED;
-        break;
-    case RoomType::Elite:
-        roomLabel = "Elite Area";
-        roomColor = Color{ 255, 140, 0, 255 };  // orange
-        break;
-    case RoomType::Rest:
-        roomLabel = "Rest Area";
-        roomColor = Color{ 100, 230, 120, 255 }; // green
-        break;
-    case RoomType::Treasure:
-        roomLabel = "Treasure Area";
-        roomColor = GOLD;
-        break;
-    case RoomType::Store:
-        roomLabel = "Shop Area";
-        roomColor = Color{ 220, 200, 60, 255 };
-        break;
-    default:  // Standard
-        roomLabel = "Standard Area";
-        roomColor = YELLOW;
-        break;
-    }
-
-    // Very first room of the run - just show the biome name as the intro.
-    if (_wave == 1 && _currentAct == 1)
-    {
-        const char* biomeName = GetBiomeName(_currentBiome);
-        int bw = MeasureText(biomeName, fontSize);
-        DrawText(biomeName, sw / 2 - bw / 2, midY - 30, fontSize, GOLD);
-        return;
-    }
-
-    // New act intro (room 1 of any act after act 1)
-    bool isFirstRoomOfNewAct = (_currentRoom == 1 && _currentAct > 1);
-    int roomLabelY = (isFirstRoomOfNewAct || _currentRoomType == RoomType::Boss) ? midY - 55 : midY - 30;
-
-    // Act label line (shown on new acts and boss rooms)
-    if (isFirstRoomOfNewAct)
-    {
-        std::string actStr = "Act " + std::to_string(_currentAct) + " - " + GetBiomeName(GetBiomeForAct(_currentAct));
-        int aw = MeasureText(actStr.c_str(), 42);
-        DrawText(actStr.c_str(), sw / 2 - aw / 2, roomLabelY - 52, 42, LIGHTGRAY);
-    }
-
-    // Room label
-    int rw = MeasureText(roomLabel, fontSize);
-    DrawText(roomLabel, sw / 2 - rw / 2, roomLabelY, fontSize, roomColor);
-
-    if (_currentRoomType == RoomType::Boss)
-    {
-        const char* actLine = (_message).c_str();
-        int aw = MeasureText(actLine, 36);
-        DrawText(actLine, sw / 2 - aw / 2, roomLabelY + fontSize + 10, 36, LIGHTGRAY);
     }
 }
 
@@ -5986,11 +5278,13 @@ void Engine::GenerateLevelUpOptions(LevelUpOfferContext context)
 
     // Separate pools by rarity. Ability learn/upgrade cards remain on the boss
     // reward screen; these offers are purely the RPG stat-growth layer.
-    UpgradeType commonPool[6] = {
+    UpgradeType commonPool[] = {
         UpgradeType::AttackPower, UpgradeType::AttackRange,
         UpgradeType::MaxHealth,   UpgradeType::MaxMana,
-        UpgradeType::Defense,     UpgradeType::MoveSpeed
+        UpgradeType::Defense,     UpgradeType::MoveSpeed,
+        UpgradeType::CritChance,  UpgradeType::CritDamage
     };
+    const int commonCount = (int)(sizeof(commonPool) / sizeof(commonPool[0]));
     UpgradeType rarePool[6] = {
         UpgradeType::IronConstitution, UpgradeType::SwiftFeet, UpgradeType::Ferocity,
         UpgradeType::ArcaneMind,       UpgradeType::IronSkin,  UpgradeType::BladeEdge
@@ -6009,7 +5303,7 @@ void Engine::GenerateLevelUpOptions(LevelUpOfferContext context)
             pool[j] = tmp;
         }
     };
-    shufflePool(commonPool, 6);
+    shufflePool(commonPool, commonCount);
     shufflePool(rarePool,   6);
     shufflePool(epicPool,   5);
 
@@ -6052,11 +5346,11 @@ void Engine::GenerateLevelUpOptions(LevelUpOfferContext context)
         int roll  = (total > 0) ? GetRandomValue(0, total - 1) : 0;
 
         UpgradeType picked = UpgradeType::AttackPower;
-        if (roll < commonW && cIdx < 6)                     picked = commonPool[cIdx++];
+        if (roll < commonW && cIdx < commonCount)           picked = commonPool[cIdx++];
         else if (roll < commonW + rareW && rIdx < 6)       picked = rarePool[rIdx++];
         else if (eIdx < 5)                                 picked = epicPool[eIdx++];
         else if (rIdx < 6)                                 picked = rarePool[rIdx++];
-        else if (cIdx < 6)                                 picked = commonPool[cIdx++];
+        else if (cIdx < commonCount)                       picked = commonPool[cIdx++];
 
         _levelUpOptions[i] = picked;
     }
@@ -6132,15 +5426,17 @@ void Engine::GenerateTreasureChestOptions()
     }
 
     // -- Build stat upgrade pool (common + rare) --------------------------------
-    UpgradeType statPool[12] = {
+    UpgradeType statPool[] = {
         UpgradeType::AttackPower,      UpgradeType::AttackRange,   UpgradeType::MaxHealth,
         UpgradeType::MaxMana,          UpgradeType::Defense,       UpgradeType::MoveSpeed,
+        UpgradeType::CritChance,       UpgradeType::CritDamage,
         UpgradeType::IronConstitution, UpgradeType::SwiftFeet,     UpgradeType::Ferocity,
         UpgradeType::ArcaneMind,       UpgradeType::IronSkin,      UpgradeType::BladeEdge
     };
-    for (int i = 0; i < 12; i++)
+    const int statCount = (int)(sizeof(statPool) / sizeof(statPool[0]));
+    for (int i = 0; i < statCount; i++)
     {
-        int j = GetRandomValue(i, 11);
+        int j = GetRandomValue(i, statCount - 1);
         UpgradeType tmp = statPool[i]; statPool[i] = statPool[j]; statPool[j] = tmp;
     }
 
@@ -6155,7 +5451,7 @@ void Engine::GenerateTreasureChestOptions()
     for (int i = 0; i < 3; i++)
     {
         bool canAbility = (aIdx < abilityPoolSize);
-        bool canStat    = (sIdx < 12);
+        bool canStat    = (sIdx < statCount);
         bool pickAbility = canAbility && (!canStat || GetRandomValue(0, 1) == 0);
 
         if (pickAbility)
@@ -6164,6 +5460,78 @@ void Engine::GenerateTreasureChestOptions()
             _levelUpOptions[i] = statPool[sIdx++];
         else
             _levelUpOptions[i] = UpgradeType::AttackPower; // should never reach
+    }
+}
+
+void Engine::FinishAbilityChoice()
+{
+    // Preserve the existing pending-room/demo rules during input extraction.
+    // The existing retired-state guard resolves Play on the following update.
+    if (_pendingRoomChoice)
+    {
+        _pendingRoomChoice = false;
+        if (_bossesDefeated >= 2) _gameState = GameState::DemoEnd;
+        else
+        {
+            _roomClearPending = true;
+            _gameState = GameState::Play;
+        }
+    }
+    else _gameState = GameState::Play;
+}
+
+void Engine::UpdateAbilityChoiceInput()
+{
+    if (_abilityChoiceOpenTimer > 0.f) return;
+    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    const Vector2 mouse = GetVirtualMousePos();
+    const bool swap = _abilityChoiceSwapPending;
+    const int count = swap ? _player.GetLearnedCount() : _abilityChoiceOptionCount;
+    const float cardW = swap ? 210.f : 280.f, cardH = swap ? 260.f : 360.f;
+    const float gap = swap ? 28.f : 40.f;
+    const float sx = (sw - count * (cardW + gap) + gap) * 0.5f;
+    const float cy = (sh - cardH) * 0.5f - (swap ? 0.f : 10.f);
+    for (int i = 0; i < count; ++i)
+    {
+        Rectangle card{sx + i * (cardW + gap), cy, cardW, cardH};
+        if (!(CheckCollisionPointRec(mouse, card) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) &&
+            !(_gamepad.isActive && i == _abilityChoiceGpCursor && _gamepad.menuConfirmPressed)) continue;
+        if (swap)
+        {
+            _player.RemoveAbilityAtSlot(i);
+            _player.ApplyUpgrade(_abilityChoiceSwapTarget);
+            _abilityChoiceSwapPending = false;
+            FinishAbilityChoice();
+        }
+        else
+        {
+            const UpgradeType opt = _abilityChoiceOptions[i];
+            const bool learn = (int)opt >= (int)UpgradeType::LearnFireSpread && (int)opt <= (int)UpgradeType::LearnElectricUltimate;
+            if (learn && _player.GetLearnedCount() >= _player.GetMaxAbilitySlots())
+            {
+                _abilityChoiceSwapPending = true;
+                _abilityChoiceSwapTarget = opt;
+            }
+            else
+            {
+                _player.ApplyUpgrade(opt);
+                _abilityChoiceSwapPending = false;
+                FinishAbilityChoice();
+            }
+        }
+        return;
+    }
+    if (swap)
+    {
+        Rectangle cancel{sw * 0.5f - 90.f, sh * 0.82f, 180.f, 44.f};
+        if ((CheckCollisionPointRec(mouse, cancel) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+            (_gamepad.isActive && _gamepad.backPressed)) _abilityChoiceSwapPending = false;
+    }
+    else
+    {
+        const float scale = _touchModeActive ? 1.3f : 1.f;
+        Rectangle next{sw * 0.5f - 110.f * scale, sh * 0.87f, 220.f * scale, 52.f * scale};
+        if (CheckCollisionPointRec(mouse, next) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) FinishAbilityChoice();
     }
 }
 
@@ -6236,27 +5604,6 @@ void Engine::DrawAbilityChoice()
             DrawText(lvStr, (int)(cx + cardW/2.f - MeasureText(lvStr, lvSz)/2.f),
                      (int)(card.y + cardH*0.70f), lvSz, Color{255,200,80,255});
 
-            bool swapCardActivated = (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
-                                     (_gamepad.isActive && ready && i == _abilityChoiceGpCursor && _gamepad.menuConfirmPressed);
-            if (swapCardActivated)
-            {
-                _player.RemoveAbilityAtSlot(i);
-                _player.ApplyUpgrade(_abilityChoiceSwapTarget);
-                _abilityChoiceSwapPending = false;
-                if (_pendingRoomChoice)
-                {
-                    _pendingRoomChoice = false;
-                    if (_bossesDefeated >= 2)
-                        _gameState = GameState::DemoEnd;
-                    else
-                    {
-                        _roomClearPending = true;
-                        _gameState = GameState::Play;
-                    }
-                }
-                else
-                    _gameState = GameState::Play;
-            }
         }
 
         // Cancel button
@@ -6268,9 +5615,6 @@ void Engine::DrawAbilityChoice()
         int cSz = 22;
         DrawText(cTxt, (int)(cancelBtn.x + cancelBtn.width/2.f - MeasureText(cTxt,cSz)/2.f),
                  (int)(cancelBtn.y + cancelBtn.height/2.f - cSz/2.f), cSz, RAYWHITE);
-        if ((ready && cHov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
-            (_gamepad.isActive && ready && _gamepad.backPressed))
-            _abilityChoiceSwapPending = false;
         return;
     }
 
@@ -6360,35 +5704,6 @@ void Engine::DrawAbilityChoice()
                          (int)(cardY + cardH*0.66f), dSz, LIGHTGRAY);
         }
 
-        bool abilCardActivated = (ready && hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
-                                 (_gamepad.isActive && ready && i == _abilityChoiceGpCursor && _gamepad.menuConfirmPressed);
-        if (abilCardActivated)
-        {
-            if (isLearn && _player.GetLearnedCount() >= _player.GetMaxAbilitySlots())
-            {
-                // No free slot - enter swap mode
-                _abilityChoiceSwapPending = true;
-                _abilityChoiceSwapTarget  = opt;
-            }
-            else
-            {
-                _player.ApplyUpgrade(opt);
-                _abilityChoiceSwapPending = false;
-                if (_pendingRoomChoice)
-                {
-                    _pendingRoomChoice = false;
-                    if (_bossesDefeated >= 2)
-                        _gameState = GameState::DemoEnd;
-                    else
-                    {
-                        _roomClearPending = true;
-                        _gameState = GameState::Play;
-                    }
-                }
-                else
-                    _gameState = GameState::Play;
-            }
-        }
     }
 
     if (count == 0)
@@ -6409,22 +5724,6 @@ void Engine::DrawAbilityChoice()
     DrawText(contTxt, (int)(contBtn.x + contBtn.width/2.f - MeasureText(contTxt, contSz)/2.f),
              (int)(contBtn.y + contBtn.height/2.f - contSz/2.f), contSz,
              contHov ? Color{160,255,160,255} : RAYWHITE);
-    if (ready && contHov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-    {
-        if (_pendingRoomChoice)
-        {
-            _pendingRoomChoice = false;
-            if (_bossesDefeated >= 2)
-                _gameState = GameState::DemoEnd;
-            else
-            {
-                _roomClearPending = true;
-                _gameState = GameState::Play;
-            }
-        }
-        else
-            _gameState = GameState::Play;
-    }
 }
 
 // -- DrawDemoEnd ---------------------------------------------------------------
@@ -6437,678 +5736,60 @@ void Engine::DrawDemoEnd()
     ctx.bossesDefeated = _bossesDefeated;
     ctx.playerGold = _player.GetGold();
     ctx.playerLevel = _player.GetLevel();
+    ctx.promptMode = GetPromptModeForUi();
+    ctx.unlockLine = _victoryUnlockLine.c_str();
     _overlayRenderer.DrawDemoEnd(ctx);
 }
 
-// -- UpdateExpTally ------------------------------------------------------------
-// Drains _pendingExp into the player at 50 EXP/sec with NO interruptions.
-// Once the bar is full the player presses Continue, then level-up choices
-// fire (one per level gained).  Skip input drains the remainder instantly.
-void Engine::UpdateExpTally(float dt)
+void Engine::UpdateStartingAbilityChoiceInput()
 {
-    bool skip = IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_M)
-             || (_touchModeActive && IsMouseButtonPressed(MOUSE_LEFT_BUTTON));
-
-    if (_expTallyDone)
+    if (_levelUpOpenTimer > 0.f) return;
+    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    const Vector2 mouse = GetVirtualMousePos();
+    const float cardW = 260.f, gap = 34.f;
+    const float startX = (sw - cardW * 3.f - gap * 2.f) * 0.5f;
+    // A controller press either picks a card or confirms the card already
+    // picked, never both on the same press (the mouse confirms with a button).
+    bool pickedThisPress = false;
+    for (int i = 0; i < 3; ++i)
     {
-        if (skip)
+        Rectangle card{startX + i * (cardW + gap), sh * 0.18f, cardW, 275.f};
+        const bool mousePick = CheckCollisionPointRec(mouse, card) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+        const bool gpPick = _gamepad.isActive && i == _levelUpGpCursor && _gamepad.menuConfirmPressed;
+        if (!mousePick && !gpPick) continue;
+        if (gpPick && !mousePick && _startingAbilitySelected[i]) break;   // second press: confirm below
+        pickedThisPress = true;
+        if (_startingAbilitySelected[i])
         {
-            _tallyChoiceChaining = false;
-            if (_currentRoomType == RoomType::Elite && !_eliteRewardGranted)
-            {
-                _eliteRewardGranted = true;
-                GenerateLevelUpOptions(LevelUpOfferContext::EliteReward);
-                _levelUpReturnState = GameState::ExpTally;
-                _levelUpOpenTimer   = 0.25f;
-                _gameState          = GameState::LevelUpChoice;
-            }
-            else if (_currentRoomType == RoomType::Boss && _lastAbilityChoiceWave != _wave)
-            {
-                _lastAbilityChoiceWave  = _wave;
-                GenerateAbilityChoiceOptions();
-                _abilityChoiceOpenTimer = 0.5f;
-                _pendingRoomChoice      = true;
-                _gameState = GameState::AbilityChoice;
-            }
-            else
-            {
-                _roomClearPending = true;
-                _gameState = GameState::Play;
-            }
+            _startingAbilitySelected[i] = false;
+            --_startingAbilityPickCount;
         }
-        return;
-    }
-
-    // -- Bar still draining ----------------------------------------------------
-
-    if (skip)
-    {
-        // Instantly drain all remaining EXP - no level-up interruption during drain.
-        if (_pendingExp > 0.f)
+        else if (_startingAbilityPickCount < 1)
         {
-            _player.AddExp((int)_pendingExp);
-            _pendingExp    = 0.f;
-            _expTallyAccum = 0.f;
-        }
-        _tallyLevelUpsRemaining = _player.GetLevel() - _tallyStartLevel;
-        _expTallyDone = true;
-        return;
-    }
-
-    // Animated drain - 50 EXP per second, no interruptions.
-    static constexpr float kDrainRate = 50.f;
-    float drain = std::min(kDrainRate * dt, _pendingExp);
-    _pendingExp    -= drain;
-    _expTallyAccum += drain;
-
-    int wholeExp = (int)_expTallyAccum;
-    if (wholeExp > 0)
-    {
-        _expTallyAccum -= (float)wholeExp;
-        _player.AddExp(wholeExp);   // level-ups handled silently inside AddExp
-    }
-
-    if (_pendingExp <= 0.f)
-    {
-        _pendingExp             = 0.f;
-        _expTallyAccum          = 0.f;
-        _tallyLevelUpsRemaining = _player.GetLevel() - _tallyStartLevel;
-        _expTallyDone           = true;
-    }
-}
-
-// -- DrawExpTally --------------------------------------------------------------
-// Dark overlay drawn on top of the game world showing EXP bar filling and
-// the player's current level.  Dismiss hint appears once the bar is full.
-void Engine::DrawExpTally()
-{
-    ExpTallyRenderContext ctx{};
-    ctx.player = &_player;
-    ctx.tallyStartLevel = _tallyStartLevel;
-    ctx.pendingExp = _pendingExp;
-    ctx.expTallyDone = _expTallyDone;
-    ctx.tallyLevelUpsRemaining = _tallyLevelUpsRemaining;
-    ctx.tallyChoiceChaining = _tallyChoiceChaining;
-    ctx.touchModeActive = _touchModeActive;
-    _overlayRenderer.DrawExpTally(ctx);
-}
-
-// -- DrawMap -------------------------------------------------------------------
-// Full-screen Slay-the-Spire-style act map.  Shows the entire node graph for
-// the current act; available nodes are highlighted and clickable.
-void Engine::DrawMap()
-{
-    const float sw = (float)kVirtualWidth;
-    const float sh = (float)kVirtualHeight;
-    bool ready     = (_mapOpenTimer <= 0.f);
-    Vector2 mouse  = GetVirtualMousePos();
-
-    // -- Background --------------------------------------------------------
-    Biome actBiome = GetBiomeForAct(_currentAct);
-    Color bgDark = Color{ 78, 62, 40, 255 };
-    Color bgLight = Color{ 110, 88, 58, 255 };
-    if (actBiome == Biome::Forest)
-    {
-        bgDark  = Color{ 30, 74, 42, 255 };
-        bgLight = Color{ 48, 112, 66, 255 };
-    }
-    DrawScrollingCheckerboard(sw, sh, bgDark, bgLight, 18.f, 10.f);
-
-    // -- Header ? centred over the node graph area -------------------------
-    // Graph spans 30?76% of the screen; journey panel occupies 78?97%.
-    const float mapCentreX = sw * _mapHeaderX;
-    std::string header = "Act " + std::to_string(_currentAct)
-                       + "  -  " + GetBiomeName(actBiome);
-    int hSz = (int)_mapHeaderFs;
-    DrawText(header.c_str(),
-        (int)(mapCentreX - MeasureText(header.c_str(), hSz) / 2.f), (int)_mapHeaderY, hSz, Color{255, 214, 102, 255});
-    const char* sub = "Choose your path";
-    const float subCentreX = sw * _mapSubX;
-    const int subFs = (int)_mapSubFs;
-    DrawText(sub,
-        (int)(subCentreX - MeasureText(sub, subFs) / 2.f), (int)_mapSubY, subFs,
-        Color{206, 242, 255, 210});
-
-    if (_actMap.empty()) return;
-
-    // -- Helpers -----------------------------------------------------------
-    auto nodeColor = [](RoomType rt) -> Color {
-        switch (rt) {
-        case RoomType::Boss:     return Color{220,  40,  40, 255};
-        case RoomType::Elite:    return Color{230, 130,  20, 255};
-        case RoomType::Rest:     return Color{ 60, 190,  90, 255};
-        case RoomType::Treasure: return Color{220, 190,  30, 255};
-        case RoomType::Store:    return Color{ 80, 190, 230, 255};
-        default:                 return Color{ 80, 130, 220, 255};
-        }
-    };
-    auto roomIcon = [&](RoomType rt) -> Texture2D* {
-        switch (rt) {
-        case RoomType::Standard: return &_mapIconNormal;
-        case RoomType::Elite:    return &_mapIconElite;
-        case RoomType::Rest:     return &_mapIconRest;
-        case RoomType::Store:    return &_mapIconShop;
-        case RoomType::Treasure: return &_mapIconTreasure;
-        case RoomType::Boss:     return &_mapIconBoss;
-        default:                 return nullptr;
-        }
-    };
-    auto nodeDesc = [](RoomType rt) -> const char* {
-        switch (rt) {
-        case RoomType::Boss:     return "Act finale  -  boss area";
-        case RoomType::Elite:    return "Miniboss area  -  rarer reward";
-        case RoomType::Rest:     return "Safe area  -  heal pickups appear";
-        case RoomType::Treasure: return "Reward area  -  free upgrade card";
-        case RoomType::Store:    return "Shop area  -  placeholder for now";
-        default:                 return "Combat area  -  standard area reward";
-        }
-    };
-
-    // -- Left panel: stats + legend ----------------------------------------
-    {
-        const float pX  = 48.f;
-        const float pY  = 98.f;
-        const float pH  = sh - pY - 98.f;
-        const float pW  = 490.f;
-        const float pad = 30.f;
-        const float legendIndent = 20.f;
-        const float titleSize = 32.f;
-        const float statFont = 28.f;
-        const float baseStatRowH = 44.f;
-        const float legendIconSize = 56.f;
-        const float legendLabelSize = 28.f;
-        const float legendDescSize = 21.f;
-        const float baseLegendRowH = 80.f;
-        const float legendGap = 22.f;
-        const float titleToRuleGap = 8.f;
-        const float ruleToRowsGap = 16.f;
-        const float sectionGapBase = 22.f;
-
-        // Pre-calculate content height so the panel can grow to roughly match
-        // the graph height without clipping smaller screens.
-        int statRows = 5;  // Level, HP, MP, Attack, Defense
-        if (_player.GetLevel() < _player.GetMaxLevel()) statRows++;  // EXP row
-        float contentH = pad
-                       + titleSize
-                       + titleToRuleGap
-                       + ruleToRowsGap
-                       + statRows * baseStatRowH
-                       + sectionGapBase
-                       + titleSize
-                       + titleToRuleGap
-                       + ruleToRowsGap
-                       + 6.f * baseLegendRowH
-                       + pad;
-        float panelH = std::max(contentH, pH);
-        float extraSpace = panelH - contentH;
-        float statRowH = baseStatRowH + extraSpace * 0.12f / (float)statRows;
-        float legendRowH = baseLegendRowH + extraSpace * 0.88f / 6.f;
-        float sectionGap = sectionGapBase + extraSpace * 0.08f;
-
-        // Panel background
-        DrawRectangleRounded({ pX, pY, pW, panelH }, 0.05f, 8,
-            Fade(Color{12, 71, 84, 255}, 0.92f));
-        DrawRectangleRoundedLines({ pX, pY, pW, panelH }, 0.05f, 8,
-            Fade(Color{130, 235, 255, 255}, 0.30f));
-
-        float cy         = pY + pad;
-        float rightEdge  = pX + pW - pad;
-
-        // -- Stats ------------------------------------------------------
-        DrawText("PLAYER STATS", (int)(pX + pad), (int)cy, (int)titleSize, Color{255, 214, 102, 255});
-        cy += titleSize + titleToRuleGap;
-        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(Color{130, 235, 255, 255}, 0.55f));
-        cy += ruleToRowsGap;
-
-        // stat row: label left, coloured value right
-        auto statRow = [&](const char* lbl, const char* val, Color valCol = RAYWHITE)
-        {
-            DrawText(lbl, (int)(pX + pad), (int)cy, (int)statFont, Color{188, 228, 238, 228});
-            int vw = MeasureText(val, (int)statFont);
-            DrawText(val, (int)(rightEdge - vw), (int)cy, (int)statFont, valCol);
-            cy += statRowH;
-        };
-
-        statRow("Level",   TextFormat("%d / %d", _player.GetLevel(), _player.GetMaxLevel()));
-
-        float hpPct = (_player.GetMaxHealthValue() > 0.f)
-            ? _player.GetHealthValue() / _player.GetMaxHealthValue() : 0.f;
-        Color hpCol = hpPct > 0.6f ? GREEN : hpPct > 0.30f ? YELLOW : RED;
-        statRow("HP",
-            TextFormat("%d / %d",
-                (int)std::ceil(_player.GetHealthValue()),
-                (int)std::ceil(_player.GetMaxHealthValue())), hpCol);
-
-        statRow("MP",
-            TextFormat("%d / %d", _player.GetMana(), _player.GetMaxMana()),
-            Color{100, 160, 255, 255});
-
-        statRow("Attack", TextFormat("%d", (int)std::ceil((float)_player.GetMeleeDamage())));
-        statRow("Armour", TextFormat("%d / %d", _player.GetArmour(), _player.GetMaxArmour()),
-            Color{ 120, 180, 255, 255 });
-
-        if (_player.GetLevel() < _player.GetMaxLevel())
-            statRow("EXP",
-                TextFormat("%d / %d", _player.GetExp(), _player.GetExpToNext()),
-                Color{220, 190, 50, 220});
-
-        // -- Section divider --------------------------------------------
-        cy += sectionGap;
-        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(Color{130, 235, 255, 255}, 0.24f));
-        cy += 18.f;
-
-        // -- Legend -----------------------------------------------------
-        DrawText("LEGEND", (int)(pX + pad), (int)cy, (int)titleSize, Color{255, 214, 102, 255});
-        cy += titleSize + titleToRuleGap;
-        DrawLineEx({ pX + pad, cy }, { rightEdge, cy }, 1.f, Fade(Color{130, 235, 255, 255}, 0.55f));
-        cy += ruleToRowsGap;
-
-        const float iconX = pX + pad + legendIndent;
-        const float txtX  = iconX + legendIconSize + legendGap;
-
-        auto legendRow = [&](Texture2D* icon, Color circleCol,
-                             const char* name, const char* desc)
-        {
-            float iconY = cy + (legendRowH - legendIconSize) * 0.5f;
-            if (icon && icon->id > 0)
-            {
-                Rectangle src = { 0, 0, (float)icon->width, (float)icon->height };
-                DrawTexturePro(*icon, src, { iconX, iconY, legendIconSize, legendIconSize }, {}, 0.f, WHITE);
-            }
-            else
-            {
-                // Coloured circle for rooms without a PNG icon (Rest, Boss)
-                Vector2 c = { iconX + legendIconSize * 0.5f, iconY + legendIconSize * 0.5f };
-                DrawCircleV(c, legendIconSize * 0.44f, Fade(circleCol, 0.65f));
-                DrawCircleLines((int)c.x, (int)c.y, legendIconSize * 0.44f, circleCol);
-            }
-            float labelY = cy + 3.f;
-            float descY  = cy + legendLabelSize + 7.f;
-            DrawText(name, (int)txtX, (int)labelY, (int)legendLabelSize, RAYWHITE);
-            DrawText(desc, (int)txtX, (int)descY, (int)legendDescSize, Color{188, 228, 238, 215});
-            cy += legendRowH;
-        };
-
-        legendRow(&_mapIconNormal,   { 80,130,220,255 }, "NORMAL AREA",   "Standard combat area");
-        legendRow(&_mapIconElite,    {230,130, 20,255 }, "ELITE AREA",    "Miniboss area");
-        legendRow(&_mapIconRest,     { 60,190, 90,255 }, "REST AREA",     "Safe area with food");
-        legendRow(&_mapIconTreasure, {220,190, 30,255 }, "TREASURE AREA", "Free upgrade card");
-        legendRow(&_mapIconShop,     { 80,190,230,255 }, "SHOP AREA",     "Placeholder shop area");
-        legendRow(&_mapIconBoss,     {220, 40, 40,255 }, "BOSS AREA",     "Act finale");
-    }
-
-    // -- Right panel: journey history --------------------------------------
-    {
-        const float jX  = sw * _mapJourneyX;
-        const float jY  = 98.f;
-        const float jW  = sw - jX - 48.f;
-        const float jH  = sh - jY - 98.f;
-        const float pad = _mapPad;
-
-        DrawRectangleRounded({ jX, jY, jW, jH }, 0.05f, 8,
-            Fade(Color{12, 71, 84, 255}, 0.92f));
-        DrawRectangleRoundedLines({ jX, jY, jW, jH }, 0.05f, 8,
-            Fade(Color{130, 235, 255, 255}, 0.30f));
-
-        float cy = jY + pad;
-        DrawText("JOURNEY", (int)(jX + pad), (int)cy, (int)_mapTitleFs, Color{255, 214, 102, 255});
-        cy += _mapTitleFs + 6.f;
-        DrawLineEx({ jX + pad, cy }, { jX + jW - pad, cy }, 1.f,
-            Fade(Color{130, 235, 255, 255}, 0.55f));
-        cy += 14.f;
-
-        // Visited-room tiles ? one per completed node, stamped with the room
-        // icon and crossed with a red diagonal slash.
-        int drawn = 0;
-        for (const auto& node : _actMap)
-            if (node.completed) drawn++;
-
-        int maxJourneySlots = 0;
-        for (const auto& node : _actMap)
-            maxJourneySlots = std::max(maxJourneySlots, node.row + 1);
-        maxJourneySlots = std::max(1, maxJourneySlots);
-
-        const float baseGap = _mapSqGap;
-        const float availW = jW - pad * 2.f;
-        float fitSqSz = _mapSqSz;
-        fitSqSz = std::min(fitSqSz, (availW - baseGap * (maxJourneySlots - 1)) / (float)maxJourneySlots);
-        fitSqSz = std::max(20.f, fitSqSz);
-
-        float fitGap = (maxJourneySlots > 1)
-            ? std::min(baseGap, std::max(4.f, (availW - fitSqSz * maxJourneySlots) / (float)(maxJourneySlots - 1)))
-            : 0.f;
-        const float historyRowH = fitSqSz;
-        const float historyStartX = jX + pad;
-
-        if (drawn == 0)
-        {
-            DrawText("No rooms cleared yet",
-                (int)historyStartX, (int)(cy + historyRowH * 0.5f - _mapNoRoomsFs * 0.5f),
-                (int)_mapNoRoomsFs, RAYWHITE);
+            _startingAbilitySelected[i] = true;
+            ++_startingAbilityPickCount;
         }
         else
         {
-            float sx = historyStartX;
-
-            for (const auto& node : _actMap)
-            {
-                if (!node.completed) continue;
-
-                Color col = nodeColor(node.type);
-                Rectangle tile{ sx, cy, fitSqSz, fitSqSz };
-                DrawRectangleRounded(tile, 0.25f, 4, Fade(BLACK, 0.92f));
-                DrawRectangleRoundedLines(tile, 0.25f, 4, Fade(col, 0.95f));
-
-                if (Texture2D* icon = roomIcon(node.type); icon && icon->id > 0)
-                {
-                    const float iconPad = std::max(4.f, fitSqSz * 0.12f);
-                    Rectangle src = { 0.f, 0.f, (float)icon->width, (float)icon->height };
-                    Rectangle dst = {
-                        sx + iconPad,
-                        cy + iconPad,
-                        fitSqSz - iconPad * 2.f,
-                        fitSqSz - iconPad * 2.f
-                    };
-                    DrawTexturePro(*icon, src, dst, {}, 0.f, WHITE);
-                }
-
-                const float slashPad = std::max(3.f, fitSqSz * 0.10f);
-                DrawLineEx(
-                    { sx + slashPad,               cy + fitSqSz - slashPad },
-                    { sx + fitSqSz - slashPad,     cy + slashPad },
-                    std::max(3.f, fitSqSz * 0.08f),
-                    Color{ 215, 55, 55, 255 });
-
-                sx += fitSqSz + fitGap;
-            }
+            for (int j = 0; j < 3; ++j) _startingAbilitySelected[j] = false;
+            _startingAbilitySelected[i] = true;
         }
-
-        cy += historyRowH + 12.f;
-
-        cy += 16.f;
-        DrawText(TextFormat("Gold:  %d", _player.GetGold()),
-            (int)(jX + pad), (int)cy, (int)_mapRoomsFs, Color{255, 214, 102, 220});
-
-        // -- Biome progress diamonds ? size-aware zone that lifts upward as
-        // the diamonds get larger so the divider and label make room ---------
-        {
-            const float minDivY = cy + _mapRoomsFs + 20.f;
-            const float zoneBot = jY + jH - pad;
-            const float wantedHalf = _mapDiamondSz;
-            const float wantedSlot = wantedHalf * 2.35f;
-            const float wantedZoneH = wantedSlot * (float)kTotalActs;
-            const float wantedHeadH = _mapBiomeTitleFs + 22.f;
-            const float divY = std::max(minDivY, zoneBot - wantedZoneH - wantedHeadH);
-            const float zoneTop = divY + wantedHeadH;
-            const float zoneH   = std::max(1.f, zoneBot - zoneTop);
-
-            DrawLineEx({ jX + pad, divY }, { jX + jW - pad, divY }, 1.f,
-                Fade(Color{130, 235, 255, 255}, 0.30f));
-            DrawText("BIOMES", (int)(jX + pad), (int)(divY + 4.f), (int)_mapBiomeTitleFs,
-                Color{255, 214, 102, 200});
-
-            const float slot   = zoneH / (float)kTotalActs;
-            const float halfW  = (jW - pad * 2.f) * 0.42f;
-            const float half   = std::min(_mapDiamondSz, std::min(halfW, slot * 0.45f));
-            const float dcx    = jX + jW * 0.5f;
-
-            auto drawDiamond = [&](float cx, float dcy, float h, const char* label, int state)
-            {
-                if (state != 0)
-                {
-                    Color fill = (state == 1)
-                        ? Color{255, 185, 30, 230}
-                        : Color{12,  12,  20, 220};
-                    DrawTriangle({cx, dcy - h}, {cx + h, dcy}, {cx - h, dcy}, fill);
-                    DrawTriangle({cx - h, dcy}, {cx + h, dcy}, {cx, dcy + h}, fill);
-                }
-
-                float thick  = (state == 1) ? 2.5f : 1.5f;
-                Color border = (state == 1)
-                    ? Color{255, 230, 120, 255}
-                    : Color{130, 130, 140, 200};
-
-                DrawLineEx({cx,     dcy - h}, {cx + h, dcy    }, thick, border);
-                DrawLineEx({cx + h, dcy    }, {cx,     dcy + h}, thick, border);
-                DrawLineEx({cx,     dcy + h}, {cx - h, dcy    }, thick, border);
-                DrawLineEx({cx - h, dcy    }, {cx,     dcy - h}, thick, border);
-
-                int fs = (int)(h * _mapBiomeLabelFs);
-                fs = std::max(9, std::min(fs, 24));
-                Color tc = (state == 0) ? Color{110, 110, 120, 180}
-                         : (state == 1) ? Color{255, 245, 190, 255}
-                                        : Color{ 70,  70,  85, 200};
-                int tw2 = MeasureText(label, fs);
-                DrawText(label, (int)(cx - tw2 / 2.f), (int)(dcy - fs / 2.f), fs, tc);
-            };
-
-            for (int i = 0; i < kTotalActs; i++)
-            {
-                int   act   = kTotalActs - i;
-                float dcy   = zoneTop + (i + 0.5f) * slot;
-                int   state = (act < _currentAct)  ? 0
-                            : (act == _currentAct) ? 1
-                                                   : 2;
-                const char* name = ((int)_biomeSequence.size() >= act)
-                    ? GetBiomeName(_biomeSequence[act - 1])
-                    : "?";
-                drawDiamond(dcx, dcy, half, name, state);
-            }
-        }
+        break;
     }
-
-    // -- Connection lines --------------------------------------------------
-    for (int i = 0; i < (int)_actMap.size(); i++)
+    const bool canConfirm = _startingAbilityPickCount == 1;
+    Rectangle confirm{sw * 0.5f - 150.f, sh - 104.f, 300.f, 58.f};
+    const bool gpConfirm = !pickedThisPress && _gamepad.isActive && canConfirm && _gamepad.menuConfirmPressed &&
+                           _levelUpGpCursor >= 0 && _levelUpGpCursor < 3 && _startingAbilitySelected[_levelUpGpCursor];
+    if ((canConfirm && CheckCollisionPointRec(mouse, confirm) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) || gpConfirm)
     {
-        const MapNode& n = _actMap[i];
-        for (int nextIdx : n.nextNodes)
-        {
-            if (nextIdx < 0 || nextIdx >= (int)_actMap.size()) continue;
-            const MapNode& m = _actMap[nextIdx];
-            Color lc = n.completed ? Color{70, 136, 152, 185} : Color{120, 214, 234, 120};
-            DrawLineEx(n.drawPos, m.drawPos, 3.5f, lc);
-        }
-    }
-
-    // -- Nodes -------------------------------------------------------------
-    const float kIconSz   = _mapIconSz;
-    const float kIconHalf = kIconSz * 0.5f;
-    int hoveredIdx = -1;
-
-    for (int i = 0; i < (int)_actMap.size(); i++)
-    {
-        const MapNode& n  = _actMap[i];
-        Color   ec        = nodeColor(n.type);
-        Texture2D* icon   = roomIcon(n.type);
-        bool    hasIcon   = (icon && icon->id > 0);
-
-        Rectangle hitRect = { n.drawPos.x - kIconHalf - 4.f,
-                               n.drawPos.y - kIconHalf - 4.f,
-                               kIconSz + 8.f, kIconSz + 8.f };
-        bool hov = ready && !n.completed && CheckCollisionPointRec(mouse, hitRect);
-        if (hov) hoveredIdx = i;
-
-        // Glow halo behind available nodes
-        if (n.available)
-        {
-            float glow = 0.18f + 0.10f * sinf((float)GetTime() * 3.0f);
-            DrawCircleV(n.drawPos, kIconHalf + 14.f, Fade(ec, glow));
-            if (hov)
-                DrawCircleV(n.drawPos, kIconHalf + 8.f, Fade(ec, 0.35f));
-        }
-
-        if (hasIcon)
-        {
-            Rectangle src = { 0, 0, (float)icon->width, (float)icon->height };
-            Rectangle dst = { n.drawPos.x - kIconHalf, n.drawPos.y - kIconHalf,
-                               kIconSz, kIconSz };
-            Color tint = n.completed ? DARKGRAY
-                       : n.available ? WHITE
-                       :               Fade(WHITE, 0.35f);
-            DrawTexturePro(*icon, src, dst, {}, 0.f, tint);
-        }
-        else
-        {
-            float r = kIconHalf - 2.f;
-            float alpha = n.completed ? 0.28f : n.available ? 0.72f : 0.18f;
-            DrawCircleV(n.drawPos, r, Fade(ec, alpha));
-            DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, r,
-                n.available ? ec : Fade(ec, 0.45f));
-            if (n.available && hov)
-                DrawCircleLines((int)n.drawPos.x, (int)n.drawPos.y, r + 4.f,
-                    Fade(ec, 0.55f));
-        }
-
-        // Click
-        if (ready && n.available && !n.completed &&
-            CheckCollisionPointRec(mouse, hitRect) &&
-            IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-        {
-            EnterMapRoom(i);
-        }
-    }
-
-    // -- Keyboard-selected node ring ---------------------------------------
-    if (_mapKeySelectedIdx >= 0 && _mapKeySelectedIdx < (int)_actMap.size())
-    {
-        const MapNode& kn = _actMap[_mapKeySelectedIdx];
-        if (kn.available && !kn.completed)
-        {
-            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y,
-                kIconHalf + 9.f,  WHITE);
-            DrawCircleLines((int)kn.drawPos.x, (int)kn.drawPos.y,
-                kIconHalf + 14.f, Fade(WHITE, 0.35f));
-        }
-    }
-
-    // -- Current-node indicator (yellow ring on last completed node) -------
-    if (_currentMapNodeIdx >= 0 && _currentMapNodeIdx < (int)_actMap.size())
-    {
-        const MapNode& cur = _actMap[_currentMapNodeIdx];
-        if (cur.completed)
-            DrawCircleLines((int)cur.drawPos.x, (int)cur.drawPos.y,
-                kIconHalf + 11.f, Fade(YELLOW, 0.55f));
-    }
-
-    // -- Hovered node description ------------------------------------------
-    if (hoveredIdx >= 0)
-    {
-        const char* dsc = nodeDesc(_actMap[hoveredIdx].type);
-        int dSz = 24;
-        DrawText(dsc,
-            (int)(mapCentreX - MeasureText(dsc, dSz) / 2.f),
-            (int)(sh - 90.f), dSz, Color{206, 242, 255, 230});
-    }
-
-    // -- Footer hint -------------------------------------------------------
-    const char* hint = _touchModeActive
-        ? "Tap a highlighted node to enter"
-        : "Click node  or  A/D  to select  -  Enter / Space  to confirm";
-    int ftSz = (int)_mapHintFs;
-    DrawText(hint,
-        (int)(mapCentreX - MeasureText(hint, ftSz) / 2.f),
-        (int)(sh - _mapHintY), ftSz, Color{173, 223, 236, 185});
-
-    // -- Map right-panel debug editor --------------------------------------
-#if MO_DEV_TOOLS
-    if (IsKeyPressed(KEY_NINE))
-        _mapEditorActive = !_mapEditorActive;
-#endif
-
-    if (_mapEditorActive)
-    {
-        constexpr int kN = 19;
-        const char* varNames[kN] = {
-            "0  Journey Panel X",
-            "1  Padding",
-            "2  Title Font",
-            "3  Rooms/Gold Font",
-            "4  No Rooms Font",
-            "5  Biome Title Font",
-            "6  Diamond Label Fs",
-            "7  Square Size",
-            "8  Square Gap",
-            "9  Icon Size",
-            "10 Diamond Size",
-            "11 Act X",
-            "12 Act Y",
-            "13 Act Font",
-            "14 Path X",
-            "15 Path Y",
-            "16 Path Font",
-            "17 Hint Y",
-            "18 Hint Font",
-        };
-        float* vars[kN] = {
-            &_mapJourneyX, &_mapPad, &_mapTitleFs, &_mapRoomsFs, &_mapNoRoomsFs,
-            &_mapBiomeTitleFs, &_mapBiomeLabelFs, &_mapSqSz, &_mapSqGap, &_mapIconSz,
-            &_mapDiamondSz, &_mapHeaderX, &_mapHeaderY, &_mapHeaderFs,
-            &_mapSubX, &_mapSubY, &_mapSubFs, &_mapHintY, &_mapHintFs
-        };
-
-        if (IsKeyPressed(KEY_UP))
-            _mapEditorSelIdx = (_mapEditorSelIdx - 1 + kN) % kN;
-        if (IsKeyPressed(KEY_DOWN))
-            _mapEditorSelIdx = (_mapEditorSelIdx + 1) % kN;
-
-        // Fractional X/font fraction controls use finer steps.
-        float step = (_mapEditorSelIdx == 0 || _mapEditorSelIdx == 6
-                   || _mapEditorSelIdx == 11 || _mapEditorSelIdx == 14) ? 0.005f : 1.f;
-        if (IsKeyDown(KEY_RIGHT)) *vars[_mapEditorSelIdx] += step;
-        if (IsKeyDown(KEY_LEFT))  *vars[_mapEditorSelIdx] -= step;
-
-        if (IsKeyPressed(KEY_S))
-        {
-            TraceLog(LOG_INFO, "=== Map Right-Panel Editor Export ===");
-            TraceLog(LOG_INFO, "_mapJourneyX     = %.3ff;", _mapJourneyX);
-            TraceLog(LOG_INFO, "_mapPad          = %.2ff;", _mapPad);
-            TraceLog(LOG_INFO, "_mapTitleFs      = %.2ff;", _mapTitleFs);
-            TraceLog(LOG_INFO, "_mapRoomsFs      = %.2ff;", _mapRoomsFs);
-            TraceLog(LOG_INFO, "_mapNoRoomsFs    = %.2ff;", _mapNoRoomsFs);
-            TraceLog(LOG_INFO, "_mapBiomeTitleFs = %.2ff;", _mapBiomeTitleFs);
-            TraceLog(LOG_INFO, "_mapBiomeLabelFs = %.3ff;", _mapBiomeLabelFs);
-            TraceLog(LOG_INFO, "_mapSqSz         = %.2ff;", _mapSqSz);
-            TraceLog(LOG_INFO, "_mapSqGap        = %.2ff;", _mapSqGap);
-            TraceLog(LOG_INFO, "_mapIconSz       = %.2ff;", _mapIconSz);
-            TraceLog(LOG_INFO, "_mapDiamondSz    = %.2ff;", _mapDiamondSz);
-            TraceLog(LOG_INFO, "_mapHeaderX      = %.3ff;", _mapHeaderX);
-            TraceLog(LOG_INFO, "_mapHeaderY      = %.2ff;", _mapHeaderY);
-            TraceLog(LOG_INFO, "_mapHeaderFs     = %.2ff;", _mapHeaderFs);
-            TraceLog(LOG_INFO, "_mapSubX         = %.3ff;", _mapSubX);
-            TraceLog(LOG_INFO, "_mapSubY         = %.2ff;", _mapSubY);
-            TraceLog(LOG_INFO, "_mapSubFs        = %.2ff;", _mapSubFs);
-            TraceLog(LOG_INFO, "_mapHintY        = %.2ff;", _mapHintY);
-            TraceLog(LOG_INFO, "_mapHintFs       = %.2ff;", _mapHintFs);
-        }
-
-        // -- Panel draw ----------------------------------------------------
-        constexpr float rowH = 30.f;
-        constexpr float panW = 290.f;
-        const float panH = 40.f + kN * rowH;
-        const float panX = 10.f;
-        const float panY = 10.f;
-
-        DrawRectangle((int)panX, (int)panY, (int)panW, (int)panH, Fade(BLACK, 0.82f));
-        DrawRectangleLines((int)panX, (int)panY, (int)panW, (int)panH, DARKGRAY);
-        DrawText("MAP EDITOR  [9] close", (int)(panX + 8.f), (int)(panY + 6.f), 11, GRAY);
-        DrawText("[UP/DOWN] sel  [L/R] nudge  [S] export",
-            (int)(panX + 8.f), (int)(panY + 20.f), 10, DARKGRAY);
-
-        for (int i = 0; i < kN; i++)
-        {
-            float ry  = panY + 38.f + i * rowH;
-            bool  sel = (i == _mapEditorSelIdx);
-            Color col = sel ? YELLOW : WHITE;
-
-            if (sel)
-                DrawText("->", (int)(panX + 4.f), (int)(ry + rowH * 0.5f - 7.f), 13, YELLOW);
-            DrawText(varNames[i], (int)(panX + 26.f), (int)(ry + rowH * 0.5f - 7.f), 13, col);
-
-            const char* valStr = TextFormat("%.3f", *vars[i]);
-            int valW = MeasureText(valStr, 13);
-            DrawText(valStr, (int)(panX + panW - valW - 6.f),
-                (int)(ry + rowH * 0.5f - 7.f), 13, col);
-        }
+        for (int i = 0; i < 3; ++i)
+            if (_startingAbilitySelected[i]) _player.ApplyUpgrade(_startingAbilityOptions[i]);
+        _starterAbilityGiftClaimed = true;
+        _awaitingStartingAbility = false;
+        _startingAbilityPickCount = 0;
+        if (_cutscene.IsActive() && _cutscene.WantsAbilitySelect()) _cutscene.OnAbilitySelected();
+        if (_currentRoomType == RoomType::Store) SetStoreDoorTiles(TileType::DoorOpen);
+        _gameState = _levelUpReturnState;
     }
 }
 
@@ -7246,59 +5927,50 @@ void Engine::DrawStartingAbilityChoice()
             DrawText(mark, (int)(card.x + card.width * 0.5f - MeasureText(mark, fs) * 0.5f), (int)(card.y + card.height - 30.f), fs, GOLD);
         }
 
-        bool startCardActivated = (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
-                                   (_gamepad.isActive && ready && i == _levelUpGpCursor && _gamepad.menuConfirmPressed);
-        if (startCardActivated)
-        {
-            if (_startingAbilitySelected[i])
-            {
-                _startingAbilitySelected[i] = false;
-                _startingAbilityPickCount--;
-            }
-            else if (_startingAbilityPickCount < 1)
-            {
-                _startingAbilitySelected[i] = true;
-                _startingAbilityPickCount++;
-            }
-            else
-            {
-                // Switch selection to the newly activated card
-                for (int j = 0; j < 3; j++) _startingAbilitySelected[j] = false;
-                _startingAbilitySelected[i] = true;
-            }
-        }
     }
 
     Rectangle confirm{ sw * 0.5f - 150.f, sh - 104.f, 300.f, 58.f };
     bool canConfirm = (_startingAbilityPickCount == 1);
     bool confirmHover = canConfirm && ready && CheckCollisionPointRec(mouse, confirm);
     DrawRectangleRounded(confirm, 0.25f, 8, canConfirm ? (confirmHover ? Color{210, 165, 45, 255} : GOLD) : Color{80, 80, 80, 210});
-    const char* cText = canConfirm ? "Start with this ability" : "Choose 1 ability";
+    // On a controller the selected card confirms with a second press, so say so.
+    const bool gamepadPrompt = GetPromptModeForUi() == InputPromptMode::Gamepad;
+    const char* cText = !canConfirm ? "Choose 1 ability"
+                      : gamepadPrompt ? "A again: start with this"
+                      : "Start with this ability";
     int cFs = 26;
     DrawText(cText, (int)(confirm.x + confirm.width * 0.5f - MeasureText(cText, cFs) * 0.5f), (int)(confirm.y + confirm.height * 0.5f - cFs * 0.5f), cFs, canConfirm ? BLACK : LIGHTGRAY);
 
-    // Gamepad: pressing A on an already-selected card confirms (no need to navigate to the button)
-    bool gpConfirmStarting = _gamepad.isActive && ready && canConfirm &&
-                             _gamepad.menuConfirmPressed && _startingAbilitySelected[_levelUpGpCursor];
-    if ((canConfirm && ready && confirmHover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) || gpConfirmStarting)
+}
+void Engine::UpdateLevelUpChoiceInput()
+{
+    if (_awaitingStartingAbility) { UpdateStartingAbilityChoiceInput(); return; }
+    if (_levelUpOpenTimer > 0.f) return;
+    const bool showUlt = _showUltimateRow && !_ultimateRowPicked;
+    const bool showReg = !_regularRowPicked;
+    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    const float cardW = 280.f, cardH = 360.f, gap = 40.f;
+    const float startX = (sw - 3.f * cardW - 2.f * gap) * 0.5f;
+    const float top = (sh - 2.f * cardH - 50.f) * 0.5f;
+    const float center = (sh - cardH) * 0.5f;
+    const Vector2 mouse = GetVirtualMousePos();
+    for (int row = 0; row < 2; ++row)
     {
-        for (int i = 0; i < 3; i++)
-            if (_startingAbilitySelected[i])
-                _player.ApplyUpgrade(_startingAbilityOptions[i]);
-
-        _starterAbilityGiftClaimed = true;
-        _awaitingStartingAbility = false;
-        _startingAbilityPickCount = 0;
-
-        if (_cutscene.IsActive() && _cutscene.WantsAbilitySelect())
-            _cutscene.OnAbilitySelected();
-
-        if (_currentRoomType == RoomType::Store)
-            SetStoreDoorTiles(TileType::DoorOpen);
-
-        _gameState = _levelUpReturnState;
+        if ((row == 0 && !showUlt) || (row == 1 && !showReg)) continue;
+        const float y = showUlt && showReg ? top + row * (cardH + 50.f) : center;
+        for (int i = 0; i < 3; ++i)
+        {
+            Rectangle card{startX + i * (cardW + gap), y, cardW, cardH};
+            if ((CheckCollisionPointRec(mouse, card) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
+                (_gamepad.isActive && _levelUpGpRow == row && _levelUpGpCursor == i && _gamepad.menuConfirmPressed))
+            {
+                ConfirmLevelUpCard(row == 0, i);
+                return; // A single confirm selects only one reward.
+            }
+        }
     }
 }
+
 void Engine::DrawLevelUpChoice()
 {
     if (_awaitingStartingAbility)
@@ -7387,6 +6059,11 @@ void Engine::DrawLevelUpChoice()
             + " -> "
             + std::to_string(roundedStat(newValue)) + suffix;
     };
+    auto pctPreview = [](const char* label, float currentValue, float newValue) -> std::string
+    {
+        return std::string(label) + " " + std::to_string((int)std::lround(currentValue * 100.f)) + "% -> "
+            + std::to_string((int)std::lround(newValue * 100.f)) + "%";
+    };
     auto getUpgradeInfo = [&](UpgradeType type, const char*& name, std::string& desc, Texture2D*& icon)
     {
         desc.clear();
@@ -7394,7 +6071,7 @@ void Engine::DrawLevelUpChoice()
         {
         case UpgradeType::AttackPower:
             name = "Attack Power";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 0.5f);
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + Balance::Stats::kAttackCard);
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::AttackRange:
@@ -7405,7 +6082,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::MaxHealth:
             name = "Max Health";
-            desc = linePreview("HP", _player.GetMaxHealthValue(), _player.GetMaxHealthValue() + 2.f)
+            desc = linePreview("HP", _player.GetMaxHealthValue(), _player.GetMaxHealthValue() + Balance::Stats::kMaxHealthCard)
                 + "\nDoes not heal";
             icon = &_upgradeHealthTex;
             break;
@@ -7416,17 +6093,27 @@ void Engine::DrawLevelUpChoice()
             icon = &_upgradeMagicTex;
             break;
         case UpgradeType::Defense:
-            name = "Armour";
-            desc = "Armour " + std::to_string(_player.GetArmour()) + " -> "
-                + std::to_string(std::min(_player.GetArmour() + 1, _player.GetMaxArmour()))
-                + " / " + std::to_string(_player.GetMaxArmour())
-                + "\nAbsorbs 1 hit";
+            name = "Defense";
+            desc = linePreview("Def", _player.GetDefense(), _player.GetDefense() + Balance::Stats::kDefenseMinor)
+                + "\nHits deal less damage";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::MoveSpeed:
             name = "Move Speed";
-            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() + 12.f);
+            desc = linePreview("Speed", _player.GetMoveSpeedValue(), _player.GetMoveSpeedValue() + Balance::Stats::kSpeedCard);
             icon = &_upgradeMoveSpeedTex;
+            break;
+        case UpgradeType::CritChance:
+            name = "Crit Chance";
+            desc = pctPreview("Crit", _player.GetCritChance(),
+                std::min(Balance::Stats::kMaxCritChance, _player.GetCritChance() + Balance::Stats::kCritChanceCard));
+            icon = &_upgradeAttackPowerTex;
+            break;
+        case UpgradeType::CritDamage:
+            name = "Crit Damage";
+            desc = pctPreview("Crit +", _player.GetCritDamage(), _player.GetCritDamage() + Balance::Stats::kCritDamageCard)
+                + "\nCrits hit harder";
+            icon = &_upgradeAttackPowerTex;
             break;
         // -- Rare --------------------------------------------------------------
         case UpgradeType::IronConstitution:
@@ -7444,7 +6131,7 @@ void Engine::DrawLevelUpChoice()
         case UpgradeType::Ferocity:
             name = "Ferocity";
             desc = linePreview("Atk", _player.GetAttackPowerValue(),
-                _player.GetAttackPowerValue() + std::max(1.0f, _player.GetAttackPowerValue() * 0.10f));
+                _player.GetAttackPowerValue() + std::max(10.f, _player.GetAttackPowerValue() * 0.10f));
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::ArcaneMind:
@@ -7455,15 +6142,13 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::IronSkin:
             name = "Iron Skin";
-            desc = "Armour " + std::to_string(_player.GetArmour()) + " -> "
-                + std::to_string(std::min(_player.GetArmour() + 2, _player.GetMaxArmour()))
-                + " / " + std::to_string(_player.GetMaxArmour())
-                + "\nAbsorbs 2 hits";
+            desc = linePreview("Def", _player.GetDefense(), _player.GetDefense() + Balance::Stats::kDefenseMajor)
+                + "\nHits deal less damage";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::BladeEdge:
             name = "Blade Edge";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 1.f)
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 10.f)
                 + "\nRange " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
                 + float1String(_player.GetAttackRangeMultiplierValue() + 0.10f) + "x";
             icon = &_upgradeAttackRangeTex;
@@ -7472,7 +6157,7 @@ void Engine::DrawLevelUpChoice()
         case UpgradeType::WarGod:
             name = "War God";
             desc = linePreview("Atk", _player.GetAttackPowerValue(),
-                _player.GetAttackPowerValue() + std::max(1.75f, _player.GetAttackPowerValue() * 0.15f))
+                _player.GetAttackPowerValue() + std::max(17.5f, _player.GetAttackPowerValue() * 0.15f))
                 + "\nRange " + float1String(_player.GetAttackRangeMultiplierValue()) + "x -> "
                 + float1String(_player.GetAttackRangeMultiplierValue() + 0.12f) + "x";
             icon = &_upgradeAttackPowerTex;
@@ -7486,7 +6171,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::BladeStorm:
             name = "Blade Storm";
-            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 1.5f)
+            desc = linePreview("Atk", _player.GetAttackPowerValue(), _player.GetAttackPowerValue() + 15.f)
                 + "\nSpeed " + std::to_string(roundedStat(_player.GetMoveSpeedValue())) + " -> "
                 + std::to_string(roundedStat(_player.GetMoveSpeedValue() * 1.08f));
             icon = &_upgradeAttackPowerTex;
@@ -7495,16 +6180,14 @@ void Engine::DrawLevelUpChoice()
             name = "Juggernaut";
             desc = linePreview("HP", _player.GetMaxHealthValue(),
                 std::ceil(_player.GetMaxHealthValue() * 1.12f))
-                + "\nArmour " + std::to_string(_player.GetArmour()) + " -> "
-                + std::to_string(std::min(_player.GetArmour() + 2, _player.GetMaxArmour()))
-                + " / " + std::to_string(_player.GetMaxArmour());
+                + "\n" + linePreview("Def", _player.GetDefense(), _player.GetDefense() + Balance::Stats::kDefenseMajor);
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::ArcaneColossus:
             name = "Arcane Colossus";
             desc = linePreview("Mana", (float)_player.GetMaxMana(), (float)(_player.GetMaxMana() + 10))
                 + "\nAtk " + std::to_string(roundedStat(_player.GetAttackPowerValue()))
-                + " -> " + std::to_string(roundedStat(_player.GetAttackPowerValue() + 1.5f))
+                + " -> " + std::to_string(roundedStat(_player.GetAttackPowerValue() + 15.f))
                 + "\nRegen +15%";
             icon = &_upgradeMagicTex;
             break;
@@ -7583,7 +6266,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::WarriorFuriousMight:
             name = "Furious Might";
-            desc = "Full-Rage damage bonus\n+50% -> +70%";
+            desc = "Full-Rage damage bonus\n+35% -> +55%";
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::WarriorBattleTrance:
@@ -7593,12 +6276,12 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::WarriorUnbreakable:
             name = "Unbreakable";
-            desc = "+1 armour, +1 max HP";
+            desc = "+5 Defense, +10 max HP";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::WarriorColossus:
             name = "Colossus";
-            desc = "+2 max HP, +0.5 attack";
+            desc = "+20 max HP, +5 attack";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::WarriorWarlordsReach:
@@ -7608,7 +6291,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::WarriorBattleMeditation:
             name = "Battle Meditation";
-            desc = "Heal 1 HP when a\nroom is cleared";
+            desc = "Heal 10 HP when a\nroom is cleared";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::WarriorWeaponMaster:
@@ -7633,7 +6316,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::HunterFletcher:
             name = "Fletcher";
-            desc = "+0.5 attack power";
+            desc = "+5 attack power";
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::HunterTrappersCunning:
@@ -7648,7 +6331,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::HunterSurvivalist:
             name = "Survivalist";
-            desc = "+1 max HP, +1 armour";
+            desc = "+10 max HP, +5 Defense";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::HunterFocusedBreathing:
@@ -7688,7 +6371,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::RogueShadowConditioning:
             name = "Shadow Conditioning";
-            desc = "+1 max HP";
+            desc = "+10 max HP";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::RogueOpportunist:
@@ -7708,7 +6391,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::PaladinZealotsFury:
             name = "Zealot's Fury";
-            desc = "Retribution +6% damage\nper stack (base 12%)";
+            desc = "Retribution +6% damage\nper stack (base 8%)";
             icon = &_upgradeAttackPowerTex;
             break;
         case UpgradeType::PaladinMirroredAegis:
@@ -7723,12 +6406,12 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::PaladinCrusadersVitality:
             name = "Crusader's Vitality";
-            desc = "+2 max HP";
+            desc = "+20 max HP";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::PaladinSanctuary:
             name = "Sanctuary";
-            desc = "+2 armour AND heal 1 HP\non room clear";
+            desc = "+10 Defense AND heal 10 HP\non room clear";
             icon = &_upgradeDefenseTex;
             break;
         case UpgradeType::PaladinDivineConduit:
@@ -7763,7 +6446,7 @@ void Engine::DrawLevelUpChoice()
             break;
         case UpgradeType::WarlockCorruptedVitality:
             name = "Corrupted Vitality";
-            desc = "+2 max HP";
+            desc = "+20 max HP";
             icon = &_upgradeHealthTex;
             break;
         case UpgradeType::WarlockSoulConduit:
@@ -7937,18 +6620,6 @@ void Engine::DrawLevelUpChoice()
 
             drawMultilineCentered(desc, x + cardW / 2.f, ultRowY + cardH * 0.72f, 20, LIGHTGRAY);
 
-            bool ultActivated = (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
-                                 (_gamepad.isActive && ready && _levelUpGpRow == 0 && i == _levelUpGpCursor && _gamepad.menuConfirmPressed);
-            if (ultActivated)
-            {
-                _player.ApplyUpgrade(_levelUpUltimateOptions[i]);
-                _ultimateRowPicked = true;
-                if (_regularRowPicked)
-                {
-                    if (_levelUpReturnState == GameState::Map) _mapOpenTimer = 0.4f;
-                    _gameState = _levelUpReturnState;
-                }
-            }
         }
     }
 
@@ -8143,20 +6814,6 @@ void Engine::DrawLevelUpChoice()
                 rarSz, WHITE);
         }
 
-        // Click or gamepad A to select - blocked until open timer expires
-        bool regActivated = (ready && hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) ||
-                            (_gamepad.isActive && ready && _levelUpGpRow == 1 && i == _levelUpGpCursor && _gamepad.menuConfirmPressed);
-        if (regActivated)
-        {
-            _player.ApplyUpgrade(_levelUpOptions[i]);
-            _awaitingStartingAbility = false;
-            _regularRowPicked = true;
-            if (!_showUltimateRow || _ultimateRowPicked)
-            {
-                if (_levelUpReturnState == GameState::Map) _mapOpenTimer = 0.4f;
-                _gameState = _levelUpReturnState;
-            }
-        }
     }
     } // end showReg
 
@@ -8194,6 +6851,24 @@ static void ApplySpreadTuning(SpreadProjectile& p, const AttackTuning* t)
     }
 }
 
+// Where a basic attack goes. The mouse aims freely; the stick (or its last direction)
+// snaps to eight; with no aim input the last walk direction snaps to eight.
+Vector2 Engine::GetBasicAimDirection() const
+{
+    if (_aimSource == AimSource::Mouse)
+    {
+        Vector2 mouse = GetVirtualMousePos();
+        Vector2 world{ mouse.x + _cameraPos.x - kVirtualWidth * 0.5f,
+                       mouse.y + _cameraPos.y - kVirtualHeight * 0.5f };
+        Vector2 delta = Vector2Subtract(world, _player.GetWorldPos());
+        if (Vector2LengthSqr(delta) > 0.f)
+            return Vector2Normalize(delta);
+    }
+    if (_aimSource == AimSource::Stick)
+        return Character::SnapToEightWay(_lastStickAim);
+    return Character::SnapToEightWay(_player.GetLastMoveDirection());
+}
+
 void Engine::HandlePlayerMeleeDamage()
 {
     if (!_player.CanApplyMeleeDamage())
@@ -8211,13 +6886,11 @@ void Engine::HandlePlayerMeleeDamage()
         default:                   element = AbilityType::FireSpread; tint = WHITE; break;
         }
         const AttackTuning* bt = AttackTuningStore::Get(AttackTuningKeyForBasic((int)_player.GetClass()));
-        Vector2 borigin = (bt && bt->hasFirePoint)
-                        ? _player.GetCastOrigin(bt->fireForward, bt->fireHeight)
-                        : _player.GetCastOrigin();
-        SpreadProjectile shot;
-        shot.InitBasic(borigin, _player.GetFacingDirection(), element, tint, arrow);
-        ApplySpreadTuning(shot, bt);
-        _spreadProjectiles.push_back(shot);
+        // Turn now; the shot leaves after a short turn window (FirePendingRangedShot
+        // reads the fire point then, so it sits on the side the sprite faces).
+        const Vector2 aim = GetBasicAimDirection();
+        _player.FaceAimDirection(aim);
+        _pendingRangedShot = PendingRangedShot{ true, Balance::Facing::kRangedTurnSeconds, aim, element, tint, arrow, bt };
         _player.ConsumeMeleeDamageFrame();
         return;
     }
@@ -8239,8 +6912,9 @@ void Engine::HandlePlayerMeleeDamage()
         if (CheckCollisionRecs(attackRec, enemy->GetHitCollisionRec()))
         {
             bool crit = false;
-            int base = (int)std::round(_player.GetMeleeDamage() * _player.GetClassDamageMult());
-            int dmg  = ScalePlayerHit(*enemy, std::max(1, base), crit);
+            // Float attack power: fractional attack upgrades now count (averaged by the carry).
+            const float base = _player.GetAttackPowerValue() * _player.GetClassDamageMult();
+            int dmg  = ScalePlayerHit(*enemy, std::max(1.f, base), crit);
             const float healthBefore = enemy->GetHealthValue();
             enemy->TakeDamage(dmg, _player.GetWorldPos());
             Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
@@ -8261,7 +6935,8 @@ void Engine::HandlePlayerMeleeDamage()
         }
     }
 
-    _player.ConsumeMeleeDamageFrame();
+    if (_player.MeleeSwingSpent(hitAny))
+        _player.ConsumeMeleeDamageFrame();
 
     if (hitAny)
         TriggerScreenShake(6.f, 0.07f);
@@ -8313,6 +6988,7 @@ void Engine::OpenTreasureChest()
     TriggerScreenShake(5.f, 0.12f);
     StopSound(_pickupSound);
     PlaySound(_pickupSound);
+    SfxBank::Get().Play(SfxId::ChestOpen, 0.6f);
 
     GenerateTreasureChestOptions();
     _levelUpReturnState = GameState::DungeonRun;
@@ -8381,16 +7057,15 @@ Engine::AbilityAimProfile Engine::GetAbilityAimProfile(AbilityType ability) cons
     return profile;
 }
 
-Vector2 Engine::GetCurrentAimWorldPoint() const
+Vector2 Engine::GetCurrentAimWorldPoint(float range, Vector2 fallbackDir) const
 {
     Vector2 player = _player.GetWorldPos();
-    AbilityAimProfile profile = GetAbilityAimProfile(_pendingAbilityAim.ability);
 
     if (_gamepad.isActive && _inputPromptMode == InputPromptMode::Gamepad)
     {
         Vector2 dir = Vector2Length(_gamepad.aimDir) > GamepadInput::kDeadZone
-            ? Vector2Normalize(_gamepad.aimDir) : _pendingAbilityAim.direction;
-        return Vector2Add(player, Vector2Scale(dir, profile.range));
+            ? Vector2Normalize(_gamepad.aimDir) : fallbackDir;
+        return Vector2Add(player, Vector2Scale(dir, range));
     }
 
     Vector2 mouse = GetVirtualMousePos();
@@ -8398,14 +7073,30 @@ Vector2 Engine::GetCurrentAimWorldPoint() const
                     mouse.y + _cameraPos.y - kVirtualHeight * 0.5f };
 }
 
+// Direction and clamped target for an aimed ability: the stick or mouse, or
+// fallbackDir while the stick is at rest and the mouse sits on the hero.
+void Engine::ResolveAbilityAim(AbilityType ability, Vector2 fallbackDir, Vector2& direction, Vector2& target) const
+{
+    static constexpr float kMinAimDistance = 1.f;
+    const AbilityAimProfile profile = GetAbilityAimProfile(ability);
+    const Vector2 player = _player.GetWorldPos();
+    const Vector2 delta = Vector2Subtract(GetCurrentAimWorldPoint(profile.range, fallbackDir), player);
+
+    direction = Vector2Length(delta) > kMinAimDistance ? Vector2Normalize(delta) : fallbackDir;
+    const float distance = std::min(profile.range, Vector2Length(delta));
+    target = Vector2Add(player, Vector2Scale(direction, distance));
+}
+
+// A quick tap fires an aimed ability on release; holding past this shows its area first.
+static constexpr float kAbilityTapSeconds = 0.18f;
+
 void Engine::BeginAbilityInput(int slot)
 {
     if (!_player.CanBeginAbilityCast(slot))
         return;
 
     AbilityType ability = _player.GetLearnedAbility(slot);
-    AbilityAimProfile profile = GetAbilityAimProfile(ability);
-    if (profile.mode == AbilityAimMode::Instant)
+    if (GetAbilityAimProfile(ability).mode == AbilityAimMode::Instant)
     {
         _committedAimAbility = ability;
         _committedAimDirection = _player.GetFacingDirection();
@@ -8414,98 +7105,85 @@ void Engine::BeginAbilityInput(int slot)
         return;
     }
 
-    if (_pendingAbilityAim.active)
-    {
-        if (_pendingAbilityAim.slot == slot && (_settingsMgr.Get().abilityAimToggle || _touchModeActive))
-        {
-            CommitAbilityAim();
-            return;
-        }
-        CancelAbilityAim();
-    }
-
-    _pendingAbilityAim.active = true;
-    _pendingAbilityAim.slot = slot;
-    _pendingAbilityAim.ability = ability;
-    _pendingAbilityAim.direction = _player.GetFacingDirection();
-    _pendingAbilityAim.target = Vector2Add(_player.GetWorldPos(),
-        Vector2Scale(_pendingAbilityAim.direction, profile.range));
-}
-
-void Engine::CancelAbilityAim()
-{
-    _pendingAbilityAim = PendingAbilityAim{};
-    _player.SetAbilityAimMoveScale(1.f);
-}
-
-void Engine::CommitAbilityAim()
-{
-    if (!_pendingAbilityAim.active)
+    // Aimed abilities fire when the button comes up. One hold at a time.
+    if (_abilityHold.active)
         return;
-    if (_player.CanBeginAbilityCast(_pendingAbilityAim.slot))
-    {
-        _committedAimAbility = _pendingAbilityAim.ability;
-        _committedAimDirection = _pendingAbilityAim.direction;
-        _committedAimTarget = _pendingAbilityAim.target;
-        _player.TriggerAbilityCast(_pendingAbilityAim.slot);
-    }
-    CancelAbilityAim();
+    _abilityHold = AbilityHold{ true, slot, ability, 0.f, false };
+}
+
+void Engine::ReleaseAbilityHold()
+{
+    const int slot = _abilityHold.slot;
+    _abilityHold = AbilityHold{};
+    if (!_player.CanBeginAbilityCast(slot))
+        return;
+
+    AbilityType ability = _player.GetLearnedAbility(slot);
+    ResolveAbilityAim(ability, _abilityAimPreview.direction, _committedAimDirection, _committedAimTarget);
+    _committedAimAbility = ability;
+    _player.TriggerAbilityCast(slot);
 }
 
 void Engine::UpdateAbilityAiming()
 {
-    if (_pendingAbilityAim.active)
-    {
-        AbilityAimProfile profile = GetAbilityAimProfile(_pendingAbilityAim.ability);
-        _player.SetAbilityAimMoveScale(profile.moveScale);
-        Vector2 player = _player.GetWorldPos();
-        Vector2 rawTarget = GetCurrentAimWorldPoint();
-        Vector2 delta = Vector2Subtract(rawTarget, player);
-        if (Vector2Length(delta) > 1.f)
-            _pendingAbilityAim.direction = Vector2Normalize(delta);
-        float distance = std::min(profile.range, Vector2Length(delta));
-        _pendingAbilityAim.target = Vector2Add(player, Vector2Scale(_pendingAbilityAim.direction, distance));
-
-        if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
-        {
-            CancelAbilityAim();
-            return;
-        }
-        if (_pendingAbilityAim.commitOnMouseRelease && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
-        {
-            CommitAbilityAim();
-            return;
-        }
-    }
-
+    // Key and gamepad presses start a cast (instant abilities fire at once).
     for (int slot = 0; slot < _player.GetLearnedCount(); ++slot)
     {
-        KeyboardKey key = _player.GetAbilityKey(slot);
-        bool pressed = (key != KEY_NULL && IsKeyPressed(key)) ||
-                       (_gamepad.isActive && _gamepad.abilityPressed[slot]);
-        bool released = (key != KEY_NULL && IsKeyReleased(key)) ||
-                        (_gamepad.isActive && _gamepad.abilityReleased[slot]);
-
+        const KeyboardKey key = _player.GetAbilityKey(slot);
+        const bool pressed = (key != KEY_NULL && IsKeyPressed(key)) ||
+                             (_gamepad.isActive && _gamepad.abilityPressed[slot]);
         if (pressed)
         {
             BeginAbilityInput(slot);
-            return;
+            break;
         }
-        if (_pendingAbilityAim.active && _pendingAbilityAim.slot == slot &&
-            !_settingsMgr.Get().abilityAimToggle && released)
+    }
+
+    if (_abilityHold.active)
+    {
+        _abilityHold.time += GetFrameTime();
+        const KeyboardKey key = _player.GetAbilityKey(_abilityHold.slot);
+        const bool released = _abilityHold.fromBar
+            ? IsMouseButtonReleased(MOUSE_LEFT_BUTTON)
+            : ((key != KEY_NULL && IsKeyReleased(key)) ||
+               (_gamepad.isActive && _gamepad.abilityReleased[_abilityHold.slot]));
+        if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON))
+            _abilityHold = AbilityHold{};          // right click cancels the hold
+        else if (released)
+            ReleaseAbilityHold();
+    }
+
+    // The preview follows the held ability; otherwise the first aimed ability in the bar.
+    const Vector2 lastDirection = _abilityAimPreview.direction;
+    AbilityType previewAbility = AbilityType::None;
+    if (_abilityHold.active)
+        previewAbility = _abilityHold.ability;
+    else
+    {
+        for (int slot = 0; slot < _player.GetLearnedCount(); ++slot)
         {
-            CommitAbilityAim();
-            return;
+            AbilityType ability = _player.GetLearnedAbility(slot);
+            if (GetAbilityAimProfile(ability).mode == AbilityAimMode::Instant)
+                continue;
+            previewAbility = ability;
+            break;
         }
+    }
+
+    _abilityAimPreview.active = previewAbility != AbilityType::None;
+    _abilityAimPreview.showArea = _abilityHold.active && _abilityHold.time >= kAbilityTapSeconds;
+    if (_abilityAimPreview.active)
+    {
+        _abilityAimPreview.ability = previewAbility;
+        ResolveAbilityAim(previewAbility, lastDirection, _abilityAimPreview.direction, _abilityAimPreview.target);
     }
 }
 
 void Engine::DrawAbilityAimPreview() const
 {
-    if (!_pendingAbilityAim.active)
+    if (!_abilityAimPreview.active)
         return;
 
-    AbilityAimProfile profile = GetAbilityAimProfile(_pendingAbilityAim.ability);
     auto toScreen = [&](Vector2 world)
     {
         return Vector2{ world.x - _cameraPos.x + kVirtualWidth * 0.5f + _shakeOffset.x,
@@ -8513,69 +7191,75 @@ void Engine::DrawAbilityAimPreview() const
     };
 
     Vector2 start = toScreen(_player.GetWorldPos());
-    Vector2 target = toScreen(_pendingAbilityAim.target);
-    Vector2 dir = _pendingAbilityAim.direction;
+    Vector2 target = toScreen(_abilityAimPreview.target);
+    Vector2 dir = _abilityAimPreview.direction;
     Vector2 side{ -dir.y, dir.x };
-    Color element = (_pendingAbilityAim.ability == AbilityType::FireSpread ||
-                     _pendingAbilityAim.ability == AbilityType::FireBolt ||
-                     _pendingAbilityAim.ability == AbilityType::FireUltimate)
+    Color element = (_abilityAimPreview.ability == AbilityType::FireSpread ||
+                     _abilityAimPreview.ability == AbilityType::FireBolt ||
+                     _abilityAimPreview.ability == AbilityType::FireUltimate)
                   ? Color{ 255, 110, 45, 255 }
-                  : (_pendingAbilityAim.ability == AbilityType::IceSpread ||
-                     _pendingAbilityAim.ability == AbilityType::IceBolt ||
-                     _pendingAbilityAim.ability == AbilityType::IceUltimate)
+                  : (_abilityAimPreview.ability == AbilityType::IceSpread ||
+                     _abilityAimPreview.ability == AbilityType::IceBolt ||
+                     _abilityAimPreview.ability == AbilityType::IceUltimate)
                   ? Color{ 100, 220, 255, 255 }
-                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::WarCleave &&
-                     (int)_pendingAbilityAim.ability <= (int)AbilityType::Earthshatter)
+                  : ((int)_abilityAimPreview.ability >= (int)AbilityType::WarCleave &&
+                     (int)_abilityAimPreview.ability <= (int)AbilityType::Earthshatter)
                   ? Color{ 255, 135, 70, 255 }
-                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::FanOfKnives &&
-                     (int)_pendingAbilityAim.ability <= (int)AbilityType::RainOfBlades)
+                  : ((int)_abilityAimPreview.ability >= (int)AbilityType::FanOfKnives &&
+                     (int)_abilityAimPreview.ability <= (int)AbilityType::RainOfBlades)
                   ? Color{ 205, 120, 255, 255 }
-                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::PiercingShot &&
-                     (int)_pendingAbilityAim.ability <= (int)AbilityType::PiercingBarrage)
+                  : ((int)_abilityAimPreview.ability >= (int)AbilityType::PiercingShot &&
+                     (int)_abilityAimPreview.ability <= (int)AbilityType::PiercingBarrage)
                   ? Color{ 100, 240, 175, 255 }
-                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::Smite &&
-                     (int)_pendingAbilityAim.ability <= (int)AbilityType::HammerOfJustice)
+                  : ((int)_abilityAimPreview.ability >= (int)AbilityType::Smite &&
+                     (int)_abilityAimPreview.ability <= (int)AbilityType::HammerOfJustice)
                   ? Color{ 255, 225, 110, 255 }
-                  : ((int)_pendingAbilityAim.ability >= (int)AbilityType::ShadowBolt &&
-                     (int)_pendingAbilityAim.ability <= (int)AbilityType::ShadowNova)
+                  : ((int)_abilityAimPreview.ability >= (int)AbilityType::ShadowBolt &&
+                     (int)_abilityAimPreview.ability <= (int)AbilityType::ShadowNova)
                   ? Color{ 205, 90, 240, 255 }
                   : Color{ 255, 230, 70, 255 };
 
-    DrawLineEx(start, target, 4.f, Fade(element, 0.72f));
-    Vector2 arrowBase = Vector2Subtract(target, Vector2Scale(dir, 28.f));
-    DrawTriangle(target,
+    // The drawn line stops short of the full target (the area preview below still uses it).
+    Vector2 lineEnd = target;
+    const float reach = Vector2Distance(start, target);
+    if (reach > Balance::Vfx::kAimLineMaxLength)
+        lineEnd = Vector2Add(start, Vector2Scale(Vector2Normalize(Vector2Subtract(target, start)),
+                                                 Balance::Vfx::kAimLineMaxLength));
+    Px::Line(start, lineEnd, 4.f, Fade(element, 0.72f), Balance::Vfx::kGlowTelegraphStrength);
+    Vector2 arrowBase = Vector2Subtract(lineEnd, Vector2Scale(dir, 28.f));
+    DrawTriangle(lineEnd,
                  Vector2Add(arrowBase, Vector2Scale(side, 13.f)),
                  Vector2Subtract(arrowBase, Vector2Scale(side, 13.f)),
                  Fade(element, 0.88f));
 
+    if (!_abilityAimPreview.showArea)
+        return;
+    AbilityAimProfile profile = GetAbilityAimProfile(_abilityAimPreview.ability);
     if (profile.mode == AbilityAimMode::GroundTarget)
     {
-        if (_pendingAbilityAim.ability == AbilityType::FireSpread)
+        if (_abilityAimPreview.ability == AbilityType::FireSpread)
         {
             Vector2 a = Vector2Subtract(target, Vector2Scale(side, profile.length * 0.5f));
             Vector2 b = Vector2Add(target, Vector2Scale(side, profile.length * 0.5f));
-            DrawLineEx(a, b, profile.width, Fade(element, 0.13f));
-            DrawLineEx(a, b, 3.f, Fade(element, 0.9f));
+            Px::Line(a, b, profile.width, Fade(element, 0.13f));
+            Px::Line(a, b, 3.f, Fade(element, 0.9f), Balance::Vfx::kGlowTelegraphStrength);
         }
         else
         {
-            DrawCircleV(target, profile.radius, Fade(element, 0.10f));
-            DrawCircleLinesV(target, profile.radius, Fade(element, 0.9f));
+            Px::Disc(target, profile.radius, Fade(element, 0.10f));
+            Px::Circle(target, profile.radius, Fade(element, 0.9f), Balance::Vfx::kGlowTelegraphStrength);
         }
     }
     else if (profile.length > 0.f && profile.width > 0.f)
     {
         Vector2 end = Vector2Add(start, Vector2Scale(dir, profile.length));
         Vector2 halfSide = Vector2Scale(side, profile.width * 0.5f);
-        DrawLineEx(start, end, profile.width, Fade(element, 0.10f));
-        DrawLineEx(Vector2Add(start, halfSide), Vector2Add(end, halfSide), 2.f, Fade(element, 0.8f));
-        DrawLineEx(Vector2Subtract(start, halfSide), Vector2Subtract(end, halfSide), 2.f, Fade(element, 0.8f));
+        Px::Line(start, end, profile.width, Fade(element, 0.10f));
+        Px::Line(Vector2Add(start, halfSide), Vector2Add(end, halfSide), 2.f, Fade(element, 0.8f), Balance::Vfx::kGlowTelegraphStrength);
+        Px::Line(Vector2Subtract(start, halfSide), Vector2Subtract(end, halfSide), 2.f, Fade(element, 0.8f), Balance::Vfx::kGlowTelegraphStrength);
         if (profile.radius > 0.f)
-            DrawCircleLinesV(end, profile.radius, Fade(element, 0.85f));
+            Px::Circle(end, profile.radius, Fade(element, 0.85f), Balance::Vfx::kGlowTelegraphStrength);
     }
-
-    const char* mode = _settingsMgr.Get().abilityAimToggle ? "PRESS AGAIN TO CAST" : "RELEASE TO CAST";
-    DrawText(mode, (int)target.x - MeasureText(mode, 18) / 2, (int)target.y + 24, 18, element);
 }
 
 void Engine::HandlePlayerCastRequest()
@@ -8618,47 +7302,10 @@ void Engine::HandlePlayerCastRequest()
         _committedAimAbility = AbilityType::None;
     }
 }
-void Engine::SpawnSpreadBurst(AbilityType element)
-{
-    static const std::array<Vector2, 8> directions{
-        Vector2{  1.f,  0.f },
-        Vector2{ -1.f,  0.f },
-        Vector2{  0.f,  1.f },
-        Vector2{  0.f, -1.f },
-        Vector2{  1.f,  1.f },
-        Vector2{  1.f, -1.f },
-        Vector2{ -1.f,  1.f },
-        Vector2{ -1.f, -1.f }
-    };
-
-    const AttackTuning* t = AttackTuningStore::Get(AttackTuningKeyForAbility(element));
-    Vector2 origin = (t && t->hasFirePoint)
-                   ? _player.GetCastOrigin(t->fireForward, t->fireHeight)
-                   : _player.GetCastOrigin();
-
-    for (const Vector2& dir : directions)
-    {
-        SpreadProjectile projectile;
-        projectile.Init(origin, dir, element);
-        ApplySpreadTuning(projectile, t);
-        _spreadProjectiles.push_back(projectile);
-    }
-}
-
-void Engine::SpawnBolt(AbilityType element)
-{
-    const AttackTuning* t = AttackTuningStore::Get(AttackTuningKeyForAbility(element));
-    Vector2 origin = (t && t->hasFirePoint)
-                   ? _player.GetCastOrigin(t->fireForward, t->fireHeight)
-                   : _player.GetCastOrigin();
-    SpreadProjectile projectile;
-    projectile.Init(origin, _player.GetFacingDirection(), element);
-    ApplySpreadTuning(projectile, t);
-    _spreadProjectiles.push_back(projectile);
-}
 
 bool Engine::DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
-                             bool burn, bool chill, bool shock)
+                             bool burn, bool chill, bool shock, bool damageOverTime,
+                             const Vector2* arrivalPos)
 {
     const bool overload = (element == AbilityType::FireSpread || element == AbilityType::FireBolt ||
                            element == AbilityType::FireUltimate) && enemy.IsCharged();
@@ -8667,7 +7314,14 @@ bool Engine::DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
     bool crit = false;
     int dealt = ScalePlayerHit(enemy, std::max(1, damage), crit);
     const float healthBefore = enemy.GetHealthValue();
-    enemy.TakeDamage(dealt, _player.GetWorldPos());
+    const Vector2 heroPos = _player.GetWorldPos();
+    const Vector2 arrival = arrivalPos ? *arrivalPos : heroPos;
+    auto hit = [&](int amount)
+    {
+        if (damageOverTime) enemy.TakeDamageUnblockable(amount, heroPos);
+        else                enemy.TakeDamageArriving(amount, heroPos, arrival);
+    };
+    hit(dealt);
     Enemy::HitBlockReason blocked = enemy.ConsumeHitBlock();
     if (blocked != Enemy::HitBlockReason::None)
     {
@@ -8675,13 +7329,13 @@ bool Engine::DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
         return false;
     }
     const std::uint32_t attackId = 100u + static_cast<std::uint32_t>(element);
-    if (RegisterHitFx(enemy, healthBefore, crit, false, false, attackId) <= 0)
+    if (RegisterHitFx(enemy, healthBefore, crit, false, damageOverTime, attackId) <= 0)
         return false;
     if (combo > 0 && enemy.IsAlive())
     {
         const float comboHealthBefore = enemy.GetHealthValue();
-        enemy.TakeDamage(combo, _player.GetWorldPos());
-        RegisterHitFx(enemy, comboHealthBefore, false, false, false, attackId + 1000u);
+        hit(combo);
+        RegisterHitFx(enemy, comboHealthBefore, false, false, damageOverTime, attackId + 1000u);
     }
     if (burn)
         enemy.ApplyBurn(0.45f, std::max(1, _player.GetBoltBurnDamage(element)), _player.GetWorldPos());
@@ -8701,7 +7355,7 @@ bool Engine::DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
 }
 
 void Engine::DamageMageArea(Vector2 centre, float radius, int damage, AbilityType element,
-                            bool burn, bool chill, bool shock)
+                            bool burn, bool chill, bool shock, bool damageOverTime)
 {
     for (auto& enemy : _enemies)
     {
@@ -8713,7 +7367,7 @@ void Engine::DamageMageArea(Vector2 centre, float radius, int damage, AbilityTyp
         if (Vector2Distance(centre, closest) > radius)
             continue;
 
-        DamageMageEnemy(*enemy, damage, element, burn, chill, shock);
+        DamageMageEnemy(*enemy, damage, element, burn, chill, shock, damageOverTime, &centre);
     }
 }
 
@@ -8747,6 +7401,12 @@ void Engine::CastMageSpell(AbilityType ability, Vector2 direction, Vector2 targe
                                    : ability == AbilityType::IceBolt ? Character::CastType::IceSpread
                                                                      : Character::CastType::ElectricSpread;
         _vfx.SpawnCastEffect(castFx, origin, direction);
+        // The cast sprite is the flash; add the forward spark kick in the bolt's colour.
+        const Color boltColor = ability == AbilityType::FireBolt ? Vfx::kFireGlow
+                              : ability == AbilityType::IceBolt  ? Vfx::kIceGlow
+                                                                 : Vfx::kShockGlow;
+        _vfx.SpawnImpactBurst(origin, boltColor, Balance::Vfx::kMuzzleSparkCount, Balance::Vfx::kMuzzleSparkSpeed,
+                              direction, Balance::Vfx::kMuzzleSparkSpread);
         return;
     }
 
@@ -8765,7 +7425,9 @@ void Engine::CastMageSpell(AbilityType ability, Vector2 direction, Vector2 targe
         break;
 
     case AbilityType::IceSpread: // Frost Nova
-        DamageMageArea(playerPos, profile.radius, _player.GetSpreadHitDamage(ability), ability, false, true, false);
+        DamageMageArea(playerPos, profile.radius,
+                       _player.GetSpreadHitDamage(ability) * Balance::AbilityDamage::kInstantSpreadMult,
+                       ability, false, true, false);
         for (auto& enemy : _enemies)
             if (enemy->IsActive() && enemy->IsAlive() && !enemy->IsBoss() &&
                 Vector2Distance(enemy->GetWorldPos(), playerPos) <= profile.radius)
@@ -8812,11 +7474,14 @@ void Engine::CastMageSpell(AbilityType ability, Vector2 direction, Vector2 targe
         {
             if (!enemy->IsActive() || !enemy->IsAlive()) continue;
             if (pointSegmentDistance(enemy->GetWorldPos(), start, destination) > 85.f) continue;
-            DamageMageEnemy(*enemy, _player.GetSpreadHitDamage(ability), ability, false, false, true);
+            DamageMageEnemy(*enemy, _player.GetSpreadHitDamage(ability) * Balance::AbilityDamage::kInstantSpreadMult,
+                            ability, false, false, true);
         }
         _player.SetWorldPos(destination);
         _player.GrantInvulnerability(0.12f);
-        DamageMageArea(destination, 110.f, _player.GetSpreadHitDamage(ability), ability, false, false, true);
+        DamageMageArea(destination, 110.f,
+                       _player.GetSpreadHitDamage(ability) * Balance::AbilityDamage::kInstantSpreadMult,
+                       ability, false, false, true);
         field.pos = start;
         field.strikePos = destination;
         field.duration = 0.38f;
@@ -8916,19 +7581,19 @@ void Engine::UpdateMageSpells(float dt)
                     if (enemy->IsActive() && enemy->IsAlive() &&
                         distanceToSegment(enemy->GetWorldPos(), a, b) <= field.width * 0.5f)
                         DamageMageEnemy(*enemy, _player.GetSpreadHitDamage(field.ability),
-                                        field.ability, true, false, false);
+                                        field.ability, true, false, false, true);
             }
             else if (field.ability == AbilityType::FireUltimate)
             {
                 DamageMageArea(field.pos, field.radius * 0.82f,
                                std::max(1, _player.GetUltimateHitDamage(field.ability) / 3),
-                               field.ability, true, false, false);
+                               field.ability, true, false, false, true);
             }
             else if (field.ability == AbilityType::IceUltimate)
             {
                 DamageMageArea(field.pos, field.radius,
                                std::max(1, _player.GetUltimateHitDamage(field.ability) / 3),
-                               field.ability, false, true, false);
+                               field.ability, false, true, false, true);
                 if ((field.tickCount % 4) == 0)
                     for (auto& enemy : _enemies)
                         if (enemy->IsActive() && enemy->IsAlive() && !enemy->IsBoss() &&
@@ -8947,8 +7612,8 @@ void Engine::UpdateMageSpells(float dt)
                 field.strikeFlash = 0.22f;
                 DamageMageArea(field.strikePos, 95.f,
                                std::max(1, _player.GetUltimateHitDamage(field.ability) / 2),
-                               field.ability, false, false, true);
-                TriggerScreenShake(2.5f, 0.06f);
+                               field.ability, false, false, true, true);
+                // The local lightning flash carries ongoing storm hits; preserve camera readability.
             }
         }
     }
@@ -8978,8 +7643,10 @@ void Engine::DrawMageSpells(Vector2 cameraRef) const
         Rectangle src = GetAnimationFrameRect(tex, fw, fh, frame);
         Vector2 p = screenPos(world);
         Rectangle dst{ p.x, p.y, size, size };
-        DrawTexturePro(tex, src, dst, Vector2{ size * 0.5f, size * 0.5f }, rotation,
-                       Fade(WHITE, std::clamp(alpha, 0.f, 1.f)));
+        const float opacity = std::clamp(alpha, 0.f, 1.f);
+        DrawTexturePro(tex, src, dst, Vector2{ size * 0.5f, size * 0.5f }, rotation, Fade(WHITE, opacity));
+        Vfx::Glow().AddSprite(tex, src, dst, Vector2{ size * 0.5f, size * 0.5f }, rotation,
+                              Fade(WHITE, opacity * Balance::Vfx::kGlowSpriteStrength));
     };
 
     for (const MageSpellField& field : _mageSpellFields)
@@ -9031,8 +7698,8 @@ void Engine::DrawMageSpells(Vector2 cameraRef) const
             {
                 Vector2 p = screenPos(field.pos);
                 float pulse = 0.55f + 0.35f * sinf(field.timer * 15.f);
-                DrawCircleLinesV(p, field.radius, Fade(ORANGE, pulse)); // warning only
-                DrawCircleLinesV(p, field.radius * 0.72f, Fade(GOLD, pulse * 0.7f));
+                Px::Circle(p, field.radius, Fade(ORANGE, pulse), Balance::Vfx::kGlowTelegraphStrength); // warning only
+                Px::Circle(p, field.radius * 0.72f, Fade(GOLD, pulse * 0.7f), Balance::Vfx::kGlowTelegraphStrength);
             }
             else
                 drawSpellFrame(AbilityType::FireUltimate, field.pos, field.radius * 2.1f, remainingFade);
@@ -9346,13 +8013,13 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     int     level = std::max(1, _player.GetAbilityLevel(ability));
     float   buff  = _player.GetClassDamageMult();
 
-    // Warrior Rage: abilities hit harder as the bar fills (base +50% at full;
+    // Warrior Rage: abilities hit harder as the bar fills (base +35% at full;
     // the Furious Might class card raises the ceiling).
     buff *= 1.f + _player.GetRageFullBonus() * _player.GetRagePercent();
 
-    // Paladin Faith: abilities hit up to +40% harder at full Faith — conviction
+    // Paladin Faith: abilities hit up to +25% harder at full Faith — conviction
     // built by holding ground pays out through holy power (see Character::AddFaith).
-    buff *= 1.f + 0.4f * _player.GetFaithPercent();
+    buff *= 1.f + 0.25f * _player.GetFaithPercent();
 
     // Overload Power Choice: permanent ability damage bought at +1 mana cost —
     // the tradeoff card, so it multiplies here rather than adding attack power.
@@ -9362,6 +8029,11 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     auto dmgVal = [&](float base) {
         float levelMult = 1.f + Balance::AbilityDamage::kClassLevelStep * (level - 1);
         return std::max(1, (int)roundf(base * levelMult * buff));
+    };
+    // The ability's main hit, from the table in ClassAbilityBalance.h.
+    auto directHit = [&](AbilityType type) {
+        const Balance::ClassAbility::HitSpec spec = Balance::ClassAbility::Hit(type);
+        return dmgVal(spec.base + atk * spec.perAtk);
     };
     // Class-card dials: poison tick potency (Toxin Expert) and curse window
     // length (Lingering Malice). Both default to 1.0 for unaffected classes.
@@ -9472,7 +8144,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
     case AbilityType::WarCleave:
     {
-        int hits = damageDirected(210.f, 200.f, dmgVal(4.f + atk * 0.8f), 1.f, 0.f, 0.f, 0);
+        int hits = damageDirected(210.f, 200.f, directHit(AbilityType::WarCleave), 1.f, 0.f, 0.f, 0);
         applyDirected(210.f, 200.f, [](Enemy& enemy) { enemy.ApplyVulnerability(1.25f, 4.f); });
         pushVfx(WarriorVfxKind::Wave, 0.28f, 210.f, Color{ 200, 235, 255, 255 });
         if (hits) TriggerScreenShake(6.f, 0.10f);
@@ -9481,14 +8153,14 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::Whirlwind:
     {
         float whirlRadius = tunedRadius(170.f);
-        DamageEnemiesInRect(radialRect(whirlRadius), dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.6f));   // spinning blades bleed
+        DamageEnemiesInRect(radialRect(whirlRadius), directHit(AbilityType::Whirlwind), 1.f, 0.f, 2.5f, dmgVal(6.f));   // spinning blades bleed
         pushVfx(WarriorVfxKind::Whirl, 0.35f, whirlRadius, Color{ 235, 235, 245, 255 });
         TriggerScreenShake(5.f, 0.12f);
         break;
     }
     case AbilityType::ThrowingAxe:
     {
-        damageDirected(520.f, 90.f, dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 3.f, dmgVal(0.8f));
+        damageDirected(520.f, 90.f, directHit(AbilityType::ThrowingAxe), 1.f, 0.f, 3.f, dmgVal(8.f));
         pushShot(0.4f, 520.f, AbilityType::ThrowingAxe, true);
         break;
     }
@@ -9497,7 +8169,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         float moveDistance = (atkTune && atkTune->hasAbility) ? atkTune->moveDistance : 120.f;
         _player.MoveAlongDirection(facing, moveDistance);
         playerPos = _player.GetWorldPos();
-        damageDirected(150.f, 140.f, dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 3.f, dmgVal(1.f));
+        damageDirected(150.f, 140.f, directHit(AbilityType::Rend), 1.f, 0.f, 3.f, dmgVal(10.f));
         pushVfx(WarriorVfxKind::Wave, 0.25f, 150.f, Color{ 220, 60, 60, 255 });
         break;
     }
@@ -9506,7 +8178,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         float moveDistance = (atkTune && atkTune->hasAbility) ? atkTune->moveDistance : 90.f;
         _player.MoveAlongDirection(facing, moveDistance);
         playerPos = _player.GetWorldPos();
-        damageDirected(150.f, 150.f, dmgVal(2.f + atk * 0.4f), 1.f, 1.3f, 0.f, 0);
+        damageDirected(150.f, 150.f, directHit(AbilityType::ShieldBash), 1.f, 1.3f, 0.f, 0);
         pushVfx(WarriorVfxKind::Bash, 0.25f, 150.f, Color{ 255, 240, 190, 255 });
         TriggerScreenShake(7.f, 0.10f);
         break;
@@ -9514,11 +8186,14 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::WarCry:
     {
         // Identity: the roar is a RAGE battery + toughness, not just flat damage —
-        // +30 Rage, one armour slot (absorbs the next hit), and the damage buff.
-        _player.GrantDamageBuff(1.4f, 6.f);
+        // +30 Rage, a burst of Defense, and the damage buff.
+        _player.GrantDamageBuff(1.25f, 6.f);
         _player.AddRage(30.f);
-        _player.AddArmour(1);
-        _player.Heal(2);
+        _player.GrantRallyDefense(Balance::Stats::kRallyDefense, Balance::Stats::kRallyDefenseSeconds);
+        // The heal bypasses the per-room sustain caps, so it only lands while a
+        // fight is live: the roar can't be farmed in a cleared room before every door.
+        if (GetActiveEnemyCount() > 0)
+            _player.Heal(10);
         _vfx.SpawnFloatingLabel(playerPos, "RAGE!", Color{ 255, 140, 40, 255 }, 1.4f);
         pushVfx(WarriorVfxKind::Cry, 0.6f, 160.f, Color{ 255, 180, 60, 255 });
         TriggerScreenShake(4.f, 0.15f);
@@ -9531,7 +8206,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // so the radius is the spend reward and avoids double-dipping).
         float rageFraction = _player.ConsumeAllRage();
         float slamRadius   = tunedRadius(340.f) * (1.f + 0.45f * rageFraction);
-        DamageEnemiesInRect(radialRect(slamRadius), dmgVal(7.f + atk * 1.5f), 1.f, 1.5f, 0.f, 0);
+        DamageEnemiesInRect(radialRect(slamRadius), directHit(AbilityType::GroundSlam), 1.f, 1.5f, 0.f, 0);
         ApplyVulnInRect(_enemies, radialRect(slamRadius), 1.3f, 5.f);   // quake cracks armor
         pushVfx(WarriorVfxKind::Slam, 0.5f, slamRadius, Color{ 235, 200, 120, 255 });
         StopSound(_explosionSound);
@@ -9541,15 +8216,15 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::Rampage:
     {
-        _player.GrantDamageBuff(2.0f, 7.f);
-        _player.GrantLifesteal(0.25f, 7.f);
+        _player.GrantDamageBuff(1.6f, 7.f);
+        _player.GrantLifesteal(0.15f, 7.f);
         pushVfx(WarriorVfxKind::Cry, 0.7f, 180.f, Color{ 255, 80, 80, 255 });
         TriggerScreenShake(8.f, 0.25f);
         break;
     }
     case AbilityType::Earthshatter:
     {
-        damageDirected(640.f, 130.f, dmgVal(10.f + atk * 2.0f), 1.f, 0.6f, 0.f, 0);
+        damageDirected(640.f, 130.f, directHit(AbilityType::Earthshatter), 1.f, 0.6f, 0.f, 0);
         applyDirected(640.f, 130.f, [](Enemy& enemy) { enemy.ApplyVulnerability(1.35f, 5.f); });
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 640.f, Color{ 180, 130, 70, 255 });
         StopSound(_explosionSound);
@@ -9561,8 +8236,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── ROGUE ────────────────────────────────────────────────────────────────
     case AbilityType::FanOfKnives:
     {
-        damageDirected(360.f, 240.f, dmgVal(4.f + atk * 0.7f), 1.f, 0.f, 0.f, 0);
-        int poison = poisonVal(1.f);
+        damageDirected(360.f, 240.f, directHit(AbilityType::FanOfKnives), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(10.f);
         applyDirected(360.f, 240.f, [=](Enemy& enemy) { enemy.ApplyPoison(poison, 4.f); });
         pushVfx(WarriorVfxKind::Fan, 0.3f, 360.f, Color{ 220, 225, 235, 255 });
         break;
@@ -9570,7 +8245,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::Shadowstep:
     {
         // Cut everything in the corridor ahead, then blink to the far end.
-        damageDirected(300.f, 110.f, dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 2.5f, dmgVal(0.7f));
+        damageDirected(300.f, 110.f, directHit(AbilityType::Shadowstep), 1.f, 0.f, 2.5f, dmgVal(7.f));
         pushVfx(WarriorVfxKind::Teleport, 0.3f, 40.f, Color{ 150, 90, 220, 255 });   // puff at origin
         float moveDistance = (atkTune && atkTune->hasAbility) ? atkTune->moveDistance : 300.f;
         _player.MoveAlongDirection(facing, moveDistance);
@@ -9586,7 +8261,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         WarriorVfx pool; pool.kind = WarriorVfxKind::PoisonZone; pool.pos = spot; pool.dir = facing;
         pool.lifetime = durationOr(3.5f); pool.radius = tunedRadius(130.f);
         pool.tint = Color{ 120, 210, 90, 255 };
-        pool.tickDamage = dmgVal(1.f + atk * 0.2f); pool.tickInterval = tickOr(0.4f);
+        pool.tickDamage = dmgVal(10.f + atk * 0.2f); pool.tickInterval = tickOr(0.4f);
         // Reuse the owned animated poison-pool decal for the complete hazard
         // lifetime. An fxStrip bypasses PoisonZone's prototype Raylib circles;
         // SpawnAbilityFx still supplies the separate vial-impact eruption.
@@ -9600,7 +8275,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
             pool.fxFrameTime = 1.f / 12.f;
         }
         _warriorVfx.push_back(pool);
-        ApplyPoisonInRect(_enemies, targetArea(130.f), poisonVal(1.f), 5.f);
+        ApplyPoisonInRect(_enemies, targetArea(130.f), poisonVal(10.f), 5.f);
         break;
     }
     case AbilityType::Backstab:
@@ -9622,7 +8297,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
                 continue;
 
             bool rearHit = enemy->IsPositionBehind(playerPos, Balance::Facing::kRearConeDot);
-            int baseDamage = dmgVal(4.f + atk * 0.9f);
+            int baseDamage = directHit(AbilityType::Backstab);
             int damage = rearHit
                 ? std::max(1, (int)roundf(baseDamage * Balance::Facing::kBackstabRearMult))
                 : baseDamage;
@@ -9650,7 +8325,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
             _player.AddFaith(3.f);
             if (rearHit)
             {
-                enemy->ApplyBleed(dmgVal(1.f), 3.f);        // deep wound bleeds
+                enemy->ApplyBleed(dmgVal(10.f), 3.f);        // deep wound bleeds
                 enemy->ApplyVulnerability(1.3f, 4.f);       // exposes the victim
                 rearStrikes++;
             }
@@ -9685,15 +8360,15 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
             _vfx.SpawnFloatingLabel(playerPos, TextFormat("FINISHER x%d", combo),
                                     Color{ 235, 235, 245, 255 }, 1.3f);
         damageDirected(210.f, 130.f,
-            std::max(1, (int)roundf(dmgVal(5.f + atk * 1.1f) * finishMult)),
-            1.f, 0.f, 3.f, dmgVal(0.9f));   // flurry of cuts bleeds
+            std::max(1, (int)roundf(directHit(AbilityType::Eviscerate) * finishMult)),
+            1.f, 0.f, 3.f, dmgVal(9.f));   // flurry of cuts bleeds
         pushVfx(WarriorVfxKind::Flurry, 0.3f, 210.f, Color{ 235, 235, 245, 255 });
         break;
     }
     case AbilityType::DeathMark:
     {
         float markRadius = tunedRadius(1200.f);
-        DamageEnemiesInRect(radialRect(markRadius), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(radialRect(markRadius), directHit(AbilityType::DeathMark), 1.f, 0.f, 0.f, 0);
         ApplyMarkInRect(_enemies, radialRect(markRadius), 6.f);   // marks the whole screen for execution
         ApplyVulnInRect(_enemies, radialRect(markRadius), 1.3f, 6.f);
         pushVfx(WarriorVfxKind::Marks, 0.6f, markRadius, Color{ 255, 70, 70, 255 });
@@ -9705,7 +8380,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::BladeDance:
     {
         float danceRadius = tunedRadius(230.f);
-        DamageEnemiesInRect(radialRect(danceRadius), dmgVal(6.f + atk * 1.2f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(radialRect(danceRadius), directHit(AbilityType::BladeDance), 1.f, 0.f, 0.f, 0);
         _player.GrantDamageBuff(1.8f, 6.f);
         _player.GrantLifesteal(0.3f, 6.f);
         pushVfx(WarriorVfxKind::Whirl, 0.5f, danceRadius, Color{ 255, 120, 120, 255 });
@@ -9715,7 +8390,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::RainOfBlades:
     {
         Rectangle area = targetArea(220.f);
-        DamageEnemiesInRect(area, dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(area, directHit(AbilityType::RainOfBlades), 1.f, 0.f, 0.f, 0);
         WarriorVfx barrage; barrage.kind = WarriorVfxKind::Barrage; barrage.pos = castTarget;
         barrage.dir = facing; barrage.lifetime = 0.6f; barrage.radius = aimProfile.radius;
         barrage.tint = Color{ 220, 225, 240, 255 }; _warriorVfx.push_back(barrage);
@@ -9728,14 +8403,14 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── HUNTER ───────────────────────────────────────────────────────────────
     case AbilityType::PiercingShot:
     {
-        damageDirected(600.f, 70.f, dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 2.5f, dmgVal(0.8f));
+        damageDirected(600.f, 70.f, directHit(AbilityType::PiercingShot), 1.f, 0.f, 2.5f, dmgVal(8.f));
         applyDirected(600.f, 70.f, [](Enemy& enemy) { enemy.ApplyMark(6.f); });
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::Multishot:
     {
-        damageDirected(380.f, 260.f, dmgVal(3.f + atk * 0.6f), 1.f, 0.f, 0.f, 0);
-        int poison = poisonVal(1.f);
+        damageDirected(380.f, 260.f, directHit(AbilityType::Multishot), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(10.f);
         applyDirected(380.f, 260.f, [=](Enemy& enemy) { enemy.ApplyPoison(poison, 4.f); });
         pushVfx(WarriorVfxKind::Fan, 0.3f, 380.f, Color{ 140, 235, 210, 255 });
         break;
@@ -9748,7 +8423,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = durationOr(15.f);   // sits armed up to 15s
         trap.radius = tunedRadius(175.f);
         trap.triggerRadius = 72.f;      // enemy contact distance that trips it
-        trap.trapDamage = dmgVal(2.f + atk * 0.3f);
+        trap.trapDamage = directHit(AbilityType::FrostTrap);
         trap.trapFreeze = 2.2f;         // hard freeze duration on snap
         trap.tint = Color{ 120, 210, 255, 255 };
         _warriorVfx.push_back(trap);
@@ -9761,7 +8436,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         trap.isTrap = true; trap.armDelay = 0.5f; trap.lifetime = durationOr(15.f);
         trap.radius = tunedRadius(195.f);
         trap.triggerRadius = 72.f;
-        trap.trapDamage = dmgVal(7.f + atk * 1.3f);
+        trap.trapDamage = directHit(AbilityType::ExplosiveArrow);
         trap.trapKnockback = 1.5f;
         trap.tint = Color{ 255, 150, 60, 255 };
         _warriorVfx.push_back(trap);
@@ -9780,7 +8455,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         // A heavy armour-piercing arrow: ignores a Shieldbearer's frontal block and
         // hits harder than a normal shot, so shielded foes can't wall you out.
-        damageDirected(660.f, 84.f, dmgVal(6.f + atk * 1.4f), 1.f, 0.f, 0.f, 0, true);
+        damageDirected(660.f, 84.f, directHit(AbilityType::Volley), 1.f, 0.f, 0.f, 0, true);
         applyDirected(660.f, 84.f, [](Enemy& enemy) {
             enemy.ApplyVulnerability(1.4f, 5.f);
             enemy.ApplyMark(5.f);
@@ -9791,8 +8466,8 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::ArrowStorm:
     {
         Rectangle area = targetArea(360.f);
-        DamageEnemiesInRect(area, dmgVal(8.f + atk * 1.6f), 1.f, 0.f, 0.f, 0);
-        ApplyPoisonInRect(_enemies, area, poisonVal(1.f), 4.f);
+        DamageEnemiesInRect(area, directHit(AbilityType::ArrowStorm), 1.f, 0.f, 0.f, 0);
+        ApplyPoisonInRect(_enemies, area, poisonVal(10.f), 4.f);
         WarriorVfx barrage; barrage.kind = WarriorVfxKind::Barrage; barrage.pos = castTarget;
         barrage.dir = facing; barrage.lifetime = 0.6f; barrage.radius = aimProfile.radius;
         barrage.tint = Color{ 140, 235, 210, 255 }; _warriorVfx.push_back(barrage);
@@ -9809,7 +8484,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::PiercingBarrage:
     {
-        damageDirected(900.f, 150.f, dmgVal(10.f + atk * 1.9f), 1.f, 0.f, 3.f, dmgVal(1.f));
+        damageDirected(900.f, 150.f, directHit(AbilityType::PiercingBarrage), 1.f, 0.f, 3.f, dmgVal(10.f));
         applyDirected(900.f, 150.f, [](Enemy& enemy) { enemy.ApplyMark(5.f); });
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 900.f, Color{ 140, 235, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
@@ -9820,7 +8495,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── PALADIN (holy) ─────────────────────────────────────────────────────────
     case AbilityType::Smite:
     {
-        damageDirected(210.f, 200.f, dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        damageDirected(210.f, 200.f, directHit(AbilityType::Smite), 1.f, 0.f, 0.f, 0);
         applyDirected(210.f, 200.f, [](Enemy& enemy) { enemy.ApplyMark(5.f); });
         pushVfx(WarriorVfxKind::Wave, 0.28f, 210.f, Color{ 255, 235, 150, 255 });
         break;
@@ -9830,7 +8505,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = castTarget; z.dir = facing;
         z.lifetime = durationOr(4.f); z.radius = tunedRadius(170.f);
         z.tint = Color{ 255, 225, 130, 255 };
-        z.tickDamage = dmgVal(1.f + atk * 0.2f); z.tickInterval = tickOr(0.45f);
+        z.tickDamage = dmgVal(10.f + atk * 0.2f); z.tickInterval = tickOr(0.45f);
         // The holy ring is the zone itself: loop it for the complete damage
         // duration instead of drawing a separate prototype circle beneath it.
         const int fxIdx = (int)AbilityType::Consecrate;
@@ -9847,32 +8522,35 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::ShieldOfFaith:   // "Aegis" — reflect + smite buff (no heal)
     {
-        // Identity: the vow is also a FAITH battery — +30 Faith and one armour
-        // slot alongside the reflect, mirroring how War Cry feeds Rage.
-        _player.GrantDamageBuff(1.5f, 6.f);
-        _player.GrantReflect(0.5f, 6.f);
-        _player.AddFaith(30.f);
-        _player.AddArmour(1);
+        // Identity: the vow is also a FAITH battery — +30 Faith and a burst of
+        // Defense alongside the reflect, mirroring how War Cry feeds Rage.
+        _player.GrantDamageBuff(1.3f, 6.f);
+        _player.GrantReflect(0.35f, 6.f);
+        _player.GrantRallyDefense(Balance::Stats::kRallyDefense, Balance::Stats::kRallyDefenseSeconds);
+        // Faith never decays: grant it only mid-fight so a cleared room can't be
+        // used to pre-fill it.
+        if (GetActiveEnemyCount() > 0)
+            _player.AddFaith(30.f);
         _vfx.SpawnFloatingLabel(playerPos, "FAITH!", Color{ 255, 235, 150, 255 }, 1.4f);
         pushVfx(WarriorVfxKind::Cry, 0.6f, 160.f, Color{ 255, 235, 150, 255 });
         break;
     }
     case AbilityType::HolyBolt:
     {
-        damageDirected(560.f, 80.f, dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
+        damageDirected(560.f, 80.f, directHit(AbilityType::HolyBolt), 1.f, 0.f, 0.f, 0);
         applyDirected(560.f, 80.f, [](Enemy& enemy) { enemy.ApplyMark(5.f); });
         break;   // comet FX added by SpawnAbilityFx
     }
     case AbilityType::HammerThrow:
     {
-        damageDirected(480.f, 110.f, dmgVal(5.f + atk * 1.0f), 1.f, 1.2f, 0.f, 0);
+        damageDirected(480.f, 110.f, directHit(AbilityType::HammerThrow), 1.f, 1.2f, 0.f, 0);
         pushShot(0.42f, 480.f, AbilityType::HammerThrow, true);
         break;
     }
     case AbilityType::LayOnHands:   // repurposed "Vengeful Ward" — strong reflect + full retribution (no heal)
     {
-        _player.GrantReflect(0.6f, 6.f);
-        _player.AddRetribution(5);
+        _player.GrantReflect(0.4f, 6.f);
+        _player.AddRetribution(3);
         pushVfx(WarriorVfxKind::Cry, 0.6f, 150.f, Color{ 255, 245, 190, 255 });
         break;
     }
@@ -9884,7 +8562,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         // as the Warrior's Rage-fuelled Ground Slam).
         float faithFraction = _player.ConsumeAllFaith();
         float novaRadius    = tunedRadius(320.f) * (1.f + 0.45f * faithFraction);
-        int hits = DamageEnemiesInRect(radialRect(novaRadius), dmgVal(7.f + atk * 1.4f), 1.f, 0.8f, 0.f, 0);   // holy stun
+        int hits = DamageEnemiesInRect(radialRect(novaRadius), directHit(AbilityType::DivineStorm), 1.f, 0.8f, 0.f, 0);   // holy stun
         _player.AddRetribution(hits);   // wrath builds per foe struck (no heal)
         ApplyMarkInRect(_enemies, radialRect(novaRadius), 5.f);
         pushVfx(WarriorVfxKind::Slam, 0.5f, novaRadius, Color{ 255, 235, 150, 255 });
@@ -9894,15 +8572,15 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::AvengingWrath:   // pure wrath — big damage buff + reflect, no heal/lifesteal
     {
-        _player.GrantDamageBuff(1.9f, 7.f);
-        _player.GrantReflect(0.5f, 7.f);
+        _player.GrantDamageBuff(1.5f, 7.f);
+        _player.GrantReflect(0.3f, 7.f);
         pushVfx(WarriorVfxKind::Cry, 0.7f, 180.f, Color{ 255, 240, 170, 255 });
         TriggerScreenShake(8.f, 0.25f);
         break;
     }
     case AbilityType::HammerOfJustice:
     {
-        damageDirected(660.f, 150.f, dmgVal(10.f + atk * 1.9f), 1.f, 1.3f, 0.f, 0);
+        damageDirected(660.f, 150.f, directHit(AbilityType::HammerOfJustice), 1.f, 1.3f, 0.f, 0);
         applyDirected(660.f, 150.f, [](Enemy& enemy) { enemy.ApplyMark(6.f); });
         pushVfx(WarriorVfxKind::Spikes, 0.55f, 660.f, Color{ 255, 235, 150, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
@@ -9913,7 +8591,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // ── WARLOCK (dark) ──────────────────────────────────────────────────────────
     case AbilityType::ShadowBolt:
     {
-        damageDirected(560.f, 80.f, dmgVal(5.f + atk * 1.0f), 1.f, 0.f, 0.f, 0);
+        damageDirected(560.f, 80.f, directHit(AbilityType::ShadowBolt), 1.f, 0.f, 0.f, 0);
         applyDirected(560.f, 80.f, [=](Enemy& enemy) {
             enemy.ApplyVulnerability(1.25f, 4.f);
             enemy.ApplyCurse(5.f * curseDur);
@@ -9923,17 +8601,17 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::DrainLife:
     {
         _player.GrantLifesteal(0.6f, 0.3f);   // this strike heals you
-        damageDirected(220.f, 130.f, dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        damageDirected(220.f, 130.f, directHit(AbilityType::DrainLife), 1.f, 0.f, 0.f, 0);
         applyDirected(220.f, 130.f, [](Enemy& enemy) { enemy.ApplyVulnerability(1.2f, 3.f); });
         pushVfx(WarriorVfxKind::Wave, 0.3f, 220.f, Color{ 170, 90, 210, 255 });
         break;
     }
     case AbilityType::Curse:
     {
-        damageDirected(260.f, 200.f, dmgVal(2.f + atk * 0.4f), 1.f, 0.f, 0.f, 0);
-        int poison = poisonVal(1.f);
+        damageDirected(260.f, 200.f, directHit(AbilityType::Curse), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(10.f);
         applyDirected(260.f, 200.f, [=](Enemy& enemy) {
-            enemy.ApplyVulnerability(1.4f, 5.f);
+            enemy.ApplyVulnerability(1.25f, 5.f);
             enemy.ApplyPoison(poison, 5.f);
             enemy.ApplyCurse(7.f * curseDur);
         });
@@ -9946,18 +8624,18 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
         WarriorVfx z; z.kind = WarriorVfxKind::PoisonZone; z.pos = spot; z.dir = facing;
         z.lifetime = durationOr(4.f); z.radius = tunedRadius(150.f);
         z.tint = Color{ 150, 70, 190, 255 };
-        z.tickDamage = dmgVal(1.f + atk * 0.25f); z.tickInterval = tickOr(0.4f);
+        z.tickDamage = dmgVal(7.5f + atk * 0.25f); z.tickInterval = tickOr(0.4f);
         _warriorVfx.push_back(z);
         Rectangle area = targetArea(150.f);
-        ApplyPoisonInRect(_enemies, area, poisonVal(1.f), 5.f);
+        ApplyPoisonInRect(_enemies, area, poisonVal(10.f), 5.f);
         ApplyCurseInRect(_enemies, area, 5.f * curseDur);
         break;
     }
     case AbilityType::Hellfire:
     {
         float hellRadius = tunedRadius(260.f);
-        DamageEnemiesInRect(radialRect(hellRadius), dmgVal(5.f + atk * 1.1f), 1.f, 0.f, 0.f, 0);
-        ApplyBurnInRect(_enemies, radialRect(hellRadius), dmgVal(1.f), 3, playerPos);   // hellish flames linger
+        DamageEnemiesInRect(radialRect(hellRadius), directHit(AbilityType::Hellfire), 1.f, 0.f, 0.f, 0);
+        ApplyBurnInRect(_enemies, radialRect(hellRadius), dmgVal(10.f), 3, playerPos);   // hellish flames linger
         pushVfx(WarriorVfxKind::Slam, 0.45f, hellRadius, Color{ 200, 60, 160, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(8.f, 0.2f);
@@ -9967,7 +8645,7 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     {
         float siphonRadius = tunedRadius(230.f);
         _player.GrantLifesteal(0.4f, 0.3f);
-        DamageEnemiesInRect(radialRect(siphonRadius), dmgVal(4.f + atk * 0.9f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(radialRect(siphonRadius), directHit(AbilityType::SoulSiphon), 1.f, 0.f, 0.f, 0);
         ApplySlowInRect(_enemies, radialRect(siphonRadius), 0.6f, 3.f);   // siphoning dread slows them
         _player.GrantLifesteal(0.25f, 5.f);   // lingering siphon buff afterward
         pushVfx(WarriorVfxKind::Whirl, 0.5f, siphonRadius, Color{ 170, 90, 210, 255 });
@@ -9976,10 +8654,10 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     case AbilityType::Cataclysm:
     {
         float cataclysmRadius = tunedRadius(1200.f);
-        DamageEnemiesInRect(radialRect(cataclysmRadius), dmgVal(9.f + atk * 1.8f), 1.f, 0.f, 0.f, 0);
+        DamageEnemiesInRect(radialRect(cataclysmRadius), directHit(AbilityType::Cataclysm), 1.f, 0.f, 0.f, 0);
         ApplyVulnInRect(_enemies, radialRect(cataclysmRadius), 1.35f, 6.f);                 // screen-wide curse
         ApplyCurseInRect(_enemies, radialRect(cataclysmRadius), 6.f * curseDur);                       // everything on screen is primed
-        ApplyBurnInRect(_enemies, radialRect(cataclysmRadius), dmgVal(1.f), 3, playerPos);  // + dark fire
+        ApplyBurnInRect(_enemies, radialRect(cataclysmRadius), dmgVal(10.f), 3, playerPos);  // + dark fire
         pushVfx(WarriorVfxKind::Marks, 0.6f, cataclysmRadius, Color{ 180, 70, 210, 255 });
         StopSound(_explosionSound); PlaySound(_explosionSound);
         TriggerScreenShake(13.f, 0.4f);
@@ -9987,16 +8665,16 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     }
     case AbilityType::DemonForm:
     {
-        _player.GrantDamageBuff(2.0f, 8.f);
-        _player.GrantLifesteal(0.35f, 8.f);
+        _player.GrantDamageBuff(1.6f, 8.f);
+        _player.GrantLifesteal(0.2f, 8.f);
         pushVfx(WarriorVfxKind::Cry, 0.7f, 190.f, Color{ 200, 60, 160, 255 });
         TriggerScreenShake(8.f, 0.25f);
         break;
     }
     case AbilityType::ShadowNova:
     {
-        damageDirected(680.f, 200.f, dmgVal(9.f + atk * 1.7f), 1.f, 0.f, 0.f, 0);
-        int poison = poisonVal(1.f);
+        damageDirected(680.f, 200.f, directHit(AbilityType::ShadowNova), 1.f, 0.f, 0.f, 0);
+        int poison = poisonVal(10.f);
         applyDirected(680.f, 200.f, [=](Enemy& enemy) {
             enemy.ApplyVulnerability(1.4f, 6.f);
             enemy.ApplyCurse(6.f * curseDur);
@@ -10015,6 +8693,53 @@ void Engine::HandleClassAbilityCast(AbilityType ability)
     // Overlay the ability's dedicated animated FX (uses the final player position,
     // which lunges above have already updated).
     SpawnAbilityFx(ability, playerPos, facing, facingSign);
+}
+
+void Engine::PlayAnimEvent(const FiredAnimEvent& fired, Enemy* enemy)
+{
+    switch (fired.kind)
+    {
+    case CharacterTuning::EventKind::Fx:
+    {
+        if (fired.fx.empty())
+            return;
+        auto it = _eventFxSheets.find(fired.fx);
+        if (it == _eventFxSheets.end())
+        {
+            EventFxSheet sheet;
+            const std::string path = AssetPath(TextFormat("PowerUps/FX_%s.png", fired.fx.c_str()));
+            if (FileExists(path.c_str()))
+                sheet.texture = LoadTexture(path.c_str());
+            if (sheet.texture.id != 0)
+                sheet.frames = sheet.texture.width / Balance::AnimEvents::kFxCellSize;
+            it = _eventFxSheets.emplace(fired.fx, sheet).first;   // a missing sheet is remembered too
+        }
+        if (it->second.texture.id == 0 || it->second.frames <= 0)
+            return;
+        const float size = (fired.size > 0.f) ? fired.size : Balance::AnimEvents::kDefaultFxSize;
+        _vfx.SpawnSpriteFx(&it->second.texture, fired.worldPos, it->second.frames, size,
+                           Balance::AnimEvents::kFxFrameSeconds);
+        return;
+    }
+    case CharacterTuning::EventKind::Sound:
+        if (enemy != nullptr)
+            enemy->PlayAttackSound();
+        else
+            _player.PlayAttackSound();
+        return;
+    case CharacterTuning::EventKind::Shake:
+        TriggerScreenShake((fired.size > 0.f) ? fired.size : Balance::AnimEvents::kDefaultShake,
+                           Balance::AnimEvents::kShakeSeconds);
+        return;
+    }
+}
+
+void Engine::PlayPlayerAnimEvents()
+{
+    _playerAnimEvents.clear();
+    _player.CollectAnimEvents(_playerAnimEvents);
+    for (const FiredAnimEvent& fired : _playerAnimEvents)
+        PlayAnimEvent(fired, nullptr);
 }
 
 void Engine::SpawnBossFx(Vector2 worldPos, int fxId)
@@ -10064,7 +8789,7 @@ void Engine::DrawEliteSignatureTelemetry() const
     static const char* kArchetypeNames[] = { "Ogre", "Infernal", "Bonechill", "Stormclub", "Venomfang", "None" };
     const bool isBoss = encounter->IsBoss();
     const int archetypeIndex = std::clamp((int)encounter->GetEliteArchetype(), 0, 5);
-    const char* typeName = isBoss ? encounter->GetTuningName() : kArchetypeNames[archetypeIndex];
+    const char* typeName = isBoss ? encounter->GetDisplayName() : kArchetypeNames[archetypeIndex];
     if (typeName == nullptr) typeName = isBoss ? "Boss" : "None";
     const char* modifierName = isBoss ? "None" : EliteModifierName(_eliteMechanic);
     const EliteSignatureTelemetry telemetry = encounter->GetEliteSignatureTelemetry();
@@ -10402,8 +9127,10 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
             Rectangle src{ frame * cell, 0.f, cell, cell };
             Rectangle dst{ pc.x, pc.y, cell * v.fxScale, cell * v.fxScale };
             float rotation = v.spin ? atan2f(moveDir.y, moveDir.x) * RAD2DEG : 0.f;
-            DrawTexturePro(*v.fxStrip, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, rotation,
-                           Fade(v.tint, 0.85f + 0.15f * fade));
+            const Color stripTint = Fade(v.tint, 0.85f + 0.15f * fade);
+            DrawTexturePro(*v.fxStrip, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, rotation, stripTint);
+            Vfx::Glow().AddSprite(*v.fxStrip, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, rotation,
+                                  Fade(stripTint, (stripTint.a / 255.f) * Balance::Vfx::kGlowSpriteStrength));
             continue;
         }
 
@@ -10427,22 +9154,22 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         {
             // Expanding double ring sweeping around the player.
             float r = v.radius * (0.5f + 0.5f * t);
-            DrawCircleLines((int)c.x, (int)c.y, r, Fade(v.tint, fade));
-            DrawCircleLines((int)c.x, (int)c.y, r * 0.7f, Fade(v.tint, fade * 0.7f));
+            Px::Circle(c.x, c.y, r, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
+            Px::Circle(c.x, c.y, r * 0.7f, Fade(v.tint, fade * 0.7f), Balance::Vfx::kGlowShapeStrength);
             float a = t * 12.f;
             for (int i = 0; i < 3; i++)
             {
                 float ang = a + i * (2.0944f);   // 120° apart
-                DrawLineEx(c, { c.x + cosf(ang) * r, c.y + sinf(ang) * r }, 3.f, Fade(v.tint, fade));
+                Px::Line(c, { c.x + cosf(ang) * r, c.y + sinf(ang) * r }, 3.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             }
             break;
         }
         case WarriorVfxKind::Slam:
         {
             float r = v.radius * t;
-            DrawCircleLines((int)c.x, (int)c.y, r, Fade(v.tint, fade));
-            DrawCircleLines((int)c.x, (int)c.y, r * 0.85f, Fade(v.tint, fade * 0.6f));
-            DrawCircle((int)c.x, (int)c.y, 26.f * fade, Fade(v.tint, fade * 0.5f));
+            Px::Circle(c.x, c.y, r, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
+            Px::Circle(c.x, c.y, r * 0.85f, Fade(v.tint, fade * 0.6f), Balance::Vfx::kGlowShapeStrength);
+            Px::Disc(c.x, c.y, 26.f * fade, Fade(v.tint, fade * 0.5f), Balance::Vfx::kGlowShapeStrength);
             break;
         }
         case WarriorVfxKind::Trap:
@@ -10451,9 +9178,9 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
             {
                 // Detonation: expanding shockwave over the brief post-snap lifetime.
                 float r = v.radius * t;
-                DrawCircleLines((int)c.x, (int)c.y, r,        Fade(v.tint, fade));
-                DrawCircleLines((int)c.x, (int)c.y, r * 0.7f, Fade(v.tint, fade * 0.6f));
-                DrawCircle((int)c.x, (int)c.y, 26.f * fade,   Fade(v.tint, fade * 0.5f));
+                Px::Circle(c.x, c.y, r, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
+                Px::Circle(c.x, c.y, r * 0.7f, Fade(v.tint, fade * 0.6f), Balance::Vfx::kGlowShapeStrength);
+                Px::Disc(c.x, c.y, 26.f * fade, Fade(v.tint, fade * 0.5f), Balance::Vfx::kGlowShapeStrength);
             }
             else
             {
@@ -10463,14 +9190,12 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
                 float pulse = 0.5f + 0.5f * sinf(v.timer * 7.f);
                 Color mc    = live ? v.tint : Fade(v.tint, 0.45f);
                 float rr    = v.triggerRadius;
-                DrawCircleLines((int)c.x, (int)c.y, rr,        Fade(mc, live ? 0.4f + 0.5f * pulse : 0.4f));
-                DrawCircleLines((int)c.x, (int)c.y, rr * 0.45f, Fade(mc, 0.45f));
+                Px::Circle(c.x, c.y, rr, Fade(mc, live ? 0.4f + 0.5f * pulse : 0.4f), Balance::Vfx::kGlowShapeStrength);
+                Px::Circle(c.x, c.y, rr * 0.45f, Fade(mc, 0.45f), Balance::Vfx::kGlowShapeStrength);
                 for (int i = 0; i < 4; i++)   // four little jaws around the centre
                 {
                     float a = i * 1.5708f + v.timer * 0.6f;
-                    DrawLineEx({ c.x + cosf(a) * rr * 0.45f, c.y + sinf(a) * rr * 0.45f },
-                               { c.x + cosf(a) * rr * 0.8f,  c.y + sinf(a) * rr * 0.8f },
-                               2.f, Fade(mc, 0.75f));
+                    Px::Line({ c.x + cosf(a) * rr * 0.45f, c.y + sinf(a) * rr * 0.45f }, { c.x + cosf(a) * rr * 0.8f, c.y + sinf(a) * rr * 0.8f }, 2.f, Fade(mc, 0.75f), Balance::Vfx::kGlowShapeStrength);
                 }
             }
             break;
@@ -10480,9 +9205,8 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
             // Crescent arc travelling forward.
             float travel = v.radius * t;
             Vector2 wc = Vector2Add(c, Vector2Scale(moveDir, travel));
-            DrawCircleLines((int)wc.x, (int)wc.y, 60.f, Fade(v.tint, fade));
-            DrawLineEx(Vector2Subtract(wc, Vector2Scale(moveSide, 55.f)),
-                       Vector2Add(wc, Vector2Scale(moveSide, 55.f)), 5.f, Fade(v.tint, fade));
+            Px::Circle(wc.x, wc.y, 60.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
+            Px::Line(Vector2Subtract(wc, Vector2Scale(moveSide, 55.f)), Vector2Add(wc, Vector2Scale(moveSide, 55.f)), 5.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             break;
         }
         case WarriorVfxKind::Axe:
@@ -10494,22 +9218,22 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
             {
                 float ang = spin + i * 3.14159f;
                 Vector2 tip{ ac.x + cosf(ang) * 22.f, ac.y + sinf(ang) * 22.f };
-                DrawLineEx(ac, tip, 6.f, Fade(v.tint, 0.9f));
+                Px::Line(ac, tip, 6.f, Fade(v.tint, 0.9f), Balance::Vfx::kGlowShapeStrength);
             }
-            DrawCircle((int)ac.x, (int)ac.y, 6.f, Fade(v.tint, 0.9f));
+            Px::Disc(ac.x, ac.y, 6.f, Fade(v.tint, 0.9f), Balance::Vfx::kGlowShapeStrength);
             break;
         }
         case WarriorVfxKind::Bash:
         {
             float travel = v.radius * t;
             Vector2 bc = Vector2Add(c, Vector2Scale(moveDir, travel));
-            DrawCircle((int)bc.x, (int)bc.y, 30.f * (1.f - t * 0.5f), Fade(v.tint, fade));
+            Px::Disc(bc.x, bc.y, 30.f * (1.f - t * 0.5f), Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             break;
         }
         case WarriorVfxKind::Cry:
         {
             float r = v.radius * (0.3f + 0.7f * t);
-            DrawCircleLines((int)c.x, (int)c.y, r, Fade(v.tint, fade));
+            Px::Circle(c.x, c.y, r, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             break;
         }
         case WarriorVfxKind::Spikes:
@@ -10543,7 +9267,7 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
                 float dy = sinf(baseAngle + spread);
                 Vector2 tip{ c.x + dx * travel, c.y + dy * travel };
                 Vector2 tail{ c.x + dx * (travel - 26.f), c.y + dy * (travel - 26.f) };
-                DrawLineEx(tail, tip, 3.f, Fade(v.tint, fade));
+                Px::Line(tail, tip, 3.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             }
             break;
         }
@@ -10551,35 +9275,33 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         {
             // Imploding/expanding smoke puff.
             float r = v.radius * (0.4f + t);
-            DrawCircleLines((int)c.x, (int)c.y, r, Fade(v.tint, fade));
-            DrawCircle((int)c.x, (int)c.y, 10.f * fade, Fade(v.tint, fade * 0.6f));
+            Px::Circle(c.x, c.y, r, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
+            Px::Disc(c.x, c.y, 10.f * fade, Fade(v.tint, fade * 0.6f), Balance::Vfx::kGlowShapeStrength);
             break;
         }
         case WarriorVfxKind::Smoke:
         {
             // Growing translucent cloud with a few billowing puffs.
             float r = v.radius * (0.5f + 0.5f * t);
-            DrawCircle((int)c.x, (int)c.y, r, Fade(v.tint, fade * 0.35f));
+            Px::Disc(c.x, c.y, r, Fade(v.tint, fade * 0.35f));
             for (int i = 0; i < 5; i++)
             {
                 float ang = i * 1.2566f + t * 2.f;
                 float pr = r * 0.6f;
-                DrawCircle((int)(c.x + cosf(ang) * pr), (int)(c.y + sinf(ang) * pr),
-                           22.f * fade, Fade(v.tint, fade * 0.4f));
+                Px::Disc((c.x + cosf(ang) * pr), (c.y + sinf(ang) * pr), 22.f * fade, Fade(v.tint, fade * 0.4f));
             }
             break;
         }
         case WarriorVfxKind::PoisonZone:
         {
             // Bubbling green pool for its whole lifetime.
-            DrawCircle((int)c.x, (int)c.y, v.radius, Fade(v.tint, 0.25f * fade + 0.10f));
-            DrawCircleLines((int)c.x, (int)c.y, v.radius, Fade(v.tint, 0.6f));
+            Px::Disc(c.x, c.y, v.radius, Fade(v.tint, 0.25f * fade + 0.10f));
+            Px::Circle(c.x, c.y, v.radius, Fade(v.tint, 0.6f), Balance::Vfx::kGlowShapeStrength);
             for (int i = 0; i < 6; i++)
             {
                 float ang = i * 1.047f + v.timer * 3.f;
                 float pr = v.radius * (0.3f + 0.5f * fabsf(sinf(v.timer * 2.f + i)));
-                DrawCircle((int)(c.x + cosf(ang) * pr), (int)(c.y + sinf(ang) * pr),
-                           6.f, Fade(v.tint, 0.7f));
+                Px::Disc((c.x + cosf(ang) * pr), (c.y + sinf(ang) * pr), 6.f, Fade(v.tint, 0.7f), Balance::Vfx::kGlowShapeStrength);
             }
             break;
         }
@@ -10587,13 +9309,13 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
         {
             // Expanding red execution ring with target reticles.
             float r = v.radius * t;
-            DrawCircleLines((int)c.x, (int)c.y, r, Fade(v.tint, fade));
+            Px::Circle(c.x, c.y, r, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             for (float deg = 0.f; deg < 360.f; deg += 45.f)
             {
                 float rad = deg * DEG2RAD;
                 Vector2 p{ c.x + cosf(rad) * r * 0.6f, c.y + sinf(rad) * r * 0.6f };
-                DrawLineEx({ p.x - 10.f, p.y }, { p.x + 10.f, p.y }, 2.f, Fade(v.tint, fade));
-                DrawLineEx({ p.x, p.y - 10.f }, { p.x, p.y + 10.f }, 2.f, Fade(v.tint, fade));
+                Px::Line({ p.x - 10.f, p.y }, { p.x + 10.f, p.y }, 2.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
+                Px::Line({ p.x, p.y - 10.f }, { p.x, p.y + 10.f }, 2.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             }
             break;
         }
@@ -10607,7 +9329,7 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
                 float bx = c.x + (frac * 2.f - 1.f) * radius;
                 float phase = fmodf(t * 2.f + frac * 1.3f, 1.f);
                 float by = c.y - radius + phase * radius * 2.f;
-                DrawLineEx({ bx, by - 16.f }, { bx, by + 16.f }, 3.f, Fade(v.tint, fade));
+                Px::Line({ bx, by - 16.f }, { bx, by + 16.f }, 3.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             }
             break;
         }
@@ -10620,25 +9342,12 @@ void Engine::DrawWarriorEffects(Vector2 camRef)
             {
                 float off = (i - 1) * 18.f;
                 Vector2 centre = Vector2Add(fc, Vector2Scale(moveSide, off));
-                DrawLineEx(Vector2Add(Vector2Scale(moveDir, -30.f), Vector2Add(centre, Vector2Scale(moveSide, -20.f))),
-                           Vector2Add(Vector2Scale(moveDir, 30.f), Vector2Add(centre, Vector2Scale(moveSide, 20.f))),
-                           3.f, Fade(v.tint, fade));
+                Px::Line(Vector2Add(Vector2Scale(moveDir, -30.f), Vector2Add(centre, Vector2Scale(moveSide, -20.f))), Vector2Add(Vector2Scale(moveDir, 30.f), Vector2Add(centre, Vector2Scale(moveSide, 20.f))), 3.f, Fade(v.tint, fade), Balance::Vfx::kGlowShapeStrength);
             }
             break;
         }
         }
     }
-}
-
-void Engine::TriggerUltimateSequence(AbilityType element)
-{
-    _ultimatePhase       = UltimatePhase::WindUp;
-    _ultimatePhaseTimer  = 0.f;
-    _ultimateCircleAngle = 0.f;
-    _ultimateElement     = element;
-    _ultimateBlasts.clear();
-    StopSound(_fireballCastSound);
-    PlaySound(_fireballCastSound);
 }
 
 void Engine::UpdateUltimateSequence(float dt)
@@ -10707,7 +9416,7 @@ namespace
         { "Damage numbers",      0.f,   0.f,   1.f,   true,  false },
         { "Minimum font",        1.f,   12.f,  48.f,  false, true  },
         { "Maximum font",        1.f,   16.f,  72.f,  false, true  },
-        { "Damage reference",    1.f,   1.f,   100.f, false, false },
+        { "Damage reference",    1.f,   1.f,   1000.f, false, false },
         { "Rise speed",          5.f,   10.f,  240.f, false, false },
         { "Horizontal drift",    2.f,   0.f,   100.f, false, false },
         { "Lifetime",            0.05f, 0.25f, 2.f,   false, false },
@@ -10715,6 +9424,10 @@ namespace
         { "Merge window",        0.01f, 0.f,   0.5f,  false, false },
         { "Visible cap",         1.f,   4.f,   96.f,  false, true  },
         { "Freeze number anim",  0.f,   0.f,   1.f,   true,  false },
+        { "Time of day (hour)",  Balance::DayNight::kDebugHourStep, 0.f,
+                                 Balance::DayNight::kHoursPerDay - Balance::DayNight::kDebugHourStep, false, false },
+        { "Day speed x",         Balance::DayNight::kDebugClockSpeedStep, 1.f,
+                                 Balance::DayNight::kMaxDebugClockSpeed, false, true },
     };
     constexpr int kJuiceParamCount = (int)(sizeof(kJuiceParams) / sizeof(kJuiceParams[0]));
 }
@@ -10765,6 +9478,8 @@ void Engine::UpdateJuicePanel()
         case 15: value = numbers.outlineOffset; break;
         case 16: value = numbers.mergeWindow; break;
         case 17: value = (float)numbers.visibleCap; break;
+        case 19: value = _clockHours; break;
+        case 20: value = _dayClockSpeed; break;
         }
         value = std::clamp(value + dir * p.step, p.lo, p.hi);
         if (_juiceSel < 7) *juiceValues[_juiceSel] = value;
@@ -10779,6 +9494,8 @@ void Engine::UpdateJuicePanel()
         case 15: numbers.outlineOffset = value; break;
         case 16: numbers.mergeWindow = value; break;
         case 17: numbers.visibleCap = (int)value; break;
+        case 19: _clockHours = value; break;
+        case 20: _dayClockSpeed = value; break;
         }
         numbers.maxFontSize = std::max(numbers.maxFontSize, numbers.minFontSize);
         _juiceNudgeCd = 0.07f;
@@ -10796,7 +9513,7 @@ void Engine::DrawJuicePanel()
                      (float)numbers.maxFontSize, numbers.damageReference, numbers.riseSpeed,
                      numbers.horizontalDrift, numbers.lifetime, numbers.outlineOffset,
                      numbers.mergeWindow, (float)numbers.visibleCap,
-                     numbers.freezeAnimation ? 1.f : 0.f };
+                     numbers.freezeAnimation ? 1.f : 0.f, _clockHours, _dayClockSpeed };
     const float sw = (float)kVirtualWidth;
     float pw = 520.f, ph = 82.f + kJuiceParamCount * 28.f, px = sw - pw - 30.f, py = 70.f;
     DrawRectangleRounded({ px, py, pw, ph }, 0.04f, 6, Fade(Color{ 18, 16, 26, 255 }, 0.94f));
@@ -10836,8 +9553,8 @@ void Engine::DrawScreenFx()
     // Screen flash (level-up / ultimate).
     if (_screenFlashTimer > 0.f && _screenFlashDur > 0.f)
     {
-        float a = (_screenFlashTimer / _screenFlashDur) * 0.45f;
-        DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(_screenFlashColor, a));
+        float a = (_screenFlashTimer / _screenFlashDur) * 0.45f * _settingsMgr.Get().FlashScale();
+        if (a > 0.f) DrawRectangle(0, 0, kVirtualWidth, kVirtualHeight, Fade(_screenFlashColor, a));
     }
     // Player hurt — red vignette hugging the four screen edges, clear in the
     // middle (four gradient bands fading from red at the border to transparent
@@ -10864,12 +9581,38 @@ void Engine::DrawScreenFx()
     if (_juicePanelOpen) DrawJuicePanel();
 }
 
+namespace
+{
+    // What a creature "is made of" when it bursts.
+    Color GoreColorFor(CreatureFamily family)
+    {
+        switch (family)
+        {
+        case CreatureFamily::Slime:    return Color{ 110, 210,  90, 255 };
+        case CreatureFamily::Spectral: return Color{ 170, 150, 255, 255 };
+        case CreatureFamily::Plant:    return Color{ 120, 170,  60, 255 };
+        case CreatureFamily::Metal:    return Color{ 200, 200, 215, 255 };
+        case CreatureFamily::Small:    return Color{ 205,  45,  50, 255 };
+        case CreatureFamily::Beast:
+        case CreatureFamily::Boss:
+        case CreatureFamily::Flesh:
+        default:                       return Color{ 170,  25,  35, 255 };
+        }
+    }
+}
+
 int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
                           bool backstab, bool damageOverTime, std::uint32_t attackId)
 {
     const int damage = CalculateActualDamage(healthBefore, enemy.GetHealthValue());
     if (damage <= 0)
         return 0;
+    // The hit landed: commit the fractional carry staged by ScalePlayerHit.
+    if (_hitCarryStaged && !damageOverTime && enemy.GetCombatId() == _stagedHitTarget)
+    {
+        _hitDamageCarry = _stagedHitCarry;
+        _hitCarryStaged = false;
+    }
 
     const bool killed = !enemy.IsAlive();
     const bool isBoss = enemy.IsBoss();
@@ -10893,48 +9636,86 @@ int Engine::RegisterHitFx(Enemy& enemy, float healthBefore, bool crit,
         _vfx.SpawnFloatingLabel(Vector2{ enemy.GetWorldPos().x, enemy.GetWorldPos().y - 40.f },
                                 "GUARDED", Color{ 180, 100, 255, 255 }, 0.8f);
 
+    // Ongoing damage remains legible without repeatedly stopping or shoving enemies.
+    if (damageOverTime && !killed)
+    {
+        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), Color{ 160, 190, 150, 170 }, 2, 65.f);
+        return damage;
+    }
+    const bool accent = _combatImpactGate.Admit(GetTime(), damageOverTime, killed, crit);
+
     // Hit direction — away from the player, so melee/ranged both shove the target
     // outward. Reused for the directional sparks and the recoil below.
     Vector2 hitDir = Vector2Subtract(enemy.GetWorldPos(), _player.GetWorldPos());
 
     const Color impactColor = crit ? Color{ 255, 205, 45, 255 }
                                    : Color{ 230, 45, 50, 255 };
+    // Sparks run white-hot to warm yellow (Vfx::HeatRamp); red sparks read as blood.
+    const Color sparkColor = crit ? Vfx::kCritSparkColor : Vfx::kHitSparkColor;
     // Sparks spray in a cone along the blow (a cut), except a kill bursts radially
     // for a satisfying "pop". Wider cone on crits so big hits feel splashier.
     if (killed)
     {
-        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor, 12, 360.f);
-        // Extra fast white gibs so the kill flashes/pops (pairs with the death-pop
-        // scale in Enemy::DrawEnemy).
-        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), Color{ 255, 255, 255, 255 }, 8, 520.f);
+        // The death payoff: flash + shockwave, gore thrown along the blow, the
+        // corpse itself launched (Enemy::LaunchCorpse), and a crunch under the
+        // creature's death cry. Bosses keep their own deaths.
+        const bool heavyKill = crit || enemy.IsEliteMiniboss() || isBoss;
+        _vfx.SpawnDeathBurst(enemy.GetWorldPos(), hitDir, GoreColorFor(enemy.GetCreatureFamily()), heavyKill);
+        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), sparkColor, 10, 380.f);
+        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), Color{ 255, 255, 255, 255 }, 8, 540.f);
+        if (!isBoss)
+            enemy.LaunchCorpse(hitDir, heavyKill ? 150.f : 110.f);
+        SfxBank::Get().PlayKillCrunch(heavyKill);
     }
     else
-        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), impactColor,
+        _vfx.SpawnImpactBurst(enemy.GetWorldPos(), sparkColor,
                               crit ? 9 : 4, 240.f, hitDir, crit ? 0.9f : 0.6f);
 
     // Recoil: shove non-boss enemies away from the blow so hits have weight. Bosses
     // stay planted (a shovable boss feels wrong); elites take a reduced shove.
-    if (!killed && !isBoss)
+    // Kept short: the weight now comes from hit-stop and shake, not distance.
+    if (!damageOverTime && !killed && !isBoss)
     {
-        const float baseSpeed = crit ? 520.f : 340.f;
+        const float baseSpeed = crit ? 320.f : 210.f;
         const float speed = baseSpeed * (enemy.IsEliteMiniboss() ? 0.45f : 1.f);
         enemy.ApplyHitKnockback(hitDir, speed);
     }
 
+    if (!damageOverTime)
+        _vfx.SpawnContactAccent(enemy.GetWorldPos(), hitDir, impactColor, crit || killed);
+    if (accent && !damageOverTime)
+    {
+        const PlayerClass cls = _player.GetClass();
+        if (cls == PlayerClass::Warrior || cls == PlayerClass::Rogue || cls == PlayerClass::Hunter)
+            SfxBank::Get().PlayElementImpact(SfxElement::Physical, crit || killed ? 0.65f : 0.4f);
+        else if (cls == PlayerClass::Paladin)
+            SfxBank::Get().PlayElementImpact(SfxElement::Holy, crit || killed ? 0.6f : 0.35f);
+    }
+    if (!accent) return damage;
+
     if (killed)
     {
-        TriggerScreenShake(isBoss ? 9.f : 6.5f, isBoss ? 0.35f : 0.18f);
+        TriggerScreenShake(isBoss ? 10.f : (enemy.IsEliteMiniboss() ? 6.f : 4.5f), isBoss ? 0.38f : 0.16f);
+        // The last kill of an ordinary combat room gets a short cinematic beat.
+        if (!isBoss && _gameState == GameState::DungeonRun && _dungeonRoomIdx != _dungeonGen.GetBossIndex() &&
+            _dungeonReinforcements.empty())
+        {
+            bool othersAlive = false;
+            for (const auto& other : _enemies)
+                othersAlive = othersAlive || (other.get() != &enemy && other->IsActive() && other->IsAlive() && !other->IsDying());
+            if (!othersAlive) TriggerSlowMo(0.24f, 0.4f);
+        }
         // In the boss room the cinematic slow-mo is deferred to the moment the
         // LAST enemy falls (room clear) so it doesn't fire early while adds live.
         bool inBossRoom = (_gameState == GameState::DungeonRun &&
                            _dungeonRoomIdx == _dungeonGen.GetBossIndex());
         if (isBoss && !inBossRoom) TriggerSlowMo(_juiceBossSlowDur, _juiceBossSlowScale); // elite death elsewhere
-        else                       RequestHitStop(_juiceKillHitStop);                     // snappy kill; boss-room slow-mo comes at clear
+        else RequestHitStop(enemy.IsEliteMiniboss() ? _juiceKillHitStop * 1.4f : _juiceKillHitStop);   // snappy kill; boss-room slow-mo comes at clear
     }
     else if (crit)
     {
-        TriggerScreenShake(3.f, 0.09f);
-        TriggerSlowMo(_juiceCritSlowDur, _juiceCritSlowScale);   // crit slowdown (instead of extra push)
+        TriggerScreenShake(3.5f, 0.1f);
+        // A crisp critical contact beat preserves movement; slow motion is reserved for victories.
         RequestHitStop(_juiceHitStopMax);                        // crits get the full non-kill freeze too
         // Focus spotlight on the hit — screen pos via the same camera transform
         // the world objects use.
@@ -11039,7 +9820,7 @@ void Engine::ApplyUltimateImpact()
         if (fabsf(delta.x) > halfW || fabsf(delta.y) > halfH)
             continue;
 
-        int baseDmg = enemy->AsMolarbeast() ? std::min(3, _player.GetUltimateHitDamage(_ultimateElement)) : _player.GetUltimateHitDamage(_ultimateElement);
+        int baseDmg = _player.GetUltimateHitDamage(_ultimateElement);
         bool ultCrit = false;
         int dmg = ScalePlayerHit(*enemy, baseDmg, ultCrit);
         const float healthBefore = enemy->GetHealthValue();
@@ -11094,10 +9875,11 @@ void Engine::DrawUltimateSequence()
     if (_ultimatePhase == UltimatePhase::Impact)
     {
         float t = 1.f - (_ultimatePhaseTimer / _ultImpactDuration);
-        DrawRectangle(0, 0, (int)sw, (int)sh, Fade(WHITE, t * 0.85f));
+        const float flashA = t * 0.85f * _settingsMgr.Get().FlashScale();
+        if (flashA > 0.f) DrawRectangle(0, 0, (int)sw, (int)sh, Fade(WHITE, flashA));
         // Expanding ring in element colour
         Color ringCol = { ec.r, ec.g, ec.b, (unsigned char)(t * 210.f) };
-        DrawCircleLinesV({ cx, cy }, (1.f - t) * sw * 0.9f, ringCol);
+        Px::Circle({ cx, cy }, (1.f - t) * sw * 0.9f, ringCol, Balance::Vfx::kGlowShapeStrength);
     }
 
     // -- Magic circle (wind-up + cinematic) -----------------------------------
@@ -11116,20 +9898,19 @@ void Engine::DrawUltimateSequence()
             unsigned char a = (unsigned char)(190.f * progress);
             Color ringCol = { ec.r, ec.g, ec.b, a };
 
-            DrawCircleLinesV({ cx, cy }, radius, ringCol);
+            Px::Circle({ cx, cy }, radius, ringCol, Balance::Vfx::kGlowShapeStrength);
 
             // 4 glowing markers rotating around each ring
             for (int m = 0; m < 4; m++)
             {
                 float ma = angle + m * (PI * 0.5f);
                 Vector2 mp = { cx + cosf(ma) * radius, cy + sinf(ma) * radius };
-                DrawCircleV(mp, 5.f * progress, ringCol);
+                Px::Disc(mp, 5.f * progress, ringCol, Balance::Vfx::kGlowShapeStrength);
             }
         }
 
         // Soft glow around the player's screen position
-        DrawCircleV({ cx, cy }, 48.f * progress,
-            { ec.r, ec.g, ec.b, (unsigned char)(85.f * progress) });
+        Px::Disc({ cx, cy }, 48.f * progress, { ec.r, ec.g, ec.b, (unsigned char)(85.f * progress) }, Balance::Vfx::kGlowShapeStrength);
     }
 }
 
@@ -11178,21 +9959,53 @@ void Engine::DrawUltimateBlasts(Vector2 worldOffset)
         Vector2   origin   = { size * 0.5f, size * 0.5f };
         unsigned char alpha = (unsigned char)(pulse * 255.f);
 
-        // Soft glow behind - slightly larger, low alpha
-        float     glowSize   = size * 1.65f;
-        Rectangle glowDest   = { screenPos.x, screenPos.y, glowSize, glowSize };
-        Vector2   glowOrigin = { glowSize * 0.5f, glowSize * 0.5f };
-        DrawTexturePro(tex, src, glowDest, glowOrigin, rotation,
-            { 255, 255, 255, (unsigned char)(pulse * 55.f) });
-
-        // Main animated frame
+        // Main animated frame, and its light in the glow layer (VfxGlow.h)
+        // in place of the old faint oversized copy.
         DrawTexturePro(tex, src, dest, origin, rotation, { 255, 255, 255, alpha });
+        Vfx::Glow().AddSprite(tex, src, dest, origin, rotation, Fade(WHITE, pulse * Balance::Vfx::kGlowSpriteStrength));
     }
 }
 
 
+void Engine::FirePendingRangedShot()
+{
+    // Fire point is read now, after the turn, so it sits on the side the sprite faces.
+    PendingRangedShot& p = _pendingRangedShot;
+    Vector2 origin = (p.tuning && p.tuning->hasFirePoint)
+                   ? _player.GetCastOrigin(p.tuning->fireForward, p.tuning->fireHeight)
+                   : _player.GetCastOrigin();
+    SpreadProjectile shot;
+    shot.InitBasic(origin, p.aim, p.element, p.tint, p.arrow);
+    ApplySpreadTuning(shot, p.tuning);
+    _spreadProjectiles.push_back(shot);
+    _vfx.SpawnMuzzleFlash(origin, p.aim, p.tint);
+    p.active = false;
+}
+
+namespace
+{
+    // A shot arrives from the way it was travelling: a point back along its path
+    // from the target. Only the direction matters to a shield's front check, so
+    // any distance past the target's centre works.
+    constexpr float kShotArrivalProbe = 64.f;
+
+    Vector2 ShotArrivalPos(Vector2 targetPos, Vector2 travelDir, Vector2 fallback)
+    {
+        const float length = Vector2Length(travelDir);
+        if (length <= 0.f)
+            return fallback;
+        return Vector2Subtract(targetPos, Vector2Scale(travelDir, kShotArrivalProbe / length));
+    }
+}
+
 void Engine::UpdateSpreadProjectiles(float dt)
 {
+    if (_pendingRangedShot.active)
+    {
+        _pendingRangedShot.timer -= dt;
+        if (_pendingRangedShot.timer <= 0.f) FirePendingRangedShot();
+    }
+
     for (auto& projectile : _spreadProjectiles)
     {
         if (!projectile.IsActive())
@@ -11320,15 +10133,18 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 continue;
 
             AbilityType element = projectile.GetElement();
+            const Vector2 shotArrival = ShotArrivalPos(enemy->GetWorldPos(), projectile.GetDirection(),
+                                                       _player.GetWorldPos());
 
             // Class basic-attack shot: small fixed damage, no element status, one hit.
             if (projectile.IsBasic())
             {
                 bool basicCrit = false;
-                int base = std::max(1, (int)std::round(_player.GetMeleeDamage() * 0.6f * _player.GetClassDamageMult()));
+                const float base = std::max(1.f, _player.GetAttackPowerValue() * Balance::PlayerBasic::kRangedScale
+                                                    * _player.GetClassDamageMult());
                 int dmg = ScalePlayerHit(*enemy, base, basicCrit);
                 const float healthBefore = enemy->GetHealthValue();
-                enemy->TakeDamage(dmg, _player.GetWorldPos());
+                enemy->TakeDamageArriving(dmg, _player.GetWorldPos(), shotArrival);
                 Enemy::HitBlockReason blocked = enemy->ConsumeHitBlock();
                 if (blocked != Enemy::HitBlockReason::None)
                 {
@@ -11362,13 +10178,13 @@ void Engine::UpdateSpreadProjectiles(float dt)
                 break;
             }
 
-            int baseDamage = enemy->AsMolarbeast() != nullptr
-                ? 2 : _player.GetBoltHitDamage(element);
+            int baseDamage = _player.GetBoltHitDamage(element);
             bool wasSlowed = enemy->IsSlowed();
             bool landed = DamageMageEnemy(*enemy, baseDamage, element,
                                           element == AbilityType::FireBolt,
                                           element == AbilityType::IceBolt,
-                                          element == AbilityType::ElectricBolt);
+                                          element == AbilityType::ElectricBolt,
+                                          false, &shotArrival);
 
             Character::CastType hitEffectType = element == AbilityType::FireBolt ? Character::CastType::FireSpread
                                                     : element == AbilityType::IceBolt ? Character::CastType::IceSpread
@@ -11378,11 +10194,13 @@ void Engine::UpdateSpreadProjectiles(float dt)
             if (landed && element == AbilityType::FireBolt)
             {
                 // Fireball's identity is the impact burst, not merely a red bolt.
+                const Vector2 burstCentre = projectile.GetWorldPos();
                 for (auto& nearby : _enemies)
                 {
                     if (nearby.get() == enemy.get() || !nearby->IsActive() || !nearby->IsAlive()) continue;
-                    if (Vector2Distance(nearby->GetWorldPos(), projectile.GetWorldPos()) <= 135.f)
-                        DamageMageEnemy(*nearby, std::max(1, baseDamage / 2), element, true, false, false);
+                    if (Vector2Distance(nearby->GetWorldPos(), burstCentre) <= 135.f)
+                        DamageMageEnemy(*nearby, std::max(1, baseDamage / 2), element, true, false, false,
+                                        false, &burstCentre);
                 }
                 MageSpellField burst;
                 burst.ability = AbilityType::FireBolt;
@@ -11417,8 +10235,10 @@ void Engine::UpdateSpreadProjectiles(float dt)
                         if (distance < best) { best = distance; next = candidate.get(); }
                     }
                     if (!next) break;
-                    int chainDamage = std::max(1, baseDamage - 1 - jump / 2);
-                    DamageMageEnemy(*next, chainDamage, element, false, false, true);
+                    constexpr int kChainFalloff = 10;   // damage lost per jump pair
+                    int chainDamage = std::max(1, baseDamage - kChainFalloff - (jump / 2) * kChainFalloff);
+                    const Vector2 jumpedFrom = current->GetWorldPos();
+                    DamageMageEnemy(*next, chainDamage, element, false, false, true, false, &jumpedFrom);
                     MageSpellField arc;
                     arc.ability = AbilityType::ElectricBolt;
                     arc.pos = current->GetWorldPos();
@@ -11601,49 +10421,14 @@ void Engine::SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss)
     }
 }
 
-void Engine::SpawnTimedPickup()
-{
-    // Boss fights are self-contained - no timed pickups during them.
-    // The timer keeps ticking so a pickup is not immediately ready when
-    // the boss dies; it resets naturally after kDefaultTimedPickupInterval.
-    if (IsBossFightActive())
-        return;
-
-    // Sustain rework: timed heals share the per-room cap with kill drops.
-    if (_roomHealDrops >= Balance::Sustain::kMaxHealDropsPerRoom)
-        return;
-    _roomHealDrops++;
-
-    // Timed pickups are heals only. Mana gems removed from the timed pool -
-    // passive regen covers mana recovery between waves.
-    float mapW = _map.width  * _mapScale;
-    float mapH = _map.height * _mapScale;
-
-    Vector2 pos{};
-    int attempts = 0;
-    do
-    {
-        pos = Vector2{
-            (float)GetRandomValue(300, (int)mapW - 300),
-            (float)GetRandomValue(300, (int)mapH - 300)
-        };
-        attempts++;
-    } while (!IsSpawnPositionValid(pos) && attempts < 40);
-
-    auto p = std::make_unique<HealPickup>();
-    p->Init(pos);
-    p->SetTimerSpawned(true);
-    _pickups.push_back(std::move(p));
-}
-
 // =============================================================================
 // Meta progression — Echoes, Poe's Altar, permanent unlocks
 // =============================================================================
 
 Vector2 Engine::GetPoeAltarPos() const
 {
-    // West of Zeph (who stands at sw*0.5, sh*0.42) so both prompts never overlap.
-    return { (float)kVirtualWidth * 0.30f, (float)kVirtualHeight * 0.42f };
+    // West of Zeph so both prompts never overlap; set per camp on safe floor.
+    return _campAltarPos;
 }
 
 void Engine::HandlePlayerDeathMetaPenalty()
@@ -11652,13 +10437,214 @@ void Engine::HandlePlayerDeathMetaPenalty()
         return;
     _deathPenaltyApplied = true;
 
-    // One-wallet meta loop (locked 2026-07-09): it's a roguelite, so DEATH WIPES
-    // ALL carried gold. Only unlocked village buildings + cosmetics persist. No
-    // gold carryover survives a death (supersedes the old Dead Cells retention).
-    _meta.SetGoldCarryover(0);
-    _player.SetGold(0);
-    _player.TakeCells();
+    // One-wallet meta loop: it's a roguelite, so a death loses the carried
+    // gold and every unbanked Echo. Deep Pockets (bought at Poe's altar) keeps
+    // its advertised share of the gold, which arrives home as the village wallet.
+    const int kept = _meta.GetGoldKeptOnDeath(_player.GetGold());
+    _player.SetGold(kept);
+    // Poe salvages half the carried Echoes (camps bank all of them), so early
+    // runs that die before the first camp still move meta progression on.
+    const int salvaged = MetaProgressionManager::GetEchoesKeptOnDeath(_player.TakeCells());
+    if (salvaged > 0)
+    {
+        _meta.BankCells(salvaged);
+        _cellsBankedToastAmount = salvaged;
+        _cellsBankedToastTimer  = 5.f;
+    }
+    _deathReviveSalvagedEchoes = salvaged;
+    _meta.SetVillageWallet(kept);
     _meta.Save();
+}
+
+void Engine::CommitShopContract()
+{
+    // Leaving Zeph's shop moves an accepted contract into run state, where it
+    // waits for the next fight (and blocks a second contract until resolved).
+    ShopContractType accepted = _shop.ConsumeAcceptedContract();
+    if (accepted == ShopContractType::Count)
+        return;
+    RunModifier contract;
+    contract.shopContract = accepted;
+    contract.active = false;
+    contract.roomsRemaining = 1;
+    contract.tint = Color{ 215, 155, 70, 255 };
+    switch (accepted)
+    {
+    case ShopContractType::Untouched:       contract.label = "UNTOUCHED"; break;
+    case ShopContractType::ArcaneRestraint: contract.label = "ARCANE RESTRAINT"; break;
+    case ShopContractType::AgainstTheClock: contract.label = "AGAINST THE CLOCK"; break;
+    default: break;
+    }
+    _runModifiers.push_back(contract);
+    _contractToastText = contract.label + " ARMED FOR NEXT FIGHT";
+    _contractToastTimer = 3.f;
+}
+
+// Applies one pause-menu choice (codes from PauseAndGameOver::UpdatePause).
+// Called from Update exactly once per chosen action, so redrawing the pause
+// screen can never save, quit or change state.
+void Engine::ApplyPauseAction(int pauseResult)
+{
+    if (pauseResult != 0) { StopSound(_buttonPressSound); PlaySound(_buttonPressSound); }
+    if (pauseResult == 1)
+        _gameState = _stateBeforePause;
+    else if (pauseResult == 2)
+    {
+        _runState.OpenHowToPlay(GameState::Pause, _touchModeActive);
+    }
+    else if (pauseResult == 3)
+    {
+        // No-op outside a resumable run; a failed write keeps the game open.
+        if (SaveRunCheckpoint()) _shouldClose = true;
+        else                     NotifyRunSaveFailed();
+    }
+    else if (pauseResult == 4)
+    {
+        if (_touchModeActive)
+        {
+            EnterTouchButtonMapping();
+            _gameState = GameState::TouchButtonMapping;
+        }
+        else
+        {
+            _stateBeforeSettings = GameState::Pause;
+            _settingsTab         = 2;
+            _settingsDragSlider  = -1;
+            _settingsRebindSlot  = -1;
+            _keybindingsEdit     = _player.GetBindings();
+            _gameState           = GameState::Settings;
+        }
+    }
+    else if (pauseResult == 7)
+        OpenGrimoire(GameState::Pause);
+    else if (pauseResult == 8)
+        OpenCharacterSheet(GameState::Pause);
+    else if (pauseResult == 5)
+    {
+        if (IsRunSaveable()) SaveAndQuitRunToMenu();
+        else                 AbandonRunToMenu();
+    }
+    else if (pauseResult == 6)
+    {
+        _stateBeforeSettings = GameState::Pause;
+        _settingsTab         = 0;
+        _settingsDragSlider  = -1;
+        _settingsRebindSlot  = -1;
+        _keybindingsEdit     = _player.GetBindings();
+        _gameState           = GameState::Settings;
+    }
+}
+
+bool Engine::IsRetiredGameState(GameState state)
+{
+    return state == GameState::Play || state == GameState::Map ||
+           state == GameState::ExpTally || state == GameState::GameOver ||
+           state == GameState::BossChoice;
+}
+
+void Engine::RecoverFromRetiredState()
+{
+    // A live run continues in its dungeon; anything else goes home, where the
+    // next run is prepared. Never the main menu silently, never a legacy loop.
+    if (_isMainGameRun && _runSessionData.IsActive() && _dungeonRoomIdx >= 0)
+    {
+        _gameState = GameState::DungeonRun;
+        return;
+    }
+    _nextRunPrepared = false;
+    EnterVillage();
+}
+
+std::string Engine::DescribeNewClassUnlocks(unsigned mask)
+{
+    std::string names;
+    for (int c = 0; c < (int)PlayerClass::Count; ++c)
+    {
+        if (!(mask & (1u << c))) continue;
+        if (!names.empty()) names += ", ";
+        names += GetPlayerClassInfo((PlayerClass)c).name;
+    }
+    return names.empty() ? std::string() : "NEW CLASS UNLOCKED: " + names;
+}
+
+void Engine::PrepareNextRun()
+{
+    // The next run's character exists from the moment the player is home with
+    // no run in progress: fresh run state, chosen class, permanent stat unlocks
+    // and the class starter ability. Wallet gold is untouched by the reset.
+    _nextRunPrepared = false;   // force the full character reset below
+    ResetRunState();
+    _preparedStarter = GetRunStarterAbility(_player.GetClass());   // class default or Armory choice
+    _player.LearnAbility(_preparedStarter);
+    _nextRunPrepared = true;
+}
+
+void Engine::GrantRunStartBonuses()
+{
+    // One-shot grants for the run that is starting right now. Kept out of
+    // ResetRunState/PrepareNextRun so returning to the menu or village can
+    // never re-roll or re-grant them.
+    // Permanent stat unlocks, read at the gate so purchases made in the village
+    // after the character was prepared still apply (exactly once per run).
+    _player.ApplyMetaBonuses(
+        _meta.GetVitalityBonus(GetPlayerClassInfo(_player.GetClass()).baseHealth),
+        _meta.GetManaRegenMultiplier(),
+        _meta.GetStartingDefenseBonus());
+    _player.SetCellGainMultiplier(_meta.GetCellGainMultiplier());   // Echo Surge
+    const int stipend = _meta.GetStartingGoldBonus();
+    if (stipend > 0)
+        _player.AddGold(stipend);                    // Zeph's Stipend
+    if (_meta.HasStartingRelic())
+        GrantRelic(RollRandomRelic());               // Heirloom
+    _secondWindAvailable = _meta.HasSecondWind();    // Second Wind
+    if (_meta.HasBonusStarterAbility())              // Ability Mastery
+    {
+        std::vector<AbilityType> pool;
+        for (int i = 0; i < kAllAbilityCount; ++i)
+        {
+            const AbilityType a = kAllAbilities[i];
+            if (_player.ClassAllows(a) && !IsUltimateAbility(a) &&
+                !_player.HasLearnedAbility(a) && _meta.IsAbilityUnlocked(a))
+                pool.push_back(a);
+        }
+        if (!pool.empty())
+            _player.LearnAbility(pool[(std::size_t)GetRandomValue(0, (int)pool.size() - 1)]);
+    }
+}
+
+void Engine::BankCarriedEchoes()
+{
+    const int carried = _player.TakeCells();
+    if (carried <= 0)
+        return;
+    _meta.BankCells(carried);
+    _cellsBankedToastAmount = carried;
+    _cellsBankedToastTimer  = 4.f;
+}
+
+void Engine::AbandonRunToMenu()
+{
+    // Leaving a run from the dungeon counts as a death (Deep Pockets share
+    // kept, carried Echoes lost). Leaving from the village loses nothing: a
+    // paused run already banked its Echoes and the wallet is safe at home.
+    const bool inDungeonRun = _isMainGameRun && _runSessionData.IsActive() &&
+                              !_runSessionData.IsPausedInVillage() &&
+                              _gameState != GameState::Village &&
+                              _stateBeforePause != GameState::Village;
+    if (inDungeonRun)
+    {
+        if (_isMainGameRun && !_debug.IsActive())
+            AppendRunLog(RunOutcome::Abandoned,
+                         TextFormat("Abandoned in %s, domain %d", GetBiomeName(_currentBiome), _worldZone + 1));
+        EndRunCheckpoint();
+        HandlePlayerDeathMetaPenalty();
+    }
+    else
+        _meta.SetVillageWallet(_player.GetGold());
+    _nextRunPrepared = false;
+    ResetRunState();
+    _menu.Init();
+    _gameState = GameState::Menu;
 }
 
 // ── Death -> Poe revive cutscene ───────────────────────────────────────────────
@@ -11746,9 +10732,7 @@ void Engine::UpdateDeathRevive()
     // ESC / back abandons the run to the main menu (keeps a quit path).
     if (IsKeyPressed(KEY_ESCAPE) || (_gamepad.isActive && _gamepad.backPressed))
     {
-        ResetRunState();
-        _menu.Init();
-        _gameState = GameState::Menu;
+        AbandonRunToMenu();
         return;
     }
 
@@ -11766,19 +10750,27 @@ void Engine::UpdateDeathRevive()
             return;
         }
 
-        if (_firstDeathRevive)
-        {
-            _firstDeathRevive = false;
-            _prologue.Complete();
-            _prologueActive = false;
-            _firstVillageVisit = true;
-            _villageIntroDialogueActive = false;
-            _villageIntroDialogueLine = 0;
-        }
-        EnterVillage();
-        _fadeInTimer = 1.f;
-        _fadeInDuration = 1.f;
+        ConfirmDeathRevive();
     }
+}
+
+void Engine::ConfirmDeathRevive()
+{
+    if (_firstDeathRevive)
+    {
+        _firstDeathRevive = false;
+        _prologue.Complete();
+        _prologueActive = false;
+        _firstVillageVisit = true;
+        _villageIntroDialogueActive = false;
+        _villageIntroDialogueLine = 0;
+    }
+    // Poe asks what the player will become: class + look for the next run,
+    // then the village (where that run's character is prepared).
+    _classSelectCursor      = (int)_player.GetClass();
+    ReloadAppearancePortrait();
+    _classSelectReturnState = GameState::Village;
+    _gameState              = GameState::ClassSelect;
 }
 
 void Engine::DrawDeathRevive()
@@ -11802,12 +10794,12 @@ void Engine::DrawDeathRevive()
                             m.pos.y - _cameraPos.y + sh * 0.5f };
             if (m.gold)
             {
-                DrawCircleV(scr, 4.f * a + 1.5f, Color{ 255, 210, 90, (unsigned char)(230 * a) });
-                DrawCircleLinesV(scr, 4.f * a + 1.5f, Fade(Color{ 255, 240, 180, 255 }, a));
+                Px::Disc(scr, 4.f * a + 1.5f, Color{ 255, 210, 90, (unsigned char)(230 * a) }, Balance::Vfx::kGlowShapeStrength);
+                Px::Circle(scr, 4.f * a + 1.5f, Fade(Color{ 255, 240, 180, 255 }, a), Balance::Vfx::kGlowShapeStrength);
             }
             else
             {
-                DrawCircleV(scr, 3.5f * a + 1.f, Color{ 190, 130, 240, (unsigned char)(220 * a) });
+                Px::Disc(scr, 3.5f * a + 1.f, Color{ 190, 130, 240, (unsigned char)(220 * a) }, Balance::Vfx::kGlowShapeStrength);
             }
         }
 
@@ -11828,7 +10820,7 @@ void Engine::DrawDeathRevive()
         float scale = sh * 0.34f / (float)poe.height;
         float dw = fw * scale, dh = poe.height * scale;
         Rectangle dst = { sw * 0.30f - dw * 0.5f, sh * 0.40f - dh * 0.5f + bob, dw, dh };
-        DrawCircle((int)(sw * 0.30f), (int)(sh * 0.40f), dh * 0.55f, Fade(Color{ 120, 70, 200, 255 }, 0.20f));
+        Px::Aura((sw * 0.30f), (sh * 0.40f), dh * 0.55f, Fade(Color{ 120, 70, 200, 255 }, 0.20f));
         DrawTexturePro(poe, src, dst, { 0, 0 }, 0.f, Color{ 205, 180, 255, 235 });
     }
 
@@ -11870,10 +10862,18 @@ void Engine::DrawDeathRevive()
         if (!line.empty()) DrawText(line.c_str(), (int)x, (int)y, fs, col);
     }
 
+    // What survived the fall: Poe's salvage of the carried Echoes.
+    if (_deathReviveSalvagedEchoes > 0)
+    {
+        const char* t = TextFormat("Poe salvaged %d Echoes for your altar", _deathReviveSalvagedEchoes);
+        int fs = 24, tw = MeasureText(t, fs);
+        DrawText(t, (int)(sw * 0.5f - tw * 0.5f), (int)(panel.y - 46.f), fs, Color{ 150, 215, 235, 235 });
+    }
+
     // Continue prompt once fully revealed (blinks).
     if (_deathReviveTypeT >= kDeathReviveTypeDur && fmodf(_deathReviveTimer, 1.0f) < 0.6f)
     {
-        const char* p  = "Press  E  to rise";
+        const char* p  = (GetPromptModeForUi() == InputPromptMode::Gamepad) ? "A  to rise" : "Press  E  to rise";
         int fs = 22, tw = MeasureText(p, fs);
         DrawText(p, (int)(panel.x + panel.width - tw - 30.f),
                  (int)(panel.y + panel.height - fs - 16.f), fs, Color{ 190, 160, 230, 220 });
@@ -11897,9 +10897,30 @@ void Engine::UpdateMetaShop(float dt)
     if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_E) ||
         (_gamepad.isActive && _gamepad.backPressed))
     {
+        _meta.SaveIfDirty();
+        if (_metaShopTrophyHall)
+        {
+            _metaShopTrophyHall = false;
+            _metaShopJournal = false;   // Poe's altar opens on its unlock cards again
+        }
         _gameState = _metaShopReturnState;
         return;
     }
+
+    // -- Page toggle: Unlocks <-> Journal (Tab / gamepad Y / click the tab) ------
+    if (!_metaShopTrophyHall)
+    {
+        const Rectangle tabRect{ (float)kVirtualWidth - 330.f, 60.f, 280.f, 52.f };
+        if (IsKeyPressed(KEY_TAB) ||
+            (_gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_UP)) ||
+            (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(GetVirtualMousePos(), tabRect)))
+        {
+            _metaShopJournal = !_metaShopJournal;
+            StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+            return;
+        }
+    }
+    if (_metaShopJournal) return;   // read-only page
 
     // -- Cursor navigation (keyboard arrows + d-pad), 6 cards per row ---------
     const int columns = 6;
@@ -11972,9 +10993,23 @@ void Engine::DrawMetaShop()
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
 
+    if (_metaShopTrophyHall)
+    {
+        DrawScrollingCheckerboard(sw, sh, Color{ 124, 88, 36, 255 }, Color{ 150, 108, 48, 255 }, 18.f, 12.f);  // trophy hall: bronze
+        const char* hallTitle = "TROPHY HALL";
+        DrawText(hallTitle, (int)(sw * 0.5f - MeasureText(hallTitle, 74) * 0.5f), 70, 74, GOLD);
+        const char* hallSub = "Every class's mastery and every domain you have conquered.";
+        DrawText(hallSub, (int)(sw * 0.5f - MeasureText(hallSub, 28) * 0.5f), 158, 28, Color{ 220, 200, 160, 255 });
+        DrawMetaJournal();
+        const char* hallHint = _gamepad.isActive ? "B: Back" : "ESC / E: Back";
+        DrawText(hallHint, (int)(sw * 0.5f - MeasureText(hallHint, 24) * 0.5f), (int)(sh - 60.f), 24,
+                 Color{ 190, 175, 150, 255 });
+        return;
+    }
+
     // Dark mystical backdrop — same scrolling pattern as other full screens,
     // tinted purple so the altar feels different from Zeph's shop.
-    DrawScrollingCheckerboard(sw, sh, Color{ 26, 16, 34, 255 }, Color{ 34, 22, 46, 255 }, 18.f, 12.f);
+    DrawScrollingCheckerboard(sw, sh, Color{ 58, 52, 128, 255 }, Color{ 76, 68, 152, 255 }, 18.f, 12.f);  // altar: indigo
 
     const Texture2D& cellTexture = CellPickup::GetMediumTexture();
 
@@ -12006,6 +11041,28 @@ void Engine::DrawMetaShop()
     Rectangle orbDst{ balanceX, 212.f, orbSize, orbSize };
     DrawTexturePro(cellTexture, orbSrc, orbDst, Vector2{ 0.f, 0.f }, 0.f, WHITE);
     DrawText(balanceText, (int)(balanceX + orbSize + 14.f), 214, balanceFontSize, Color{ 255, 120, 210, 255 });
+
+    // -- Page tab (top right): click or Tab / Y switches page ----------------------
+    {
+        const Rectangle tabRect{ sw - 330.f, 60.f, 280.f, 52.f };
+        const bool hover = CheckCollisionPointRec(GetVirtualMousePos(), tabRect);
+        DrawRectangleRounded(tabRect, 0.3f, 6, hover ? Color{ 70, 44, 88, 240 } : Color{ 46, 30, 60, 230 });
+        DrawRectangleRoundedLines(tabRect, 0.3f, 6, Color{ 200, 110, 220, 255 });
+        const char* tabText = _metaShopJournal
+            ? (_gamepad.isActive ? "Y: Unlocks" : "TAB: Unlocks")
+            : (_gamepad.isActive ? "Y: Journal" : "TAB: Journal");
+        DrawText(tabText, (int)(tabRect.x + (tabRect.width - MeasureText(tabText, 26)) * 0.5f),
+                 (int)(tabRect.y + 13.f), 26, RAYWHITE);
+    }
+
+    if (_metaShopJournal)
+    {
+        DrawMetaJournal();
+        const char* journalHint = _gamepad.isActive ? "Y: Unlocks    B: Back" : "TAB: Unlocks    ESC / E: Back";
+        DrawText(journalHint, (int)(sw * 0.5f - MeasureText(journalHint, 24) * 0.5f), (int)(sh - 60.f), 24,
+                 Color{ 170, 160, 180, 255 });
+        return;
+    }
 
     // -- Unlock cards -----------------------------------------------------------
     const int columns = 6;
@@ -12088,6 +11145,307 @@ void Engine::DrawMetaShop()
     DrawText(lifetimeText, 40, (int)(sh - 60.f), 22, Color{ 130, 120, 140, 255 });
 }
 
+namespace
+{
+    // Armory card grid (3 x 2). Shared by UpdateArmory and DrawArmory.
+    Rectangle ArmoryCardRect(int index)
+    {
+        const float cardW = 470.f, cardH = 250.f, gap = 34.f;
+        const float gridW = 3.f * cardW + 2.f * gap;
+        const float x0 = ((float)kVirtualWidth - gridW) * 0.5f;
+        const float y0 = 300.f;
+        return Rectangle{ x0 + (index % 3) * (cardW + gap), y0 + (index / 3) * (cardH + gap), cardW, cardH };
+    }
+}
+
+std::vector<AbilityType> Engine::GetArmoryOptions(PlayerClass cls) const
+{
+    // The class starter first, then its other regular abilities in kit order.
+    std::vector<AbilityType> options;
+    const AbilityType starter = StarterAbilityForClass(cls);
+    options.push_back(starter);
+    for (int i = 0; i < kAllAbilityCount; ++i)
+    {
+        const AbilityType a = kAllAbilities[i];
+        if (a != starter && ClassAllowsAbility(cls, a) && !IsUltimateAbility(a))
+            options.push_back(a);
+    }
+    return options;
+}
+
+bool Engine::IsArmoryOptionUnlocked(PlayerClass cls, int index) const
+{
+    // Option N opens at class mastery rank N; Mage bolts also need Poe's unlock.
+    const std::vector<AbilityType> options = GetArmoryOptions(cls);
+    if (index < 0 || index >= (int)options.size()) return false;
+    if (index == 0) return true;
+    return index <= _meta.GetClassMasteryTier(cls) && _meta.IsAbilityUnlocked(options[(std::size_t)index]);
+}
+
+AbilityType Engine::GetRunStarterAbility(PlayerClass cls) const
+{
+    // A saved choice only counts while it is still a valid, unlocked option.
+    const AbilityType chosen = _meta.GetStarterChoice(cls);
+    const std::vector<AbilityType> options = GetArmoryOptions(cls);
+    for (int i = 0; i < (int)options.size(); ++i)
+        if (options[(std::size_t)i] == chosen && IsArmoryOptionUnlocked(cls, i))
+            return chosen;
+    return StarterAbilityForClass(cls);
+}
+
+bool Engine::ConfirmArmoryChoice(int index)
+{
+    const PlayerClass cls = _player.GetClass();
+    if (!IsArmoryOptionUnlocked(cls, index)) return false;
+    const AbilityType chosen = GetArmoryOptions(cls)[(std::size_t)index];
+    _meta.SetStarterChoice(cls, index == 0 ? AbilityType::None : chosen);
+    const std::string className = GetPlayerClassInfo(cls).name;
+    _armoryMessage = className + " now starts each run with " + GetAbilityName(chosen) + ".";
+    // The next run's character was prepared on arrival: swap its starter now,
+    // unless it was already upgraded at Zeph's (then the choice waits a run).
+    if (_nextRunPrepared && _preparedStarter != chosen && _player.HasLearnedAbility(_preparedStarter))
+    {
+        if (_player.GetAbilityLevel(_preparedStarter) <= 1 && _player.ReplaceAbility(_preparedStarter, chosen))
+            _preparedStarter = chosen;
+        else
+            _armoryMessage = className + " starts with " + GetAbilityName(chosen) + " from the next run.";
+    }
+    _armoryMessageTimer = 3.f;
+    return true;
+}
+
+void Engine::UpdateArmory(float dt)
+{
+    if (_armoryMessageTimer > 0.f) _armoryMessageTimer -= dt;
+    if (_armoryOpenTimer > 0.f)
+    {
+        _armoryOpenTimer -= dt;
+        return;
+    }
+    _gamepad.Update(_gamepadBindingsEdit);
+
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_E) || (_gamepad.isActive && _gamepad.backPressed))
+    {
+        _gameState = GameState::Village;
+        return;
+    }
+
+    const PlayerClass cls = _player.GetClass();
+    const int count = (int)GetArmoryOptions(cls).size();
+    const int columns = 3;
+    _armoryNavCooldown -= dt;
+    auto moveCursor = [&](int dCol, int dRow)
+    {
+        const int rows = (count + columns - 1) / columns;
+        const int col = std::clamp(_armoryCursor % columns + dCol, 0, columns - 1);
+        const int row = std::clamp(_armoryCursor / columns + dRow, 0, rows - 1);
+        _armoryCursor = std::min(count - 1, row * columns + col);
+        _armoryNavCooldown = 0.16f;
+    };
+    const bool navReady = _armoryNavCooldown <= 0.f;
+    const bool gpLeft  = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT);
+    const bool gpRight = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT);
+    const bool gpUp    = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP);
+    const bool gpDown  = _gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN);
+    if (navReady && (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A) || gpLeft))  moveCursor(-1, 0);
+    if (navReady && (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D) || gpRight)) moveCursor( 1, 0);
+    if (navReady && (IsKeyPressed(KEY_UP)    || IsKeyPressed(KEY_W) || gpUp))    moveCursor(0, -1);
+    if (navReady && (IsKeyPressed(KEY_DOWN)  || IsKeyPressed(KEY_S) || gpDown))  moveCursor(0,  1);
+
+    bool confirm = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
+                   (_gamepad.isActive && _gamepad.menuConfirmPressed);
+    const Vector2 mouse = GetVirtualMousePos();
+    const bool mouseMoved = Vector2Length(GetMouseDelta()) > 0.f;
+    for (int i = 0; i < count; ++i)
+    {
+        if (!CheckCollisionPointRec(mouse, ArmoryCardRect(i))) continue;
+        if (mouseMoved) _armoryCursor = i;
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) { _armoryCursor = i; confirm = true; }
+    }
+
+    if (confirm)
+    {
+        if (ConfirmArmoryChoice(_armoryCursor))
+        {
+            if (_audioInitialised) PlaySound(_pickupSound);
+        }
+        else
+        {
+            SfxBank::Get().Play(SfxId::GuiCancel, 0.5f, false);
+        }
+    }
+}
+
+void Engine::DrawArmory()
+{
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+    DrawScrollingCheckerboard(sw, sh, Color{ 92, 100, 44, 255 }, Color{ 116, 124, 58, 255 }, 18.f, 12.f);  // armory: olive
+
+    const PlayerClass cls = _player.GetClass();
+    const char* className = GetPlayerClassInfo(cls).name;
+    const char* title = "ARMORY";
+    DrawText(title, (int)(sw * 0.5f - MeasureText(title, 74) * 0.5f), 70, 74, Color{ 235, 200, 140, 255 });
+    const char* sub = TextFormat("Choose the ability your %s starts each run with.", className);
+    DrawText(sub, (int)(sw * 0.5f - MeasureText(sub, 28) * 0.5f), 158, 28, Color{ 215, 200, 180, 255 });
+    const int rank = _meta.GetClassMasteryTier(cls);
+    const char* rankText = TextFormat("%s mastery rank %d of %d. Each rank opens another choice.",
+                                      className, rank, MetaProgressionManager::kMasteryRanks);
+    DrawText(rankText, (int)(sw * 0.5f - MeasureText(rankText, 22) * 0.5f), 206, 22, Color{ 170, 160, 150, 255 });
+
+    const std::vector<AbilityType> options = GetArmoryOptions(cls);
+    const AbilityType current = GetRunStarterAbility(cls);
+    for (int i = 0; i < (int)options.size(); ++i)
+    {
+        const AbilityType ability = options[(std::size_t)i];
+        const bool unlocked = IsArmoryOptionUnlocked(cls, i);
+        const bool equipped = ability == current;
+        const bool cursorHere = i == _armoryCursor;
+        const Rectangle card = ArmoryCardRect(i);
+
+        DrawRectangleRounded(card, 0.12f, 6, equipped ? Color{ 34, 58, 40, 235 }
+                                           : unlocked ? Color{ 56, 44, 34, 235 }
+                                           :            Color{ 34, 30, 30, 235 });
+        const Color border = cursorHere ? GOLD
+                           : equipped   ? Color{ 90, 200, 120, 255 }
+                           : unlocked   ? Color{ 200, 160, 100, 255 }
+                           :              Color{ 80, 75, 72, 255 };
+        if (cursorHere)
+            DrawRectangleRoundedLines(Rectangle{ card.x - 3.f, card.y - 3.f, card.width + 6.f, card.height + 6.f }, 0.12f, 6, border);
+        DrawRectangleRoundedLines(card, 0.12f, 6, border);
+
+        if (const Texture2D* icon = GetAbilityIcon(ability))
+        {
+            if (icon->id != 0)
+            {
+                const float box = 96.f;
+                const float scale = std::min(box / (float)icon->width, box / (float)icon->height);
+                const float iw = icon->width * scale, ih = icon->height * scale;
+                DrawTextureEx(*icon, Vector2{ card.x + 20.f + (box - iw) * 0.5f, card.y + 24.f + (box - ih) * 0.5f },
+                              0.f, scale, unlocked ? WHITE : Fade(WHITE, 0.3f));
+            }
+        }
+        DrawText(GetAbilityName(ability), (int)(card.x + 136.f), (int)(card.y + 28.f), 30,
+                 unlocked ? RAYWHITE : Color{ 140, 130, 130, 255 });
+        DrawText(GetAbilityDesc(ability), (int)(card.x + 136.f), (int)(card.y + 72.f), 22,
+                 unlocked ? Color{ 205, 198, 190, 255 } : Color{ 120, 112, 110, 255 });
+
+        const char* status = nullptr;
+        Color statusColor{ 200, 160, 100, 255 };
+        if (equipped)            { status = "STARTING ABILITY"; statusColor = Color{ 90, 200, 120, 255 }; }
+        else if (i == 0)         { status = "Class default"; }
+        else if (unlocked)       { status = "Available"; }
+        else if (i > rank)       { status = TextFormat("Mastery rank %d", i); statusColor = Color{ 150, 140, 135, 255 }; }
+        else                     { status = "Unlock it at Poe's altar"; statusColor = Color{ 190, 130, 200, 255 }; }
+        DrawText(status, (int)(card.x + 20.f), (int)(card.y + card.height - 48.f), 24, statusColor);
+    }
+
+    if (_armoryMessageTimer > 0.f && !_armoryMessage.empty())
+    {
+        const int fs = 26;
+        const int w = MeasureText(_armoryMessage.c_str(), fs);
+        DrawRectangle((int)(sw * 0.5f - w * 0.5f - 18.f), 866, w + 36, 44, Fade(BLACK, 0.6f));
+        DrawText(_armoryMessage.c_str(), (int)(sw * 0.5f - w * 0.5f), 875, fs, GOLD);
+    }
+
+    const char* hint = _gamepad.isActive
+        ? "D-Pad: Navigate    A: Choose    B: Back"
+        : "Arrows: Navigate    Enter / Click: Choose    ESC / E: Back";
+    DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, 24) * 0.5f), (int)(sh - 60.f), 24, Color{ 180, 168, 150, 255 });
+}
+
+void Engine::DrawMetaJournal()
+{
+    const float sw = (float)kVirtualWidth;
+    const Color heading{ 255, 170, 230, 255 };
+    const Color body{ 200, 195, 210, 255 };
+    const Color dim{ 130, 120, 140, 255 };
+    const Color cellPink{ 255, 120, 210, 255 };
+    const Color done{ 90, 200, 120, 255 };
+    const int ranks = MetaProgressionManager::kMasteryRanks;
+    int earned = 0, earnable = 0;
+
+    // -- Class mastery (left) ---------------------------------------------------
+    const float leftX = 110.f, top = 300.f, rowH = 96.f, leftW = 1000.f;
+    DrawText("CLASS MASTERY", (int)leftX, (int)top, 34, heading);
+    DrawText("Clear rooms (1 pt) and bosses (5 pts) to rank up. Rewards bank automatically.",
+             (int)leftX, (int)top + 42, 20, dim);
+    for (int i = 0; i < (int)PlayerClass::Count; ++i)
+    {
+        const PlayerClass cls = (PlayerClass)i;
+        const int tier      = _meta.GetClassMasteryTier(cls);
+        const int points    = _meta.GetClassMasteryProgress(cls);
+        const int prev      = MetaProgressionManager::GetMasteryThreshold(tier);
+        const int target    = _meta.GetClassMasteryTarget(cls);
+        const bool mastered = tier >= ranks;
+        for (int r = 1; r <= ranks; ++r)
+        {
+            earnable += MetaProgressionManager::GetMasteryReward(r);
+            if (r <= tier) earned += MetaProgressionManager::GetMasteryReward(r);
+        }
+
+        const float y = top + 84.f + i * rowH;
+        const bool current = (cls == _player.GetClass());
+        Rectangle row{ leftX - 16.f, y - 10.f, leftW, rowH - 12.f };
+        DrawRectangleRounded(row, 0.18f, 6, current ? Color{ 52, 34, 66, 235 } : Color{ 34, 28, 42, 225 });
+        if (current) DrawRectangleRoundedLines(row, 0.18f, 6, GOLD);
+
+        DrawText(GetPlayerClassInfo(cls).name, (int)leftX, (int)y, 30, current ? GOLD : RAYWHITE);
+        DrawText(TextFormat("Rooms %d   Bosses %d", _meta.GetClassRooms(cls), _meta.GetClassBosses(cls)),
+                 (int)leftX, (int)y + 40, 20, dim);
+
+        // Rank pips
+        for (int r = 0; r < ranks; ++r)
+            DrawPoly({ leftX + 262.f + r * 30.f, y + 16.f }, 4, 10.f, 0.f,
+                     r < tier ? heading : Color{ 70, 60, 80, 255 });
+
+        // Progress toward the next rank
+        const Rectangle bar{ leftX + 430.f, y + 6.f, 300.f, 20.f };
+        const float fill = mastered ? 1.f
+            : std::clamp((float)(points - prev) / (float)std::max(1, target - prev), 0.f, 1.f);
+        DrawRectangleRec(bar, Color{ 24, 18, 30, 255 });
+        DrawRectangleRec({ bar.x, bar.y, bar.width * fill, bar.height }, mastered ? done : cellPink);
+        DrawRectangleLinesEx(bar, 1.f, Color{ 90, 80, 100, 255 });
+        DrawText(mastered ? "MASTERED" : TextFormat("%d / %d", points, target),
+                 (int)bar.x, (int)(bar.y + 28.f), 20, mastered ? done : body);
+
+        if (!mastered)
+            DrawText(TextFormat("Rank %d: +%d cells", tier + 1, MetaProgressionManager::GetMasteryReward(tier + 1)),
+                     (int)(leftX + 760.f), (int)y + 4, 22, cellPink);
+    }
+
+    // -- Biome first clears (right) -----------------------------------------------
+    const float rightX = 1180.f, colW = 320.f, cellH = 92.f;
+    DrawText("FIRST BOSS CLEARS", (int)rightX, (int)top, 34, heading);
+    DrawText("Defeat each domain's boss once, with any class.", (int)rightX, (int)top + 42, 20, dim);
+    for (int b = 0; b < MetaProgressionManager::kBiomeCount; ++b)
+    {
+        const Biome biome = (Biome)b;
+        const bool cleared = _meta.HasClearedBiome(biome);
+        const int reward = MetaProgressionManager::GetBiomeFirstClearReward(biome);
+        earnable += reward;
+        if (cleared) earned += reward;
+
+        const float x = rightX + (b % 2) * (colW + 14.f);
+        const float y = top + 84.f + (b / 2) * (cellH + 12.f);
+        Rectangle card{ x - 12.f, y - 10.f, colW, cellH };
+        DrawRectangleRounded(card, 0.18f, 6, cleared ? Color{ 30, 62, 40, 235 } : Color{ 34, 28, 42, 225 });
+        DrawRectangleRoundedLines(card, 0.18f, 6, cleared ? done : Color{ 80, 75, 90, 255 });
+        DrawText(GetBiomeName(biome), (int)x, (int)y, 26, cleared ? RAYWHITE : body);
+        DrawText(cleared ? "CLEARED" : TextFormat("+%d cells", reward), (int)x, (int)y + 38, 22,
+                 cleared ? done : cellPink);
+    }
+
+    const char* total = TextFormat("Milestone cells earned: %d / %d", earned, earnable);
+    DrawText(total, (int)(sw * 0.5f - MeasureText(total, 26) * 0.5f), 950, 26, body);
+    if (!_meta.DidLastSaveSucceed())
+    {
+        const char* warning = "Progress could not be saved. Check available storage; returning to the village retries.";
+        DrawText(warning, (int)(sw * 0.5f - MeasureText(warning, 20) * 0.5f), 986, 20,
+                 Color{ 255, 170, 120, 255 });
+    }
+}
+
 // =============================================================================
 // Cursed Shrine — risk/reward blessing+curse pacts (#19)
 // =============================================================================
@@ -12115,8 +11473,8 @@ static const int kWagerTierCount = (int)(sizeof(kWagerTiers) / sizeof(kWagerTier
 
 Vector2 Engine::GetCurseShrinePos() const
 {
-    // East of Zeph, mirroring Poe's Altar on the west.
-    return { (float)kVirtualWidth * 0.70f, (float)kVirtualHeight * 0.42f };
+    // East of Zeph, mirroring Poe's altar on the west; set per camp on safe floor.
+    return _campShrinePos;
 }
 
 // ── Generic ChoiceCardScreen ────────────────────────────────────────────────
@@ -12253,13 +11611,19 @@ void Engine::DrawChoiceCards(const ChoiceCardScreen& s)
                      (int)(card.y + 82.f), 30, costCol);
         }
 
-        // Downside block (RISK / CURSE / COST).
-        DrawText(c.downsideHeader.c_str(), (int)(card.x + 30.f), (int)(card.y + 150.f), 24, Color{ 245, 100, 110, 255 });
-        DrawText(c.downsideText.c_str(),   (int)(card.x + 30.f), (int)(card.y + 186.f), 26, Color{ 240, 200, 205, 255 });
+        // Downside block (RISK / CURSE / COST); a card without one (Rest Site)
+        // lifts its upside block into the space.
+        const bool hasDownside = !c.downsideText.empty();
+        if (hasDownside)
+        {
+            DrawText(c.downsideHeader.c_str(), (int)(card.x + 30.f), (int)(card.y + 150.f), 24, Color{ 245, 100, 110, 255 });
+            DrawText(c.downsideText.c_str(),   (int)(card.x + 30.f), (int)(card.y + 186.f), 26, Color{ 240, 200, 205, 255 });
+        }
 
         // Upside block (REWARD).
-        DrawText(c.upsideHeader.c_str(), (int)(card.x + 30.f), (int)(card.y + 300.f), 24, Color{ 120, 235, 150, 255 });
-        DrawText(c.upsideText.c_str(),   (int)(card.x + 30.f), (int)(card.y + 336.f), 26, Color{ 205, 240, 210, 255 });
+        const float upY = hasDownside ? 300.f : 170.f;
+        DrawText(c.upsideHeader.c_str(), (int)(card.x + 30.f), (int)(card.y + upY), 24, Color{ 120, 235, 150, 255 });
+        DrawText(c.upsideText.c_str(),   (int)(card.x + 30.f), (int)(card.y + upY + 36.f), 26, Color{ 205, 240, 210, 255 });
 
         if (sel)
         {
@@ -12372,30 +11736,60 @@ void Engine::RollDungeonRoomSpecials()
     int keyIdx   = _dungeonGen.GetKeyIndex();   // KEY room stays type Standard — must skip it
 
     // Collect eligible Standard rooms. Skip start/boss/key so a decision room
-    // never overwrites the gem room or a structural room.
-    std::vector<int> candidates;
+    // never overwrites the gem room or a structural room. Holdout and Swarm
+    // rooms carry the domain's combat rhythm, so they are used only as a last
+    // resort.
+    std::vector<int> candidates, rhythmRooms;
     for (int i = 0; i < (int)rooms.size(); i++)
         if (i != startIdx && i != bossIdx && i != keyIdx &&
             rooms[i].type == RoomType::Standard)
-            candidates.push_back(i);
+        {
+            const bool rhythm = rooms[i].encounterProfile == EncounterProfile::Holdout ||
+                                rooms[i].encounterProfile == EncounterProfile::Swarm;
+            (rhythm ? rhythmRooms : candidates).push_back(i);
+        }
 
-    for (int i = (int)candidates.size() - 1; i > 0; i--)
-        std::swap(candidates[i], candidates[GetRandomValue(0, i)]);
-
-    int count = candidates.empty() ? 0 : (1 + (GetRandomValue(0, 1)));   // 1, sometimes 2
-    count = std::min(count, (int)candidates.size());
-
-    for (int n = 0; n < count; n++)
+    auto shuffle = [](auto& list)
     {
-        DungeonRoomState& st = _dungeonRoomStates[candidates[n]];
-        st.special = RoomSpecialType::RiskShrine;
-        // Offer all three contracts for now (with only 3 authored, no sub-roll).
-        st.specialOptions[0] = 0;
-        st.specialOptions[1] = 1;
-        st.specialOptions[2] = 2;
-        st.specialClaimed = false;
-        st.specialChoice  = -1;
+        for (int i = (int)list.size() - 1; i > 0; i--)
+            std::swap(list[i], list[GetRandomValue(0, i)]);
+    };
+    shuffle(candidates);
+    shuffle(rhythmRooms);
+    candidates.insert(candidates.end(), rhythmRooms.begin(), rhythmRooms.end());
+
+    // A Rest Site in every domain from the second on, in the deepest free room
+    // so it tends to sit on the way to the boss.
+    bool restSiteTagged = false;
+    if (_worldZone >= 1 && !candidates.empty())
+    {
+        auto deepest = std::max_element(candidates.begin(), candidates.end(),
+            [&](int a, int b) { return rooms[a].depth < rooms[b].depth; });
+        TagRoomSpecial(_dungeonRoomStates[*deepest], RoomSpecialType::RestSite);
+        candidates.erase(deepest);
+        restSiteTagged = true;
     }
+
+    // Then the domain's events, never the same twice in a domain. The
+    // build-shaping ones (Mutation Altar, Relic Forge) wait for the second
+    // domain, when there is a build to reshape.
+    std::vector<RoomSpecialType> events = { RoomSpecialType::RiskShrine, RoomSpecialType::CursedReward,
+                                            RoomSpecialType::OmenProphecy, RoomSpecialType::LockedArmory };
+    if (_worldZone >= 1)
+    {
+        events.push_back(RoomSpecialType::MutationAltar);
+        events.push_back(RoomSpecialType::RelicForge);
+    }
+    shuffle(events);
+    // Special rooms per domain, rest site included: a small budget in the early
+    // domains, a larger one from Balance::Rooms::kSpecialsLateFromZone on.
+    const int specialBudget = _worldZone < Balance::Rooms::kSpecialsLateFromZone
+        ? Balance::Rooms::kSpecialsEarly : Balance::Rooms::kSpecialsLate;
+    int count = std::max(0, specialBudget - (restSiteTagged ? 1 : 0));
+    if (candidates.empty()) count = 0;
+    count = std::min({ count, (int)candidates.size(), (int)events.size() });
+    for (int n = 0; n < count; n++)
+        TagRoomSpecial(_dungeonRoomStates[candidates[n]], events[n]);
 }
 
 void Engine::OpenDecisionRoom()
@@ -12429,6 +11823,8 @@ void Engine::OpenDecisionRoom()
             _decisionScreen.cards.push_back(c);
         }
     }
+    else
+        BuildRoomEventCards(st);   // Cursed Cache, Omen Stone, Armory, Altar, Forge, Rest
 
     OpenChoiceCards(_decisionScreen);
     _gameState = GameState::DecisionRoom;
@@ -12444,11 +11840,16 @@ void Engine::UpdateDecisionRoom()
         return;
     }
     if (_decisionScreen.result >= 0)
+        ApplyDecisionChoice(_decisionScreen.result);
+}
+
+void Engine::ApplyDecisionChoice(int card)
+{
     {
         DungeonRoomState& st = _dungeonRoomStates[_dungeonRoomIdx];
         if (st.special == RoomSpecialType::RiskShrine)
         {
-            int ci = st.specialOptions[_decisionScreen.result];
+            int ci = card >= 0 && card < 3 ? st.specialOptions[card] : -1;
             if (ci >= 0 && ci < kRiskContractCount)
             {
                 const RiskContract& rc = kRiskContracts[ci];
@@ -12464,10 +11865,16 @@ void Engine::UpdateDecisionRoom()
                 _runModifiers.push_back(m);
             }
         }
+        else if (!ApplyRoomEventChoice(st, card))
+        {
+            _gameState = GameState::DungeonRun;   // nothing taken: the shrine stays open
+            return;
+        }
         st.specialClaimed = true;
-        st.specialChoice  = _decisionScreen.result;
+        st.specialChoice  = card;
         if (_audioInitialised) SfxBank::Get().Play(SfxId::UIConfirm, 0.7f);
         _gameState = GameState::DungeonRun;
+        SaveRunCheckpoint();   // the room is spent: resuming must not offer it again
     }
 }
 
@@ -12509,11 +11916,13 @@ void Engine::ResolveActiveModifiersOnRoomClear()
     std::string lastName;
     std::string shopContractResult;
     bool resolvedAny = false;
+    bool lastWasCurse = false;
     for (auto it = _runModifiers.begin(); it != _runModifiers.end(); )
     {
         if (it->active && --it->roomsRemaining <= 0)
         {
             lastName = it->label;
+            lastWasCurse = it->curse;
             resolvedAny = true;
 
             if (it->shopContract != ShopContractType::Count)
@@ -12531,7 +11940,8 @@ void Engine::ResolveActiveModifiersOnRoomClear()
                 {
                     float limit = (_currentRoomType == RoomType::Boss) ? 150.f
                                 : (_currentRoomType == RoomType::Elite) ? 75.f : 50.f;
-                    succeeded = (float)(GetTime() - _roomEnterTime) <= limit;
+                    // Active combat time: pausing, menus and reward screens never count.
+                    succeeded = _roomCombatSeconds <= limit;
                     break;
                 }
                 default: break;
@@ -12541,15 +11951,7 @@ void Engine::ResolveActiveModifiersOnRoomClear()
                 {
                     if (it->shopContract == ShopContractType::Untouched)
                     {
-                        AbilityType target = AbilityType::None;
-                        int lowestLevel = 999;
-                        for (AbilityType ability : kAllAbilities)
-                        {
-                            if (IsUltimateAbility(ability) || !_player.HasLearnedAbility(ability) ||
-                                !_player.CanUpgradeAbility(ability)) continue;
-                            int level = _player.GetAbilityLevel(ability);
-                            if (level < lowestLevel) { lowestLevel = level; target = ability; }
-                        }
+                        const AbilityType target = FindWeakestUpgradableAbility();
                         if (target != AbilityType::None)
                             _player.UpgradeAbility(target);
                         else
@@ -12581,9 +11983,18 @@ void Engine::ResolveActiveModifiersOnRoomClear()
         _contractToastText  = shopContractResult;
         _contractToastTimer = 4.f;
     }
+    else if (resolvedAny && lastWasCurse)
+    {
+        EarnFeat(Feat::CurseBreaker);
+        _contractToastText  = "CURSE LIFTED: " + lastName;
+        _contractToastTimer = 4.f;
+    }
     else if (resolvedAny)
     {
-        _contractToastText  = TextFormat("%s HONORED   +%d gold   +%d XP", lastName.c_str(), bonusGold, bonusXp);
+        std::string text = lastName + " HONORED";
+        if (bonusGold != 0) text += TextFormat("   %+d gold", bonusGold);
+        if (bonusXp != 0)   text += TextFormat("   %+d XP", bonusXp);
+        _contractToastText  = text;
         _contractToastTimer = 4.f;
     }
 
@@ -12617,6 +12028,7 @@ void Engine::OpenRelicChoice()
     {
         RelicType t = (RelicType)i;
         if (_player.HasRelic(t)) continue;
+        if (!RelicFitsClass(t, _player.GetClass())) continue;   // no dead elemental picks
         int w = (GetRelicInfo(t).rarity == RelicRarity::Common) ? 6
               : (GetRelicInfo(t).rarity == RelicRarity::Rare)   ? 3 : 1;
         pool.push_back(t);
@@ -12645,6 +12057,7 @@ void Engine::OpenRelicChoice()
     _relicChoiceCursor    = 0;
     _relicChoiceOpenTimer = 0.25f;
     _gameState            = GameState::RelicChoice;
+    SfxBank::Get().Play(SfxId::RelicReveal, 0.5f, false);
 }
 
 void Engine::UpdateRelicChoice()
@@ -12684,18 +12097,22 @@ void Engine::UpdateRelicChoice()
     }
 
     if (confirm)
-    {
-        GrantRelic(_relicChoices[_relicChoiceCursor]);
-        if (_audioInitialised) PlaySound(_pickupSound);
-        _pendingRelicChoices--;
-        _gameState = GameState::DungeonRun;
-    }
+        ConfirmRelicChoice(_relicChoiceCursor);
+}
+
+void Engine::ConfirmRelicChoice(int choiceIndex)
+{
+    if (choiceIndex < 0 || choiceIndex >= 3) return;
+    GrantRelic(_relicChoices[choiceIndex]);
+    if (_audioInitialised) SfxBank::Get().Play(SfxId::RelicGained, 0.6f);
+    _pendingRelicChoices--;
+    _gameState = GameState::DungeonRun;
 }
 
 void Engine::DrawRelicChoice()
 {
     const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
-    DrawScrollingCheckerboard(sw, sh, Color{ 18, 20, 32, 255 }, Color{ 26, 28, 42, 255 }, 16.f, 11.f);
+    DrawScrollingCheckerboard(sw, sh, Color{ 112, 40, 52, 255 }, Color{ 136, 56, 66, 255 }, 16.f, 11.f);  // relic choice: crimson
     DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.4f));
 
     const char* title = "CHOOSE A RELIC";
@@ -12783,11 +12200,37 @@ void Engine::DrawRelicChoice()
     DrawText(hint, (int)(sw * 0.5f - MeasureText(hint, 24) * 0.5f), (int)(sh - 56.f), 24, Color{ 185, 185, 205, 220 });
 }
 
+void Engine::UpdateHowToPlayMouse(float dt)
+{
+    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
+    _htpSlideOffset *= (1.f - std::min(dt * 14.f, 1.f));
+    if (!IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) return;
+    const float tabW = sw * 0.175f, tabGap = sw * 0.012f;
+    const float tabStartX = (sw - 4.f * tabW - 3.f * tabGap) * 0.5f;
+    for (int i = 0; i < 4; ++i)
+    {
+        Rectangle tab{tabStartX + i * (tabW + tabGap), sh * 0.103f, tabW, sh * 0.063f};
+        if (i != _htpTab && CheckCollisionPointRec(GetVirtualMousePos(), tab))
+        {
+            _htpSlideOffset = (i > _htpTab ? 1.f : -1.f) * sw * 0.12f;
+            _htpTab = i;
+            StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+            return;
+        }
+    }
+    Rectangle back{sw * 0.43f, sh * 0.929f, sw * 0.14f, sh * 0.055f};
+    if (CheckCollisionPointRec(GetVirtualMousePos(), back))
+    {
+        StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
+        if (_howToPlayFrom == GameState::Menu) _menu.Init();
+        _runState.ReturnFromHowToPlay();
+    }
+}
+
 void Engine::DrawHowToPlay()
 {
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
-    const float dt = GetFrameTime();
 
     // -- Font sizes -----------------------------------------------------------
     const int titleSz  = (int)(sh * 0.062f);
@@ -12796,14 +12239,11 @@ void Engine::DrawHowToPlay()
     const int descSz   = (int)(sh * 0.022f);
     const int tabSz    = (int)(sh * 0.026f);
 
-    // -- Slide animation ------------------------------------------------------
-    _htpSlideOffset *= (1.f - std::min(dt * 14.f, 1.f));
-
     // -- Background -----------------------------------------------------------
     DrawScrollingCheckerboard(sw, sh,
-        Color{ 96, 34, 86, 255 },
-        Color{ 132, 54, 116, 255 },
-        22.f, 12.f);
+        Color{ 22, 96, 100, 255 },
+        Color{ 30, 124, 128, 255 },
+        22.f, 12.f);   // how to play: teal
 
     // -- Title bar ------------------------------------------------------------
     const float titleBarH = sh * 0.095f;
@@ -12854,12 +12294,6 @@ void Engine::DrawHowToPlay()
             (int)(tabBarY + tabBarH / 2.f - tabSz / 2.f),
             tabSz, textCol);
 
-        if (tabHov && !isActive && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-        {
-            _htpSlideOffset = (i > _htpTab ? 1.f : -1.f) * sw * 0.12f;
-            _htpTab = i;
-            StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
-        }
     }
 
     // -- Content panel --------------------------------------------------------
@@ -12870,7 +12304,18 @@ void Engine::DrawHowToPlay()
     Rectangle panelRect = { panelX, panelY, panelW, panelH };
 
     if (_htpBorderTex.id != 0)
-        DrawNineSliceEx(_htpBorderTex, 62.8f, 15.3f, 19.5f, 18.1f, 16.f, panelRect, Fade(WHITE, 0.88f));
+    {
+        // The book is painted, not sliced: trim its transparent top rows and draw it whole at 2x.
+        static constexpr float kBookTrimTop = 56.f;
+        static constexpr float kBookScale   = 2.f;
+        const Rectangle bookSrc{ 0.f, kBookTrimTop, (float)_htpBorderTex.width,
+                                 (float)_htpBorderTex.height - kBookTrimTop };
+        const float bookW = bookSrc.width * kBookScale;
+        const float bookH = bookSrc.height * kBookScale;
+        const Rectangle bookDst{ panelRect.x + (panelRect.width - bookW) * 0.5f,
+                                 panelRect.y + (panelRect.height - bookH) * 0.5f, bookW, bookH };
+        DrawTexturePro(_htpBorderTex, bookSrc, bookDst, {}, 0.f, Fade(WHITE, 0.88f));
+    }
     else
         DrawRectangleRounded(panelRect, 0.04f, 8, Fade(Color{ 45, 12, 52, 255 }, 0.88f));
 
@@ -13225,69 +12670,8 @@ void Engine::DrawHowToPlay()
         (int)(btnY + btnH / 2.f - backLabelSz / 2.f),
         backLabelSz, Color{ 255, 243, 214, 255 });
 
-    if (hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-    {
-        StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
-        if (_howToPlayFrom == GameState::Menu)
-            _menu.Init();
-        _runState.ReturnFromHowToPlay();
-    }
 }
 
-
-Vector2 Engine::GetRandomPropPosition()
-{
-    float mapW = _map.width * _mapScale;
-    float mapH = _map.height * _mapScale;
-    Vector2 playerStart{ mapW * 0.5f, mapH * 0.5f };
-
-    // One full player unit of clearance from every map edge.
-    // Player sprite is 32 px wide at draw scale 6 ? 192 world-space pixels.
-    // The bottom margin is larger because prop positions are top-left corners,
-    // so tall props (trees) would otherwise hang off the bottom edge.
-    const float margin       = 32.f * 6.f;         // 192 px - sides and top
-    const float bottomMargin = margin * 1.5f;       // 288 px - bottom
-    float minX = margin;
-    float maxX = mapW - margin;
-    float minY = margin;
-    float maxY = mapH - bottomMargin;
-
-    float minSpacing = 308.f;
-    float playerSafeRadius = 320.f;
-    int attempts = 0;
-    const int maxAttempts = 50;
-
-    while (attempts < maxAttempts)
-    {
-        Vector2 pos{};
-        pos.x = (float)GetRandomValue((int)minX, (int)maxX);
-        pos.y = (float)GetRandomValue((int)minY, (int)maxY);
-
-        bool tooClose = false;
-
-        if (Vector2Distance(pos, playerStart) < playerSafeRadius)
-            tooClose = true;
-
-        for (auto& prop : _props)
-        {
-            if (Vector2Distance(pos, prop.GetWorldPos()) < minSpacing)
-            {
-                tooClose = true;
-                break;
-            }
-        }
-
-        if (!tooClose)
-            return pos;
-
-        attempts++;
-    }
-
-    Vector2 fallback{};
-    fallback.x = (float)GetRandomValue((int)minX, (int)maxX);
-    fallback.y = (float)GetRandomValue((int)minY, (int)maxY);
-    return fallback;
-}
 
 const char* Engine::GetBiomeName(Biome biome) const
 {
@@ -13447,72 +12831,20 @@ void Engine::LoadDungeonVisualVariantAssets(int variantIdx, TileDefSet& defs, Ti
 // Gameplay still uses the original Biome enum; these variants are art only.
 void Engine::LoadTilesetForBiome(Biome biome)
 {
+    switch (biome)
+    {
+    case Biome::Forest: case Biome::Jungle: case Biome::Graveyard:
+        SfxBank::Get().SetFootSurface(FootSurface::Grass); break;
+    case Biome::AncientCastle: case Biome::TheSanctuary: case Biome::LostCity: case Biome::DreamRealm:
+        SfxBank::Get().SetFootSurface(FootSurface::Stone); break;
+    default:
+        SfxBank::Get().SetFootSurface(FootSurface::Dirt); break;
+    }
     LoadDungeonVisualVariants(biome);
     AssignDungeonVisualVariantWings();
     int roomIdx = _dungeonRoomIdx >= 0 ? _dungeonRoomIdx : _dungeonGen.GetStartIndex();
     _currentDungeonVisualVariant = GetDungeonVisualVariantForRoom(roomIdx);
     LoadDungeonVisualVariantAssets(_currentDungeonVisualVariant, _tileDefs, _tileRenderer);
-}
-
-void Engine::PopulatePropsForBiome(Biome biome)
-{
-    _props.clear();
-
-    // Boss and Store rooms are open arenas - no props
-    if (_currentRoomType == RoomType::Boss || _currentRoomType == RoomType::Store)
-        return;
-
-    if (biome == Biome::Forest)
-    {
-        // Forest props are all solid blockers, so a mixed random rotation is
-        // enough to make each pass through the biome read differently without
-        // changing the existing prop/pathfinding systems.
-        int propCount = GetRandomValue(4, 6);
-        for (int i = 0; i < propCount; ++i)
-        {
-            Vector2 pos = GetRandomPropPosition();
-            int choice = GetRandomValue(0, 3);
-            if (choice == 0)
-            {
-                _props.push_back(Prop{ pos, _treeTex, 1, 0, 0, 4.8f });
-                _props.back().SetCollisionTopFraction(0.25f);
-                _props.back().SetCollisionSideFraction(0.30f);
-            }
-            else if (choice == 1)
-            {
-                _props.push_back(Prop{ pos, _smallTreeTex, 1, 0, 0, 4.8f });
-                _props.back().SetCollisionTopFraction(0.25f);
-                _props.back().SetCollisionSideFraction(0.30f);
-            }
-            else if (choice == 2)
-            {
-                _props.push_back(Prop{ pos, _rockTex, 1, 0, 0, 4.f });
-            }
-            else
-            {
-                _props.push_back(Prop{ pos, _bigRockTex, 1, 0, 0, 3.2f });
-            }
-        }
-        return;
-    }
-
-    // Dungeon keeps the original authored mix of pillars and torches.
-    int propCount = GetRandomValue(7, 10);
-    int pillarCount = propCount - 3;
-
-    for (int i = 0; i < pillarCount; ++i)
-    {
-        Vector2 pos = GetRandomPropPosition();
-        _props.push_back(Prop{ pos, _pillarTex });
-    }
-    for (int i = 0; i < 2; ++i)
-    {
-        Vector2 pos = GetRandomPropPosition();
-        _props.push_back(Prop{ pos, _torchTex, 8, 32, 29, 2.5f });
-    }
-
-    Vector2 pos = GetRandomPropPosition();
-    _props.push_back(Prop{ pos, _pillarTorchTex, 8, 32, 52, 3.f, 1.f / 10.f, 17 });
 }
 
 void Engine::ApplyBiome(Biome biome)
@@ -13528,10 +12860,13 @@ void Engine::ApplyBiome(Biome biome)
     // Forest-family biomes use the forest map; all others use the dungeon map.
     // New biome maps can be wired in here when the art is ready.
     bool useForestMap = (biome == Biome::Forest || biome == Biome::Jungle);
-    if (useForestMap)
-        _map = LoadTexture(AssetPath("ForestLevel/ForestMap.png").c_str());
-    else
-        _map = LoadTexture(AssetPath("TileSet/Map.png").c_str());
+    std::string mapPath = AssetPath(useForestMap ? "ForestLevel/ForestMap.png" : "TileSet/Map.png");
+    // The supplied asset pack stores the legacy arena at the root. A missing
+    // old path must not produce a zero-sized world during initial run reset.
+    if (!FileExists(mapPath.c_str())) mapPath = AssetPath("Map.png");
+    _map = LoadTexture(mapPath.c_str());
+    if (_map.id == 0 || _map.width <= 0 || _map.height <= 0)
+        throw std::runtime_error("Required arena map could not be loaded: " + mapPath);
 
     // Compute the map scale for the current screen size.
     // WorldConfig derives the correct scale from mode + texture dimensions,
@@ -13540,7 +12875,6 @@ void Engine::ApplyBiome(Biome biome)
     _mapScale = _worldConfig.GetScale();
 
     _currentBiome = biome;
-    PopulatePropsForBiome(biome);
     {
         std::vector<Rectangle> propRects;
         propRects.reserve(_props.size() + 1);
@@ -13559,91 +12893,6 @@ void Engine::ApplyBiome(Biome biome)
     // Biome swaps happen between waves, so recentering the player gives them
     // a clean neutral start in the new arena before enemies spawn in.
     _player.SetWorldPos(Vector2{ _map.width * _mapScale * 0.5f, _map.height * _mapScale * 0.5f });
-}
-
-void Engine::UpdateBiomeTransition(float dt)
-{
-    if (!_biomeTransitionActive)
-        return;
-
-    float totalDuration = kBiomeFadeOutDuration + kBiomeFadeInDuration;
-    float previousElapsed = totalDuration - _biomeTransitionTimer;
-    _biomeTransitionTimer = std::max(0.f, _biomeTransitionTimer - dt);
-    float currentElapsed = totalDuration - _biomeTransitionTimer;
-
-    if (!_biomeTransitionSwapped &&
-        previousElapsed < kBiomeFadeOutDuration &&
-        currentElapsed >= kBiomeFadeOutDuration)
-    {
-        ApplyBiome(_pendingBiome);
-        _nav.RefreshSync(_player.GetFeetWorldPos());
-        _biomeTransitionSwapped = true;
-    }
-
-    if (_biomeTransitionTimer <= 0.f)
-    {
-        _biomeTransitionActive = false;
-        _biomeTransitionSwapped = false;
-    }
-}
-
-float Engine::GetBiomeTransitionAlpha() const
-{
-    if (!_biomeTransitionActive)
-        return 0.f;
-
-    float totalDuration = kBiomeFadeOutDuration + kBiomeFadeInDuration;
-    float elapsed = totalDuration - _biomeTransitionTimer;
-    if (elapsed < kBiomeFadeOutDuration)
-        return elapsed / kBiomeFadeOutDuration;
-
-    float fadeInElapsed = elapsed - kBiomeFadeOutDuration;
-    return 1.f - std::min(1.f, fadeInElapsed / kBiomeFadeInDuration);
-}
-
-void Engine::RespawnOutOfBoundsEnemies()
-{
-    float mapW = _map.width  * _mapScale;
-    float mapH = _map.height * _mapScale;
-    const float hardMargin = 60.f;   // enemy is truly outside if beyond this
-
-    for (auto& enemy : _enemies)
-    {
-        if (!enemy->IsActive())
-            continue;
-        if (enemy->IsDying() || !enemy->IsAlive())
-            continue;
-
-        Vector2 pos = enemy->GetWorldPos();
-        bool outOfBounds = pos.x < hardMargin || pos.y < hardMargin ||
-                           pos.x > mapW - hardMargin || pos.y > mapH - hardMargin;
-
-        if (!outOfBounds)
-            continue;
-
-        // Find a valid position away from props, other enemies, and the player
-        Vector2 newPos{};
-        bool found = false;
-
-        for (int attempt = 0; attempt < 50; ++attempt)
-        {
-            newPos.x = (float)GetRandomValue(300, (int)(mapW - 300));
-            newPos.y = (float)GetRandomValue(300, (int)(mapH - 300));
-
-            if (!IsSpawnPositionValid(newPos))
-                continue;
-
-            // Also keep a safe distance from the player
-            if (Vector2Distance(newPos, _player.GetWorldPos()) < 300.f)
-                continue;
-
-            found = true;
-            break;
-        }
-
-        if (found)
-            enemy->Teleport(newPos);
-    }
 }
 
 bool Engine::IsSpawnPositionValid(Vector2 pos)
@@ -13710,6 +12959,9 @@ void Engine::ResetRunState()
     _wave          = 0;
     _enemiesKilled = 0;
     _bossesDefeated = 0;
+    _runRoomsCleared = 0;
+    _runElitesSlain = 0;
+    _runTimer = 0.f;
     _gameTimer = 0.f;
     _playerDying = false;
     _awaitingStartingAbility = false;
@@ -13717,19 +12969,21 @@ void Engine::ResetRunState()
     _startingAbilityPickCount = 0;
     for (int i = 0; i < 6; i++)
         _startingAbilitySelected[i] = false;
+    _dungeonTutStep      = DungeonTutStep::Done;
+    _dungeonTutFlash     = 0.f;
     _waveStarting        = true;
     _wave1LevelUpDone    = false;
     _bossWarningTimer    = 0.f;
-    _biomeTransitionActive = false;
-    _biomeTransitionSwapped = false;
-    _biomeTransitionTimer = 0.f;
     _ultimatePhase       = UltimatePhase::None;
     _ultimatePhaseTimer  = 0.f;
     _ultimateCircleAngle = 0.f;
     _warriorVfx.clear();
     _mageSpellFields.clear();
-    CancelAbilityAim();
+    _abilityAimPreview = AbilityAimPreview{};
+    _abilityHold = AbilityHold{};
     _lifestealAccum      = 0.f;
+    _hitDamageCarry      = 0.f;
+    _hitCarryStaged      = false;
     _showUltimateRow     = false;
     _ultimateRowPicked   = false;
     _regularRowPicked    = false;
@@ -13749,19 +13003,16 @@ void Engine::ResetRunState()
     _roomClearTimer     = 0.f;
     _pendingExp             = 0.f;
     _expTallyAccum          = 0.f;
-    _expTallyDone           = false;
-    _tallyStartLevel        = 1;
     _tallyLevelUpsRemaining = 0;
-    _tallyChoiceChaining    = false;
-    _currentMapNodeIdx  = -1;
-    _mapKeySelectedIdx  = -1;
-    _mapOpenTimer       = 0.f;
-    _actMap.clear();
 
     _isMainGameRun = false;
 
     // World map run state
     _worldZone = 0;
+    _shopStockZone = -1;
+    _atCrossroads = false;
+    _crossroadsLeaving = false;
+    _pendingPathBoon = PathBoon::Count;
     _worldCompletedBiomes.clear();
     _worldChosenNodeIndices.clear();
     _worldMap.Reset();
@@ -13790,6 +13041,7 @@ void Engine::ResetRunState()
     _spreadProjectiles.clear();
     _ultimateBlasts.clear();
     _lavaBalls.clear();
+    _volleyWindups.clear();
     _enemyProjectiles.clear();
     _poisonClouds.clear();
     _cyclopsLasers.clear();
@@ -13798,32 +13050,32 @@ void Engine::ResetRunState()
     _lastPlayerLevel = _player.GetLevel();   // avoid a false level-up flash on run start
     _lastPlayerHp    = _player.GetHealthValue();
     _slowMoTimer = 0.f; _critFocusTimer = 0.f; _screenFlashTimer = 0.f;
+    _combatImpactGate = CombatImpactGate{};
+    _hitStopTimer = 0.f;
+    _shakeTimer = _shakeDuration = _shakeStrength = 0.f;
+    _shakeOffset = Vector2Zero();
     _playerHurtTimer = 0.f; _deathVignette = 0.f;
     _displayGold = (float)_player.GetGold();  _displayCells = (float)_player.GetCells();
     _displayHpPct = 1.f; _displayManaPct = 1.f;
     _vfx.Clear();
     _damageNumbers.Clear();
-    _player.SetClass(selectedClass);
-    _player.SetAppearance(selectedAppearance.c_str());
-    _player.Init();
-
-    // Meta progression: permanent unlocks + gold retained from the last death.
-    _player.ApplyMetaBonuses(
-        _meta.GetStartingGoldBonus() + _meta.TakeGoldCarryover(),
-        _meta.GetVitalityBonus(),
-        _meta.GetManaRegenMultiplier(),
-        _meta.HasFifthAbilitySlot(),
-        _meta.HasSixthAbilitySlot(),
-        _meta.GetStartingArmourBonus());
-
-    _player.SetCellGainMultiplier(_meta.GetCellGainMultiplier());   // Echo Surge
-
-    // Heirloom: begin the run already holding one random relic.
-    if (_meta.HasStartingRelic())
-        GrantRelic(RollRandomRelic());
-
-    // Second Wind: one free revive per run.
-    _secondWindAvailable = _meta.HasSecondWind();
+    // A character prepared on village arrival (PrepareNextRun) already carries
+    // this run's Zeph/Poe purchases; re-initialising it here would wipe them.
+    if (!_nextRunPrepared)
+    {
+        // The wallet is never touched by a reset: gold only changes through
+        // spending, death (Deep Pockets) and run-start grants (Stipend).
+        const int wallet = _player.GetGold();
+        _player.SetClass(selectedClass);
+        _player.SetAppearance(selectedAppearance.c_str());
+        _player.Init();
+        _player.SetGold(wallet);
+        // Every Poe's altar effect (stats and one-shot grants) is applied in
+        // GrantRunStartBonuses() when the run actually begins, so unlocks bought
+        // in the village after this reset still count for the very next run,
+        // and menu or village round trips can never farm them.
+    }
+    _secondWindAvailable = false;
 
     // Cursed Shrine / Wager: reset run-wide modifiers + the per-biome wager.
     _runPlayerDamageMult = 1.f;
@@ -13833,7 +13085,7 @@ void Engine::ResetRunState()
     _player.SetWagerRewardMult(1.f);
     _curseShrineUsed     = false;
     _nearCurseShrine     = false;
-    _wagerAccessGranted  = false;   // earned only by choosing "push onward" after a boss
+    _wagerAccessGranted  = false;   // re-armed at each Zeph camp after the Forest
     ClearRunModifiers();            // death/new run drops all Risk Shrine contracts
     _pendingRelicChoices = 0;
 
@@ -13874,9 +13126,122 @@ int Engine::GetActiveEnemyCount() const
     return _combatDirector.GetActiveEnemyCount(_enemies);
 }
 
+// -- Boss intro (Werewolf first) -----------------------------------------------
+// The boss drops in while the room is frozen, roars, shows its name, then the
+// fight starts. IsBossFightActive stays false until the intro ends, so the boss
+// track starts with the fight, not during the intro.
+void Engine::StartBossIntro(Enemy& boss)
+{
+    _bossIntroActive   = true;
+    _bossIntroTimer    = 0.f;
+    _bossIntroSkipHold = 0.f;
+    _bossIntroLanded   = false;
+    _bossIntroRoared   = false;
+    _bossIntroBoss     = &boss;
+    _bossIntroRest     = boss.GetWorldPos();
+    boss.SetWorldPosition(Vector2{ _bossIntroRest.x, _bossIntroRest.y - Balance::BossIntro::kDropHeight });
+}
+
+void Engine::UpdateBossIntro(float dt)
+{
+    using namespace Balance::BossIntro;
+
+    // Skip: only after the first viewing, by holding attack (mouse or bound key).
+    const KeyBindings& bindings = _player.GetBindings();
+    const bool holdingSkip = IsMouseButtonDown(MOUSE_LEFT_BUTTON) ||
+                             (bindings.attack != KEY_NULL && IsKeyDown(bindings.attack));
+    if (_bossIntroSeen && holdingSkip)
+    {
+        _bossIntroSkipHold += dt;
+        if (_bossIntroSkipHold >= kSkipHoldSeconds)
+        {
+            EndBossIntro();
+            return;
+        }
+    }
+    else
+        _bossIntroSkipHold = 0.f;
+
+    _bossIntroTimer += dt;
+    if (_bossIntroBoss == nullptr)
+    {
+        _bossIntroActive = false;
+        return;
+    }
+
+    if (!_bossIntroLanded)
+    {
+        if (_bossIntroTimer < kDropSeconds)
+        {
+            const float f = _bossIntroTimer / kDropSeconds;
+            const float height = (1.f - f) * (1.f - f);   // fast at the start, eases onto the ground
+            _bossIntroBoss->SetWorldPosition(Vector2{ _bossIntroRest.x, _bossIntroRest.y - kDropHeight * height });
+        }
+        else
+        {
+            _bossIntroLanded = true;
+            _bossIntroBoss->SetWorldPosition(_bossIntroRest);
+            TriggerScreenShake(kLandShake, kLandShakeSeconds);
+        }
+    }
+    if (!_bossIntroRoared && _bossIntroTimer >= kRoarAt)
+    {
+        _bossIntroRoared = true;
+        TriggerScreenShake(kRoarShake, kRoarShakeSeconds);
+    }
+    if (_bossIntroTimer >= kRoarAt + kBannerSeconds)
+        EndBossIntro();
+}
+
+void Engine::EndBossIntro()
+{
+    if (_bossIntroBoss != nullptr)
+        _bossIntroBoss->SetWorldPosition(_bossIntroRest);
+    _bossIntroActive = false;
+    _bossIntroBoss   = nullptr;
+    _bossIntroSeen   = true;
+}
+
+void Engine::DrawBossIntro() const
+{
+    if (!_bossIntroActive) return;
+    using namespace Balance::BossIntro;
+    const float sw = (float)kVirtualWidth;
+    const float sh = (float)kVirtualHeight;
+
+    // Name banner: a dark red band across the middle, fading in and out.
+    const float age = _bossIntroTimer - kRoarAt;
+    if (age >= 0.f)
+    {
+        const float fadeIn  = std::min(1.f, age / kBannerFadeSeconds);
+        const float fadeOut = std::min(1.f, std::max(0.f, (kBannerSeconds - age) / kBannerFadeSeconds));
+        const float alpha   = std::min(fadeIn, fadeOut);
+        const float bandY   = sh * kBannerBandY;
+        const Color edge    = Fade(Color{ 220, 60, 60, 255 }, alpha);
+        DrawRectangle(0, (int)bandY, (int)sw, (int)kBannerBandHeight, Fade(Color{ 20, 0, 0, 220 }, alpha));
+        DrawRectangle(0, (int)bandY, (int)sw, 3, edge);
+        DrawRectangle(0, (int)(bandY + kBannerBandHeight - 3), (int)sw, 3, edge);
+        const char* name = "WEREWOLF";
+        DrawText(name, (int)(sw * 0.5f - MeasureText(name, kBannerTitleSize) * 0.5f),
+                 (int)(bandY + 24.f), kBannerTitleSize, Fade(RAYWHITE, alpha));
+    }
+
+    // Skip prompt: only once the intro has been watched; a ring fills while held.
+    if (_bossIntroSeen)
+    {
+        const Vector2 centre{ sw - kSkipMargin - kSkipRingOuter, sh - kSkipMargin - kSkipRingOuter };
+        const float progress = std::min(1.f, _bossIntroSkipHold / kSkipHoldSeconds);
+        DrawRing(centre, kSkipRingInner, kSkipRingOuter, 0.f, 360.f, 32, Fade(RAYWHITE, 0.25f));
+        DrawRing(centre, kSkipRingInner, kSkipRingOuter, -90.f, -90.f + 360.f * progress, 32, Color{ 255, 220, 120, 255 });
+        const char* prompt = "Hold ATTACK to skip";
+        DrawText(prompt, (int)(centre.x - kSkipRingOuter - 12.f - MeasureText(prompt, kSkipTextSize)),
+                 (int)(centre.y - kSkipTextSize * 0.5f), kSkipTextSize, Fade(RAYWHITE, 0.85f));
+    }
+}
+
 bool Engine::IsBossFightActive() const
 {
-    return _combatDirector.IsBossFightActive(_enemies);
+    return !_bossIntroActive && _combatDirector.IsBossFightActive(_enemies);
 }
 
 bool Engine::TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance)
@@ -13932,11 +13297,6 @@ void Engine::UpdateBossSupportRespawns(float dt)
     _combatDirector.UpdateBossSupportRespawns(ctx, dt);
 }
 
-bool Engine::TryGetPooledEnemySpawn(Vector2 pos)
-{
-    return SpawnBasicEnemy(pos) != nullptr;
-}
-
 Enemy* Engine::SpawnBasicEnemy(Vector2 pos)
 {
     for (auto& enemy : _enemies)
@@ -13944,8 +13304,7 @@ Enemy* Engine::SpawnBasicEnemy(Vector2 pos)
         if (enemy->IsActive())
             continue;
         // Only reuse plain grunts — every specialised type has its own pool.
-        // All tunable types carry a tuning name; the legacy specials don't.
-        if (enemy->GetTuningName() != nullptr)
+        if (!enemy->IsPlainGrunt())
             continue;
         if (enemy->AsCyclops() != nullptr)
             continue;
@@ -13969,52 +13328,6 @@ Enemy* Engine::SpawnBasicEnemy(Vector2 pos)
     return enemyPtr;
 }
 
-bool Engine::TryGetPooledCyclopsSpawn(Vector2 pos)
-{
-    for (auto& enemy : _enemies)
-    {
-        if (enemy->IsActive())
-            continue;
-
-        Cyclops* cyclops = enemy->AsCyclops();
-        if (cyclops == nullptr)
-            continue;
-
-        cyclops->ResetForSpawn(pos);
-        ConfigureSpawnedEnemy(*cyclops);
-        return true;
-    }
-
-    return false;
-}
-
-int Engine::GetCyclopsSpawnCountForWave(int wave) const
-{
-    // Superseded by the curated wave table in SpawnEnemies - kept for
-    // any legacy call sites that may still reference it.
-    (void)wave;
-    return 0;
-}
-
-bool Engine::TryGetPooledOgreSpawn(Vector2 pos)
-{
-    for (auto& enemy : _enemies)
-    {
-        if (enemy->IsActive())
-            continue;
-
-        Ogre* ogre = enemy->AsOgre();
-        if (ogre == nullptr)
-            continue;
-
-        ogre->ResetForSpawn(pos);
-        ConfigureSpawnedEnemy(*ogre);
-        return true;
-    }
-
-    return false;
-}
-
 bool Engine::TryGetPooledMolarbeastSpawn(Vector2 pos)
 {
     for (auto& enemy : _enemies)
@@ -14027,6 +13340,7 @@ bool Engine::TryGetPooledMolarbeastSpawn(Vector2 pos)
             continue;
 
         molarbeast->ResetForSpawn(pos);
+        molarbeast->SetFinalForm(_currentBiome == Biome::DemonsInsides);
         ConfigureSpawnedEnemy(*molarbeast);
         return true;
     }
@@ -14034,32 +13348,20 @@ bool Engine::TryGetPooledMolarbeastSpawn(Vector2 pos)
     return false;
 }
 
-int Engine::GetOgreSpawnCountForWave(int wave) const
+int Engine::GetRunPowerLevel() const
 {
-    // Superseded by the curated wave table in SpawnEnemies - kept for
-    // any legacy call sites that may still reference it.
-    (void)wave;
-    return 0;
-}
-
-int Engine::GetEnemyPowerLevelForWave(int wave) const
-{
-    // Power level advances every kRoomsPerPowerLevel rooms — roughly one tier per
-    // world zone — so enemies visibly toughen up as the run deepens.
-    // rooms 1-5: power 1   rooms 6-10: power 2   rooms 11-15: power 3   etc.
-    if (wave <= 0)
-        return 1;
-
-    return 1 + ((wave - 1) / Balance::Curve::kRoomsPerPowerLevel);
+    // One power level per world-map domain (RunProgression.h). The domain index
+    // only advances when a new domain is committed on the world map, so
+    // backtracking, revisits, menus and village pauses never raise it.
+    return RunProgression::EnemyPowerLevelForZone(_worldZone);
 }
 
 void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
 {
     // All enemy types share the same spawn-tuning path:
-    // 1. SetWaveScale - fixed base stats + behavioural timing for this room.
-    // 2. ApplyEnemyPowerLevel - single global multiplier, advances every 10 rooms.
+    // 1. SetWaveScale - fixed base stats + behavioural timing for this domain.
+    // 2. ApplyEnemyPowerLevel - single global multiplier, one level per domain.
     // 3. SetTarget - restore player pointer so pooled enemies rejoin the run.
-    // _wave = total rooms entered this run, used here for scaling only.
     if (_gameState == GameState::DungeonRun)
     {
         const float cellW = (float)kVirtualWidth / (float)RoomLayout::kCols;
@@ -14081,8 +13383,9 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
     }
 
     enemy.SetCombatId(_nextCombatTargetId++);
-    enemy.SetWaveScale(_wave);
-    enemy.ApplyEnemyPowerLevel(GetEnemyPowerLevelForWave(_wave));
+    const int powerLevel = GetRunPowerLevel();
+    enemy.SetWaveScale(RunProgression::BehaviourWaveForPowerLevel(powerLevel));
+    enemy.ApplyEnemyPowerLevel(powerLevel);
 
     // Run-wide difficulty multipliers (Ascension + Cursed Shrine are both folded
     // into these) stack on top of the per-wave power level.
@@ -14115,6 +13418,8 @@ void Engine::ConfigureSpawnedEnemy(Enemy& enemy)
     // visibly tougher versions (their stats already scale via power level).
     // Zones 0-1 = tier 0, zones 2-3 = tier 1, zone 4 = tier 2, zone 5 = tier 3.
     int variantTier = (_worldZone <= 1) ? 0 : (_worldZone <= 3) ? 1 : (_worldZone == 4) ? 2 : 3;
+    if (_debugForcedVariantTier >= 0)   // debug: showcase every enemy recolour on demand
+        variantTier = _debugForcedVariantTier;
     enemy.SetVariantTier(variantTier);
 
     enemy.SetTarget(&_player);
@@ -14174,6 +13479,8 @@ Enemy* Engine::SpawnOgre(Vector2 pos)
 
 void Engine::SpawnMolarbeast(Vector2 pos)
 {
+    // In Demon's Insides the Molarbeast is the final boss (its final form);
+    // the pooled path applies the same rule.
     if (TryGetPooledMolarbeastSpawn(pos))
     {
         _bossWarningTimer = 4.f;
@@ -14182,6 +13489,7 @@ void Engine::SpawnMolarbeast(Vector2 pos)
 
     auto molarbeast = std::make_unique<Molarbeast>(pos);
     molarbeast->Init();
+    molarbeast->SetFinalForm(_currentBiome == Biome::DemonsInsides);
     ConfigureSpawnedEnemy(*molarbeast);
     _enemies.push_back(std::move(molarbeast));
     _bossWarningTimer = 4.f;
@@ -14379,58 +13687,147 @@ Enemy* Engine::SpawnEliteMiniboss(Vector2 pos)
 // =============================================================================
 void Engine::StartMainRun()
 {
+    QueueJourney("Forest", {
+    [this] {
     _debug.Deactivate();
+#if MO_ITCH_DEMO
+    _useHandcraftedDungeonRooms = false;   // demo uses procedural dungeons (proven boss-exit flow)
+#else
     _useHandcraftedDungeonRooms = true;
+#endif
     _lastHandcraftedRoomId.clear();
     _forcedHandcraftedRoomId.clear();
     _handcraftedDungeonRoomIds.clear();
-    // One-wallet meta loop: gold persists from the village INTO the run (only a
-    // death zeroes it, in HandlePlayerDeathMetaPenalty). Capture the village
-    // wallet before ResetRunState reseeds it, then restore it afterwards so the
-    // hauled/leftover gold rides into the run instead of being reset.
-    int walletGold = _player.GetGold();
-    ResetRunState();   // calls _player.Init() which loads the chosen class sprites
-    _player.SetGold(walletGold);
+    // One-wallet meta loop: gold persists from the village INTO the run.
+    // ResetRunState never touches the wallet. When the character was prepared
+    // on village arrival (the normal full-game path) it keeps everything bought
+    // there; only run-scoped engine state is reset here.
+    const bool preparedInVillage = _nextRunPrepared;
+    ResetRunState();
+    _nextRunPrepared = false;
     _isMainGameRun = true;
+    _runCheckpointEnded = false;
+    _runId = _meta.BeginRun();   // the checkpoint names this run; Continue needs the profile to agree
+    _runDomainLog.clear();
+    _domainStartRooms = 0;
+    _domainStartSeconds = 0.f;
+    _runDeath = RunLogDeath();
+    _player.ClearLastDamageSource();
     _runSessionData.Begin();
-    _player.LearnAbility(StarterAbilityForClass(_player.GetClass()));
-
-    SetRandomSeed((unsigned int)time(nullptr));
+#if !MO_ITCH_DEMO
+    if (!preparedInVillage)
+        _player.LearnAbility(GetRunStarterAbility(_player.GetClass()));
+#else
+    // itch.io demo: no choice screen - grant two random class abilities outright.
+    // Done here (before the dungeon loads) so the opening Shop's Zeph intro
+    // cutscene sees the starter gift already claimed and just plays dialogue +
+    // opens the door instead of popping the removed starting-ability picker.
+    {
+        std::vector<AbilityType> pool;
+        for (int i = 0; i < kAllAbilityCount; ++i)
+        {
+            AbilityType a = kAllAbilities[i];
+            if (_player.ClassAllows(a) && !IsUltimateAbility(a))
+                pool.push_back(a);
+        }
+        for (int n = 0; n < 2 && !pool.empty(); ++n)
+        {
+            int idx = GetRandomValue(0, (int)pool.size() - 1);
+            _player.LearnAbility(pool[(std::size_t)idx]);
+            pool.erase(pool.begin() + idx);
+        }
+        _starterAbilityGiftClaimed = true;
+    }
+#endif
+#if !MO_ITCH_DEMO
+    // The demo's "you're awake, pick a spell" shop intro belongs to the demo
+    // opener; full-game camps play the per-domain arrival lines instead.
+    _cutsceneIntroPlayed = true;
+#endif
+    // Seed first so the recorded run seed also explains the run-start rolls.
+    _runSeed = (unsigned int)time(nullptr);
+    SetRandomSeed(_runSeed);
+    GrantRunStartBonuses();
+    // The wallet now rides with the run: it is no longer safe in the village.
+    _meta.SetVillageWallet(0);
 
     _currentBiome = Biome::Forest;
     _pendingBiome = _currentBiome;
+    },
+    [this] {
+    _dungeonGen.SetPlan(DungeonGen::PlanForDomain(0));   // the first domain is the smallest
+#if MO_ITCH_DEMO
+    _dungeonGen.Generate();
+    // New-game opener: force room 0 to Zeph's Shop so the player meets Zeph and
+    // can spend starting gold before the first fight. DungeonGen never seats
+    // Store rooms itself, so it has to be forced in. Replay the one-time Zeph
+    // intro too, so every fresh demo run gets the full opening beat.
+    _dungeonGen.ForceRoomType(_dungeonGen.GetStartIndex(), RoomType::Store);
+    _cutsceneIntroPlayed = false;
+#else
     RefreshHandcraftedRooms();
     if (!GenerateHandcraftedDungeon(_currentBiome, _handcraftedDungeonRoomIds))
     {
         _message = "Forest room library cannot form a complete dungeon yet";
         TraceLog(LOG_ERROR, "%s", _message.c_str());
-        EnterVillage();
-        return;
+        throw std::runtime_error(_message);
     }
+#endif
+    },
+    [this] {
     LoadTilesetForBiome(_currentBiome);
-
+    },
+    [this] {
     int startIdx = _dungeonGen.GetStartIndex();
     EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonEntranceSpawnPos(), true);
 
-    _fadeInTimer = 1.0f;
-    _fadeInDuration = 1.0f;
+    // Arm the in-dungeon tutorial: always in the demo, first-time only otherwise.
+#if MO_ITCH_DEMO
+    _dungeonTutStep = DungeonTutStep::Move;
+#else
+    if (!_meta.HasCompletedOnboarding())
+        _dungeonTutStep = DungeonTutStep::Move;
+#endif
+
+    }
+    },
+    [this] { EnterVillageShared(); });  // matches the pre-journey failure path
 }
 
 void Engine::StartSelectedGameMode()
 {
+#if MO_ITCH_DEMO
+    // itch.io demo: no prologue, no opening village - straight into the Forest run.
+    _prologueEntryMode        = PrologueEntryMode::Continue;
+    _firstVillageVisit        = false;
+    _pendingNewRunFromVillage = false;
+    StartMainRun();
+    return;
+#endif
+
+    if (!_journeyExecuting)
+    {
+        QueueJourney("Your story continues", {[this] { StartSelectedGameMode(); }});
+        return;
+    }
+
     if (ShouldPlayPrologue(_prologueEntryMode))
     {
         StartPrologue();
         return;
     }
 
-    // Continue skips onboarding, so initialize the sprite sheets here using
-    // the class and appearance that were just confirmed on hero select.
-    const int walletGold = _player.GetGold();
-    _player.Init();
-    _player.SetGold(walletGold);
+    // The scripted prologue is gone: New Game now lands in the village first, so a
+    // brand-new player still gets the village intro + "speak with Zeph" gate
+    // before the in-dungeon tutorial. Continue (and any later New Game once
+    // onboarding is done) skips straight past it.
+    // The village wallet is the profile's persisted gold; the class may have
+    // changed on the select screen, so the next run is always prepared afresh.
+    _player.SetGold(_meta.GetVillageWallet());
+    _nextRunPrepared = false;
     _pendingNewRunFromVillage = true;
-    _firstVillageVisit = false;
+    _firstVillageVisit = (_prologueEntryMode == PrologueEntryMode::NewGame) &&
+                         !_meta.HasCompletedOnboarding();
     EnterVillage();
 }
 
@@ -14472,7 +13869,7 @@ const Texture2D* Engine::GetRelicIcon(RelicType type) const
     return nullptr;
 }
 
-Texture2D* Engine::GetAbilityIcon(AbilityType type)
+const Texture2D* Engine::GetAbilityIcon(AbilityType type) const
 {
     // Mage elemental abilities keep using the element pickup textures.
     if (IsElementalAbility(type))
@@ -14503,8 +13900,16 @@ void Engine::UpdateClassSelect()
     if (IsKeyPressed(KEY_ESCAPE) ||
         (_gamepad.isActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)))
     {
-        // Backing out returns to wherever class select was opened from (the
-        // main menu, or the village gate).
+        // Backing out returns to wherever class select was opened from: the
+        // main menu, or (after a death) the village with the same class.
+        if (_classSelectReturnState == GameState::Village)
+        {
+            _nextRunPrepared = false;
+            EnterVillage();
+            _fadeInTimer = 1.f;
+            _fadeInDuration = 1.f;
+            return;
+        }
         _gameState = _classSelectReturnState;
         if (_gameState == GameState::Menu) _menu.Init();
         return;
@@ -14571,25 +13976,36 @@ void Engine::UpdateClassSelect()
     if (click && !clickedLook && !clickedNav && CheckCollisionPointRec(mouse, centerCard))
         confirm = true;
 
-    if (confirm)
+    if (confirm && !ConfirmClassSelection((PlayerClass)_classSelectCursor))
     {
-        ClassUnlockProfile profile{
-            _meta.IsRogueUnlocked(),
-            _meta.IsWarlockUnlocked(),
-            _meta.HasCompletedGame()
-        };
-        PlayerClass selectedClass = (PlayerClass)_classSelectCursor;
-        ClassUnlockStatus status = GetClassUnlockStatus(selectedClass, profile);
-        if (!status.unlocked)
-        {
-            StopSound(_buttonPressSound);
-            PlaySound(_buttonPressSound);
-            return;
-        }
-        _player.SetAppearance(GetAppearancePrefix(_appearanceCursor));
-        _player.SetClass(selectedClass);
-        StartSelectedGameMode();
+        StopSound(_buttonPressSound);
+        PlaySound(_buttonPressSound);
     }
+}
+
+bool Engine::ConfirmClassSelection(PlayerClass selectedClass)
+{
+    ClassUnlockProfile profile{
+        _meta.IsRogueUnlocked(),
+        _meta.IsWarlockUnlocked(),
+        _meta.IsPaladinUnlocked()
+    };
+    if (!GetClassUnlockStatus(selectedClass, profile).unlocked)
+        return false;
+    _player.SetAppearance(GetAppearancePrefix(_appearanceCursor));
+    _player.SetClass(selectedClass);
+    if (_classSelectReturnState == GameState::Village)
+    {
+        // Returning from Poe after a death: prepare the next run for the
+        // chosen class on village arrival.
+        _nextRunPrepared = false;
+        EnterVillage();
+        _fadeInTimer = 1.f;
+        _fadeInDuration = 1.f;
+        return true;
+    }
+    StartSelectedGameMode();
+    return true;
 }
 
 void Engine::DrawClassSelect()
@@ -14597,7 +14013,7 @@ void Engine::DrawClassSelect()
     const int   count = (int)PlayerClass::Count;
     const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
 
-    DrawScrollingCheckerboard(sw, sh, Color{ 26, 22, 34, 255 }, Color{ 34, 28, 44, 255 }, 16.f, 11.f);
+    DrawScrollingCheckerboard(sw, sh, Color{ 92, 48, 120, 255 }, Color{ 116, 64, 146, 255 }, 16.f, 11.f);  // class select: plum
 
     const char* title = "CHOOSE YOUR HERO";
     int titleFs = 60;
@@ -14662,7 +14078,7 @@ void Engine::DrawClassSelect()
     // ---- Center focused class card --------------------------------------------
     const PlayerClassInfo& info = GetPlayerClassInfo((PlayerClass)_classSelectCursor);
     ClassUnlockProfile unlockProfile{
-        _meta.IsRogueUnlocked(), _meta.IsWarlockUnlocked(), _meta.HasCompletedGame()
+        _meta.IsRogueUnlocked(), _meta.IsWarlockUnlocked(), _meta.IsPaladinUnlocked()
     };
     ClassUnlockStatus unlockStatus = GetClassUnlockStatus((PlayerClass)_classSelectCursor, unlockProfile);
     Rectangle centerCard{ centerX, centerY, centerW, centerH };
@@ -14754,8 +14170,8 @@ void Engine::SpawnBossForBiome(Vector2 pos)
     switch (_currentBiome)
     {
     case Biome::Caverns:
-        SpawnMolarbeast(pos);
-        return;   // SpawnMolarbeast already sets the warning timer
+        SpawnPooledType<AbyssSlime>(_enemies, pos, &Enemy::AsAbyssSlime, configure);
+        break;
 
     case Biome::Forest:
         SpawnPooledType<Werewolf>(_enemies, pos, &Enemy::AsWerewolf, configure);
@@ -14790,6 +14206,9 @@ void Engine::SpawnBossForBiome(Vector2 pos)
         break;
 
     case Biome::DemonsInsides:
+        SpawnMolarbeast(pos);   // the final boss, in its final form
+        return;                 // SpawnMolarbeast already sets the warning timer
+
     default:
         SpawnPooledType<AbyssSlime>(_enemies, pos, &Enemy::AsAbyssSlime, configure);
         break;
@@ -14821,6 +14240,9 @@ void Engine::SaveDungeonRoomEnemyState()
         DungeonEnemySnapshot snapshot{};
         snapshot.type = GetDungeonSnapshotType(*enemy);
         snapshot.pos = enemy->GetWorldPos();
+        if (enemy->GetMaxHealthValue() > 0.f)
+            snapshot.healthFraction = std::clamp(
+                enemy->GetHealthValue() / enemy->GetMaxHealthValue(), 0.f, 1.f);
         state.survivors.push_back(snapshot);
     }
 }
@@ -14848,6 +14270,8 @@ bool Engine::RestoreDungeonRoomEnemyState(int roomIdx)
         if (spawned)
         {
             anySpawned = true;
+            // Same domain => same scaled max HP; restore the share it had left.
+            spawned->RestoreHealthFraction(snapshot.healthFraction);
             // The elite buff is re-applied inside SpawnDungeonSnapshotEnemy for
             // any "Elite_<base>" survivor; just re-point the room's elite handle.
             if (spawned->IsEliteMiniboss())
@@ -15047,7 +14471,7 @@ void Engine::UpdateEnemyProjectiles(float dt)
 
         if (CheckCollisionRecs(projectile.GetCollisionRec(), _player.GetCollisionRec()))
         {
-            _player.TakeDamage(projectile.GetDamage(), projectile.GetWorldPos());
+            _player.TakeDamageFrom(projectile.GetSource(), projectile.GetDamage(), projectile.GetWorldPos());
             if (projectile.GetKind() == EnemyProjectileKind::FireBolt)
                 _vfx.SpawnHitEffect(Character::CastType::FireBolt, projectile.GetWorldPos(), Vector2{ 0.f, -1.f });
             projectile.Destroy();
@@ -15070,9 +14494,10 @@ void Engine::DrawEnemyProjectiles(Vector2 worldOffset) const
 // Poison clouds — lingering ground hazards from Sporeling deaths and the
 // Toxic Vermin boss. Standing inside one chips the player's health.
 // =============================================================================
-void Engine::SpawnPoisonCloud(Vector2 pos, float radius)
+void Engine::SpawnPoisonCloud(Vector2 pos, float radius, const DamageSource& source)
 {
     PoisonCloud cloud;
+    cloud.source   = source;
     cloud.pos      = pos;
     cloud.timer    = 5.5f;
     cloud.radius   = radius;
@@ -15121,7 +14546,7 @@ void Engine::UpdatePoisonClouds(float dt)
         if (_poisonDamageCooldown <= 0.f && _player.IsAlive() &&
             Vector2Distance(cloud.pos, _player.GetFeetWorldPos()) < cloud.radius)
         {
-            _player.TakeFractionalDamage(0.25f, cloud.pos);
+            _player.TakeFractionalDamageFrom(cloud.source, 2.5f, cloud.pos);
             _poisonDamageCooldown = 0.7f;
         }
     }
@@ -15139,8 +14564,8 @@ void Engine::SpawnWarlockMinion()
 void Engine::UpdateWarlockMinions(float dt)
 {
     if (_warlockMinions.empty()) return;
-    const float kSpeed = 320.f, kAttackRange = 80.f, kLeash = 1100.f, kCooldown = 0.7f;
-    const int   kBaseDamage = 4;   // atk-independent; ScalePlayerHit adds relic scaling
+    const float kSpeed = 320.f, kAttackRange = 80.f, kLeash = 1100.f, kCooldown = 1.0f;
+    const int   kBaseDamage = 20;   // atk-independent; ScalePlayerHit adds relic scaling
     Vector2 playerPos = _player.GetWorldPos();
 
     for (auto& m : _warlockMinions)
@@ -15207,7 +14632,7 @@ void Engine::DrawWarlockMinions(Vector2 worldOffset) const
         Vector2 screen{ m.pos.x + worldOffset.x + kVirtualWidth  / 2.f,
                         m.pos.y + worldOffset.y + kVirtualHeight / 2.f + bobY };
         // Soft demonic aura so the ally reads clearly.
-        DrawCircleV(Vector2{ screen.x, screen.y + frameH * scale * 0.32f }, 24.f, Fade(Color{ 150, 80, 220, 255 }, 0.20f));
+        Px::Aura(Vector2{ screen.x, screen.y + frameH * scale * 0.32f }, 24.f, Fade(Color{ 150, 80, 220, 255 }, 0.20f));
         Rectangle src{ fr * fw, 0.f, fw * m.facing, (float)frameH };   // negative w flips
         Rectangle dst{ screen.x, screen.y, fw * scale, frameH * scale };
         DrawTexturePro(_minionTex, src, dst, Vector2{ dst.width * 0.5f, dst.height * 0.5f }, 0.f, Color{ 210, 170, 255, 255 });
@@ -15240,23 +14665,32 @@ void Engine::DrawPoisonClouds(Vector2 worldOffset) const
         const float pulse    = 0.5f + 0.5f * sinf(elapsed * 9.f);
         const float radius   = cloud.radius * (0.75f - 0.35f * progress) * (0.9f + 0.1f * pulse);
 
-        DrawCircleV(screenPos, radius, Fade(kPoisonWarnColor, 0.22f + 0.10f * pulse));
-        DrawCircleLinesV(screenPos, cloud.radius * (0.55f + 0.45f * progress), Fade(kPoisonWarnColor, 0.6f));
+        Px::Disc(screenPos, radius, Fade(kPoisonWarnColor, 0.22f + 0.10f * pulse));
+        Px::Circle(screenPos, cloud.radius * (0.55f + 0.45f * progress), Fade(kPoisonWarnColor, 0.6f), Balance::Vfx::kGlowTelegraphStrength);
     }
 }
 
 // =============================================================================
 // Relics — damage scaling, on-kill effects, granting, HUD strip.
 // =============================================================================
-int Engine::ScalePlayerHit(const Enemy& target, int baseDamage, bool& outCrit) const
+int Engine::ScalePlayerHit(const Enemy& target, float baseDamage, bool& outCrit)
 {
+    // DamagePolicy.h: every per-hit modifier is combined in float and the hit
+    // is converted to whole damage exactly once, carrying the remainder.
     float hpFraction = (target.GetMaxHealthValue() > 0.f)
         ? (target.GetHealthValue() / target.GetMaxHealthValue()) : 1.f;
-    // Cursed Shrine blessing/curse modifies all outgoing player damage.
-    int scaledBase = std::max(1, (int)lroundf(baseDamage * _runPlayerDamageMult));
-    int dmg = _player.ScaleOutgoingDamage(target.IsFrozen(), target.IsCharged(),
-        target.IsBurning(), hpFraction, scaledBase, outCrit);
-    if (_juiceForceCrit && !outCrit) { outCrit = true; dmg *= 2; }   // debug: force crit
+    // Run-wide multiplier (Ascension player damage).
+    float mult = _runPlayerDamageMult;
+    RelicHitContext relicHit;
+    relicHit.targetFrozen      = target.IsFrozen();
+    relicHit.targetCharged     = target.IsCharged();
+    relicHit.targetBurning     = target.IsBurning();
+    relicHit.targetHpFraction  = hpFraction;
+    relicHit.targetEliteOrBoss = target.IsBoss() || target.IsEliteMiniboss();
+    relicHit.earlyInFight      = _roomCombatSeconds < kAmbushWindow;
+    relicHit.lastEnemy         = GetActiveEnemyCount() <= 1;
+    mult *= _player.OutgoingDamageMultiplier(relicHit, outCrit);
+    if (_juiceForceCrit && !outCrit) { outCrit = true; mult *= 1.f + _player.GetCritDamage(); }   // debug: force crit
 
     // ── Universal status-combo reactions (NOT relic-gated) ──────────────────────
     // These make applying statuses inherently rewarding and create cross-class
@@ -15275,16 +14709,50 @@ int Engine::ScalePlayerHit(const Enemy& target, int baseDamage, bool& outCrit) c
     // curse first, then collect. Delayed but powerful is the class's brain.
     if (target.IsCursed() && _player.GetClass() == PlayerClass::Warlock)
         comboMult += _player.GetCursedBonus();   // Dark Pact cards raise this
-    dmg = (int)lroundf(dmg * comboMult);
+    mult *= comboMult;
 
     // Vulnerability / armor break: a marked-vulnerable target takes extra damage.
-    dmg = std::max(1, (int)lroundf(dmg * target.GetIncomingDamageMult()));
+    mult *= target.GetIncomingDamageMult();
+    // The carry is only STAGED here; RegisterHitFx commits it once this target
+    // actually loses HP, so shielded, invulnerable or rejected hits never spend
+    // or bank fractional damage.
+    float staged = _hitDamageCarry;
+    const int dmg = DamagePolicy::ResolveHitDamage(std::max(0.f, baseDamage) * mult, staged);
+    _stagedHitCarry   = staged;
+    _stagedHitTarget  = target.GetCombatId();
+    _hitCarryStaged   = true;
     return dmg;
 }
 
 void Engine::ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
-                              bool wasCharged, bool /*eliteOrBoss*/)
+                              bool wasCharged, bool eliteOrBoss)
 {
+    if (wasBurning && _player.HasRelic(RelicType::PyreHeart))     _player.Heal(10);
+    if (wasFrozen  && _player.HasRelic(RelicType::GlacialBattery)) _player.RestoreMana(3);
+    if (eliteOrBoss && _player.HasRelic(RelicType::SoulHarvest))   _player.AddCells(15);
+
+    // Chain Reaction — sometimes a kill bursts and hits everything close by
+    // (and a kill it causes can burst again).
+    if (_player.HasRelic(RelicType::ChainReaction) && GetRandomValue(1, 100) <= kChainReactionChancePercent)
+    {
+        const float radius = 170.f;
+        _vfx.SpawnHitEffect(Character::CastType::FireSpread, pos, Vector2{ 0.f, -1.f });
+        for (auto& e : _enemies)
+        {
+            if (!e->IsActive() || e->IsDying()) continue;
+            if (Vector2Distance(e->GetWorldPos(), pos) < radius)
+            {
+                const float healthBefore = e->GetHealthValue();
+                e->TakeDamage(30, pos);
+                Enemy::HitBlockReason blocked = e->ConsumeHitBlock();
+                if (blocked != Enemy::HitBlockReason::None)
+                    ShowBlockedHitFeedback(*e, blocked);
+                else
+                    RegisterHitFx(*e, healthBefore, false, false, false, 3004u);
+            }
+        }
+    }
+
     // Wildfire — a burning corpse erupts, damaging + igniting nearby enemies.
     if (wasBurning && _player.WantsWildfire())
     {
@@ -15296,12 +14764,12 @@ void Engine::ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
             if (Vector2Distance(e->GetWorldPos(), pos) < radius)
             {
                 const float healthBefore = e->GetHealthValue();
-                e->TakeDamage(3, pos);
+                e->TakeDamage(30, pos);
                 Enemy::HitBlockReason blocked = e->ConsumeHitBlock();
                 if (blocked != Enemy::HitBlockReason::None)
                     ShowBlockedHitFeedback(*e, blocked);
                 else if (RegisterHitFx(*e, healthBefore, false, false, false, 3001u) > 0)
-                    e->ApplyBurn(0.5f, 2, pos);
+                    e->ApplyBurn(0.5f, 20, pos);
             }
         }
     }
@@ -15328,7 +14796,7 @@ void Engine::ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
             if (Vector2Distance(e->GetWorldPos(), pos) < radius)
             {
                 const float healthBefore = e->GetHealthValue();
-                e->TakeDamage(2, pos);
+                e->TakeDamage(20, pos);
                 Enemy::HitBlockReason blocked = e->ConsumeHitBlock();
                 if (blocked != Enemy::HitBlockReason::None)
                     ShowBlockedHitFeedback(*e, blocked);
@@ -15349,6 +14817,8 @@ RelicType Engine::RollRandomRelic() const
         RelicType type = (RelicType)i;
         if (_player.HasRelic(type))
             continue;
+        if (!RelicFitsClass(type, _player.GetClass()))
+            continue;   // e.g. no burn relics for a class that cannot burn
         int w = 1;
         switch (GetRelicInfo(type).rarity)
         {
@@ -15379,7 +14849,8 @@ void Engine::GrantRelic(RelicType type)
     if (type == RelicType::Count || _player.HasRelic(type))
         return;
     _player.AddRelic(type);
-    _relicToastName  = GetRelicInfo(type).name;
+    RecordRelicFound(type);
+    _relicToastName  = std::string("New Relic:  ") + GetRelicInfo(type).name;
     _relicToastTimer = 4.f;
     // Power-gain moment.
     TriggerScreenFlash(Color{ 200, 160, 255, 255 }, 0.30f);
@@ -15388,52 +14859,34 @@ void Engine::GrantRelic(RelicType type)
         SfxBank::Get().Play(SfxId::AbilityLearn, 0.7f);   // relic-gain fanfare
 }
 
-void Engine::DrawOwnedRelics() const
+bool Engine::TryLastStand()
 {
-    int count = _player.GetRelicCount();
-    if (count <= 0)
-        return;
+    if (!_player.HasRelic(RelicType::LastStand) || _lastStandUsedThisRoom) return false;
+    _lastStandUsedThisRoom = true;
+    _player.ReviveInPlace(0.f);   // up at 10 HP, with the revive's brief i-frames
+    TriggerScreenFlash(Color{ 255, 220, 140, 255 }, 0.30f);
+    TriggerScreenShake(8.f, 0.3f);
+    _relicToastName  = "LAST STAND";
+    _relicToastTimer = 2.5f;
+    return true;
+}
 
-    // Compact vertical strip of coloured relic pips on the left edge, below
-    // the resource labels. Archetype colour + first letter keeps it readable
-    // without dedicated relic art.
-    const float startX = 24.f;
-    const float startY = 150.f;
-    const float size   = 34.f;
-    const float gap    = 6.f;
-
-    for (int i = 0; i < count; i++)
+void Engine::ApplySpikedPauldrons()
+{
+    const Vector2 pos = _player.GetWorldPos();
+    const float radius = 150.f;
+    for (auto& e : _enemies)
     {
-        RelicType type = _player.GetRelicAt(i);
-        const RelicInfo& info = GetRelicInfo(type);
-        Color archColor;
-        switch (info.archetype)
+        if (!e->IsActive() || e->IsDying()) continue;
+        if (Vector2Distance(e->GetWorldPos(), pos) < radius)
         {
-        case RelicArchetype::Fire:     archColor = Color{ 230, 90,  40, 255 }; break;
-        case RelicArchetype::Ice:      archColor = Color{ 90, 180, 235, 255 }; break;
-        case RelicArchetype::Electric: archColor = Color{ 235, 210, 60, 255 }; break;
-        case RelicArchetype::Offense:  archColor = Color{ 210, 70,  90, 255 }; break;
-        case RelicArchetype::Defense:  archColor = Color{ 120, 190, 120, 255 }; break;
-        case RelicArchetype::Economy:  archColor = Color{ 220, 180, 70, 255 }; break;
-        default:                       archColor = Color{ 170, 150, 220, 255 }; break;
-        }
-
-        float y = startY + i * (size + gap);
-        Rectangle pip{ startX, y, size, size };
-        DrawRectangleRounded(pip, 0.28f, 5, Fade(archColor, 0.85f));
-        DrawRectangleRoundedLines(pip, 0.28f, 5, Fade(WHITE, 0.35f));
-        const Texture2D* ricon = GetRelicIcon(type);
-        if (ricon && ricon->id != 0)
-        {
-            float s = (size - 8.f) / (float)ricon->width;
-            Rectangle src{ 0.f, 0.f, (float)ricon->width, (float)ricon->height };
-            Rectangle dst{ startX + 4.f, y + 4.f, ricon->width * s, ricon->height * s };
-            DrawTexturePro(*ricon, src, dst, Vector2{}, 0.f, WHITE);
-        }
-        else
-        {
-            char letter[2] = { info.name[0], '\0' };
-            DrawText(letter, (int)(startX + size * 0.5f - 6.f), (int)(y + 6.f), 22, RAYWHITE);
+            const float healthBefore = e->GetHealthValue();
+            e->TakeDamage(20, pos);
+            Enemy::HitBlockReason blocked = e->ConsumeHitBlock();
+            if (blocked != Enemy::HitBlockReason::None)
+                ShowBlockedHitFeedback(*e, blocked);
+            else
+                RegisterHitFx(*e, healthBefore, false, false, false, 3003u);
         }
     }
 }
@@ -15551,15 +15004,7 @@ void Engine::UpdateCyclopsLasers(float dt)
                     continue;
 
                 int laserDmg = laser.GetDamage();
-                const float healthBefore = _player.GetHealthValue();
-                _player.TakeDamage(laserDmg, laser.GetWorldPos());
-                DamageNumberEvent incoming{};
-                incoming.targetId = 0;
-                incoming.attackId = 9001u;
-                incoming.worldPos = _player.GetWorldPos();
-                incoming.finalDamage = CalculateActualDamage(healthBefore, _player.GetHealthValue());
-                incoming.outcome = DamageNumberOutcome::Incoming;
-                if (incoming.finalDamage > 0) _damageNumbers.Submit(incoming);
+                _player.TakeDamageFrom(laser.GetSource(), laserDmg, laser.GetWorldPos());
                 laser.OnHitPlayer();
                 TriggerScreenShake(2.5f, 0.07f);
                 break;
@@ -15638,16 +15083,8 @@ void Engine::UpdateLavaBallProjectiles(float dt)
             !projectile.HasHitPlayer() &&
             CheckCollisionRecs(collisionRec, _player.GetCollisionRec()))
         {
-            static constexpr int kLavaBallDamage = 2;
-            const float healthBefore = _player.GetHealthValue();
-            _player.TakeDamage(kLavaBallDamage, projectile.GetWorldPos());
-            DamageNumberEvent incoming{};
-            incoming.targetId = 0;
-            incoming.attackId = 9002u;
-            incoming.worldPos = _player.GetWorldPos();
-            incoming.finalDamage = CalculateActualDamage(healthBefore, _player.GetHealthValue());
-            incoming.outcome = DamageNumberOutcome::Incoming;
-            if (incoming.finalDamage > 0) _damageNumbers.Submit(incoming);
+            static constexpr int kLavaBallDamage = 20;
+            _player.TakeDamageFrom(projectile.GetSource(), kLavaBallDamage, projectile.GetWorldPos());
             projectile.OnPlayerHit();
             if (projectile.IsFlying())
             {
@@ -15666,61 +15103,15 @@ void Engine::UpdateLavaBallProjectiles(float dt)
 
 void Engine::SaveKeybindings()
 {
-    const KeyBindings& b  = _player.GetBindings();
-    const GamepadBindings& g = _gamepadBindingsEdit;
-    FILE* f = fopen("keybindings.cfg", "w");
-    if (!f) return;
-    // Keyboard / Mouse
-    std::fprintf(f, "moveUp %d\n",    (int)b.moveUp);
-    std::fprintf(f, "moveDown %d\n",  (int)b.moveDown);
-    std::fprintf(f, "moveLeft %d\n",  (int)b.moveLeft);
-    std::fprintf(f, "moveRight %d\n", (int)b.moveRight);
-    std::fprintf(f, "dash %d\n",      (int)b.dash);
-    std::fprintf(f, "attack %d\n",    (int)b.attack);
-    std::fprintf(f, "ability0 %d\n",  (int)b.ability[0]);
-    std::fprintf(f, "ability1 %d\n",  (int)b.ability[1]);
-    std::fprintf(f, "ability2 %d\n",  (int)b.ability[2]);
-    std::fprintf(f, "ability3 %d\n",  (int)b.ability[3]);
-    // Gamepad
-    std::fprintf(f, "gp_attack %d\n",    (int)g.attack);
-    std::fprintf(f, "gp_dash %d\n",      (int)g.dash);
-    std::fprintf(f, "gp_ability0 %d\n",  (int)g.ability[0]);
-    std::fprintf(f, "gp_ability1 %d\n",  (int)g.ability[1]);
-    std::fprintf(f, "gp_ability2 %d\n",  (int)g.ability[2]);
-    std::fprintf(f, "gp_ability3 %d\n",  (int)g.ability[3]);
-    std::fprintf(f, "gp_pause %d\n",     (int)g.pause);
-    std::fclose(f);
+    if (!SettingsManager::SaveKeybindings(_player.GetBindings(), _gamepadBindingsEdit))
+        TraceLog(LOG_WARNING, "Keybindings could not be saved");
 }
 
 void Engine::LoadKeybindings()
 {
-    FILE* f = fopen("keybindings.cfg", "r");
-    if (!f) return;
     KeyBindings     b;
     GamepadBindings g;
-    char key[32];
-    int  value;
-    while (fscanf(f, "%31s %d", key, &value) == 2)
-    {
-        if      (std::strcmp(key, "moveUp")     == 0) b.moveUp       = (KeyboardKey)value;
-        else if (std::strcmp(key, "moveDown")   == 0) b.moveDown     = (KeyboardKey)value;
-        else if (std::strcmp(key, "moveLeft")   == 0) b.moveLeft     = (KeyboardKey)value;
-        else if (std::strcmp(key, "moveRight")  == 0) b.moveRight    = (KeyboardKey)value;
-        else if (std::strcmp(key, "dash")       == 0) b.dash         = (KeyboardKey)value;
-        else if (std::strcmp(key, "attack")     == 0) b.attack       = (KeyboardKey)value;
-        else if (std::strcmp(key, "ability0")   == 0) b.ability[0]   = (KeyboardKey)value;
-        else if (std::strcmp(key, "ability1")   == 0) b.ability[1]   = (KeyboardKey)value;
-        else if (std::strcmp(key, "ability2")   == 0) b.ability[2]   = (KeyboardKey)value;
-        else if (std::strcmp(key, "ability3")   == 0) b.ability[3]   = (KeyboardKey)value;
-        else if (std::strcmp(key, "gp_attack")  == 0) g.attack       = (GamepadButton)value;
-        else if (std::strcmp(key, "gp_dash")    == 0) g.dash         = (GamepadButton)value;
-        else if (std::strcmp(key, "gp_ability0")== 0) g.ability[0]   = (GamepadButton)value;
-        else if (std::strcmp(key, "gp_ability1")== 0) g.ability[1]   = (GamepadButton)value;
-        else if (std::strcmp(key, "gp_ability2")== 0) g.ability[2]   = (GamepadButton)value;
-        else if (std::strcmp(key, "gp_ability3")== 0) g.ability[3]   = (GamepadButton)value;
-        else if (std::strcmp(key, "gp_pause")   == 0) g.pause        = (GamepadButton)value;
-    }
-    std::fclose(f);
+    if (!SettingsManager::LoadKeybindings(b, g)) return;   // no file yet: keep the defaults
     _player.SetBindings(b);
     _gamepadBindingsEdit = g;
 }
@@ -15992,9 +15383,23 @@ void Engine::RollRoomAffix(int roomIdx, RoomType type)
     _currentRoomAffix = RoomAffix::None;
 
     // Only Standard combat rooms roll affixes, and only while still uncleared.
+    // Decision rooms are peaceful (no enemies for an affix to change).
     if (type != RoomType::Standard) return;
     auto it = _dungeonRoomStates.find(roomIdx);
-    if (it != _dungeonRoomStates.end() && it->second.cleared) return;
+    if (it != _dungeonRoomStates.end() &&
+        (it->second.cleared || it->second.special != RoomSpecialType::None)) return;
+
+    // An uncleared room keeps the affix it rolled on its first visit, so
+    // leaving and coming back can't re-roll it.
+    DungeonRoomState& state = _dungeonRoomStates[roomIdx];
+    if (state.affixRolled)
+    {
+        _currentRoomAffix = state.affix;
+        if (_currentRoomAffix != RoomAffix::None)
+            _roomAffixBannerTimer = kRoomAffixBannerSeconds;   // remind on re-entry
+        return;
+    }
+    state.affixRolled = true;
     if (GetRandomValue(1, 100) > kRoomAffixChancePercent) return;
 
     // Weighted pick among the real affixes (index 0 = None is skipped).
@@ -16008,35 +15413,9 @@ void Engine::RollRoomAffix(int roomIdx, RoomType type)
         roll -= kRoomAffixes[i].rollWeight;
         if (roll <= 0) { _currentRoomAffix = (RoomAffix)i; break; }
     }
+    state.affix = _currentRoomAffix;
     if (_currentRoomAffix != RoomAffix::None)
-        _roomAffixBannerTimer = 3.5f;   // brief intro flash on the HUD banner
-}
-
-void Engine::DrawRoomAffixBanner()
-{
-    if (_currentRoomAffix == RoomAffix::None) return;
-    if (_roomAffixBannerTimer > 0.f) _roomAffixBannerTimer -= GetFrameTime();
-
-    const RoomAffixDef& a = GetRoomAffixDef(_currentRoomAffix);
-    Color accent{ a.r, a.g, a.b, 255 };
-
-    const float sw = (float)kVirtualWidth;
-    const char* tag  = "ROOM AFFIX";
-    int tagFs = 18, nameFs = 34, descFs = 20;
-    int nameW = MeasureText(a.name, nameFs);
-    int descW = MeasureText(a.description, descFs);
-    float pillW = std::max(nameW, descW) + 90.f;
-    float pillH = 104.f;
-    float pillX = sw * 0.5f - pillW * 0.5f;
-    float pillY = 92.f;
-
-    Rectangle pill{ pillX, pillY, pillW, pillH };
-    DrawRectangleRounded(pill, 0.4f, 10, Fade(Color{ 20, 18, 28, 255 }, 0.9f));
-    DrawRectangleRoundedLines(pill, 0.4f, 10, accent);
-
-    DrawText(tag,  (int)(sw * 0.5f - MeasureText(tag, tagFs) * 0.5f), (int)(pillY + 12.f), tagFs, Fade(accent, 0.85f));
-    DrawText(a.name, (int)(sw * 0.5f - nameW * 0.5f), (int)(pillY + 34.f), nameFs, accent);
-    DrawText(a.description, (int)(sw * 0.5f - descW * 0.5f), (int)(pillY + 76.f), descFs, Color{ 212, 212, 224, 230 });
+        _roomAffixBannerTimer = kRoomAffixBannerSeconds;   // brief intro flash on the HUD banner
 }
 
 // =============================================================================
@@ -16059,15 +15438,27 @@ void Engine::QueueRoomIntroBanner()
         auto it = _dungeonRoomStates.find(_dungeonRoomIdx);
         if (it != _dungeonRoomStates.end()) special = it->second.special;
     }
-    if (special == RoomSpecialType::RiskShrine)
+    if (_atCrossroads)
     {
-        _roomIntroTitle = "RISK SHRINE";
-        _roomIntroSub   = "Bind a contract, or walk on";
+        _roomIntroTitle = _domainClearedLine.empty() ? "CROSSROADS" : "DOMAIN CLEARED";
+        const std::string road = _worldZone >= RunProgression::kFinalZone - 1
+            ? "one road is left: the final descent"
+            : TextFormat("walk through a door to choose domain %d of 6", _worldZone + 2);
+        _roomIntroSub = _domainClearedLine.empty() ? road : _domainClearedLine + "   -   " + road;
+        _domainClearedLine.clear();
+    }
+    else if (special != RoomSpecialType::None)
+    {
+        const RoomEventPresentation& look = GetRoomEventPresentation(special);
+        _roomIntroTitle = look.title;
+        _roomIntroSub   = look.bannerSub;
     }
     else if (_dungeonRoomIdx == _dungeonGen.GetBossIndex())
     {
-        _roomIntroTitle = "BOSS ROOM";
+        _roomIntroTitle = _worldZone >= 5 ? "FINAL BOSS" : "BOSS ROOM";
         _roomIntroSub   = "No turning back";
+        if (!_dungeonRoomStates[_dungeonRoomIdx].cleared)
+            SfxBank::Get().Play(SfxId::BossArrival, 0.6f, false);
     }
     else if (_dungeonRoomIdx == _dungeonGen.GetKeyIndex())
     {
@@ -16118,10 +15509,9 @@ void Engine::QueueRoomIntroBanner()
         _roomIntroTimer = kRoomIntroDuration;
 }
 
-void Engine::DrawRoomIntroBanner()
+void Engine::DrawRoomIntroBanner() const
 {
-    if (_roomIntroTimer <= 0.f) return;
-    _roomIntroTimer -= GetFrameTime();
+    if (_roomIntroTimer <= 0.f) return;   // advanced by UpdateHudPresentation
 
     const float sw = (float)kVirtualWidth;
     float elapsed = kRoomIntroDuration - _roomIntroTimer;
@@ -16216,13 +15606,18 @@ void Engine::DrawModifierStack() const
     }
     // Risk Shrine contracts — armed (waiting for the next combat room) or active.
     for (const RunModifier& m : _runModifiers)
-        pills.push_back({ m.active ? m.label : (m.label + " (armed)"), m.tint });
+    {
+        std::string text = m.label;
+        if (m.roomsRemaining > 1) text += TextFormat(" x%d", m.roomsRemaining);
+        if (!m.active)            text += " (armed)";
+        pills.push_back({ text, m.tint });
+    }
     if (pills.empty()) return;
 
-    // Below the corner minimap, right-aligned.
+    // Top-right, right-aligned, below the elite modifier and Ascension labels.
+    constexpr float kStackTop = 136.f;
     const float sw = (float)kVirtualWidth;
-    const float mapH = DungeonGen::kGridSize * 30.f + 30.f;   // matches minimap footprint
-    float y = 8.f + mapH + 10.f;
+    float y = kStackTop;
     for (const ModifierPill& pill : pills)
     {
         int   fs = 18;
@@ -16245,10 +15640,18 @@ void Engine::DrawDungeonMiniMap(float originX, float originY, float cellPx, bool
     const float sq  = cellPx * 0.62f;
     const float mmW = DungeonGen::kGridSize * cellPx + pad * 2.f;
 
-    DrawRectangleRounded({ originX, originY, mmW, mmW }, 0.08f, 4,
-                         Fade(Color{ 25, 25, 35, 255 }, overlay ? 0.92f : 0.61f));
-    DrawRectangleRoundedLines({ originX, originY, mmW, mmW }, 0.08f, 4,
-                              Color{ 200, 200, 220, 45 });
+    if (overlay)
+    {
+        DrawRectangleRounded({ originX, originY, mmW, mmW }, 0.08f, 4, Fade(Color{ 25, 25, 35, 255 }, 0.92f));
+        DrawRectangleRoundedLines({ originX, originY, mmW, mmW }, 0.08f, 4, Color{ 200, 200, 220, 45 });
+    }
+    else
+    {
+        // The corner minimap sits in the HUD pack's frame, see-through so the
+        // room shows behind it.
+        constexpr float kMinimapFrameAlpha = 0.70f;
+        DrawHudFrame(Rectangle{ originX, originY, mmW, mmW }, kMinimapFrameAlpha);
+    }
 
     int  bossIdx  = _dungeonGen.GetBossIndex();
     int  startIdx = _dungeonGen.GetStartIndex();
@@ -16320,8 +15723,9 @@ void Engine::DrawDungeonMiniMap(float originX, float originY, float cellPx, bool
             {
                 int dFs = (int)(cellPx * 0.55f);
                 Color mc = ds->second.specialClaimed ? Color{ 150, 130, 90, 220 }
-                                                      : Color{ 255, 190, 90, 255 };
-                DrawText("!", (int)(rx + sq * 0.5f - MeasureText("!", dFs) * 0.5f),
+                                                      : GetRoomEventPresentation(ds->second.special).color;
+                const char* mark = ds->second.special == RoomSpecialType::RestSite ? "+" : "!";
+                DrawText(mark, (int)(rx + sq * 0.5f - MeasureText(mark, dFs) * 0.5f),
                          (int)(ry + sq * 0.5f - dFs * 0.5f), dFs, mc);
             }
         }
@@ -16393,8 +15797,8 @@ Enemy* Engine::SpawnDungeonGrunt(const EncounterSpawnEntry& entry, Vector2 pos, 
                     spawned, rolePos, cellW, cellH, 0.f, safeRolePos))
                 spawned->Teleport(safeRolePos);
         }
-        if (entry.swarmProfile)
-            spawned->ApplyDifficultyScaling(0.75f, 0.85f);
+        if (entry.swarmProfile)   // full HP (opening rule), softer hits
+            spawned->ApplyDifficultyScaling(1.f, 0.75f);
     }
     return spawned;
 }
@@ -16537,8 +15941,7 @@ void Engine::DrawPendingEnemySpawns(Vector2 worldOffset) const
 
             // Filled circle gently breathes in size/alpha.
             const float breathe = 0.5f + 0.5f * sinf(elapsed * 6.5f);
-            DrawCircleV(screenPos, 16.f + 4.f * breathe,
-                        Fade(kSpawnTelegraphColor, 0.28f + 0.18f * breathe));
+            Px::Disc(screenPos, 16.f + 4.f * breathe, Fade(kSpawnTelegraphColor, 0.28f + 0.18f * breathe), Balance::Vfx::kGlowTelegraphStrength);
 
             // Two expanding, fading outline rings, offset half a cycle apart
             // so a new ring is always mid-expansion (a continuous pulse
@@ -16551,8 +15954,7 @@ void Engine::DrawPendingEnemySpawns(Vector2 worldOffset) const
                 const float ringT = fmodf(elapsed + phaseOffset, kRingPeriod) / kRingPeriod;
                 const float ringRadius = ringT * kRingMaxRadius;
                 const float ringAlpha  = 1.f - ringT;
-                DrawCircleLinesV(screenPos, ringRadius,
-                                 Fade(kSpawnTelegraphColor, ringAlpha * 0.85f));
+                Px::Circle(screenPos, ringRadius, Fade(kSpawnTelegraphColor, ringAlpha * 0.85f), Balance::Vfx::kGlowTelegraphStrength);
             }
         }
         else   // Smoke phase
@@ -16561,7 +15963,7 @@ void Engine::DrawPendingEnemySpawns(Vector2 worldOffset) const
             const float t = std::clamp(smokeElapsed / Balance::Rhythm::kSpawnSmokeSeconds, 0.f, 1.f);
             const float radius = 20.f - 14.f * t;                 // contracts toward a point
             const Color color  = Fade(kSpawnTelegraphColor, 0.4f + 0.6f * t);  // brightens
-            DrawCircleV(screenPos, radius, color);
+            Px::Disc(screenPos, radius, color, Balance::Vfx::kGlowTelegraphStrength);
         }
     }
 }
@@ -16692,6 +16094,13 @@ void Engine::SpawnDungeonRoomEnemies()
         float bossX = sw * 0.5f;
         float bossY = sh * 0.28f;
         SpawnBossForBiome({ bossX, bossY });
+        // The Werewolf (Forest guardian) plays its intro before the fight starts.
+        for (auto& enemy : _enemies)
+            if (enemy->IsActive() && enemy->AsWerewolf() != nullptr)
+            {
+                StartBossIntro(*enemy);
+                break;
+            }
         // Boss rooms retain crowd pressure, but use mostly cheap adds so the
         // boss pattern remains the encounter's readable centrepiece.
         const int addCount = GetRandomValue(4 + tier * 2, 6 + tier * 2);
@@ -16815,7 +16224,7 @@ void Engine::SpawnDungeonRoomEnemies()
         overflowReinforcements.insert(overflowReinforcements.end(),
             encounter.reinforcements.begin(), encounter.reinforcements.end());
         _dungeonReinforcements = std::move(overflowReinforcements);
-        _dungeonReinforcementTimer = Balance::Pressure::kReinforceInterval;
+        _dungeonReinforcementTimer = EncounterBreathingInterval(_currentEncounterProfile);
         if (_debug.IsActive())
             TraceLog(LOG_INFO, "ROOM PRESSURE tier %d: %d/%d (bodies %d, opening %d->%d, reinforcements %d)",
                      tierIdx, encounter.debug.totalPressure, encounter.debug.pressureCap,
@@ -16923,6 +16332,7 @@ void Engine::ClearDungeonEnemies()
     _spreadProjectiles.clear();
     _cyclopsLasers.clear();
     _lavaBalls.clear();
+    _volleyWindups.clear();
     _enemyProjectiles.clear();
     _poisonClouds.clear();
     _warriorVfx.clear();
@@ -16952,6 +16362,7 @@ void Engine::ResetEliteRoomRuntime()
     _eliteCageDamageTimer    = 0.f;
     _eliteEnrageWarningTimer = 0.f;
     _eliteHazardSpawnTimer   = 0.f;
+    _volleyWindups.clear();
     // Every reset path also clears the bounded attack-zone pool so no elite
     // damage/warning survives a room exit, restart, or snapshot restore.
     _combatDirector.ClearEliteRuntime();
@@ -17013,6 +16424,64 @@ void Engine::InitializeEliteRoomRuntime(Enemy* elite, int roomIdx,
             (int)(kHazardVolleyMinInterval * 100.f),
             (int)(kHazardVolleyMaxInterval * 100.f)) / 100.f;
         break;
+    }
+}
+
+// Arena Pressure volleys launch from just inside the walls: the room minus its
+// one-cell wall ring (thicker wall art is handled by sliding the point inward).
+Rectangle Engine::GetArenaFloorRect() const
+{
+    const float cellW = (float)kVirtualWidth / RoomLayout::kCols;
+    const float cellH = (float)kVirtualHeight / RoomLayout::kRows;
+    return Rectangle{ cellW, cellH, kVirtualWidth - cellW * 2.f, kVirtualHeight - cellH * 2.f };
+}
+
+// A volley may launch from open floor the player can see: not a blocked tile,
+// not inside a prop, and not under the HUD panel (in the dungeon, world
+// position is screen position).
+bool Engine::IsVolleyLaunchPointClear(Vector2 pos) const
+{
+    const float cell = _nav.GetCellSize();
+    if (cell <= 0.f || _nav.IsCellBlocked((int)(pos.x / cell), (int)(pos.y / cell)))
+        return false;
+    for (const Prop& prop : _props)
+        if (CheckCollisionPointRec(pos, prop.GetCollisionRec()))
+            return false;
+    const float pad = Balance::Hazards::kVolleyAuraRadius;
+    auto covers = [&](Rectangle r)
+    {
+        return CheckCollisionPointRec(pos, Rectangle{ r.x - pad, r.y - pad, r.width + pad * 2.f, r.height + pad * 2.f });
+    };
+    return !covers(GetHudPanelLayout().panel);
+}
+
+// Each volley shot's ember on the wall: it grows over the wind-up, pulses,
+// points where the shot will fly, and a warning ring closes in on it; the shot
+// leaves when the ring touches. Natural fire (no elite tint) glows orange.
+void Engine::DrawVolleyWindups(Vector2 worldOffset) const
+{
+    using namespace Balance::Hazards;
+    constexpr float kSineToUnit = 0.5f;   // maps sin's -1..1 to 0..1
+    const float wave = (sinf((float)GetTime() * kVolleyEmberPulseHz * 2.f * PI) + 1.f) * kSineToUnit;
+    const float pulse = 1.f - kVolleyEmberPulseDepth * wave;
+    for (const VolleyWindup& windup : _volleyWindups)
+    {
+        if (windup.delay > 0.f) continue;   // its ripple has not reached it yet
+        const float progress = std::clamp(1.f - windup.timer / kVolleyWindupSeconds, 0.f, 1.f);
+        const float grow = Lerp(kVolleyEmberStartShare, 1.f, progress);
+        const Color colour = ColorIsEqual(windup.tint, WHITE) ? Vfx::kFireGlow : windup.tint;
+        const Vector2 at{ windup.from.x + worldOffset.x + kVirtualWidth * 0.5f,
+                          windup.from.y + worldOffset.y + kVirtualHeight * 0.5f };
+        const float radius = kVolleyEmberRadius * grow;
+        const Vector2 base = Vector2Add(at, Vector2Scale(windup.dir, radius));
+        const Vector2 tip = Vector2Add(base, Vector2Scale(windup.dir, kVolleyPointerLength));
+        const float ring = Lerp(kVolleyWarnRingStart, radius, progress);   // closes in; fires on contact
+        Px::Aura(at, kVolleyAuraRadius * grow, Fade(colour, kVolleyAuraStrength * pulse));
+        Px::Ring(at, ring - kVolleyWarnRingWidth, ring, Fade(colour, pulse), Balance::Vfx::kGlowTelegraphStrength);
+        Px::Line(base, tip, kVolleyPointerWidth, Fade(colour, pulse), Balance::Vfx::kGlowTelegraphStrength);
+        Px::Disc(at, radius + kVolleyEmberRim, Fade(BLACK, kVolleyEmberRimAlpha));
+        Px::Disc(at, radius, Fade(colour, pulse), Balance::Vfx::kGlowShapeStrength);
+        Px::Disc(at, radius * kVolleyEmberCoreShare, Fade(WHITE, pulse));
     }
 }
 
@@ -17182,6 +16651,8 @@ void Engine::SpawnDungeonDoorOpenEffects()
 {
     const auto& rooms = _dungeonGen.GetRooms();
     if (_dungeonRoomIdx < 0 || _dungeonRoomIdx >= (int)rooms.size()) return;
+    SfxBank::Get().Play(SfxId::DoorOpen, 0.45f);
+    SaveRunCheckpoint();   // the room is won: checkpoint it
 
     const DungeonRoom& room = rooms[_dungeonRoomIdx];
     float sw = (float)kVirtualWidth;
@@ -17676,7 +17147,7 @@ void Engine::UpdateDungeonMagicGemAndBarrier(float dt)
             else
             {
                 _bossBarrierMessageTimer = 2.2f;
-                _message = "you need a a magic gem to get past the barrier";
+                _message = "You need the magic gem to pass this barrier";
 
                 Vector2 p = _player.GetWorldPos();
                 switch (barrierSide)
@@ -17909,6 +17380,12 @@ void Engine::UpdateSettings(float dt)
             // Helper: sync the cursor column with the actual current display option
             auto syncDisplayCol = [&]()
             {
+                if (_settingsTab == 3)
+                {
+                    _settingsGpContentCol = (_settingsGpContentRow == 1) ? s.flashLevel
+                                          : (_settingsGpContentRow == 2) ? s.hitStopLevel : 0;
+                    return;
+                }
                 if (_settingsTab != 0) { _settingsGpContentCol = 0; return; }
                 if (_settingsGpContentRow == 0)
                     _settingsGpContentCol = (int)s.windowMode;
@@ -17921,13 +17398,14 @@ void Engine::UpdateSettings(float dt)
             // Row count per tab for content section
             int maxContentRows = (_settingsTab == 0) ? 3
                                : (_settingsTab == 1) ? 3
+                               : (_settingsTab == 3) ? 3
                                : (_keybindSubTab == 0) ? 10 : 7;
 
             switch (_settingsGpSection)
             {
-            case 0: // Main tab strip (Display / Audio / Keybindings)
-                if (gpLeft)  { _settingsGpTabCursor = (_settingsGpTabCursor + 2) % 3; _settingsGpCooldown = kGpCooldown; }
-                if (gpRight) { _settingsGpTabCursor = (_settingsGpTabCursor + 1) % 3; _settingsGpCooldown = kGpCooldown; }
+            case 0: // Main tab strip (Display / Audio / Keybindings / Comfort)
+                if (gpLeft)  { _settingsGpTabCursor = (_settingsGpTabCursor + 3) % 4; _settingsGpCooldown = kGpCooldown; }
+                if (gpRight) { _settingsGpTabCursor = (_settingsGpTabCursor + 1) % 4; _settingsGpCooldown = kGpCooldown; }
                 if (gpA)
                 {
                     _settingsTab          = _settingsGpTabCursor;
@@ -18032,6 +17510,24 @@ void Engine::UpdateSettings(float dt)
                         }
                     }
                 }
+                else if (_settingsTab == 3) // Comfort: shake slider, then two 3-way choices
+                {
+                    if (_settingsGpContentRow == 0)
+                    {
+                        if (gpLeft)  { s.screenShake = std::max(0.f, s.screenShake - 0.05f); _settingsGpCooldown = kGpCooldown; }
+                        if (gpRight) { s.screenShake = std::min(1.f, s.screenShake + 0.05f); _settingsGpCooldown = kGpCooldown; }
+                    }
+                    else
+                    {
+                        if (gpLeft  && _settingsGpContentCol > 0) { _settingsGpContentCol--; _settingsGpCooldown = kGpCooldown; }
+                        if (gpRight && _settingsGpContentCol < 2) { _settingsGpContentCol++; _settingsGpCooldown = kGpCooldown; }
+                        if (gpLeft || gpRight)   // only on input, so a mouse click isn't undone
+                        {
+                            if (_settingsGpContentRow == 1) s.flashLevel   = _settingsGpContentCol;
+                            else                            s.hitStopLevel = _settingsGpContentCol;
+                        }
+                    }
+                }
                 else // Keybindings: A starts rebind for focused row
                 {
                     if (gpA)
@@ -18069,9 +17565,9 @@ void Engine::UpdateSettings(float dt)
     const float tabY   = panelY + 85.f;
     const float tabH   = 52.f;
     const float tabGap = 14.f;
-    const float kTabW[3] = { 195.f, 175.f, 225.f };
+    const float kTabW[4] = { 195.f, 175.f, 225.f, 190.f };
     float tabX = panelX + 40.f;
-    for (int tabIdx = 0; tabIdx < 3; tabIdx++)
+    for (int tabIdx = 0; tabIdx < 4; tabIdx++)
     {
         if (mousePressed && CheckCollisionPointRec(mouse, { tabX, tabY, kTabW[tabIdx], tabH }))
         {
@@ -18178,23 +17674,27 @@ void Engine::UpdateSettings(float dt)
             ApplySfxVolume();
         }
     }
+    else if (_settingsTab == 3)
+    {
+        // -- Comfort ------------------------------------------------------------
+        const float trackX = contentX;
+        const float trackW = 600.f;
+        const bool overTrack = (mouse.x >= trackX - 26.f && mouse.x <= trackX + trackW + 26.f
+                             && mouse.y >= contentY - 26.f && mouse.y <= contentY + 46.f);
+        if (mousePressed && overTrack) _settingsDragSlider = 3;
+        if (mouseReleased)             _settingsDragSlider = -1;
+        if (mouseDown && _settingsDragSlider == 3)
+            s.screenShake = std::clamp((mouse.x - trackX) / trackW, 0.f, 1.f);
+
+        static const char* kLevels[] = { "Full", "Reduced", "Off" };
+        s.flashLevel   = DrawOptionRow("Screen Flashes", kLevels, 3, s.flashLevel,
+                                       contentX, contentY + rowSpacing, 210.f, 56.f, mouse, mousePressed);
+        s.hitStopLevel = DrawOptionRow("Hit-Stop", kLevels, 3, s.hitStopLevel,
+                                       contentX, contentY + rowSpacing * 2.f, 210.f, 56.f, mouse, mousePressed);
+    }
     else
     {
         // -- Keybindings ------------------------------------------------------
-
-        Rectangle aimModeToggle{ panelX + 620.f, contentY + 8.f, 420.f, 40.f };
-        if (mousePressed && CheckCollisionPointRec(mouse, aimModeToggle))
-        {
-            s.abilityAimToggle = !s.abilityAimToggle;
-            _settingsMgr.Save();
-        }
-        if (_settingsRebindSlot < 0 && _settingsGpRebindSlot < 0 &&
-            IsGamepadAvailable(GamepadInput::kGamepad) &&
-            IsGamepadButtonPressed(GamepadInput::kGamepad, GAMEPAD_BUTTON_RIGHT_FACE_UP))
-        {
-            s.abilityAimToggle = !s.abilityAimToggle;
-            _settingsMgr.Save();
-        }
 
         // Sub-tab click (M&K vs Gamepad) - same geometry as DrawSettingsKeybindings
         const float subTabH   = 40.f;
@@ -18335,9 +17835,9 @@ void Engine::DrawSettings() const
     const float sw = (float)kVirtualWidth;
     const float sh = (float)kVirtualHeight;
 
-    // Scrolling checkerboard background - blue-navy tones
+    // Scrolling checkerboard background - slate blue
     DrawScrollingCheckerboard(sw, sh,
-        Color{14, 28, 52, 255}, Color{20, 42, 76, 255}, 20.f, 11.f);
+        Color{40, 66, 110, 255}, Color{54, 86, 138, 255}, 20.f, 11.f);
 
     // Panel layout
     const float panelW = 1100.f;
@@ -18349,7 +17849,9 @@ void Engine::DrawSettings() const
     if (_settingsBorderTex.id != 0)
     {
         const float borderPad = 24.f;
-        DrawNineSlice(_settingsBorderTex, 18.f, 22.f,
+        static constexpr NineSliceCuts kSettingsBorderCuts{ 16, 16, 16, 16 };
+        static constexpr int kSettingsBorderScale = 2;
+        DrawNineSliceScaled(_settingsBorderTex, kSettingsBorderCuts, kSettingsBorderScale,
             { panelX - borderPad, panelY - borderPad,
               panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
     }
@@ -18371,11 +17873,11 @@ void Engine::DrawSettings() const
     const float tabY   = panelY + 85.f;
     const float tabH   = 52.f;
     const float tabGap = 14.f;
-    const float kTabW[3]           = { 195.f, 175.f, 225.f };
-    static const char* kTabLabels[3] = { "DISPLAY", "AUDIO", "KEYBINDINGS" };
+    const float kTabW[4]           = { 195.f, 175.f, 225.f, 190.f };
+    static const char* kTabLabels[4] = { "DISPLAY", "AUDIO", "KEYBINDINGS", "COMFORT" };
     bool gpAvail = IsGamepadAvailable(0);
     float tabX = panelX + 40.f;
-    for (int tabIdx = 0; tabIdx < 3; tabIdx++)
+    for (int tabIdx = 0; tabIdx < 4; tabIdx++)
     {
         bool   active     = (_settingsTab == tabIdx);
         bool   gpCursor   = gpAvail && (_settingsGpSection == 0) && (_settingsGpTabCursor == tabIdx);
@@ -18455,6 +17957,44 @@ void Engine::DrawSettings() const
                            trackX, contentY + rowSpacing * 2.f, trackW,
                            (_settingsDragSlider == 2) || (gpInAudio && _settingsGpContentRow == 2), mouse, mouseDown, mouseRel);
     }
+    else if (_settingsTab == 3)
+    {
+        // Comfort tab
+        const float trackX = contentX;
+        const float trackW = 600.f;
+        bool mouseDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON) || (GetTouchPointCount() > 0);
+        bool mouseRel  = IsMouseButtonReleased(MOUSE_LEFT_BUTTON);
+        const bool gpIn = gpAvail && (_settingsGpSection == 2);
+        auto focusRing = [&](int row, float y, float h)
+        {
+            if (gpIn && _settingsGpContentRow == row)
+                DrawRectangleRoundedLines({ trackX - 330.f, y, 1100.f - 80.f, h }, 0.1f, 4, Color{255, 200, 0, 160});
+        };
+        focusRing(0, contentY - 24.f, 52.f);
+        DrawSettingsSlider("Screen Shake", s.screenShake, trackX, contentY, trackW,
+                           (_settingsDragSlider == 3) || (gpIn && _settingsGpContentRow == 0), mouse, mouseDown, mouseRel);
+
+        static const char* kLevels[] = { "Full", "Reduced", "Off" };
+        focusRing(1, contentY + rowSpacing - 8.f, 72.f);
+        DrawOptionRow("Screen Flashes", kLevels, 3, s.flashLevel,
+                      contentX, contentY + rowSpacing, 210.f, 56.f, mouse, false);
+        focusRing(2, contentY + rowSpacing * 2.f - 8.f, 72.f);
+        DrawOptionRow("Hit-Stop", kLevels, 3, s.hitStopLevel,
+                      contentX, contentY + rowSpacing * 2.f, 210.f, 56.f, mouse, false);
+
+        static const char* kNotes[] = {
+            "Screen Shake scales every camera shake. 0% turns it off.",
+            "Screen Flashes covers full-screen flashes: level-ups, relics,",
+            "ultimates, boss attacks and Second Wind. Reduced keeps a faint tint.",
+            "Hit-Stop is the brief freeze when a blow lands or an enemy dies.",
+        };
+        float noteY = contentY + rowSpacing * 3.f;
+        for (const char* note : kNotes)
+        {
+            DrawText(note, (int)(panelX + 80.f), (int)noteY, 26, Color{ 170, 195, 215, 220 });
+            noteY += 36.f;
+        }
+    }
     else
     {
         // Keybindings tab
@@ -18520,16 +18060,6 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
                  stFs, active ? BLACK : RAYWHITE);
         stX += subTabW + subTabGap;
     }
-
-    const GameSettings& settings = _settingsMgr.Get();
-    Rectangle aimModeToggle{ panelX + 620.f, subTabY, 420.f, subTabH };
-    bool aimHovered = CheckCollisionPointRec(mouse, aimModeToggle);
-    DrawRectangleRounded(aimModeToggle, 0.2f, 6,
-        aimHovered ? Color{ 65, 105, 125, 230 } : Color{ 30, 55, 70, 200 });
-    DrawRectangleRoundedLines(aimModeToggle, 0.2f, 6, Color{ 130, 235, 255, 180 });
-    const char* aimMode = settings.abilityAimToggle ? "AIM: PRESS / PRESS" : "AIM: HOLD / RELEASE";
-    DrawText(aimMode, (int)aimModeToggle.x + 14, (int)aimModeToggle.y + 8, 22, RAYWHITE);
-    DrawText("Y", (int)(aimModeToggle.x + aimModeToggle.width - 34.f), (int)aimModeToggle.y + 8, 22, GOLD);
 
     // Divider below sub-tabs
     float subDivY = subTabY + subTabH + 8.f;
@@ -18706,124 +18236,142 @@ void Engine::DrawSettingsKeybindings(float contentY, float panelX, float panelW,
 //                         cursed wager unlocks for the next shop, and this same
 //                         character presses on to the next domain. Die and it's
 //                         all gone.
-void Engine::OpenBossChoice()
+bool Engine::BuyVillageObject(int defIndex, int cellCol, int cellRow)
 {
-    if (_worldZone < 4 && _worldMapPreparedZone != _worldZone + 1)
+    if (defIndex < 0 || defIndex >= (int)_villageObjectCatalog.size()) return false;
+    if (!VillagePlaygroundCanPlace(defIndex, cellCol, cellRow)) return false;
+    const VillageRuntimeObjectDef& def = _villageObjectCatalog[defIndex];
+    if (_player.GetGold() < def.costGold)
     {
-        _worldMap.Generate(_worldCompletedBiomes, _worldChosenNodeIndices,
-                           _worldZone + 1, kVirtualWidth, kVirtualHeight);
-        _worldMapPreparedZone = _worldZone + 1;
-        _runSessionData.MarkWorldMapGenerated();
+        _villagePlaygroundMessage = "Not enough gold";
+        _villagePlaygroundMessageTimer = 2.f;
+        return false;
     }
-    _bossChoiceCursor    = 0;      // default-highlight the safe option
-    _bossChoiceOpenTimer = 0.30f;  // swallow the exit-tile input for a beat
-    _gameState           = GameState::BossChoice;
+    if (def.costGold > 0) _player.AddGold(-def.costGold);
+    VillagePlacedObject placed{};
+    placed.defName = def.name;
+    placed.defIndex = defIndex;
+    placed.cellCol = cellCol;
+    placed.cellRow = cellRow;
+    placed.placedThisVisit = true;
+    _villagePlacedObjects.push_back(placed);
+    CommitVillageEconomy();   // building + its cost in one profile write
+    RefreshVillageShopNpc();
+    SyncVillageCitizenCount();
+    if (def.name == "ZephsShop")
+    {
+        _villageBuildMode = false;
+        _villagePlaygroundMessage = "Zeph has opened shop in the village.";
+        _villagePlaygroundMessageTimer = 3.f;
+    }
+    return true;
 }
 
-// Shared card geometry (Update + Draw MUST agree).
-static void BossChoiceCardRects(Rectangle& left, Rectangle& right)
+bool Engine::RemoveVillageObject(int placedIndex)
 {
-    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
-    const float cardW = sw * 0.30f, cardH = sh * 0.46f, gap = sw * 0.05f;
-    const float totalW = cardW * 2.f + gap;
-    const float x0 = sw * 0.5f - totalW * 0.5f;
-    const float y  = sh * 0.5f - cardH * 0.5f + sh * 0.04f;
-    left  = { x0,                 y, cardW, cardH };
-    right = { x0 + cardW + gap,   y, cardW, cardH };
+    if (placedIndex < 0 || placedIndex >= (int)_villagePlacedObjects.size()) return false;
+    const VillagePlacedObject placed = _villagePlacedObjects[placedIndex];
+    if (placed.defIndex < 0 || placed.defIndex >= (int)_villageObjectCatalog.size()) return false;
+    const VillageRuntimeObjectDef& def = _villageObjectCatalog[placed.defIndex];
+    if (VillageObjectIsPermanentService(def))
+    {
+        _villagePlaygroundMessage = "This service building cannot be removed.";
+        _villagePlaygroundMessageTimer = 2.f;
+        return false;
+    }
+    // Same-visit removal is an undo (full refund); tearing down an older
+    // building salvages half, so parking gold in buildings before a risky run
+    // can't dodge the death penalty.
+    const int refund = placed.placedThisVisit ? def.costGold : def.costGold / 2;
+    if (refund > 0)
+    {
+        _player.AddGold(refund);
+        _villagePlaygroundMessage = placed.placedThisVisit
+            ? TextFormat("Refunded %dg", refund)
+            : TextFormat("Salvaged %dg (half value)", refund);
+        _villagePlaygroundMessageTimer = 2.f;
+    }
+    _villagePlacedObjects.erase(_villagePlacedObjects.begin() + placedIndex);
+    CommitVillageEconomy();   // removal + refund in one profile write
+    RefreshVillageShopNpc();
+    SyncVillageCitizenCount();
+    return true;
 }
 
-void Engine::UpdateBossChoice()
+void Engine::ConfirmLevelUpCard(bool ultimateRow, int index)
 {
-    const float dt = GetFrameTime();
-    if (_bossChoiceOpenTimer > 0.f) { _bossChoiceOpenTimer -= dt; return; }
-    _gamepad.Update(_gamepadBindingsEdit);
-
-    Rectangle left, right;
-    BossChoiceCardRects(left, right);
-    Vector2 mouse = GetVirtualMousePos();
-
-    if (IsKeyPressed(KEY_LEFT)  || IsKeyPressed(KEY_A)) _bossChoiceCursor = 0;
-    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) _bossChoiceCursor = 1;
-    if (_gamepad.isActive)
+    if (index < 0 || index >= 3) return;
+    if (ultimateRow)
     {
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT))  _bossChoiceCursor = 0;
-        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) _bossChoiceCursor = 1;
+        if (!_showUltimateRow || _ultimateRowPicked) return;
+        _player.ApplyUpgrade(_levelUpUltimateOptions[index]);
+        _ultimateRowPicked = true;
+        if (!_regularRowPicked) return;
     }
-    if (CheckCollisionPointRec(mouse, left))  _bossChoiceCursor = 0;
-    if (CheckCollisionPointRec(mouse, right)) _bossChoiceCursor = 1;
-
-    bool clickL = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(mouse, left);
-    bool clickR = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(mouse, right);
-    bool confirm = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
-                   (_gamepad.isActive && _gamepad.menuConfirmPressed);
-
-    if (clickL || (confirm && _bossChoiceCursor == 0))
+    else
     {
-        StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
-        _runSessionData.PauseInVillage();
-        EnterVillage();
-        _fadeInTimer = 1.0f; _fadeInDuration = 1.0f;
-        return;
+        if (_regularRowPicked) return;
+        _player.ApplyUpgrade(_levelUpOptions[index]);
+        _awaitingStartingAbility = false;
+        _regularRowPicked = true;
+        if (_showUltimateRow && !_ultimateRowPicked) return;
     }
-    if (clickR || (confirm && _bossChoiceCursor == 1))
-    {
-        // Push onward keeps the boss-fight damage and mana expenditure.
-        StopSound(_buttonPressSound); PlaySound(_buttonPressSound);
-        _player.AddGold(50 + _worldZone * 50);     // bravery bounty (tunable)
-        _wagerAccessGranted = false;
-        OpenWorldMap();
-        return;
-    }
+    // The level-up screen returns to where it opened from; a retired state is
+    // corrected by the guard in Update.
+    _gameState = _levelUpReturnState;
 }
 
-void Engine::DrawBossChoice()
+void Engine::LeaveVictoryScreen()
 {
-    const float sw = (float)kVirtualWidth, sh = (float)kVirtualHeight;
-    DrawRectangle(0, 0, (int)sw, (int)sh, Color{ 10, 8, 16, 255 });
+    _nextRunPrepared = false;
+#if MO_ITCH_DEMO
+    ResetRunState();
+    _menu.Init();
+    _gameState = GameState::Menu;
+#else
+    // Home after a won run: the village prepares the next attempt.
+    EnterVillage();
+    _fadeInTimer = 1.0f; _fadeInDuration = 1.0f;
+#endif
+}
 
-    const char* title = "The boss lies broken. What now?";
-    int tFs = 46, tTw = MeasureText(title, tFs);
-    DrawText(title, (int)(sw * 0.5f - tTw * 0.5f), (int)(sh * 0.16f), tFs, Color{ 235, 228, 245, 255 });
+void Engine::FinishVillageIntro()
+{
+    _villageIntroDialogueActive = false;
+    _firstVillageVisit = false;
+    // Onboarding isn't "complete" until the in-dungeon combat tutorial is
+    // cleared - that call lives in UpdateDungeonTutorial(), not here.
+    // Zeph's welcome purse: a brand-new Mystic can try the shop once before
+    // the first run (persisted as the village wallet).
+    _player.AddGold(Balance::Economy::kNewProfileWelcomeGold);
+    _meta.SetVillageWallet(_player.GetGold());
+    _villagePlaygroundMessage = TextFormat("Zeph gave you %d gold. Head north when you are ready.",
+                                          Balance::Economy::kNewProfileWelcomeGold);
+    _villagePlaygroundMessageTimer = 6.f;
+}
 
-    Rectangle left, right;
-    BossChoiceCardRects(left, right);
-
-    struct CardInfo { Rectangle rec; const char* head; const char* sub; std::vector<const char*> lines; Color accent; };
-    CardInfo cards[2] = {
-        { left,  "Return to Village", "Safe",
-          { "Pause this journey.", "Restore health and mana,", "visit Zeph, then resume", "the same world-map path.", "", "Your run remains active." },
-          Color{ 110, 190, 130, 255 } },
-        { right, "Push Onward", "Double or Nothing",
-          { "Press deeper, same soul.", "Take a gold bounty,", "but restore no health", "and restore no mana.", "", "Fall now and lose it all." },
-          Color{ 220, 90, 110, 255 } },
-    };
-
-    for (int i = 0; i < 2; i++)
+void Engine::CompleteDomain()
+{
+    RecordDomainEnd(true);
+    // TEMP DUNGEON TIMER (remove when the first-dungeon timing task is complete)
+    if (_worldZone == 0 && s_tempDomainOneStart >= 0.0)
     {
-        const CardInfo& c = cards[i];
-        bool sel = (_bossChoiceCursor == i);
-        Color body = sel ? Color{ 34, 30, 48, 255 } : Color{ 22, 20, 32, 245 };
-        DrawRectangleRounded(c.rec, 0.06f, 10, body);
-        DrawRectangleRoundedLinesEx(c.rec, 0.06f, 10, sel ? 5.f : 2.f,
-                                    sel ? c.accent : Color{ 70, 66, 86, 255 });
-
-        int hFs = 34, hTw = MeasureText(c.head, hFs);
-        DrawText(c.head, (int)(c.rec.x + c.rec.width * 0.5f - hTw * 0.5f), (int)(c.rec.y + 26.f), hFs, c.accent);
-        int sFs = 20, sTw = MeasureText(c.sub, sFs);
-        DrawText(c.sub, (int)(c.rec.x + c.rec.width * 0.5f - sTw * 0.5f), (int)(c.rec.y + 68.f), sFs, Color{ 190, 184, 205, 255 });
-
-        float ly = c.rec.y + 120.f;
-        for (const char* ln : c.lines)
-        {
-            int lFs = 22, lTw = MeasureText(ln, lFs);
-            DrawText(ln, (int)(c.rec.x + c.rec.width * 0.5f - lTw * 0.5f), (int)ly, lFs, Color{ 210, 204, 222, 235 });
-            ly += lFs + 10.f;
-        }
+        const double elapsed = GetTime() - s_tempDomainOneStart;
+        printf("TEMP TIMER: first dungeon cleared in %.1f s\n", elapsed);
+        TraceLog(LOG_INFO, "TEMP TIMER: first dungeon cleared in %.1f s", elapsed);
+        s_tempDomainOneStart = -1.0;
     }
-
-    const char* hint = "A / D  or  <  >  to choose      Enter / click to confirm";
-    int hFs = 22, hTw = MeasureText(hint, hFs);
-    DrawText(hint, (int)(sw * 0.5f - hTw * 0.5f), (int)(sh * 0.90f), hFs, Color{ 150, 145, 165, 220 });
+    if (_worldZone < RunProgression::kFinalZone)
+    {
+        // A partial breath after a boss, not a reset (Balance::Sustain), plus a
+        // bounty that grows with depth so income keeps pace with shop tiers.
+        const int heal = (int)std::ceil(_player.GetMaxHealthValue() * Balance::Sustain::kBossClearHealFraction);
+        if (heal > 0) _player.Heal(heal);
+        const int bounty = Balance::Economy::kDomainBountyBase + Balance::Economy::kDomainBountyStep * _worldZone;
+        _player.AddGold(bounty);
+        _domainClearedLine = TextFormat("+%d gold   +%d HP", bounty, heal);   // shown by the crossroads banner
+    }
+    OpenWorldMap();
 }
 
 // -- World Map ------------------------------------------------------------------
@@ -18835,42 +18383,62 @@ void Engine::OpenWorldMap()
     if (_worldZone >= 5)
     {
         _demoCompleted = true;
-        _meta.RecordGameCompleted();
-        _gameState     = GameState::DemoEnd;
+        if (!_ascensionRecorded)
+        {
+            _ascensionRecorded = true;
+            _meta.RecordAscensionCleared(_ascensionTier);
+            _meta.RecordGameCompleted();
+            _victoryUnlockLine = DescribeNewClassUnlocks(_meta.TakeNewClassUnlocks());
+        }
+        // A won run made it home: bank its Echoes and keep its gold.
+        EndRunCheckpoint();
+        CaptureRunSummary(true);   // before banking empties the carried Echoes
+        BankCarriedEchoes();
+        _meta.SetVillageWallet(_player.GetGold());
+        OpenRunSummary();          // then the victory screen (LeaveRunSummary)
         return;
     }
 
-    // Zone 4 boss just cleared ? skip map, go straight to the final domain.
-    if (_worldZone >= 4)
+    // Between domains: the crossroads room, its doors leading to the next domains.
+    RollCrossroadsDoors();
+    OpenCrossroads();
+}
+
+void Engine::EnterFinalDomain()
+{
+    // The fifth domain's boss is down and the crossroads' last door was taken.
+    _atCrossroads = false;
+    _worldZone = 5;
+    _currentBiome = Biome::DemonsInsides;
+    _dungeonGen.SetPlan(DungeonGen::PlanForDomain(5));   // the final domain is the largest
+    _handcraftedDungeonRoomIds.clear();
+    LoadTilesetForBiome(_currentBiome);
+#if MO_ITCH_DEMO
+    _useHandcraftedDungeonRooms = false;
+    _dungeonGen.Generate();
+    _dungeonGen.ForceRoomType(_dungeonGen.GetStartIndex(), RoomType::Store);   // Zeph's last camp
+#else
+    // The final domain runs on authored rooms like every other domain.
+    _useHandcraftedDungeonRooms = true;
+    RefreshHandcraftedRooms();
+    if (!GenerateHandcraftedDungeon(_currentBiome, _handcraftedDungeonRoomIds, 600, /*zephCampEntrance=*/true))
     {
-        _worldZone = 5;
-        _currentBiome = Biome::DemonsInsides;
+        TraceLog(LOG_ERROR, "Final domain: authored library incomplete, using procedural rooms");
         _useHandcraftedDungeonRooms = false;
         _handcraftedDungeonRoomIds.clear();
-        LoadTilesetForBiome(_currentBiome);
         _dungeonGen.Generate();
-        int startIdx = _dungeonGen.GetStartIndex();
-        EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonEntranceSpawnPos(), true);
-        // FadingIn was already set by the fade handler - just reset the timer/alpha.
-        _dungeonFadeState = DungeonFadeState::FadingIn;
-        _dungeonFadeTimer = kDungeonFadeDuration;
-        _dungeonFadeAlpha = 255.f;
-        return;
+        _dungeonGen.ForceRoomType(_dungeonGen.GetStartIndex(), RoomType::Store);
     }
-
-    if (_worldMapPreparedZone == _worldZone + 1)
-    {
-        _worldMap.Reopen();
-    }
-    else
-    {
-        _worldMap.Generate(_worldCompletedBiomes, _worldChosenNodeIndices,
-                           _worldZone + 1, kVirtualWidth, kVirtualHeight);
-        _worldMapPreparedZone = _worldZone + 1;
-        _runSessionData.MarkWorldMapGenerated();
-    }
-
-    _gameState = GameState::WorldMap;
+#endif
+    EarnFeat(Feat::Pathfinder);
+    EarnFeat(Feat::FinalDescent);
+    ApplyPendingPathBoon();   // before entering, so the checkpoint includes it
+    int startIdx = _dungeonGen.GetStartIndex();
+    EnterDungeonRoom(startIdx, DungeonDoorSide::None, GetDungeonEntranceSpawnPos(), true);
+    // FadingIn was already set by the fade handler - just reset the timer/alpha.
+    _dungeonFadeState = DungeonFadeState::FadingIn;
+    _dungeonFadeTimer = kDungeonFadeDuration;
+    _dungeonFadeAlpha = 255.f;
 }
 
 void Engine::UpdateWorldMap(float dt)
@@ -18904,43 +18472,68 @@ void Engine::UpdateWorldMap(float dt)
     if (!done) return;
 
     // Player confirmed a biome - advance zone and load the new dungeon.
-    Biome selectedBiome   = _worldMap.GetSelectedBiome();
-    int   selectedTierIdx = _worldMap.GetSelectedTierIdx();
+    CommitWorldMapChoice(_worldMap.GetSelectedBiome(), _worldMap.GetSelectedTierIdx());
+}
 
+void Engine::CommitWorldMapChoice(Biome selectedBiome, int selectedTierIdx)
+{
+    const Biome previousBiome = _currentBiome;
+
+    QueueJourney(GetBiomeName(selectedBiome), {
+    [this, selectedBiome] {
+    _atCrossroads = false;
+    _currentBiome = selectedBiome;
+    // Every region has a complete authored .mroom library: its own originals
+    // plus the Forest layout families re-drawn in its art (validated by the
+    // ForestVariants test suite). The itch demo stays fully procedural so its
+    // proven boss-exit / world-map flow is used end to end.
+#if MO_ITCH_DEMO
+    _useHandcraftedDungeonRooms = false;
+#else
+    _useHandcraftedDungeonRooms = true;
+#endif
+    _handcraftedDungeonRoomIds.clear();
+    // Each domain beaten makes the next one bigger (_worldZone advances after this).
+    _dungeonGen.SetPlan(DungeonGen::PlanForDomain(_worldZone + 1));
+
+    if (_useHandcraftedDungeonRooms)
+    {
+        RefreshHandcraftedRooms();
+        if (!GenerateHandcraftedDungeon(_currentBiome, _handcraftedDungeonRoomIds, 600, /*zephCampEntrance=*/true))
+        {
+            _message = "This region's handcrafted room library is incomplete";
+            throw std::runtime_error(_message);
+        }
+    }
+    else
+    {
+        _dungeonGen.Generate();
+        // Every domain after the Forest opens at Zeph's camp.
+        _dungeonGen.ForceRoomType(_dungeonGen.GetStartIndex(), RoomType::Store);
+    }
+    },
+    [this] { LoadTilesetForBiome(_currentBiome); },
+    [this, selectedBiome, selectedTierIdx] {
     _worldZone++;
     _worldCompletedBiomes.push_back(selectedBiome);
     _worldChosenNodeIndices.push_back(selectedTierIdx);
     _runSessionData.RecordMapChoice(selectedBiome, selectedTierIdx);
     _worldMapPreparedZone = -1;
-
-    _currentBiome = selectedBiome;
-    // Forest is the first complete authored library. Other regions retain their
-    // existing rooms until their .mroom coverage is finished, then they can use
-    // the same assignment path without changing runtime rendering again.
-    _useHandcraftedDungeonRooms = _currentBiome == Biome::Forest;
-    _handcraftedDungeonRoomIds.clear();
-    LoadTilesetForBiome(_currentBiome);
-
-    if (_useHandcraftedDungeonRooms)
-    {
-        RefreshHandcraftedRooms();
-        if (!GenerateHandcraftedDungeon(_currentBiome, _handcraftedDungeonRoomIds))
-        {
-            _message = "This region's handcrafted room library is incomplete";
-            _gameState = GameState::WorldMap;
-            return;
-        }
-    }
-    else
-        _dungeonGen.Generate();
+    if (_worldZone >= 2) EarnFeat(Feat::Pathfinder);
+    ApplyPendingPathBoon();   // before entering, so the camp banks Echoes and the checkpoint has it
     int startIdx   = _dungeonGen.GetStartIndex();
     Vector2 spawnPos = GetDungeonEntranceSpawnPos();
     EnterDungeonRoom(startIdx, DungeonDoorSide::None, spawnPos, true);
 
-    // Fade in to the newly generated biome entrance.
-    _dungeonFadeState = DungeonFadeState::FadingIn;
-    _dungeonFadeTimer = kDungeonFadeDuration;
-    _dungeonFadeAlpha = 255.f;
+    }
+    },
+    [this, previousBiome] {
+        // Progression is only committed in the last stage, so the player is
+        // simply back at the same crossroads.
+        _currentBiome = previousBiome;
+        LoadTilesetForBiome(_currentBiome);
+        OpenCrossroads();
+    });
 }
 
 void Engine::DrawWorldMap()
@@ -19069,7 +18662,7 @@ void Engine::UpdateBiomeModifiers(float dt)
                 if (hazard.dmgCooldown <= 0.f &&
                     Vector2Distance(_player.GetFeetWorldPos(), hazard.pos) <= kWastelandExplosionRadius)
                 {
-                    _player.TakeDamage(kWastelandDamage, hazard.pos);
+                    _player.TakeDamageFrom(DamageSource::FromHazard(DamageNames::kWastelandBlast), kWastelandDamage, hazard.pos);
                     hazard.dmgCooldown = 0.3f;
                 }
             }
@@ -19103,7 +18696,7 @@ void Engine::UpdateBiomeModifiers(float dt)
                 float perp  = fabsf(cross) / Vector2Length(ab);
                 if (perp < kLostCityBeamWidth * 0.5f && beam.damageCooldown <= 0.f)
                 {
-                    _player.TakeDamage(1, beam.center);
+                    _player.TakeDamageFrom(DamageSource::FromHazard(DamageNames::kLostCityBeam), 10, beam.center);
                     beam.damageCooldown = kLostCityBeamDmgCooldown;
                 }
             }
@@ -19160,8 +18753,8 @@ void Engine::DrawBiomeModifiers()
                 float progress = 1.f - (hazard.warningTimer / kWastelandWarningDuration);
                 float radius   = kWastelandExplosionRadius * (0.4f + 0.6f * progress);
                 float pulse    = sinf((float)GetTime() * 12.f) * 0.3f + 0.7f;
-                DrawCircleLines(cx, cy, radius, Fade(RED, pulse));
-                DrawCircleLines(cx, cy, radius * 0.55f, Fade(Color{ 255, 120, 0, 255 }, pulse * 0.5f));
+                Px::Circle((float)(cx), (float)(cy), radius, Fade(RED, pulse), Balance::Vfx::kGlowTelegraphStrength);
+                Px::Circle((float)(cx), (float)(cy), radius * 0.55f, Fade(Color{ 255, 120, 0, 255 }, pulse * 0.5f), Balance::Vfx::kGlowTelegraphStrength);
             }
             else if (_roomClearExplosionTex.id != 0)
             {
@@ -19195,11 +18788,9 @@ void Engine::DrawBiomeModifiers()
             Vector2 screenB = worldToScreen(worldB);
             Vector2 screenC = worldToScreen(beam.center);
 
-            DrawLineEx(screenA, screenB, kLostCityBeamWidth + 6.f,
-                Fade(Color{ 255, 220, 60, 255 }, 0.30f));
-            DrawLineEx(screenA, screenB, kLostCityBeamWidth,
-                Color{ 255, 230, 80, 230 });
-            DrawCircle((int)screenC.x, (int)screenC.y, 7, Color{ 255, 200, 50, 200 });
+            Px::Line(screenA, screenB, kLostCityBeamWidth + 6.f, Fade(Color{ 255, 220, 60, 255 }, 0.30f), Balance::Vfx::kGlowShapeStrength);
+            Px::Line(screenA, screenB, kLostCityBeamWidth, Color{ 255, 230, 80, 230 }, Balance::Vfx::kGlowShapeStrength);
+            Px::Disc(screenC.x, screenC.y, 7, Color{ 255, 200, 50, 200 }, Balance::Vfx::kGlowShapeStrength);
         }
         break;
     }
@@ -19214,8 +18805,8 @@ void Engine::DrawBiomeModifiers()
             Vector2 sp = worldToScreen(zone.pos);
             int cx = (int)sp.x;
             int cy = (int)sp.y;
-            DrawCircle(cx, cy, (int)zone.radius, Fade(Color{ 50, 70, 220, 255 }, fill));
-            DrawCircleLines(cx, cy, zone.radius, Fade(Color{ 110, 150, 255, 255 }, border));
+            Px::Disc((float)(cx), (float)(cy), zone.radius, Fade(Color{ 50, 70, 220, 255 }, fill));
+            Px::Circle((float)(cx), (float)(cy), zone.radius, Fade(Color{ 110, 150, 255, 255 }, border), Balance::Vfx::kGlowTelegraphStrength);
         }
         break;
     }
@@ -19246,8 +18837,8 @@ void Engine::DrawBiomeModifiers()
             px = std::clamp(px, 30.f, sw - 30.f);
             py = std::clamp(py, 30.f, sh - 30.f);
             float alpha = 0.28f + 0.18f * sinf(t * 2.2f + phase);
-            DrawCircle((int)px, (int)py, 9, Fade(Color{ 210, 140, 255, 255 }, alpha));
-            DrawCircle((int)px, (int)py, 4, Fade(WHITE, alpha * 0.55f));
+            Px::Disc(px, py, 9, Fade(Color{ 210, 140, 255, 255 }, alpha), Balance::Vfx::kGlowShapeStrength);
+            Px::Disc(px, py, 4, Fade(WHITE, alpha * 0.55f), Balance::Vfx::kGlowShapeStrength);
         }
         break;
     }
@@ -19356,6 +18947,14 @@ void Engine::UpdateDreamFlicker(float dt)
 
 void Engine::UpdateDungeonRun(float dt)
 {
+    // Active combat clock for timed contracts and telemetry: only while this
+    // room's fight is live and the dungeon itself is updating (menus, pause,
+    // relic/level-up screens are other states and never reach this line; the
+    // intro banner's freeze is skipped too).
+    if (_dungeonEnemiesSpawned && _roomIntroTimer <= 0.f &&
+        (GetActiveEnemyCount() > 0 || !_pendingEnemySpawns.empty() || !_dungeonReinforcements.empty()))
+        _roomCombatSeconds += GetFrameTime();
+
     if (_prologueActive)
     {
         // F8 is intentionally unused elsewhere. F12 unlocks developer tools;
@@ -19421,6 +19020,8 @@ void Engine::UpdateDungeonRun(float dt)
         _prologueLastHealth = healthNow;
     }
 
+    UpdateDungeonTutorial();   // action-gated onboarding prompts (replaces the prologue)
+
     // Hit-stop: freeze the simulation for a few frames so impacts land hard.
     if (_hitStopTimer > 0.f) { _hitStopTimer -= GetFrameTime(); return; }
     // Slow-mo (crit / boss death): scale the gameplay sim (timer ticks in Update).
@@ -19474,8 +19075,8 @@ void Engine::UpdateDungeonRun(float dt)
         if (_shakeTimer > 0.f)
         {
             _shakeTimer -= dt;
-            float x = GetRandomValue(-100, 100) / 50.f * _shakeStrength;
-            float y = GetRandomValue(-100, 100) / 50.f * _shakeStrength;
+            float x = GetRandomValue(-100, 100) / 100.f * _shakeStrength * ImpactShakeEnvelope(_shakeTimer, _shakeDuration);
+            float y = GetRandomValue(-100, 100) / 100.f * _shakeStrength * ImpactShakeEnvelope(_shakeTimer, _shakeDuration);
             _shakeOffset = { x, y };
         }
         else
@@ -19561,6 +19162,23 @@ void Engine::UpdateDungeonRun(float dt)
                 _cutscene.AdvanceOnInput();
 
             return;   // skip all normal dungeon input while cutscene is active
+        }
+
+        // -- Boss intro: the room holds still and the player stays idle until it ends.
+        if (_bossIntroActive)
+        {
+            UpdateBossIntro(dt);
+            return;
+        }
+
+        // -- Elite encounter banner: the room holds still while the big ELITE
+        // ENCOUNTER banner covers the middle of the screen. Combat is paused, so the
+        // banner's timer (normally ticked by CombatDirector) ticks here instead.
+        // Room intro banners (shrines and other special rooms) do NOT freeze play.
+        if (_currentRoomType == RoomType::Elite && _eliteEnrageWarningTimer > 0.f)
+        {
+            _eliteEnrageWarningTimer -= dt;
+            return;
         }
 
         if (_debug.IsActive())
@@ -19662,6 +19280,20 @@ void Engine::UpdateDungeonRun(float dt)
                     _gameState = GameState::AbilityChoice; break;
                 case DebugActionKind::ApplyUpgrade:
                     _player.ApplyUpgrade((UpgradeType)cmd.value); break;
+                case DebugActionKind::RandomizeClassLoadout:
+                    DebugApplyClass((PlayerClass)GetRandomValue(0, (int)PlayerClass::Count - 1), true); break;
+                case DebugActionKind::NextClass:
+                    DebugApplyClass((PlayerClass)(((int)_player.GetClass() + 1) % (int)PlayerClass::Count), false); break;
+                case DebugActionKind::PrevClass:
+                    DebugApplyClass((PlayerClass)(((int)_player.GetClass() + (int)PlayerClass::Count - 1) % (int)PlayerClass::Count), false); break;
+                case DebugActionKind::NextBiome:
+                    DebugLoadBiome((Biome)(((int)_currentBiome + 1) % 10)); break;
+                case DebugActionKind::PrevBiome:
+                    DebugLoadBiome((Biome)(((int)_currentBiome + 9) % 10)); break;
+                case DebugActionKind::CycleVariantTier:
+                    DebugCycleVariantTier(); break;
+                case DebugActionKind::ToggleDebugChrome:
+                    _debugChromeHidden = !_debugChromeHidden; break;
                 default: break;
                 }
             }
@@ -19721,8 +19353,39 @@ void Engine::UpdateDungeonRun(float dt)
         // -- Normal player update ----------------------------------------------
         if (_player.GetHealthValue() <= 0.f && !_playerDying)
         {
-            _playerDying   = true;
-            _gameOverTimer = _gameOverDelay;
+#if MO_DEV_TOOLS
+            if (_debug.IsActive())
+            {
+                // Trailer capture: never let a debug session hit death / revive.
+                _player.Heal((int)ceilf(_player.GetMaxHealthValue()));
+                _player.GrantInvulnerability(2.0f);
+            }
+            else
+#endif
+            if (TryLastStand())
+            {
+                // Last Stand relic: the lethal hit leaves 1 HP (once per room).
+            }
+            else if (_secondWindAvailable && _isMainGameRun)
+            {
+                // Second Wind meta unlock: once per run, get back up at 40% HP.
+                _secondWindAvailable = false;
+                _player.ReviveInPlace(0.4f);
+                TriggerScreenShake(12.f, 0.5f);
+                TriggerScreenFlash(Color{ 120, 255, 170, 255 }, 0.35f);
+                _secondWindToastTimer = 2.5f;
+                StopSound(_explosionSound);
+                PlaySound(_explosionSound);
+            }
+            else
+            {
+                _playerDying   = true;
+                RecordDeathMoment();           // what killed the player, and the situation
+                EndRunCheckpoint();            // quitting during the death beat can't undo it
+                _gameOverTimer = _gameOverDelay;
+                TriggerSlowMo(1.2f, 0.35f);   // death slow-mo
+                _deathVignette = 1.2f;         // dark-red overlay (decays in Update)
+            }
         }
         if (_playerDying)
         {
@@ -19735,8 +19398,11 @@ void Engine::UpdateDungeonRun(float dt)
                 // then begin Poe's revive cutscene (replaces the GameOver menu).
                 _deathReviveLostGold  = _player.GetGold();
                 _deathReviveLostCells = _player.GetCells();
+                const bool summarise = _isMainGameRun && !_debug.IsActive();
+                if (summarise) CaptureRunSummary(false);   // before the wipe: what the run carried
                 HandlePlayerDeathMetaPenalty();   // one-wallet rule: wipes all gold + cells
-                BeginDeathRevive();
+                if (summarise) OpenRunSummary();  // then Poe (LeaveRunSummary)
+                else           BeginDeathRevive();
             }
             _cameraPos = { sw * 0.5f, sh * 0.5f };
             return;
@@ -19776,9 +19442,12 @@ void Engine::UpdateDungeonRun(float dt)
             }
         }
 
+        UpdateAbilityBarInput();
         UpdateAbilityAiming();
         const Vector2 playerPosBeforeUpdate = _player.GetWorldPos();
+        _player.SetAttackClickConsumed(ClickLandsOnAbilityBar());
         _player.Update(dt);
+        PlayPlayerAnimEvents();
         HandlePlayerCastRequest();
         UpdateDungeonMagicGemAndBarrier(dt);
 
@@ -19824,6 +19493,13 @@ void Engine::UpdateDungeonRun(float dt)
             int nextIdx = _dungeonGen.GetNeighborIndex(_dungeonRoomIdx, dr, dc);
             if (nextIdx < 0) return;
 
+            if (_atCrossroads)   // a crossroads door leads to its domain, not to a room
+            {
+                for (int door = 0; door < 3; ++door)
+                    if (_crossroadsGateway[door] == nextIdx) ChooseCrossroadsDoor(door);
+                return;
+            }
+
             if (nextIdx == _dungeonGen.GetBossIndex() && !_bossBarrierUnlocked)
             {
                 if (_hasMagicGem)
@@ -19835,7 +19511,7 @@ void Engine::UpdateDungeonRun(float dt)
                 else
                 {
                     _bossBarrierMessageTimer = 2.2f;
-                    _message = "you need a a magic gem to get past the barrier";
+                    _message = "You need the magic gem to pass this barrier";
                     Vector2 blocked = _player.GetWorldPos();
                     if (dr < 0) blocked.y = cellH + 4.f;
                     if (dr > 0) blocked.y = (RoomLayout::kRows - 2) * cellH - 4.f;
@@ -20001,12 +19677,15 @@ void Engine::UpdateDungeonRun(float dt)
                     if (_player.PitFallComplete())
                     {
                         _player.EndPitFall();
-                        _player.TakePitfallDamage(1);
+                        // The fall and any lava burn after it are credited to the pit.
+                        const DamageSourceScope fallScope(_player, DamageSource::FromHazard(
+                            _dungeonRoomLayout.fallSurface == FallSurface::Lava ? DamageNames::kLavaPit : DamageNames::kPit));
+                        _player.TakePitfallDamage(10);
                         if (_player.GetHealthValue() > 0.f)
                         {
                             _player.SetWorldPos(_dungeonLastSafePos);
                             if (_dungeonRoomLayout.fallSurface == FallSurface::Lava)
-                                _player.ApplyBurnTicks(0.55f, 2, 0.25f,
+                                _player.ApplyBurnTicks(0.55f, 2, 2.5f,
                                                        _dungeonLastSafePos);
                         }
                         _pitDragTimer = 0.f;
@@ -20090,6 +19769,7 @@ void Engine::UpdateDungeonRun(float dt)
                 }
                 else
                 {
+                    _shopReturnState = GameState::DungeonRun;
                     _gameState = GameState::Shop;
                 }
                 return;
@@ -20232,8 +19912,11 @@ void Engine::UpdateDungeonRun(float dt)
         eCtx.triggerScreenShake = [&](float s, float d){ TriggerScreenShake(s, d); };
         eCtx.spawnSmallSlime    = [&](Vector2 pos) { SpawnSlime(pos, SlimeSize::Small); };
         eCtx.spawnBasicEnemy    = [&](Vector2 pos) { return SpawnBasicEnemy(pos); };
-        eCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f); };
+        // Cast during the boss's turn: the cloud is credited to the boss.
+        eCtx.spawnBossPoisonPool = [&](Vector2 pos) { SpawnPoisonCloud(pos, 130.f, _player.GetIncomingDamageSource()); };
+        eCtx.damageSourceOf = [&](Enemy& enemy) { return DamageSourceOf(enemy); };
         eCtx.spawnBossFx        = [&](Vector2 pos, int fxId) { SpawnBossFx(pos, fxId); };
+        eCtx.playAnimEvent      = [&](const FiredAnimEvent& fired, Enemy& enemy) { PlayAnimEvent(fired, &enemy); };
         eCtx.spawnBossCallout   = [&](Vector2 pos, const char* text) { ShowBossCallout(pos, text); };
         eCtx.spawnEliteFx       = [&](Vector2 pos, int fxId, float scale, Color tint)
             { SpawnEliteFx(pos, fxId, scale, tint); };
@@ -20277,24 +19960,28 @@ void Engine::UpdateDungeonRun(float dt)
             // (+kDamagePerLevel per power level), so hazards stay relevant
             // without ever spiking ahead of the run.
             {
-                int powerLevel = 1 + (_wave - 1) / Balance::Curve::kRoomsPerPowerLevel;
-                float damageGrowth = 1.f + Balance::Curve::kDamagePerLevel * (float)(powerLevel - 1);
+                const float damageGrowth =
+                    RunProgression::StatScaleForPowerLevel(GetRunPowerLevel()).damage;
                 hazardCtx.scaledBoltDamage = std::max(1, (int)roundf((float)Balance::Hazards::kTotemBoltDamage  * damageGrowth));
                 hazardCtx.scaledTickDamage = std::max(1, (int)roundf((float)Balance::Hazards::kHazardTickDamage * damageGrowth));
             }
-            hazardCtx.spawnFireBolt = [&](Vector2 pos, Vector2 dir, int damage)
+            hazardCtx.spawnFireBolt = [&](Vector2 pos, Vector2 dir, int damage, RoomHazardType from)
             {
                 EnemyProjectile bolt;
                 bolt.Init(pos, dir, EnemyProjectileKind::FireBolt, damage);
+                bolt.SetSource(DamageSource::FromHazard(from == RoomHazardType::FireTotem
+                    ? DamageNames::kFireTotem : DamageNames::kFireballTorch));
                 // Hazard bolts stay SMALL — a wisp bolt at 55% sprite+hitbox
                 // size (Balance::Hazards::kHazardBoltScale is the knob).
                 bolt.SetScale(Balance::Hazards::kHazardBoltScale);
                 _enemyProjectiles.push_back(bolt);
                 SfxBank::Get().Play(SfxId::CastFire, 0.3f);   // totem/torch fire whoosh
             };
-            hazardCtx.damagePlayer = [&](int damage, Vector2 fromPos)
+            hazardCtx.damagePlayer = [&](int damage, Vector2 fromPos, RoomHazardType from)
             {
-                _player.TakeDamage(damage, fromPos);
+                // Only the lava pool hurts directly; the others fire bolts.
+                (void)from;
+                _player.TakeDamageFrom(DamageSource::FromHazard(DamageNames::kLavaPool), damage, fromPos);
             };
             _roomHazards.Update(hazardCtx);
             // Persist hazard health/destroyed state every frame (cheap: the
@@ -20303,6 +19990,19 @@ void Engine::UpdateDungeonRun(float dt)
         }
 
         HandlePlayerMeleeDamage();
+
+        // Relic reward: elites and bosses owe a 3-card relic pick, presented once
+        // the room is clear so it never interrupts combat. (This trigger used to
+        // live only in the unused legacy wave loop, so dungeon picks never opened.)
+        if (_pendingRelicChoices > 0 && !_editorPlaytestActive && !_prologueActive &&
+            !_dungeonScrolling && _dungeonFadeState == DungeonFadeState::None &&
+            GetActiveEnemyCount() == 0 && _pendingEnemySpawns.empty() &&
+            _dungeonReinforcements.empty() && _dungeonRoomIdx >= 0 &&
+            _dungeonRoomStates[_dungeonRoomIdx].cleared)   // clear (and contracts) resolved first
+        {
+            OpenRelicChoice();
+            return;
+        }
 
         // Player-enemy capsule separation - gives enemies physical presence.
         // Dash passes through enemies; on landing inside one, the player is ejected.
@@ -20472,6 +20172,7 @@ void Engine::UpdateDungeonRun(float dt)
         UpdateMageSpells(dt);
         UpdatePoisonClouds(dt);
         _vfx.Update(dt);
+        _vfx.UpdateDashDust(_player.GetFeetWorldPos(), _player.IsDashing(), dt);
         _damageNumbers.Update(dt);
         UpdateDungeonClearEffects(dt);
         UpdateEnemyCount(dt);
@@ -20490,9 +20191,10 @@ void Engine::UpdateDungeonRun(float dt)
             {
                 switch (pickup->GetType())
                 {
-                case PickupType::Gold: SfxBank::Get().Play(SfxId::PickupGold,  0.5f); break;
+                case PickupType::Gold: SfxBank::Get().PlayEither(SfxId::CoinA, SfxId::CoinB, 0.5f, SfxId::PickupGold); break;
                 case PickupType::Cell: SfxBank::Get().Play(SfxId::PickupCell,  0.6f); break;
-                default:               SfxBank::Get().Play(SfxId::PickupMagic, 0.5f); break;   // Heal / Mana
+                case PickupType::Heal: SfxBank::Get().PlayEither(SfxId::HealA, SfxId::HealB, 0.45f, SfxId::PickupMagic); break;
+                default:               SfxBank::Get().Play(SfxId::PickupMagic, 0.5f); break;   // Mana
                 }
                 _vfx.SpawnImpactBurst(pickup->GetWorldPos(), Color{ 255, 220, 120, 255 }, 5, 170.f);
                 pickup->OnCollect(_player);
@@ -20503,10 +20205,16 @@ void Engine::UpdateDungeonRun(float dt)
                 [](const std::unique_ptr<Pickup>& pickup) { return !pickup->IsActive(); }),
             _pickups.end());
 
+        // Healing feedback (pickups, lifesteal, relics, class cards). Requests
+        // count HP, so one burst per frame keeps a big heal from stacking sprites.
+        if (_player.ConsumeHealEffectRequests() > 0)
+            _vfx.SpawnHealEffect();
+
         // Elite-room mechanics (cage damage, bodyguard invuln, enrage, leap, hazards).
         if (_currentRoomType == RoomType::Elite && _eliteMechanic >= 0)
         {
             EliteMechanicsContext eliteCtx{};
+            eliteCtx.damageSourceOf = [&](Enemy& enemy) { return DamageSourceOf(enemy); };
             eliteCtx.currentRoomType        = _currentRoomType;
             eliteCtx.map                    = &_map;
             eliteCtx.mapScale               = _mapScale;
@@ -20515,6 +20223,9 @@ void Engine::UpdateDungeonRun(float dt)
             eliteCtx.player                 = &_player;
             eliteCtx.enemies                = &_enemies;
             eliteCtx.lavaBalls              = &_lavaBalls;
+            eliteCtx.volleyWindups          = &_volleyWindups;
+            eliteCtx.arenaFloor             = GetArenaFloorRect();
+            eliteCtx.isVolleyLaunchPointClear = [&](Vector2 pos) { return IsVolleyLaunchPointClear(pos); };
             eliteCtx.eliteMechanic          = &_eliteMechanic;
             eliteCtx.eliteMinibossPtr       = &_eliteMinibossPtr;
             eliteCtx.eliteCageCenter        = &_eliteCageCenter;
@@ -20582,6 +20293,7 @@ void Engine::UpdateDungeonRun(float dt)
                 _enemyProjectiles.clear();
                 _cyclopsLasers.clear();
                 _lavaBalls.clear();
+                _volleyWindups.clear();
                 _poisonClouds.clear();
                 _roomHazards.ClearRoom();
                 _vfx.SpawnFloatingLabel(
@@ -20620,8 +20332,9 @@ void Engine::UpdateDungeonRun(float dt)
         {
             _dungeonReinforcementTimer -= dt;
             int activeEnemies = GetActiveEnemyCount();
-            bool eligible = (_dungeonReinforcementTimer <= 0.f) ||
-                           (activeEnemies <= Balance::Pressure::kReinforceRefillActive);
+            const float interval = EncounterBreathingInterval(_currentEncounterProfile);
+            bool eligible = ShouldReserveEncounterBatch(_dungeonReinforcementTimer, interval,
+                                                        activeEnemies, (int)_pendingEnemySpawns.size());
             if (eligible)
             {
                 float waveCellW = (float)kVirtualWidth  / (float)RoomLayout::kCols;
@@ -20629,10 +20342,10 @@ void Engine::UpdateDungeonRun(float dt)
                 const size_t reservedBefore = _pendingEnemySpawns.size();
                 TryReserveDungeonReinforcementBatch(waveCellW, waveCellH);
                 const int batchSize = (int)(_pendingEnemySpawns.size() - reservedBefore);
-                _dungeonReinforcementTimer = Balance::Pressure::kReinforceInterval;
                 if (batchSize > 0)
-                    _vfx.SpawnFloatingLabel({ (float)kVirtualWidth * 0.5f, (float)kVirtualHeight * 0.30f },
-                                            "REINFORCEMENTS!", Color{ 255, 170, 70, 255 }, 1.4f);
+                    _dungeonReinforcementTimer = interval;
+                // The existing ground warnings communicate the arrival at its location.
+                // Avoid a repeated central banner obscuring each small reinforcement batch.
                 if (_debug.IsActive())
                     TraceLog(LOG_INFO, "REINFORCEMENT batch reserved: +%d (queued left %d, pending %d)",
                              batchSize, (int)_dungeonReinforcements.size(), (int)_pendingEnemySpawns.size());
@@ -20715,6 +20428,45 @@ void Engine::UpdateDungeonRun(float dt)
                     return;
                 }
 
+                // A short release of tension, without delaying doors, rewards, or movement.
+                const bool bossClear = _currentRoomType == RoomType::Boss;
+                const Vector2 clearPos = _player.GetWorldPos();
+                _vfx.SpawnFloatingLabel({ clearPos.x, clearPos.y - 85.f },
+                    bossClear ? "BOSS DEFEATED" : "ROOM CLEAR", Color{ 235, 215, 145, 255 },
+                    bossClear ? 1.35f : 1.0f);
+                _vfx.SpawnContactAccent(clearPos, { 1.f, 0.f }, Color{ 235, 215, 145, 255 }, true);
+                SfxBank::Get().Play(SfxId::UIConfirm, 0.45f, false);
+
+                // Persistent class mastery / biome first-clear milestones. This
+                // block is the single uncleared->cleared edge for combat rooms;
+                // editor playtests, the prologue and debug sessions never count.
+                if (_isMainGameRun && !_editorPlaytestActive && !_prologueActive && !_debug.IsActive())
+                {
+                    ++_runRoomsCleared;   // (_bossesDefeated is counted at the boss's death)
+                    if (_currentRoomType == RoomType::Elite) ++_runElitesSlain;
+                    if (bossClear)
+                    {
+                        EarnFeat(Feat::FirstBlood);
+                        if (_player.GetTelemDamageTaken() <= 0.01f) EarnFeat(Feat::Untouched);
+                    }
+                    CheckRunFeats();
+                    const int bankedReward = bossClear
+                        ? _meta.RecordBossDefeated(_player.GetClass(), _currentBiome)
+                        : _meta.RecordRoomCleared(_player.GetClass());
+                    if (bankedReward > 0)
+                        _vfx.SpawnFloatingLabel({ clearPos.x, clearPos.y - 130.f },
+                            TextFormat("MILESTONE  +%d ECHOES BANKED", bankedReward),
+                            Color{ 150, 215, 235, 255 }, 1.0f);
+                    const std::string unlocked = DescribeNewClassUnlocks(_meta.TakeNewClassUnlocks());
+                    if (!unlocked.empty())
+                    {
+                        _vfx.SpawnFloatingLabel({ clearPos.x, clearPos.y - 175.f }, unlocked.c_str(),
+                                                Color{ 255, 215, 120, 255 }, 3.0f);
+                        _relicToastName  = unlocked;   // reuse the top toast so it stays readable
+                        _relicToastTimer = 4.f;
+                    }
+                }
+
                 int roomClearExp = Balance::Levelling::kStandardRoomClearExp;
                 if (_currentRoomType == RoomType::Elite)
                     roomClearExp = Balance::Levelling::kEliteRoomClearExp;
@@ -20730,12 +20482,17 @@ void Engine::UpdateDungeonRun(float dt)
                     _player.AddGold(40);
                     _message = "Zeph's Wager pays out: +40 gold, bonus XP";
                 }
+                // A Risk Shrine XP contract pays on THIS clear; its multiplier is
+                // reset by ResolveActiveModifiersOnRoomClear before the XP drains.
+                roomClearExp = _player.ApplyContractXpBonus(roomClearExp);
                 _pendingExp += (float)roomClearExp;
 
                 // Class cards with "heal on room clear" (Battle Meditation /
                 // Sanctuary) — sustain that respects the no-auto-heal economy.
                 if (_player.GetHealOnRoomClear() > 0)
                     _player.Heal(_player.GetHealOnRoomClear());
+                if (_player.HasRelic(RelicType::Ironclad))  _player.AddIroncladDefense();
+                if (_player.HasRelic(RelicType::CoinPurse)) _player.AddGold(15);
 
                 // Telemetry: record the cleared room for the debug overlay.
                 {
@@ -20743,14 +20500,14 @@ void Engine::UpdateDungeonRun(float dt)
                     rec.act          = _currentAct;
                     rec.room         = _currentRoom;
                     snprintf(rec.roomType, sizeof(rec.roomType), "%s", GetDebugRoomTypeName(_currentRoomType));
-                    rec.clearSeconds = (float)(GetTime() - _roomEnterTime);
+                    rec.clearSeconds = _roomCombatSeconds;
                     rec.dmgTaken     = (int)std::ceil(_player.GetTelemDamageTaken());
                     rec.healed       = (int)_player.GetTelemHealed();
                     rec.healDrops    = _roomHealDrops;
                     rec.xpGained     = roomClearExp;
                     rec.goldDelta    = _player.GetGold() - _roomEnterGold;
                     rec.playerLevel  = _player.GetLevel();
-                    rec.powerLevel   = 1 + (_wave - 1) / Balance::Curve::kRoomsPerPowerLevel;
+                    rec.powerLevel   = GetRunPowerLevel();
                     _roomTelemetryCount++;
                 }
 
@@ -20848,15 +20605,28 @@ void Engine::UpdateDungeonRun(float dt)
         if (_dungeonRoomIdx == bossIdx && _dungeonRoomStates[bossIdx].cleared)
         {
             Rectangle exitRect = GetDungeonBossExitTrigger();
-            if (CheckCollisionPointRec(_player.GetWorldPos(), exitRect))
+            // Body overlap, not the sprite centre: a south-side exit sits against
+            // the wall, where the centre point can never reach (the body stops
+            // first) -- that softlocked the "Basic Room" boss layout.
+            if (CheckCollisionRecs(_player.GetCollisionRec(), exitRect))
             {
                 // Boss cleared - fade to black, then show the world map so player picks next biome.
                 // Note: the fade handler sets FadingIn after the action fires; that stale state
                 // is overwritten when UpdateWorldMap later calls EnterDungeonRoom.
                 ClearDungeonEnemies();
-                // Every boss now offers the return-vs-onward choice instead of
-                // jumping straight to the world map.
-                _dungeonFadePendingAction = [this]() { OpenBossChoice(); };
+                // Hades-style run: no trip home between domains. Clearing a boss
+                // completes the domain (breather heal + bounty) and opens the world
+                // map; Zeph waits at the next domain's camp. In the demo, clearing
+                // the Caverns boss ends the demo instead.
+#if MO_ITCH_DEMO
+                if (_currentBiome == Biome::Caverns)
+                    _dungeonFadePendingAction = [this]() {
+                        _victoryInputLock = kVictoryInputLockSeconds;
+                        _gameState = GameState::DemoEnd;
+                    };
+                else
+#endif
+                    _dungeonFadePendingAction = [this]() { CompleteDomain(); };
                 _dungeonFadeState = DungeonFadeState::FadingOut;
                 _dungeonFadeTimer = kDungeonFadeDuration;
                 return;
@@ -20964,6 +20734,7 @@ void Engine::UpdateDungeonRun(float dt)
     }
     if (IsKeyPressed(KEY_R))
     {
+        _dungeonGen.SetPlan(DungeonGen::Plan{});
         _dungeonGen.Generate();
         AssignDungeonVisualVariantWings();
     }
@@ -21038,7 +20809,7 @@ void Engine::DrawDungeonRun()
             }();
         int lw = MeasureText(label, 24);
         DrawText(label, (int)(sw * 0.5f - lw * 0.5f), 16, 24, GOLD);
-        if (_debug.IsActive() && _currentDungeonVisualVariant >= 0 &&
+        if (DebugChromeVisible() && _currentDungeonVisualVariant >= 0 &&
             _currentDungeonVisualVariant < (int)_dungeonVisualVariants.size())
         {
             const std::string& visualName = _dungeonVisualVariants[_currentDungeonVisualVariant].name;
@@ -21046,7 +20817,7 @@ void Engine::DrawDungeonRun()
             DrawText(visualName.c_str(), (int)(sw * 0.5f - visualW * 0.5f), 44, 16,
                      Fade(RAYWHITE, 0.65f));
         }
-        if (_debug.IsActive())
+        if (DebugChromeVisible())
         {
             const char* profile = "SKIRMISH";
             switch (_currentEncounterProfile)
@@ -21086,6 +20857,7 @@ void Engine::DrawDungeonRun()
                 const TileRenderer& nextRenderer = _dungeonScrollTileRenderer.IsLoaded()
                     ? _dungeonScrollTileRenderer : _tileRenderer;
                 nextRenderer.DrawRoom(_dungeonScrollNextLayout, scaleX, scaleY, nextOff);
+                ApplyTimeOfDay(DayNight::IsOutdoorBiome(_currentBiome), nullptr);
             }
             else
             {
@@ -21108,6 +20880,7 @@ void Engine::DrawDungeonRun()
                 // _shakeOffset shifts everything together so the screen-shake effect is visible.
                 Vector2 worldOffset{ -_cameraPos.x + _shakeOffset.x, -_cameraPos.y + _shakeOffset.y };
                 Vector2 shakenCamRef{ _cameraPos.x - _shakeOffset.x, _cameraPos.y - _shakeOffset.y };
+                _vfx.DrawGroundDecals(worldOffset);   // landed gore sits on the floor under everything
 
                 // Elite signature warnings (charge lanes, fissure outlines,
                 // landing markers) draw in WORLD space under the enemies and
@@ -21118,6 +20891,7 @@ void Engine::DrawDungeonRun()
                 rlPopMatrix();
                 for (const auto& proj : _spreadProjectiles)
                     proj.Draw(worldOffset);
+                DrawVolleyWindups(worldOffset);   // Arena Pressure embers on the walls
                 for (const auto& proj : _lavaBalls)
                     if (proj.IsActive())
                         proj.Draw(worldOffset);
@@ -21126,6 +20900,7 @@ void Engine::DrawDungeonRun()
                 DrawEnemyProjectiles(worldOffset);
                 DrawCyclopsLasers(worldOffset);
                 _vfx.Draw(worldOffset, _player.GetWorldPos(), _player.GetCastOrigin());
+                _vfx.DrawFloatingTexts(worldOffset);   // RAGE!, FROZEN, MARKED, room-clear labels
                 DrawPendingEnemySpawns(worldOffset);   // purple-circle/smoke reinforcement telegraphs
                 for (auto& pickup : _pickups)
                     pickup->Draw(worldOffset);
@@ -21170,53 +20945,43 @@ void Engine::DrawDungeonRun()
                     // Chill haze (slow) — bold blue aura + orbiting frost motes.
                     if (enemy->IsSlowed())
                     {
-                        DrawCircleV(c, bodyR, Fade(Color{ 120, 200, 255, 255 }, 0.18f));
-                        DrawCircleLines((int)c.x, (int)c.y, bodyR, Fade(Color{ 150, 215, 255, 255 }, 0.9f));
-                        DrawCircleLines((int)c.x, (int)c.y, bodyR + 4.f, Fade(Color{ 150, 215, 255, 255 }, 0.5f));
+                        Px::Aura(c, bodyR, Fade(Color{ 120, 200, 255, 255 }, 0.18f));
+                        Px::Circle(c.x, c.y, bodyR, Fade(Color{ 150, 215, 255, 255 }, 0.9f), Balance::Vfx::kGlowShapeStrength);
+                        Px::Circle(c.x, c.y, bodyR + 4.f, Fade(Color{ 150, 215, 255, 255 }, 0.5f), Balance::Vfx::kGlowShapeStrength);
                         for (int i = 0; i < 5; ++i)
                         {
                             float a = t * 1.4f + i * (2.f * PI / 5.f);
                             Vector2 p{ c.x + cosf(a) * bodyR, c.y + sinf(a) * bodyR * 0.7f };
-                            DrawCircleV(p, 5.f, Fade(Color{ 220, 245, 255, 255 }, 0.95f));
+                            Px::Disc(p, 5.f, Fade(Color{ 220, 245, 255, 255 }, 0.95f), Balance::Vfx::kGlowShapeStrength);
                         }
                     }
                     // Armor break / vulnerability — thick pulsing broken orange ring + glow.
                     if (enemy->IsVulnerable())
                     {
                         float pulse = 0.5f + 0.5f * sinf(t * 9.f);
-                        DrawCircleV(c, bodyR * 0.9f, Fade(Color{ 255, 130, 40, 255 }, 0.12f + 0.10f * pulse));
+                        Px::Aura(c, bodyR * 0.9f, Fade(Color{ 255, 130, 40, 255 }, 0.12f + 0.10f * pulse));
                         for (int i = 0; i < 8; ++i)
                         {
                             float a0 = i * (2.f * PI / 8.f) + t * 0.7f;
                             float a1 = a0 + 0.34f;
                             Vector2 p0{ c.x + cosf(a0) * bodyR, c.y + sinf(a0) * bodyR };
                             Vector2 p1{ c.x + cosf(a1) * bodyR, c.y + sinf(a1) * bodyR };
-                            DrawLineEx(p0, p1, 5.f, Fade(Color{ 255, 160, 60, 255 }, 0.7f + 0.3f * pulse));
+                            Px::Line(p0, p1, 5.f, Fade(Color{ 255, 160, 60, 255 }, 0.7f + 0.3f * pulse), Balance::Vfx::kGlowShapeStrength);
                         }
                     }
                     // Poison — fat green bubbles streaming up + faint green haze.
                     if (enemy->IsPoisoned())
                     {
-                        DrawCircleV(c, bodyR * 0.85f, Fade(Color{ 90, 210, 70, 255 }, 0.14f));
+                        Px::Aura(c, bodyR * 0.85f, Fade(Color{ 90, 210, 70, 255 }, 0.14f));
                         for (int i = 0; i < 6; ++i)
                         {
                             float ph = fmodf(t * 1.0f + i * 0.17f, 1.f);
                             float bx = c.x + sinf(t * 3.f + i * 2.1f) * bodyR * 0.6f;
                             float by = c.y + bodyR * 0.4f - ph * bodyR * 1.7f;
-                            DrawCircleV({ bx, by }, (1.f - ph) * 9.f + 2.5f, Fade(Color{ 130, 235, 90, 255 }, 0.95f * (1.f - ph)));
+                            Px::Disc({ bx, by }, (1.f - ph) * 9.f + 2.5f, Fade(Color{ 130, 235, 90, 255 }, 0.95f * (1.f - ph)), Balance::Vfx::kGlowShapeStrength);
                         }
                     }
-                    // Bleed — red droplets spraying off the body.
-                    if (enemy->IsBleeding())
-                    {
-                        for (int i = 0; i < 6; ++i)
-                        {
-                            float ph = fmodf(t * 1.8f + i * 0.22f, 1.f);
-                            float bx = c.x + (i - 2.5f) * bodyR * 0.35f;
-                            float by = c.y - bodyR * 0.1f + ph * bodyR * 1.1f;
-                            DrawCircleV({ bx, by }, 5.f * (1.f - ph * 0.5f), Fade(Color{ 210, 25, 25, 255 }, 0.95f * (1.f - ph)));
-                        }
-                    }
+                    // Bleed droplets are not drawn: the game is cutesy, not gory.
                     // Marked / execute — big pulsing red reticle above the head.
                     if (enemy->IsMarked())
                     {
@@ -21224,15 +20989,16 @@ void Engine::DrawDungeonRun()
                         float bob = sinf(t * 6.f) * 4.f;
                         float sc = 1.f + 0.15f * sinf(t * 8.f);
                         Color mk = Color{ 255, 60, 60, 255 };
-                        DrawLineEx({ c.x - 16.f * sc, my + bob }, { c.x, my + 14.f * sc + bob }, 5.f, mk);
-                        DrawLineEx({ c.x + 16.f * sc, my + bob }, { c.x, my + 14.f * sc + bob }, 5.f, mk);
-                        DrawCircleLines((int)c.x, (int)(my + 4.f + bob), 20.f * sc, Fade(mk, 0.7f));
+                        Px::Line({ c.x - 16.f * sc, my + bob }, { c.x, my + 14.f * sc + bob }, 5.f, mk, Balance::Vfx::kGlowShapeStrength);
+                        Px::Line({ c.x + 16.f * sc, my + bob }, { c.x, my + 14.f * sc + bob }, 5.f, mk, Balance::Vfx::kGlowShapeStrength);
+                        Px::Circle(c.x, (my + 4.f + bob), 20.f * sc, Fade(mk, 0.7f), Balance::Vfx::kGlowShapeStrength);
                     }
                 }
 
                 // Warrior melee VFX (spins, waves, spikes) drawn over the enemies.
                 DrawWarriorEffects(shakenCamRef);
                 DrawMageSpells(shakenCamRef);
+                _vfx.DrawSparks(worldOffset);   // hit sparks fly over the enemies
 
                 // Dream Realm flicker - pulsing ring at windup position + destination marker.
                 if (_currentBiome == Biome::DreamRealm)
@@ -21251,18 +21017,14 @@ void Engine::DrawDungeonRun()
                         dstScreen.y += sh * 0.5f;
 
                         // Ring where the enemy is fading out.
-                        DrawCircleLines((int)srcScreen.x, (int)srcScreen.y, 40.f,
-                            Fade(Color{ 180, 100, 255, 255 }, pulse));
-                        DrawCircleLines((int)srcScreen.x, (int)srcScreen.y, 26.f,
-                            Fade(Color{ 200, 140, 255, 255 }, pulse * 0.6f));
+                        Px::Circle(srcScreen.x, srcScreen.y, 40.f, Fade(Color{ 180, 100, 255, 255 }, pulse), Balance::Vfx::kGlowShapeStrength);
+                        Px::Circle(srcScreen.x, srcScreen.y, 26.f, Fade(Color{ 200, 140, 255, 255 }, pulse * 0.6f), Balance::Vfx::kGlowShapeStrength);
 
                         // Smaller ring marking the destination.
-                        DrawCircleLines((int)dstScreen.x, (int)dstScreen.y, 28.f,
-                            Fade(Color{ 130, 60, 220, 255 }, 0.55f));
+                        Px::Circle(dstScreen.x, dstScreen.y, 28.f, Fade(Color{ 130, 60, 220, 255 }, 0.55f), Balance::Vfx::kGlowShapeStrength);
 
                         // Faint line connecting source to destination.
-                        DrawLineEx(srcScreen, dstScreen, 1.5f,
-                            Fade(Color{ 180, 100, 255, 255 }, 0.25f));
+                        Px::Line(srcScreen, dstScreen, 1.5f, Fade(Color{ 180, 100, 255, 255 }, 0.25f), Balance::Vfx::kGlowShapeStrength);
                     }
                 }
 
@@ -21282,8 +21044,7 @@ void Engine::DrawDungeonRun()
 
                         // Faint pale-lavender spirit aura that breathes around Poe.
                         float auraPulse = 0.10f + 0.05f * sinf(_poeAltarBobTimer * 2.4f);
-                        DrawCircleV(Vector2{ altarScreen.x, altarScreen.y + bobOffset }, 48.f,
-                            Fade(Color{ 184, 170, 236, 255 }, auraPulse));
+                        Px::Aura(Vector2{ altarScreen.x, altarScreen.y + bobOffset }, 48.f, Fade(Color{ 184, 170, 236, 255 }, auraPulse));
 
                         // Merchant sprite (animated idle: cycle the 6 idle frames).
                         if (_cellsMerchantTex.id != 0)
@@ -21345,13 +21106,13 @@ void Engine::DrawDungeonRun()
                             DrawRectangleRounded({ ss.x - 28.f, ss.y + 12.f, 56.f, 26.f }, 0.4f, 6, Color{ 40, 26, 32, 255 });
                             Color orbCol = used ? Color{ 100, 78, 88, 255 } : Color{ 232, 70, 110, 255 };
                             float glow = used ? 0.08f : (0.18f + 0.08f * sinf(_curseShrineBobTimer * 3.f));
-                            DrawCircleV({ ss.x, ss.y - 6.f + bob }, 42.f, Fade(orbCol, glow));
-                            DrawCircleV({ ss.x, ss.y - 6.f + bob }, 16.f, Fade(orbCol, used ? 0.4f : 0.9f));
+                            Px::Aura({ ss.x, ss.y - 6.f + bob }, 42.f, Fade(orbCol, glow));
+                            Px::Disc({ ss.x, ss.y - 6.f + bob }, 16.f, Fade(orbCol, used ? 0.4f : 0.9f), Balance::Vfx::kGlowShapeStrength);
                             if (!used)
                                 for (int i = 0; i < 3; i++)
                                 {
                                     float a = _curseShrineBobTimer * 3.f + i * 2.094f;
-                                    DrawCircleV({ ss.x + cosf(a) * 22.f, ss.y - 6.f + bob + sinf(a) * 22.f }, 4.f, Fade(orbCol, 0.85f));
+                                    Px::Disc({ ss.x + cosf(a) * 22.f, ss.y - 6.f + bob + sinf(a) * 22.f }, 4.f, Fade(orbCol, 0.85f), Balance::Vfx::kGlowShapeStrength);
                                 }
                             if (_nearCurseShrine && !_shop.IsNearNpc())
                             {
@@ -21363,6 +21124,9 @@ void Engine::DrawDungeonRun()
                     }
                 }
 
+                if (_atCrossroads)
+                    DrawCrossroadsSigns(worldOffset);
+
                 // Decision-room shrine (Risk Shrine, …) — an amber rune-altar at
                 // room centre; dims once its contract has been bound.
                 {
@@ -21371,26 +21135,56 @@ void Engine::DrawDungeonRun()
                         drsIt->second.special != RoomSpecialType::None)
                     {
                         bool used = drsIt->second.specialClaimed;
+                        const RoomEventPresentation& look = GetRoomEventPresentation(drsIt->second.special);
                         Vector2 sp = GetDecisionShrinePos();
                         Vector2 ss{ sp.x + worldOffset.x + kVirtualWidth * 0.5f,
                                     sp.y + worldOffset.y + kVirtualHeight * 0.5f };
                         float bob = sinf(_decisionShrineBobTimer * 2.2f) * 5.f;
-                        DrawRectangleRounded({ ss.x - 30.f, ss.y + 12.f, 60.f, 28.f }, 0.4f, 6, Color{ 40, 32, 22, 255 });
-                        Color orbCol = used ? Color{ 96, 86, 70, 255 } : Color{ 240, 176, 80, 255 };
-                        float glow = used ? 0.08f : (0.18f + 0.08f * sinf(_decisionShrineBobTimer * 3.f));
-                        DrawCircleV({ ss.x, ss.y - 6.f + bob }, 44.f, Fade(orbCol, glow));
-                        DrawCircleV({ ss.x, ss.y - 6.f + bob }, 16.f, Fade(orbCol, used ? 0.4f : 0.9f));
-                        if (!used)
-                            for (int i = 0; i < 3; i++)
-                            {
-                                float a = _decisionShrineBobTimer * 3.f + i * 2.094f;
-                                DrawCircleV({ ss.x + cosf(a) * 24.f, ss.y - 6.f + bob + sinf(a) * 24.f }, 4.f, Fade(orbCol, 0.85f));
-                            }
-                        if (_nearDecisionShrine && !used)
+                        if (drsIt->second.special == RoomSpecialType::RestSite)
                         {
-                            const char* pr = "[E] Risk Shrine";
-                            int fs = 26, w = MeasureText(pr, fs);
-                            DrawText(pr, (int)(ss.x - w * 0.5f), (int)(ss.y - 92.f), fs, Color{ 255, 196, 110, 255 });
+                            // Campfire: crossed logs, a flickering flame, embers once spent.
+                            const float t = (float)GetTime();
+                            DrawEllipse((int)ss.x, (int)(ss.y + 30.f), 58.f, 16.f, Fade(BLACK, 0.35f));
+                            DrawRectanglePro({ ss.x, ss.y + 24.f, 92.f, 16.f }, { 46.f, 8.f },  18.f, Color{ 96, 62, 36, 255 });
+                            DrawRectanglePro({ ss.x, ss.y + 24.f, 92.f, 16.f }, { 46.f, 8.f }, -18.f, Color{ 120, 78, 44, 255 });
+                            if (!used)
+                            {
+                                const float f1 = 0.85f + 0.15f * sinf(t * 11.f), f2 = 0.8f + 0.2f * sinf(t * 7.f + 1.3f);
+                                Px::Aura({ ss.x, ss.y + 4.f }, 70.f, Fade(Color{ 255, 150, 60, 255 }, 0.10f + 0.04f * f2));
+                                DrawTriangle({ ss.x - 22.f * f1, ss.y + 20.f }, { ss.x + 22.f * f1, ss.y + 20.f },
+                                             { ss.x + 3.f * sinf(t * 5.f), ss.y - 40.f * f1 }, Color{ 255, 120, 40, 235 });
+                                DrawTriangle({ ss.x - 12.f * f2, ss.y + 18.f }, { ss.x + 12.f * f2, ss.y + 18.f },
+                                             { ss.x - 2.f * sinf(t * 6.f), ss.y - 22.f * f2 }, Color{ 255, 220, 110, 245 });
+                            }
+                            else
+                                for (int e = 0; e < 4; e++)
+                                    Px::Disc({ ss.x - 18.f + e * 12.f, ss.y + 20.f }, 4.f, Fade(Color{ 255, 110, 50, 255 }, 0.35f + 0.25f * sinf(t * 3.f + e)), Balance::Vfx::kGlowShapeStrength);
+                            if (_nearDecisionShrine && !used)
+                            {
+                                const char* pr = TextFormat("[E] %s", look.prompt);
+                                int fs = 26, w = MeasureText(pr, fs);
+                                DrawText(pr, (int)(ss.x - w * 0.5f), (int)(ss.y - 92.f), fs, look.color);
+                            }
+                        }
+                        else
+                        {
+                            DrawRectangleRounded({ ss.x - 30.f, ss.y + 12.f, 60.f, 28.f }, 0.4f, 6, Color{ 40, 32, 22, 255 });
+                            Color orbCol = used ? Color{ 96, 86, 70, 255 } : look.color;
+                            float glow = used ? 0.08f : (0.18f + 0.08f * sinf(_decisionShrineBobTimer * 3.f));
+                            Px::Aura({ ss.x, ss.y - 6.f + bob }, 44.f, Fade(orbCol, glow));
+                            Px::Disc({ ss.x, ss.y - 6.f + bob }, 16.f, Fade(orbCol, used ? 0.4f : 0.9f), Balance::Vfx::kGlowShapeStrength);
+                            if (!used)
+                                for (int i = 0; i < 3; i++)
+                                {
+                                    float a = _decisionShrineBobTimer * 3.f + i * 2.094f;
+                                    Px::Disc({ ss.x + cosf(a) * 24.f, ss.y - 6.f + bob + sinf(a) * 24.f }, 4.f, Fade(orbCol, 0.85f), Balance::Vfx::kGlowShapeStrength);
+                                }
+                            if (_nearDecisionShrine && !used)
+                            {
+                                const char* pr = TextFormat("[E] %s", look.prompt);
+                                int fs = 26, w = MeasureText(pr, fs);
+                                DrawText(pr, (int)(ss.x - w * 0.5f), (int)(ss.y - 92.f), fs, look.color);
+                            }
                         }
                     }
                 }
@@ -21402,6 +21196,15 @@ void Engine::DrawDungeonRun()
                 // behind draw over them (see split above).
                 _tileRenderer.DrawRoomPropsSplit(_dungeonRoomLayout, scaleX, scaleY,
                                                  _shakeOffset, playerFeetScreenY, true);
+                // The time of day over an outdoor room (EngineDayNight.cpp),
+                // with the player's own light; under the glow, so effects
+                // still shine against the dark.
+                const Vector2 playerScreen{ _player.GetWorldPos().x - shakenCamRef.x + sw * 0.5f,
+                                            _player.GetWorldPos().y - shakenCamRef.y + sh * 0.5f };
+                ApplyTimeOfDay(DayNight::IsOutdoorBiome(_currentBiome), &playerScreen);
+                // Effect light (VfxGlow.h) goes over the world but under the
+                // damage numbers and the HUD.
+                Vfx::Glow().Composite(_virtualCanvas);
                 _damageNumbers.Draw(worldOffset);
             }
         }
@@ -21432,20 +21235,16 @@ void Engine::DrawDungeonRun()
             }
 
             // Polished dungeon HUD: intro banner (temporary), badge (special
-            // rooms only), modifier pills (top-right, nothing when empty),
-            // and the corner minimap with room-type icons.
+            // rooms only) and modifier pills (top-right, nothing when empty).
+            // No corner minimap: the map is held open (below).
             DrawRoomIntroBanner();
+            DrawBossIntro();
             DrawRoomBadge();
-            {
-                constexpr float kMiniMapCell = 30.f;
-                const float mapW = DungeonGen::kGridSize * kMiniMapCell + kMiniMapCell;
-                DrawDungeonMiniMap(sw - mapW - 10.f, 8.f, kMiniMapCell, false);
-            }
             DrawModifierStack();
 
             DrawUltimateSequence();
             DrawMagicGemHudIcon();
-            if (_debug.IsActive()) drawRoomLabel();   // room label is debug info now
+            if (DebugChromeVisible()) drawRoomLabel();   // room label is debug info now
 
             if (_prologueActive)
             {
@@ -21496,10 +21295,12 @@ void Engine::DrawDungeonRun()
                     DrawText("[F8] Skip Onboarding", (int)sw - 260, 22, 20, Fade(RAYWHITE, 0.75f));
             }
 
+            DrawDungeonTutorial();
+
             // Small biome name reminder in the bottom-right corner - useful when
             // cycling biomes in the pregen map test without losing track of which one is active.
             {
-                if (_debug.IsActive())   // biome reminder is dev info, not gameplay HUD
+                if (DebugChromeVisible())   // biome reminder is dev info, not gameplay HUD
                 {
                     const char* biomeTag = TextFormat("[ %s ]", GetBiomeName(_currentBiome));
                     int biomeTagW = MeasureText(biomeTag, 16);
@@ -21507,8 +21308,9 @@ void Engine::DrawDungeonRun()
                         Fade(Color{ 160, 200, 255, 255 }, 0.55f));
                 }
             }
-            // Hold TAB: full-screen dungeon map overlay for planning.
-            if (IsKeyDown(KEY_TAB) && !_dungeonScrolling)
+            // Hold Tab / Select: the full-screen dungeon map (the only map
+            // now, so nothing covers the room in play).
+            if (_dungeonMapHeld && !_dungeonScrolling && !_atCrossroads)
             {
                 DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.72f));
                 constexpr float kOverlayCell = 64.f;
@@ -21519,7 +21321,7 @@ void Engine::DrawDungeonRun()
 
             if (_bossBarrierMessageTimer > 0.f)
             {
-                const char* msg = "you need a a magic gem to get past the barrier";
+                const char* msg = "You need the magic gem to pass this barrier";
                 int mw = MeasureText(msg, 24);
                 DrawText(msg, (int)(sw * 0.5f - mw * 0.5f), 52, 24, Color{ 190, 130, 255, 255 });
             }
@@ -21533,7 +21335,7 @@ void Engine::DrawDungeonRun()
                 DrawText(msg, (int)(sw * 0.5f - mw * 0.5f), (int)(sh * 0.3f), 54, Fade(Color{ 120, 255, 170, 255 }, a));
             }
 
-            if (_debug.IsActive())
+            if (DebugChromeVisible())
             {
                 DrawDebugToggleTab();
                 if (_debug.IsOpen())
@@ -21958,9 +21760,9 @@ void Engine::DrawHitboxEditor()
     }
 }
 
-void Engine::DrawDebugToggleTab()
+void Engine::DrawDebugToggleTab() const
 {
-    if (!_debug.IsActive())
+    if (!DebugChromeVisible())
         return;
 
     const Rectangle debugTab = GetDebugToggleTabRect();
@@ -22281,7 +22083,7 @@ void Engine::ScanAbilityArcTaps()
 
 // Draws touch-mode ability slots as square icons - same visual language as the
 // desktop bar, just repositioned and slightly larger for thumb tapping.
-void Engine::DrawTouchAbilityArc()
+void Engine::DrawTouchAbilityArc() const
 {
     const int totalSlots = _player.GetMaxAbilitySlots();
     const int screenW    = kVirtualWidth;
@@ -22323,25 +22125,6 @@ void Engine::DrawTouchAbilityArc()
             (int)(expBarX + expBarW * 0.5f - eLW * 0.5f),
             (int)(expBarY + _hudCfg.expBarH * 0.5f - eFs * 0.5f),
             eFs, WHITE);
-
-        if (_upgradeDefenseTex.id != 0)
-        {
-            const int armour = _player.GetArmour();
-            const int maxArmour = _player.GetMaxArmour();
-            const float armourIconH = std::max(1.f, _hudCfg.armourSize);
-            const float scale = armourIconH / (float)_upgradeDefenseTex.height;
-            const float iconW = _upgradeDefenseTex.width * scale;
-            const float iconGap = armourIconH * 0.35f;
-            float iconX = _hudCfg.armourX;
-            const float iconY = _hudCfg.armourY;
-
-            for (int i = 0; i < maxArmour; i++)
-            {
-                Color tint = (i < armour) ? WHITE : Fade(WHITE, 0.38f);
-                DrawTextureEx(_upgradeDefenseTex, { iconX, iconY }, 0.f, scale, tint);
-                iconX += iconW + iconGap;
-            }
-        }
     }
     for (int slot = 0; slot < totalSlots; slot++)
     {
@@ -22504,18 +22287,23 @@ void Engine::ApplyTouchCustomLayout()
     }
 }
 
-int Engine::DrawTouchButtonMapping()
+// Centre buttons of the touch layout screen, top to bottom: row 0 = Back,
+// 1 = Save, 2 = Default. Shared by the input and the drawing so they agree.
+static Rectangle TouchMappingButtonRect(int row)
+{
+    constexpr float btnW   = 230.f;
+    constexpr float btnH   = 72.f;
+    constexpr float bGap   = 18.f;
+    constexpr float totalH = 3.f * btnH + 2.f * bGap;
+    const float uiX = (float)kVirtualWidth  * 0.5f - btnW * 0.5f;
+    const float uiY = (float)kVirtualHeight * 0.5f - totalH * 0.5f;
+    return { uiX, uiY + row * (btnH + bGap), btnW, btnH };
+}
+
+int Engine::UpdateTouchButtonMapping()
 {
     const int sw = kVirtualWidth;
     const int sh = kVirtualHeight;
-
-    ClearBackground(Color{ 8, 6, 10, 255 });
-    float scaleX = sw / (RoomLayout::kCols * 16.f);
-    float scaleY = sh / (RoomLayout::kRows * 16.f);
-    if (_tileRenderer.IsLoaded())
-        _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
-    DrawHUD();
-    DrawRectangle(0, 0, sw, sh, Fade(BLACK, 0.54f));
 
     const Vector2 inputPos  = GetVirtualMousePos();
     const bool    inputDown = IsMouseButtonDown(MOUSE_LEFT_BUTTON);
@@ -22575,6 +22363,60 @@ int Engine::DrawTouchButtonMapping()
         }
     }
 
+    // A press that grabbed a draggable button never also clicks a centre button.
+    if (!inputPress || _touchMappingDragIdx >= 0) return 0;
+    int result = 0;
+    if (CheckCollisionPointRec(inputPos, TouchMappingButtonRect(0))) result = 2;   // Back
+    if (CheckCollisionPointRec(inputPos, TouchMappingButtonRect(1))) result = 1;   // Save
+    if (CheckCollisionPointRec(inputPos, TouchMappingButtonRect(2))) result = 3;   // Default
+    return result;
+}
+
+void Engine::ApplyTouchButtonMappingAction(int action)
+{
+    if (action == 1)  // Save
+    {
+        for (int i = 0; i < 6; i++) _touchCustomPos[i] = _touchMappingPos[i];
+        _touchLayoutCustom = true;
+        ApplyTouchCustomLayout();
+        _gameState = GameState::Pause;
+    }
+    else if (action == 2)  // Back
+    {
+        _gameState = GameState::Pause;
+    }
+    else if (action == 3)  // Default
+    {
+        // Restore everything to the original baked values captured on first open
+        if (_touchDefaults.captured)
+        {
+            _hudCfg.touchAtkPadR    = _touchDefaults.atkPadR;
+            _hudCfg.touchAtkPadB    = _touchDefaults.atkPadB;
+            _hudCfg.touchDashOffset = _touchDefaults.dashOffset;
+            _hudCfg.touchDashBotPad = _touchDefaults.dashBotPad;
+            for (int s = 0; s < 4; s++) _touchSlotOffset[s] = _touchDefaults.slotOffset[s];
+            for (int i = 0; i < 6; i++) _touchMappingPos[i] = _touchDefaults.pos[i];
+        }
+        _touchLayoutCustom   = false;
+        _touchMappingDragIdx = -1;
+    }
+}
+
+void Engine::DrawTouchButtonMapping() const
+{
+    const int sw = kVirtualWidth;
+    const int sh = kVirtualHeight;
+
+    ClearBackground(Color{ 8, 6, 10, 255 });
+    float scaleX = sw / (RoomLayout::kCols * 16.f);
+    float scaleY = sh / (RoomLayout::kRows * 16.f);
+    if (_tileRenderer.IsLoaded())
+        _tileRenderer.DrawRoom(_dungeonRoomLayout, scaleX, scaleY, { 0.f, 0.f });
+    DrawHUD();
+    DrawRectangle(0, 0, sw, sh, Fade(BLACK, 0.54f));
+
+    const Vector2 inputPos = GetVirtualMousePos();
+
     // -- ATK button -----------------------------------------------------------
     {
         bool drag = (_touchMappingDragIdx == 0);
@@ -22627,17 +22469,10 @@ int Engine::DrawTouchButtonMapping()
             nfs, RAYWHITE);
     }
 
-    // -- Center UI buttons -----------------------------------------------------
-    const float btnW   = 230.f;
-    const float btnH   = 72.f;
-    const float bGap   = 18.f;
-    const float uiX    = (float)sw * 0.5f - btnW * 0.5f;
-    const float totalH = 3.f * btnH + 2.f * bGap;
-    const float uiY    = (float)sh * 0.5f - totalH * 0.5f;
-
-    auto drawBtn = [&](const char* label, float y, Color col) -> bool
+    // -- Center UI buttons (clicks are handled in UpdateTouchButtonMapping) -----
+    auto drawBtn = [&](const char* label, int row, Color col)
     {
-        Rectangle rec{ uiX, y, btnW, btnH };
+        Rectangle rec = TouchMappingButtonRect(row);
         bool hov = CheckCollisionPointRec(inputPos, rec) && _touchMappingDragIdx < 0;
         DrawRectangleRounded(rec, 0.24f, 6, hov ? Fade(col, 0.92f) : Fade(col, 0.72f));
         DrawRectangleRoundedLines(rec, 0.24f, 6, Fade(WHITE, 0.50f));
@@ -22646,21 +22481,17 @@ int Engine::DrawTouchButtonMapping()
             (int)(rec.x + rec.width  * 0.5f - MeasureText(label, fs) * 0.5f),
             (int)(rec.y + rec.height * 0.5f - fs * 0.5f),
             fs, WHITE);
-        return hov && inputPress;
     };
 
-    int result = 0;
-    if (drawBtn("Back",    uiY,                   Color{ 80,  80,  80, 255})) result = 2;
-    if (drawBtn("Save",    uiY + btnH + bGap,     Color{ 55, 175,  85, 255})) result = 1;
-    if (drawBtn("Default", uiY + (btnH + bGap)*2.f, Color{195, 135,  40, 255})) result = 3;
+    drawBtn("Back",    0, Color{ 80,  80,  80, 255});
+    drawBtn("Save",    1, Color{ 55, 175,  85, 255});
+    drawBtn("Default", 2, Color{195, 135,  40, 255});
 
     const char* hint = "Drag buttons anywhere  |  they won't overlap";
     int hfs = 24;
     DrawText(hint,
         (int)((float)sw * 0.5f - MeasureText(hint, hfs) * 0.5f),
         22, hfs, Fade(WHITE, 0.80f));
-
-    return result;
 }
 
 // -- Dialogue Box Designer (F11 in debug mode) ---------------------------------
@@ -22709,8 +22540,9 @@ void Engine::UpdateDialogueBoxEditor()
         printf("bodyFontSize    = %d;\n", box.bodyFontSize);
         printf("textInsetLeft   = %.1ff;\n", box.textInsetLeft);
         printf("textInsetTop    = %.1ff;\n", box.textInsetTop);
-        printf("srcCorner       = %.1ff;   dstCorner = %.1ff;\n",
-               box.srcCorner, box.dstCorner);
+        printf("borderCuts      = { %d, %d, %d, %d };   borderScale = %d;\n",
+               box.borderCuts.top, box.borderCuts.bottom, box.borderCuts.left, box.borderCuts.right,
+               box.borderScale);
         printf("=================================================\n\n");
         fflush(stdout);
     }
@@ -22943,12 +22775,6 @@ void Engine::DrawDialogueBoxEditor()
         (int)(sw * 0.5f - MeasureText(banner, bfs) * 0.5f),
         (int)sh - bfs - 5, bfs, Fade(WHITE, 0.85f));
 }
-
-
-
-
-
-
 
 
 

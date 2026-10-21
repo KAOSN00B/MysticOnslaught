@@ -969,6 +969,31 @@ bool RoomEditor::SetSolid(int col, int row, bool enabled)
     return true;
 }
 
+void RoomEditor::FillOuterWall()
+{
+    // One undo step. Enabled door zones stay open so the doorway lines up with
+    // the dungeon's door lane.
+    PushUndo();
+    bool changed = false;
+    for (int row = 0; row < RoomLayout::kRows; ++row)
+        for (int col = 0; col < RoomLayout::kCols; ++col)
+        {
+            const bool onRing = row == 0 || row == RoomLayout::kRows - 1 ||
+                                col == 0 || col == RoomLayout::kCols - 1;
+            if (!onRing || _room.solid[row][col]) continue;
+            const Vector2 cell{ col + 0.5f, row + 0.5f };
+            bool inDoorway = false;
+            for (const RoomDoorZone& zone : _room.doorZones)
+                if (zone.enabled && CheckCollisionPointRec(cell, zone.tiles)) { inDoorway = true; break; }
+            if (inDoorway) continue;
+            _room.solid[row][col] = true;
+            changed = true;
+        }
+    if (!changed && !_undo.empty()) _undo.pop_back();
+    _status = changed ? "Walled the outer ring (doorways stay open)" : "Outer ring is already walled";
+    _statusTimer = 3.f;
+}
+
 bool RoomEditor::SetFall(int col, int row, bool enabled)
 {
     if (!IsCellValid(col, row)) return false;
@@ -1910,6 +1935,7 @@ void RoomEditor::Update()
     const bool shift = IsKeyDown(KEY_LEFT_SHIFT)   || IsKeyDown(KEY_RIGHT_SHIFT);
     const bool typing = _editingName || _editingSearch || _editingGroundBrushName;
     if (!typing && IsKeyPressed(KEY_TAB)) _paletteVisible = !_paletteVisible;
+    if (!typing && IsKeyPressed(KEY_H)) _showHelp = !_showHelp;
     if (ctrl && IsKeyPressed(KEY_Z)) { if (shift) Redo(); else Undo(); }
     if (ctrl && IsKeyPressed(KEY_Y)) Redo();
     if (ctrl && IsKeyPressed(KEY_S)) SaveRoom();
@@ -1931,6 +1957,9 @@ void RoomEditor::Update()
             _paintTool = _paintTool == PaintTool::Bucket ? PaintTool::Brush : PaintTool::Bucket;
         if (IsKeyPressed(KEY_E))
             _paintTool = _paintTool == PaintTool::Eraser ? PaintTool::Brush : PaintTool::Eraser;
+        // F walls the outer ring in the Collision layer (doorways stay open).
+        if (IsKeyPressed(KEY_F) && _layer == Layer::Collision)
+            FillOuterWall();
     }
 
     if (_showLibrary) { UpdateLibrary(); return; }
@@ -3221,6 +3250,31 @@ void RoomEditor::Draw() const
         DrawRectangle(30,1015,1120,38,Color{0,0,0,185});
         DrawText(_status.c_str(),45,1024,18,RAYWHITE);
     }
+    if (_showHelp) DrawHelp();
+}
+
+void RoomEditor::DrawHelp() const
+{
+    // Toggled with H. Plain-language guide to the keys; keep it in step with Update().
+    static const char* const kLines[] = {
+        "HOW TO USE  (press H to hide)",
+        "",
+        "Pick a layer with 1-9:",
+        "  1 Ground   2 Visual   3 Door   4 Collision   5 Props",
+        "  6 Decor    7 Fall zones   8 Door zones   9 Chest spawn",
+        "",
+        "Click or drag on the canvas to paint the active layer.",
+        "B  bucket fill      E  eraser      Tab  show/hide palette",
+        "F  (Collision layer) wall the outer ring; doorways stay open",
+        "Ctrl+Z undo    Ctrl+Y redo",
+        "S or Ctrl+S  save the room",
+    };
+    const int lineCount = (int)(sizeof(kLines) / sizeof(kLines[0]));
+    const int x = 30, y = 110, width = 760, pad = 14, lineHeight = 24, fontSize = 18;
+    DrawRectangle(x, y, width, pad * 2 + lineHeight * lineCount, Color{ 0, 0, 0, 220 });
+    DrawRectangleLines(x, y, width, pad * 2 + lineHeight * lineCount, Color{ 120, 170, 255, 255 });
+    for (int i = 0; i < lineCount; ++i)
+        DrawText(kLines[i], x + pad, y + pad + i * lineHeight, fontSize, i == 0 ? Color{ 150, 200, 255, 255 } : RAYWHITE);
 }
 
 #endif

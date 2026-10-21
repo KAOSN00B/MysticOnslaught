@@ -1,4 +1,5 @@
 #pragma once
+#include "DamageSource.h"
 #include "raylib.h"
 
 // A fast energy bolt fired by the Cyclops after its charge animation.
@@ -30,14 +31,18 @@ public:
     float     GetBeamWidth()   const { return _beamWidth; }
     bool      CanHitPlayer()   const { return _playerHitCooldown <= 0.f; }
     void      OnHitPlayer()          { _playerHitCooldown = 0.45f; }
+    // Who fired it (the run log's cause of death when it lands).
+    void SetSource(const DamageSource& source) { _source = source; }
+    const DamageSource& GetSource() const { return _source; }
 
 private:
+    DamageSource _source;
     void ConfigureScatterDirections(Vector2 centerDirection);
 
     Vector2 _worldPos{};
     Vector2 _direction{};
     Vector2 _beamDirections[5]{};
-    int     _damage    = 2;
+    int     _damage    = 20;
     float   _lifeTimer = 0.f;
     float   _playerHitCooldown = 0.f;
     float   _beamLength = 1800.f;

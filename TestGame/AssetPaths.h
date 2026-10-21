@@ -24,9 +24,6 @@ inline std::string AssetPath(const char* relativePath)
             ch = '/';
     }
 
-#ifdef __EMSCRIPTEN__
-    return normalized;
-#else
     static const char* prefixes[] =
     {
         "",
@@ -43,7 +40,6 @@ inline std::string AssetPath(const char* relativePath)
     }
 
     return normalized;
-#endif
 }
 
 // AssetFolderPath resolves a relative folder path the same way AssetPath does,
@@ -57,9 +53,6 @@ inline std::string AssetFolderPath(const char* relativePath)
             ch = '/';
     }
 
-#ifdef __EMSCRIPTEN__
-    return normalized;
-#else
     static const char* prefixes[] =
     {
         "",
@@ -76,5 +69,4 @@ inline std::string AssetFolderPath(const char* relativePath)
     }
 
     return normalized;
-#endif
 }

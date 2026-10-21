@@ -269,7 +269,7 @@ inline int GetAbilityManaCost(AbilityType type)
     case AbilityType::FireBolt:
     case AbilityType::IceBolt:
     case AbilityType::ElectricBolt:
-        return 4;   // stronger single-target spell, higher mana commitment
+        return 3;   // stronger single-target spell, higher mana commitment
     case AbilityType::FireUltimate:
     case AbilityType::IceUltimate:
     case AbilityType::ElectricUltimate:

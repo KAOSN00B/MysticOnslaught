@@ -20,6 +20,10 @@ class Werewolf : public Enemy
 public:
     Werewolf(Vector2 pos);
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Beast; }
+    // Dedicated werewolf voice at its natural pitch (the generic enemy hurt
+    // sound is pitched up for small monsters).
+    void PlayHurtSound() override;
+    void PlayDeathSound() override;
     ~Werewolf() override;
 
     void Init();
@@ -49,11 +53,17 @@ public:
     const char* GetEliteSignatureStateName() const override;
 
     // Character Animator support
-    const char* GetTuningName() const override { return "Werewolf"; }
+    const char* GetTuningName() const override { return "Werewolf"; }   // internal id (save snapshots, tuning file, sprites) - do not change
+    const char* GetDisplayName() const override { return "Fenrar"; }    // player-facing name
     int         GetEditorAnimCount() const override { return 8; }
     const char* GetEditorAnimName(int index) const override;
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
+
+    // ── Character Animator: hit window + special moves ───────────────────────
+    bool     GetDefaultHitWindow(int slot, int& start, int& end) const override;
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
 
 private:
     enum class State
@@ -70,6 +80,7 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+    void ApplyMoveTuning() override;
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
     void HandleChasing(float dt, Vector2 heroWorldPos);
     void HandleCombo(int step, float dt);   // step 1..3 (3 unlocks at phase 1)
@@ -130,12 +141,14 @@ private:
     static constexpr float _meleeRange          = 185.f;
     static constexpr float _comboCooldownBase   = 1.5f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 0.5f;
+    static constexpr float _bossDamagePerHit    = 5.f;
     static constexpr float _bossPushSpeed       = 1350.f;
     static constexpr float _pounceChargeDuration = 0.6f;
     static constexpr float _pounceCooldownBase  = 5.0f;
     static constexpr float _pounceAirDuration   = 0.5f;
-    static constexpr float _landingRadius       = 190.f;
+    static constexpr int   kSwipe2Slot = 3;   // Swipe2's animation
+    static constexpr float kDefaultLandingRadius = 190.f;
+    float _landingRadius = kDefaultLandingRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr float _howlDuration        = 1.6f;
     static constexpr float _frenzyDuration      = 6.f;
     static constexpr float _recoveryDuration    = 0.45f;

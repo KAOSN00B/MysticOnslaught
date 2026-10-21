@@ -1,4 +1,5 @@
 #include "SkeletonArcher.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "raymath.h"
@@ -80,9 +81,9 @@ void SkeletonArcher::ResetForSpawn(Vector2 pos)
     SetIdleAnimation(false);
     _scale = 4.4f;
 
-    _health      = 2.f;
-    _maxHealth   = 2.f;
-    _attackPower = 1.f;
+    _health      = Balance::Fodder::kFragileHealth;
+    _maxHealth   = Balance::Fodder::kFragileHealth;
+    _attackPower = 10.f;
     _speed       = 210.f;
     _expValue    = 4;   // ranged threat, more than a basic grunt
 
@@ -597,10 +598,10 @@ void SkeletonArcher::EnableRelentlessFire()
 void SkeletonArcher::SetWaveScale(int wave)
 {
     _expValue    = 4;
-    _health      = 2.f;
-    _maxHealth   = 2.f;
+    _health      = Balance::Fodder::kFragileHealth;
+    _maxHealth   = Balance::Fodder::kFragileHealth;
     _speed       = 210.f;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 
     // Later rooms: faster draw and shorter downtime between arrows.
     int tier = (wave - 1) / 5;
@@ -611,7 +612,7 @@ void SkeletonArcher::SetWaveScale(int wave)
 // =============================================================================
 void SkeletonArcher::PlayAttackSound()
 {
-    float pitch = GetRandomValue(120, 160) / 100.f;
+    float pitch = SoundVariation::VariedPitch(1.400f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.6f);
     PlaySound(_attackSound);

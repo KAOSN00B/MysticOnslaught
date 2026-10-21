@@ -1,4 +1,6 @@
 ﻿#include "Ogre.h"
+#include "EliteMoveDefs.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "AttackTuning.h"
@@ -60,10 +62,10 @@ void Ogre::ResetForSpawn(Vector2 pos)
     // Keep ogre scale aligned with the rest of the enemy cast so it feels like
     // part of the same world. The ogre still reads larger because its sprite
     // art itself is larger, so it does not need extra scale on top.
-    _scale       = 4.8f;
+    _scale       = Balance::Visual::ScaleForVisibleHeight(MeasureVisibleHeight(_idleAnim, _width), VisualSizeMultiplier());
     _speed       = _walkSpeed;
-    _health      = 8.f;
-    _maxHealth   = 8.f;
+    _health      = 80.f;
+    _maxHealth   = 80.f;
     _attackPower = _rushDamage;
     _expValue    = 3;
 
@@ -83,6 +85,8 @@ void Ogre::ResetForSpawn(Vector2 pos)
     _chargeDurationInst         = 3.0f;
     _chargeCooldownDurationInst = 6.0f;
     _activeChargeDuration       = _chargeDurationInst;
+
+    ApplyStoredTuning();
 }
 
 void Ogre::Update(float dt, Vector2 heroWorldPos, Vector2 navigationTarget, bool hasNavigationTarget,
@@ -262,7 +266,10 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
     // sheets, so it gets a small visual nudge to keep the ogre planted while
     // moving without affecting collision or world position.
     float visualOffsetX = (_texture.id == _walkAnim.id) ? _walkVisualOffsetX * _rightLeft : 0.f;
-    Rectangle dest{ screenPos.x + visualOffsetX, screenPos.y + drawHeight / 2.f, drawWidth, drawHeight };
+    // Per-animation sprite offset authored in the Character Animator.
+    const Vector2 animDrawOffset = GetCurrentAnimDrawOffset();
+    Rectangle dest{ screenPos.x + visualOffsetX + animDrawOffset.x,
+                    screenPos.y + drawHeight / 2.f + animDrawOffset.y, drawWidth, drawHeight };
 
     if (_rushState == RushState::Rushing)
     {
@@ -307,6 +314,10 @@ void Ogre::DrawEnemy(Vector2 cameraRef)
 
 Rectangle Ogre::GetCollisionRec() const
 {
+    Rectangle animBodyRect;
+    if (GetAnimBodyRectWorld(animBodyRect))
+        return animBodyRect;
+
     if (_collisionSize.x == 0.f)
     {
         auto* s = const_cast<Ogre*>(this);
@@ -324,6 +335,10 @@ Rectangle Ogre::GetCollisionRec() const
 
 Capsule2D Ogre::GetCapsule() const
 {
+    Capsule2D animBodyCapsule;
+    if (GetAnimBodyCapsuleWorld(animBodyCapsule))
+        return animBodyCapsule;
+
     if (_capsuleRadius == 0.f)
     {
         auto* s = const_cast<Ogre*>(this);
@@ -418,7 +433,7 @@ void Ogre::PlayHurtSound()
 {
     // Ogre hurt now reuses the player hurt clip, but pitched much lower so it
     // reads like a deep monster impact instead of a human reaction.
-    SetSoundPitch(_hurtSound, 0.45f);
+    SetSoundPitch(_hurtSound, SoundVariation::VariedPitch(0.45f));
     SetSoundVolume(_hurtSound, 0.24f);
     StopSound(_hurtSound);
     PlaySound(_hurtSound);
@@ -449,7 +464,7 @@ void Ogre::SetIdleAnimation(bool resetFrame)
     _texture    = _idleAnim;
     _width      = _idleAnim.width / (float)_sheetFrameCount;
     _height     = _idleAnim.height;
-    _updateTime = 1.f / 10.f;
+    _updateTime = TunedFrameTime(kSlotIdle, 1.f / 10.f);
     _maxFrames  = _playbackFrameCount;
 
     if (resetFrame)
@@ -464,7 +479,7 @@ void Ogre::SetWalkAnimation(bool resetFrame)
     _texture    = _walkAnim;
     _width      = _walkAnim.width / (float)_sheetFrameCount;
     _height     = _walkAnim.height;
-    _updateTime = 1.f / 10.f;
+    _updateTime = TunedFrameTime(kSlotWalk, 1.f / 10.f);
     // The last walk frames in this sheet are visually unstable, so walk uses
     // the clean leading frames while the other ogre states still keep the full
     // six-frame playback.
@@ -482,7 +497,7 @@ void Ogre::SetRushAnimation(bool resetFrame)
     _texture    = _attackAnim;
     _width      = _attackAnim.width / (float)_sheetFrameCount;
     _height     = _attackAnim.height;
-    _updateTime = 1.f / 12.f;
+    _updateTime = TunedFrameTime(kSlotRush, 1.f / 12.f);
     _maxFrames  = _playbackFrameCount;
 
     if (resetFrame)
@@ -497,7 +512,7 @@ void Ogre::SetHurtAnimation(bool resetFrame)
     _texture    = _takeDamageAnim;
     _width      = _takeDamageAnim.width / (float)_sheetFrameCount;
     _height     = _takeDamageAnim.height;
-    _updateTime = 1.f / 12.f;
+    _updateTime = TunedFrameTime(kSlotHurt, 1.f / 12.f);
     _maxFrames  = _playbackFrameCount;
 
     if (resetFrame)
@@ -512,13 +527,34 @@ void Ogre::SetDeathAnimation(bool resetFrame)
     _texture    = _deathAnim;
     _width      = _deathAnim.width / (float)_sheetFrameCount;
     _height     = _deathAnim.height;
-    _updateTime = 1.f / 8.f;
+    _updateTime = TunedFrameTime(kSlotDeath, 1.f / 8.f);
     _maxFrames  = _playbackFrameCount;
 
     if (resetFrame)
     {
         _frame = 0;
         _runningTime = 0.f;
+    }
+}
+
+// Character Animator: each sheet has its own frame width, so playback goes
+// through the same setters as the game.
+const char* Ogre::GetEditorAnimName(int index) const
+{
+    static const char* kNames[] = { "Idle", "Walk", "Rush", "Hurt", "Death" };
+    return (index >= kSlotIdle && index <= kSlotDeath) ? kNames[index] : "";
+}
+
+void Ogre::PlayEditorAnim(int index)
+{
+    switch (index)
+    {
+    case kSlotIdle:  SetIdleAnimation(true);  break;
+    case kSlotWalk:  SetWalkAnimation(true);  break;
+    case kSlotRush:  SetRushAnimation(true);  break;
+    case kSlotHurt:  SetHurtAnimation(true);  break;
+    case kSlotDeath: SetDeathAnimation(true); break;
+    default: break;
     }
 }
 
@@ -654,7 +690,7 @@ void Ogre::HandleRush(float dt, const std::vector<std::unique_ptr<Enemy>>& enemi
 
     if (_target != nullptr && _target->IsAlive() &&
         !_target->IsBeingForcedPushed() &&
-        CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
+        CheckCollisionRecs(TunedMoveBox(EliteMoves::kOgreChargeKey, GetCollisionRec()), _target->GetCollisionRec()))
     {
         PlayRushHitSound();
         _target->TakeDamage((int)_attackPower, _worldPos);
@@ -914,4 +950,15 @@ void Ogre::UnloadSharedResources()
     _sharedOgreHurtSound  = Sound{};
     _sharedOgreDeathSound = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+Enemy::MoveInfo Ogre::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index != 0)
+        return move;
+    move.key = EliteMoves::kOgreChargeKey; move.name = "Charge"; move.shape = MoveShape::Box;
+    move.animSlot = kSlotRush; move.box = RelativeFacingRight(GetCollisionRec());
+    move.note = "Rams whatever this box touches during the rush. Timing rows below.";
+    return move;
 }

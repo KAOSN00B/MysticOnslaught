@@ -1,0 +1,22 @@
+PROPV3 "prop_0" "DreamRealm big" "DreamRealm_ForestVariants" 0 0 64 48 10 15 45 33
+PROPV3 "prop_1" "DreamRealm mid" "DreamRealm_ForestVariants" 64 0 32 48 0 15 32 33
+PROPV3 "prop_2" "DreamRealm small" "DreamRealm_ForestVariants" 96 0 16 32 0 9 16 23
+PROPV3 "prop_3" "DreamRealm small2" "DreamRealm_ForestVariants" 112 0 16 32 0 11 16 21
+PROPV3 "prop_4" "DreamRealm rock" "DreamRealm_ForestVariants" 128 0 32 32 2 3 29 29
+PROPV3 "prop_5" "DreamRealm rock2" "DreamRealm_ForestVariants" 160 0 32 32 2 2 28 30
+PROPV3 "prop_168711230338000_18" "DreamRealm tall" "DreamRealm_ForestVariants" 192 0 16 32 0 0 16 32
+PROPV3 "prop_168713593038100_19" "DreamRealm tall2" "DreamRealm_ForestVariants" 208 0 16 32 0 0 16 32
+PROPV3 "prop_173392298448400_1" "DreamRealm pebble" "DreamRealm_ForestVariants" 224 0 16 16 0 0 16 16
+PROPV3 "prop_173393896656300_2" "DreamRealm pebble2" "DreamRealm_ForestVariants" 240 0 16 16 0 0 16 16
+PROPV3 "prop_173395190463900_3" "DreamRealm pebble3" "DreamRealm_ForestVariants" 256 0 16 16 0 0 16 16
+PROPV3 "prop_173396521756000_4" "DreamRealm pebble" "DreamRealm_ForestVariants" 272 0 16 16 0 0 16 16
+DECORV3 "decor_0" "DreamRealm decor" "DreamRealm_ForestVariants" 288 0 32 32
+DECORV3 "decor_1" "DreamRealm decor" "DreamRealm_ForestVariants" 320 0 32 32
+DECORV3 "decor_2" "DreamRealm decor" "DreamRealm_ForestVariants" 352 0 48 16
+DECORV3 "decor_3" "DreamRealm decor" "DreamRealm_ForestVariants" 400 0 16 16
+DECORV3 "decor_4" "DreamRealm decor" "DreamRealm_ForestVariants" 416 0 16 16
+DECORV3 "decor_5" "DreamRealm decor" "DreamRealm_ForestVariants" 432 0 16 16
+DECORV3 "decor_6" "DreamRealm decor" "DreamRealm_ForestVariants" 448 0 16 16
+DECORV3 "decor_7" "DreamRealm decor" "DreamRealm_ForestVariants" 464 0 16 16
+DECORV3 "decor_8" "DreamRealm decor" "DreamRealm_ForestVariants" 480 0 16 16
+ANIMDECORV3 "anim_decor_0" "DreamRealm animated decor" "DreamRealm_ForestVariants" 0 4 4 496 0 16 16 0 48 16 16 16 48 16 16 32 48 16 16

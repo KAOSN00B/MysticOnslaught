@@ -30,7 +30,16 @@ enum class DebugActionKind
     TreasureCards,
     EliteReward,
     AbilityReward,
-    ApplyUpgrade
+    ApplyUpgrade,
+
+    // ── Trailer / showcase tools ─────────────────────────────────────────────
+    RandomizeClassLoadout,  // pick a random class + a full 4-slot kit (1 ult + 3)
+    NextClass,              // cycle to the next class, keep a full kit
+    PrevClass,              // cycle to the previous class, keep a full kit
+    NextBiome,              // cycle _currentBiome forward, reload the dungeon
+    PrevBiome,              // cycle _currentBiome backward, reload the dungeon
+    CycleVariantTier,       // force enemy colour-variant tier: Off -> 0 -> 1 -> 2 -> 3
+    ToggleDebugChrome       // hide/show every on-screen "debug is active" overlay
 };
 
 struct DebugCommand

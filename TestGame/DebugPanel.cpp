@@ -73,6 +73,8 @@ namespace
         case UpgradeType::ManaFlow:                return "Mana Flow";
         case UpgradeType::ClassAttunement:         return "Class Attunement";
         case UpgradeType::Overload:                return "Overload";
+        case UpgradeType::CritChance:              return "Crit Chance+";
+        case UpgradeType::CritDamage:              return "Crit Damage+";
 
         case UpgradeType::MagePyromancy:           return "Pyromancy";
         case UpgradeType::MageInfernalMastery:     return "Infernal Mastery";
@@ -176,10 +178,24 @@ namespace
         };
     }
 
+    // Trailer / showcase controls — one compact block near the top of the panel.
+    ItemList ShowcaseItems()
+    {
+        return {
+            { "Random Class+Kit", { DebugActionKind::RandomizeClassLoadout, 0 } },
+            { "Hide Debug HUD",   { DebugActionKind::ToggleDebugChrome,     0 } },
+            { "Class <",          { DebugActionKind::PrevClass,             0 } },
+            { "Class >",          { DebugActionKind::NextClass,             0 } },
+            { "Biome <",          { DebugActionKind::PrevBiome,             0 } },
+            { "Biome >",          { DebugActionKind::NextBiome,             0 } },
+            { "Variant Tier",     { DebugActionKind::CycleVariantTier,      0 } },
+        };
+    }
+
     ItemList NewBossItems()
     {
         return {
-            { "Werewolf",    { DebugActionKind::SpawnNewBoss, 0 } },
+            { "Fenrar",      { DebugActionKind::SpawnNewBoss, 0 } },   // internal class: Werewolf
             { "ChompBug",    { DebugActionKind::SpawnNewBoss, 1 } },
             { "Osiris",      { DebugActionKind::SpawnNewBoss, 2 } },
             { "Titan Guard", { DebugActionKind::SpawnNewBoss, 3 } },
@@ -231,6 +247,9 @@ namespace
         buttons.push_back({ "Clear Enemies + Continue",
             { padX, cursorY, contentW, 32.f }, Color{ 60, 150, 90, 210 }, DebugActionKind::ClearEnemiesContinue, 0 });
         cursorY += 40.f;
+
+        skip(38.f);  // "Showcase" section header
+        AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 120, 150, 220 }, ShowcaseItems());
 
         skip(38.f);  // "Areas" section header
         AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 88, 78, 122, 220 }, {
@@ -438,6 +457,9 @@ void DebugPanel::Draw(int act, int room, const char* roomTypeName) const
     buttons.push_back({ "Clear Enemies + Continue",
         { padX, cursorY, contentW, 32.f }, Color{ 60, 150, 90, 210 }, DebugActionKind::ClearEnemiesContinue, 0 });
     cursorY += 40.f;
+
+    section("Showcase");
+    AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 60, 120, 150, 220 }, ShowcaseItems());
 
     section("Areas");
     AppendDebugButtons(buttons, padX, contentW, cursorY, 2, Color{ 88, 78, 122, 220 }, {

@@ -1,4 +1,6 @@
 #include "Venomfang.h"
+#include "EliteMoveDefs.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "AttackTuning.h"
@@ -76,9 +78,9 @@ void Venomfang::ResetForSpawn(Vector2 pos)
     _scale = 7.0f;                 // 32px art with a slim body — this high scale
                                    // brings it up to the Ogre's on-screen mass
 
-    _health      = 8.f;            // fragile for a bruiser; speed is its armour
-    _maxHealth   = 8.f;
-    _attackPower = 2.f;
+    _health      = 80.f;            // fragile for a bruiser; speed is its armour
+    _maxHealth   = 80.f;
+    _attackPower = 20.f;
     _speed       = 260.f;          // fastest of the elite pool
     _expValue    = 7;
 
@@ -113,9 +115,9 @@ void Venomfang::SetIdleAnimation(bool resetFrame)
 // =============================================================================
 void Venomfang::SetWaveScale(int /*wave*/)
 {
-    _health      = 8.f;
-    _maxHealth   = 8.f;
-    _attackPower = 2.f;
+    _health      = 80.f;
+    _maxHealth   = 80.f;
+    _attackPower = 20.f;
     _speed       = 260.f;
     _expValue    = 7;
 }
@@ -273,7 +275,7 @@ bool Venomfang::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
         const float stepDistance = Balance::Elite::kVenomfangPounceSpeed * deltaTime;
 
         if (!_biteLanded && _target->IsAlive() &&
-            CheckCollisionRecs(GetCollisionRec(), _target->GetCollisionRec()))
+            CheckCollisionRecs(TunedMoveBox(EliteMoves::kVenomfangPounceKey, GetCollisionRec()), _target->GetCollisionRec()))
         {
             // BITE: base damage scaled by Predator's Mark (consecutive bites).
             const float markMultiplier = 1.f + 0.25f * (float)_predatorMarks;
@@ -448,7 +450,7 @@ Capsule2D Venomfang::GetCapsule() const
 // =============================================================================
 void Venomfang::PlayAttackSound()
 {
-    float pitch = GetRandomValue(110, 140) / 100.f;   // quick venomous snap
+    float pitch = SoundVariation::VariedPitch(1.250f);   // quick venomous snap
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.55f);
     PlaySound(_attackSound);
@@ -505,4 +507,20 @@ void Venomfang::UnloadSharedResources()
     _sharedHurtSound   = Sound{};
     _sharedDeathSound  = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: the pounce bite's box.
+// =============================================================================
+int Venomfang::GetEditorMoveCount() const { return 1; }
+
+Enemy::MoveInfo Venomfang::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index != 0)
+        return move;
+    move.key = EliteMoves::kVenomfangPounceKey; move.name = "Venom Pounce"; move.shape = MoveShape::Box;
+    move.animSlot = kAnimSlotAttack; move.box = RelativeFacingRight(GetCollisionRec());
+    move.note = "Bites whatever this box touches during the pounce. Timing rows below.";
+    return move;
 }

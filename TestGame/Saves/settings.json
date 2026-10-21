@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "display": {
+    "windowMode": "windowed",
+    "windowedWidth": 1920,
+    "windowedHeight": 1080,
+    "vsync": true
+  },
+  "audio": {
+    "master": 1,
+    "music": 1,
+    "sfx": 1
+  },
+  "comfort": {
+    "screenShake": 1,
+    "screenFlashes": 0,
+    "hitStop": 0
+  }
+}

@@ -1,5 +1,6 @@
 #include "PlayerPreview.h"
 #include "AssetPaths.h"
+#include "Character.h"
 
 Texture2D PlayerPreview::_sIdle{};
 Texture2D PlayerPreview::_sWalk{};
@@ -41,12 +42,14 @@ void PlayerPreview::Init()
     _deathAnim      = _sDeath;
 
     _width  = 32.f;                       // hero frames are 32x32 (6-frame strips)
-    _scale  = 6.f;                        // matches the live player's draw scale
+    _scale  = Balance::Visual::kPlayerDrawScale;   // matches the live player's draw scale
     _texture = _idleAnim;
     _height  = _texture.height;
     if (_width > 0.f)
         _maxFrames = (int)(_texture.width / _width);
     if (_maxFrames < 1) _maxFrames = 1;
+
+    _health = _maxHealth;                 // full health: no health bar over the preview
 
     // Reasonable starting body capsule so an un-tuned preview still shows a grabbable circle.
     _capsuleRadius     = 22.f;
@@ -79,4 +82,30 @@ void PlayerPreview::PlayEditorAnim(int index)
     float frameTimeOverride = GetEditorAnimFrameTime(index);
     if (frameTimeOverride > 0.f)
         _updateTime = frameTimeOverride;
+}
+
+bool PlayerPreview::GetDefaultHitWindow(int slot, int& start, int& end) const
+{
+    if (slot != Character::kSwingAnimSlot && slot != Character::kStabAnimSlot)
+        return false;
+    start = Character::kMeleeHitStartFrame;
+    end   = Character::kMeleeHitEndFrame;
+    return true;
+}
+
+Rectangle PlayerPreview::GetHitCollisionRec() const
+{
+    constexpr int kIdleSlot = 0;
+    constexpr int kWalkSlot = 1;
+    for (int slot : { kIdleSlot, kWalkSlot })
+    {
+        if (!GetAnimBodySet(slot) || GetAnimBodyRadius(slot) <= 0.f)
+            continue;
+        const Vector2 offset = GetAnimBodyOffset(slot);
+        const float radius = GetAnimBodyRadius(slot);
+        const float centreX = _worldPos.x + offset.x * ((_rightLeft > 0.f) ? 1.f : -1.f);
+        const float centreY = _worldPos.y + offset.y;
+        return Rectangle{ centreX - radius, centreY - radius, radius * 2.f, radius * 2.f };
+    }
+    return GetCollisionRec();
 }

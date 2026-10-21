@@ -13,15 +13,15 @@ int main()
 
     ClassUnlockStatus rogue = GetClassUnlockStatus(PlayerClass::Rogue, profile);
     assert(!rogue.unlocked);
-    assert(std::string(rogue.reason) == "Complete Rogue milestone");
+    assert(std::string(rogue.reason) == "Defeat any domain boss");
 
     ClassUnlockStatus warlock = GetClassUnlockStatus(PlayerClass::Warlock, profile);
     assert(!warlock.unlocked);
-    assert(std::string(warlock.reason) == "Complete Warlock milestone");
+    assert(std::string(warlock.reason) == "Clear 3 different domains");
 
     ClassUnlockStatus paladin = GetClassUnlockStatus(PlayerClass::Paladin, profile);
     assert(!paladin.unlocked);
-    assert(std::string(paladin.reason) == "Complete a run");
+    assert(std::string(paladin.reason) == "Win a run or clear 5 domains");
 
     profile.rogueUnlocked = true;
     profile.warlockUnlocked = true;

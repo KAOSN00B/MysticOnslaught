@@ -1,0 +1,103 @@
+{
+  "tracks": [
+    {
+      "role": "Forest",
+      "output": "Music/Forest_MystwoodReverie.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Mystwood Reverie (RT 4.186)\\Fantasy Vol7 Mystwood Reverie Main.wav",
+      "source_sha256": "9e74a16d6d436e3e63de9332a58ffadce027874139540e828daba6e245061fd3",
+      "reverb_tail_seconds": 4.186,
+      "loop_seconds": 92.093,
+      "output_sha256": "2cb69bbc64b35da9d38a8ef5718aa527ce168b838986ceaba39554ceb978af81",
+      "output_bytes": 2070615,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "Jungle",
+      "output": "Music/Jungle_FeysongFields.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Feysong Fields (RT 3.857)\\Fantasy Vol7 Feysong Fields Main.wav",
+      "source_sha256": "82010baff9dbd0b241bee4c9713c4156bc4cea2eb442416b4adff2cd590e0253",
+      "reverb_tail_seconds": 3.857,
+      "loop_seconds": 92.572,
+      "output_sha256": "9eb1e145600ece46fc2f4eb149849de86e9543ed7f8aa69694bd01269c722c9c",
+      "output_bytes": 2215627,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "Lost City",
+      "output": "Music/LostCity_TombOfKings.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Tomb of Kings (RT 5.625)\\Fantasy Vol7 Tomb of Kings Main.wav",
+      "source_sha256": "ec114e4fdd2a49e8f1df418f0c1ae6b3783a58e1e62a81386faed2fe95870f22",
+      "reverb_tail_seconds": 5.625,
+      "loop_seconds": 90.0,
+      "output_sha256": "05dcafe05b78e6202d7e0c95cbd7acbabdafdf5a613fd93c889ee7f7e98a2e44",
+      "output_bytes": 1942030,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "Wastelands",
+      "output": "Music/Wastelands_EnemyGrounds.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Enemy Grounds (RT 3.396)\\Fantasy Vol7 Enemy Grounds Main.wav",
+      "source_sha256": "985bff3401df4b77cb11cc504c20a0469ea195e074920ac4ec88942a27b97eb5",
+      "reverb_tail_seconds": 3.396,
+      "loop_seconds": 94.641,
+      "output_sha256": "0c3fe216b8b7c1769399e027855e59578c3159156391f3c5e65aa3a75dd76080",
+      "output_bytes": 2282317,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "Graveyard",
+      "output": "Music/Graveyard_BlackDoves.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Black Doves (RT 2.723)\\Fantasy Vol7 Black Doves Main.wav",
+      "source_sha256": "7f2c0c70e500dbdbace8e5dc49cbaaa8b5d05160cd81faec8b04aec06d04a688",
+      "reverb_tail_seconds": 2.723,
+      "loop_seconds": 87.271,
+      "output_sha256": "34f2216638991535900baa74875b7aba18155079d206712924d65e2b7e4819c7",
+      "output_bytes": 2088512,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "The Sanctuary",
+      "output": "Music/Sanctuary_Above.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Above (RT 4.184)\\Fantasy Vol7 Above Main.wav",
+      "source_sha256": "7fef3c106f9dd36d2b8f6e79f5bb79d4bce65a9eb56ff18528e952f0b23a8787",
+      "reverb_tail_seconds": 4.184,
+      "loop_seconds": 82.28,
+      "output_sha256": "06564856a6a79257f284c6182b5509db684ff8b727f6caa15debb58f16c54e7b",
+      "output_bytes": 1763670,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "Village",
+      "output": "Music/Village_Denmark.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Denmark (RT 3.115)\\Fantasy Vol7 Denmark Main.wav",
+      "source_sha256": "a7e8aac39d4676f4d6d51912d8e62e664dca1813cecbbf999a12ebf64f2e5b59",
+      "reverb_tail_seconds": 3.115,
+      "loop_seconds": 90.0,
+      "output_sha256": "6b6568d7c66f3ba71387750e9416fc0a32a8bee0c4b4957c8ad36fb931527c58",
+      "output_bytes": 2090145,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "World map",
+      "output": "Music/WorldMap_StormbornDestiny.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Stormborn Destiny (RT 6.4)\\Fantasy Vol7 Stormborn Destiny Main.wav",
+      "source_sha256": "1ea0eb2a01629385a016c910a85edb8f508093fb6de52cb5f14f67acda6d1362",
+      "reverb_tail_seconds": 6.4,
+      "loop_seconds": 96.0,
+      "output_sha256": "554a28492525963e3760ce36f7cb70c4074038a766be71b586e7f4ab776d4f46",
+      "output_bytes": 2313670,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    },
+    {
+      "role": "Final domain boss",
+      "output": "Music/FinalBoss_ElderAwakening.ogg",
+      "source": "Fantasy Music Pack Vol. 7\\Fantasy Music Pack Vol. 7\\Elder Awakening (RT 2.769)\\Fantasy Vol7 Elder Awakening Main.wav",
+      "source_sha256": "c8c8ff542e5d5ae1eee59c0174430f6439e19a490a224d811bb6d96e79bb3467",
+      "reverb_tail_seconds": 2.769,
+      "loop_seconds": 91.385,
+      "output_sha256": "cc92c784617954b8292d886c1b7e2c99dd06483624c3e4140ae3cbaa5acd4999",
+      "output_bytes": 2304989,
+      "license": "Ovani Sound royalty-free (commercial use allowed; credit appreciated, not required; no standalone redistribution; no AI training)"
+    }
+  ]
+}

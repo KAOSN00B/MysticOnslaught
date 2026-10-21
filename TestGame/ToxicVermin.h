@@ -64,6 +64,11 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: hit window + special moves ───────────────────────
+    bool     GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
 private:
     enum class State
     {
@@ -77,6 +82,7 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+    void ApplyMoveTuning() override;
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
     void TryDealContactDamage();
     Rectangle GetBodyContactRec() const;
@@ -108,14 +114,15 @@ private:
     static constexpr float _meleeRange          = 190.f;
     static constexpr float _meleeCooldownBase   = 1.8f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 0.5f;
+    static constexpr float _bossDamagePerHit    = 5.f;
     static constexpr float _bossPushSpeed       = 1350.f;
     static constexpr float _spitCastDuration    = 0.75f;
     static constexpr float _spitCooldownBase    = 4.0f;
     static constexpr float _burrowDuration      = 0.5f;
     static constexpr float _tunnelDuration      = 2.4f;
     static constexpr float _burrowCooldownBase  = 6.0f;
-    static constexpr float _eruptRadius         = 200.f;
+    static constexpr float kDefaultEruptRadius = 200.f;
+    float _eruptRadius = kDefaultEruptRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr float _recoveryDuration    = 0.6f;
     static constexpr int   _bossBaseExpValue    = 15;
 

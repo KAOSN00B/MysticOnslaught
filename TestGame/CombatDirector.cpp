@@ -1,4 +1,5 @@
 #include "CombatDirector.h"
+#include "EliteMoveDefs.h"
 
 #include "AbyssSlime.h"
 #include "AncientBear.h"
@@ -23,11 +24,46 @@
 #include "raymath.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <unordered_map>
 
 namespace
 {
+    // Credits every projectile spawned during one enemy's turn to that enemy:
+    // whatever was added to the shared lists while this object lived.
+    class ProjectileCredit
+    {
+    public:
+        ProjectileCredit(const EnemyRuntimeContext& ctx, const DamageSource& source)
+            : _ctx(ctx), _source(source),
+              _lasers(ctx.cyclopsLasers ? ctx.cyclopsLasers->size() : 0),
+              _lavaBalls(ctx.lavaBalls ? ctx.lavaBalls->size() : 0),
+              _shots(ctx.enemyProjectiles ? ctx.enemyProjectiles->size() : 0) {}
+        ~ProjectileCredit()
+        {
+            Credit(_ctx.cyclopsLasers, _lasers);
+            Credit(_ctx.lavaBalls, _lavaBalls);
+            Credit(_ctx.enemyProjectiles, _shots);
+        }
+        ProjectileCredit(const ProjectileCredit&) = delete;
+        ProjectileCredit& operator=(const ProjectileCredit&) = delete;
+    private:
+        template <typename Projectile>
+        void Credit(std::vector<Projectile>* list, std::size_t from) const
+        {
+            if (!list) return;
+            for (std::size_t i = from; i < list->size(); ++i) (*list)[i].SetSource(_source);
+        }
+        const EnemyRuntimeContext& _ctx;
+        const DamageSource& _source;
+        std::size_t _lasers, _lavaBalls, _shots;
+    };
+
+    // Elite signature attacks, by archetype: the Bestiary type of each elite.
+    constexpr const char* kEliteArchetypeTypes[] = { "Ogre", "Infernal", "Bonechill", "Stormclub", "Venomfang" };
+    static_assert(std::size(kEliteArchetypeTypes) == (std::size_t)EliteArchetype::Count, "name every elite archetype");
+
     constexpr float kBossSupportRespawnDelay = 28.f;
     constexpr float kBossSupportMinPlayerDistance = 520.f;
     constexpr float kBossOgreInitialDelay = 22.f;
@@ -319,6 +355,181 @@ void CombatDirector::SpawnEnemies(const CombatSpawnContext& ctx) const
     }
 }
 
+namespace
+{
+    // ── Arena Pressure volleys (Balance::Hazards::kVolley*) ──────────────────
+    // Shots come out of the room's walls: each launch point glows as an ember
+    // first, then fires. Patterns are picked per volley.
+    enum class VolleyPattern { Barrage, Fan, Salvo };
+    enum class ArenaWall { West, East, North, South };
+
+    constexpr int   kRandomSteps = 1000;           // resolution of RandomUnit
+    constexpr float kBarragePhaseMin = 0.25f;      // a barrage's lanes shift by a random part of a slot
+    constexpr float kBarragePhaseMax = 0.75f;
+    constexpr float kSalvoSlotJitter = 0.5f;       // salvo points wander this much of a slot
+    constexpr float kSlotCentre = 0.5f;            // the middle of a slot (or of a fan's spread)
+
+    float RandomUnit() { return GetRandomValue(0, kRandomSteps) / (float)kRandomSteps; }   // 0 to 1
+    float RandomSigned() { return Lerp(-1.f, 1.f, RandomUnit()); }                          // -1 to 1
+
+    // A point just inside `wall`'s face, `t` (0-1) of the way along it.
+    Vector2 WallPoint(const Rectangle& floor, ArenaWall wall, float t)
+    {
+        const float inset = Balance::Hazards::kVolleyWallInset;
+        switch (wall)
+        {
+        case ArenaWall::West:  return { floor.x + inset, floor.y + floor.height * t };
+        case ArenaWall::East:  return { floor.x + floor.width - inset, floor.y + floor.height * t };
+        case ArenaWall::North: return { floor.x + floor.width * t, floor.y + inset };
+        case ArenaWall::South: return { floor.x + floor.width * t, floor.y + floor.height - inset };
+        }
+        return {};
+    }
+
+    // Straight out of `wall`, into the room.
+    Vector2 WallInward(ArenaWall wall)
+    {
+        switch (wall)
+        {
+        case ArenaWall::West:  return { 1.f, 0.f };
+        case ArenaWall::East:  return { -1.f, 0.f };
+        case ArenaWall::North: return { 0.f, 1.f };
+        case ArenaWall::South: return { 0.f, -1.f };
+        }
+        return { 1.f, 0.f };
+    }
+
+    float DistanceToWall(const Rectangle& floor, ArenaWall wall, Vector2 p)
+    {
+        switch (wall)
+        {
+        case ArenaWall::West:  return p.x - floor.x;
+        case ArenaWall::East:  return floor.x + floor.width - p.x;
+        case ArenaWall::North: return p.y - floor.y;
+        case ArenaWall::South: return floor.y + floor.height - p.y;
+        }
+        return 0.f;
+    }
+
+    // The walls, farthest from the player first: the far side gives the most
+    // time to see a shot coming.
+    std::array<ArenaWall, 4> WallsFarthestFirst(const Rectangle& floor, Vector2 player)
+    {
+        std::array<ArenaWall, 4> walls{ ArenaWall::West, ArenaWall::East, ArenaWall::North, ArenaWall::South };
+        std::sort(walls.begin(), walls.end(), [&](ArenaWall a, ArenaWall b)
+                  { return DistanceToWall(floor, a, player) > DistanceToWall(floor, b, player); });
+        return walls;
+    }
+
+    VolleyPattern PickVolleyPattern()
+    {
+        const int* weights = Balance::Hazards::kVolleyPatternWeights;
+        int roll = GetRandomValue(0, weights[0] + weights[1] + weights[2] - 1);
+        if ((roll -= weights[0]) < 0) return VolleyPattern::Barrage;
+        if ((roll -= weights[1]) < 0) return VolleyPattern::Fan;
+        return VolleyPattern::Salvo;
+    }
+
+    // Lights `count` embers on the walls in one pattern.
+    void QueueVolley(const EliteMechanicsContext& ctx, const Rectangle& floor, int count, Color tint)
+    {
+        using namespace Balance::Hazards;
+        const Vector2 player = ctx.player->GetWorldPos();
+        const Vector2 centre{ floor.x + floor.width * kSlotCentre, floor.y + floor.height * kSlotCentre };
+        auto queue = [&](Vector2 from, Vector2 dir, float delay)
+        {
+            // A blocked point (thick wall art, a prop, under the HUD) slides
+            // toward the middle of the room until it is clear.
+            const Vector2 inward = Vector2Normalize(Vector2Subtract(centre, from));
+            bool clear = !ctx.isVolleyLaunchPointClear;
+            for (int step = 0; step <= kVolleyLaunchSlideMax && !clear; ++step)
+            {
+                const Vector2 tried = Vector2Add(from, Vector2Scale(inward, step * kVolleyLaunchSlideStep));
+                if (ctx.isVolleyLaunchPointClear(tried)) { from = tried; clear = true; }
+            }
+            if (!clear || Vector2Distance(from, player) < kVolleyMinPlayerDist) return;
+            ctx.volleyWindups->push_back(VolleyWindup{ from, Vector2Normalize(dir), tint, delay, kVolleyWindupSeconds });
+        };
+        const std::array<ArenaWall, 4> farthest = WallsFarthestFirst(floor, player);
+
+        switch (PickVolleyPattern())
+        {
+        case VolleyPattern::Barrage:
+        {
+            // A row along one of the two far walls, all flying straight
+            // across, launched as a ripple. The lanes shift every time, so no
+            // spot is always safe: find the gap.
+            const ArenaWall wall = farthest[GetRandomValue(0, 1)];
+            const float phase = kBarragePhaseMin + RandomUnit() * (kBarragePhaseMax - kBarragePhaseMin);
+            const bool reverse = GetRandomValue(0, 1) == 1;
+            for (int i = 0; i < count; ++i)
+            {
+                const int order = reverse ? count - 1 - i : i;
+                queue(WallPoint(floor, wall, (i + phase) / count), WallInward(wall), order * kVolleyRippleSeconds);
+            }
+            break;
+        }
+        case VolleyPattern::Fan:
+        {
+            // A spread from the corner farthest from the player, centred on
+            // where the player stands.
+            const bool westIsFar = DistanceToWall(floor, ArenaWall::West, player) > DistanceToWall(floor, ArenaWall::East, player);
+            const bool northIsFar = DistanceToWall(floor, ArenaWall::North, player) > DistanceToWall(floor, ArenaWall::South, player);
+            const Vector2 corner{ westIsFar ? floor.x + kVolleyCornerInset : floor.x + floor.width - kVolleyCornerInset,
+                                  northIsFar ? floor.y + kVolleyCornerInset : floor.y + floor.height - kVolleyCornerInset };
+            const Vector2 aim = Vector2Subtract(player, corner);
+            const float arc = kVolleyFanArcDeg * DEG2RAD;
+            for (int i = 0; i < count; ++i)
+            {
+                const float across = count > 1 ? (float)i / (count - 1) - kSlotCentre : 0.f;   // -0.5 to 0.5
+                queue(corner, Vector2Rotate(aim, across * arc), i * kVolleyRippleSeconds);
+            }
+            break;
+        }
+        case VolleyPattern::Salvo:
+        {
+            // Points spread along the far wall, each aimed where the player
+            // stands now, a little off, one after another.
+            const ArenaWall wall = farthest[0];
+            for (int i = 0; i < count; ++i)
+            {
+                const float t = (i + kSlotCentre + RandomSigned() * kSalvoSlotJitter * kSlotCentre) / count;
+                const Vector2 from = WallPoint(floor, wall, t);
+                const float off = RandomSigned() * kVolleyAimSpreadDeg * DEG2RAD;
+                queue(from, Vector2Rotate(Vector2Subtract(player, from), off), i * kVolleySalvoGapSeconds);
+            }
+            break;
+        }
+        }
+    }
+
+    void LaunchVolleyShot(const EliteMechanicsContext& ctx, const VolleyWindup& windup)
+    {
+        LavaBallProjectile projectile;
+        projectile.Init(windup.from, windup.dir);
+        projectile.SetTint(windup.tint);
+        projectile.SetSize(Balance::Hazards::kVolleyDrawScale, Balance::Hazards::kVolleyHitSize);
+        if (*ctx.eliteMinibossPtr && ctx.damageSourceOf)
+            projectile.SetSource(ctx.damageSourceOf(**ctx.eliteMinibossPtr));
+        ctx.lavaBalls->push_back(projectile);
+    }
+
+    // Counts every ember down and launches the ones that are done.
+    void UpdateVolleyWindups(const EliteMechanicsContext& ctx, float dt)
+    {
+        std::vector<VolleyWindup>& windups = *ctx.volleyWindups;
+        for (VolleyWindup& windup : windups)
+        {
+            if (windup.delay > 0.f) { windup.delay -= dt; continue; }
+            windup.timer -= dt;
+            if (windup.timer <= 0.f) LaunchVolleyShot(ctx, windup);
+        }
+        windups.erase(std::remove_if(windups.begin(), windups.end(),
+                                     [](const VolleyWindup& w) { return w.delay <= 0.f && w.timer <= 0.f; }),
+                      windups.end());
+    }
+}
+
 void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, float dt) const
 {
     if (ctx.currentRoomType != RoomType::Elite)
@@ -332,7 +543,7 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
             *ctx.eliteCageDamageTimer -= dt;
             if (*ctx.eliteCageDamageTimer <= 0.f)
             {
-                ctx.player->TakeDamage(1, *ctx.eliteCageCenter);
+                ctx.player->TakeDamageFrom(DamageSource::FromHazard(DamageNames::kEliteCage), 10, *ctx.eliteCageCenter);
                 *ctx.eliteCageDamageTimer = kEliteCageDamageInterval;
             }
         }
@@ -365,15 +576,17 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
     if (*ctx.eliteEnrageWarningTimer > 0.f)
         *ctx.eliteEnrageWarningTimer -= dt;
 
-    if (*ctx.eliteMechanic == 3)
+    if (*ctx.eliteMechanic == 3 && ctx.volleyWindups != nullptr)
     {
+        UpdateVolleyWindups(ctx, dt);   // embers that finished glowing launch now
         *ctx.eliteHazardSpawnTimer -= dt;
         if (*ctx.eliteHazardSpawnTimer <= 0.f)
         {
             // Environmental pressure budget: volleys share the same in-flight
             // cap as room hazards, so Arena Pressure can never smother the
-            // room. A full budget briefly delays the volley instead.
-            int environmentalShotsInFlight = 0;
+            // room. Embers still glowing count too. A full budget briefly
+            // delays the volley instead.
+            int environmentalShotsInFlight = (int)ctx.volleyWindups->size();
             for (const LavaBallProjectile& shot : *ctx.lavaBalls)
                 if (shot.IsActive())
                     environmentalShotsInFlight++;
@@ -399,49 +612,11 @@ void CombatDirector::UpdateEliteMechanics(const EliteMechanicsContext& ctx, floa
 
             const float mapW = (ctx.worldBoundsW > 0.f) ? ctx.worldBoundsW : ctx.map->width  * ctx.mapScale;
             const float mapH = (ctx.worldBoundsH > 0.f) ? ctx.worldBoundsH : ctx.map->height * ctx.mapScale;
-            const float marginLeft = 120.f;
-            const float marginRight = 120.f;
-            const float marginTop = 90.f;
-            const float marginBottom = 220.f;
-            const Vector2 playerPos = ctx.player->GetWorldPos();
+            const Rectangle floor = ctx.arenaFloor.width > 0.f ? ctx.arenaFloor : Rectangle{ 0.f, 0.f, mapW, mapH };
             const int budgetRemaining = Balance::Hazards::kEnvProjectileCap - environmentalShotsInFlight;
             const int volleyCount = std::min(budgetRemaining,
                 GetRandomValue(kHazardVolleyMinCount, kHazardVolleyMaxCount));
-
-            for (int i = 0; i < volleyCount; ++i)
-            {
-                Vector2 spawnPos{};
-                bool foundSpawn = false;
-
-                for (int attempt = 0; attempt < 24; ++attempt)
-                {
-                    spawnPos = {
-                        (float)GetRandomValue((int)marginLeft, (int)(mapW - marginRight)),
-                        (float)GetRandomValue((int)marginTop,  (int)(mapH - marginBottom))
-                    };
-
-                    if (Vector2Distance(spawnPos, playerPos) < 240.f)
-                        continue;
-                    if (!ctx.isSpawnPositionValid(spawnPos))
-                        continue;
-
-                    foundSpawn = true;
-                    break;
-                }
-
-                if (!foundSpawn)
-                    continue;
-
-                Vector2 toPlayer = Vector2Subtract(playerPos, spawnPos);
-                float baseAngle = atan2f(toPlayer.y, toPlayer.x);
-                float spread = ((float)GetRandomValue(-28, 28)) * DEG2RAD;
-                float angle = baseAngle + spread;
-
-                LavaBallProjectile projectile;
-                projectile.Init(spawnPos, Vector2{ cosf(angle), sinf(angle) });
-                projectile.SetTint(volleyTint);
-                ctx.lavaBalls->push_back(projectile);
-            }
+            QueueVolley(ctx, floor, volleyCount, volleyTint);
 
             *ctx.eliteHazardSpawnTimer = (float)GetRandomValue(
                 (int)(kHazardVolleyMinInterval * 100.f),
@@ -606,11 +781,17 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
     // reallocates, so boss summons are collected here and executed after.
     std::vector<Vector2> pendingSmallSlimeSpawns;
     std::vector<Vector2> pendingBasicEnemySpawns;
+    std::vector<FiredAnimEvent> animEvents;
 
     for (auto& enemy : *ctx.enemies)
     {
         if (!enemy->IsActive())
             continue;
+
+        // Everything this enemy does to the player this turn is credited to it.
+        const DamageSource attacker = ctx.damageSourceOf ? ctx.damageSourceOf(*enemy) : DamageSource();
+        const DamageSourceScope attackerScope(*ctx.player, attacker);
+        const ProjectileCredit credit(ctx, attacker);
 
         // Pit falls own movement and scale until the sink animation completes.
         // Running normal AI here would let an enemy attack while dropping away.
@@ -673,6 +854,13 @@ void CombatDirector::UpdateEnemyRuntime(const EnemyRuntimeContext& ctx, float dt
         enemy->SetHazardZones(ctx.hazards);   // player damage zones to steer around
         enemy->SetSquadDirective(&squadDirective);   // pack behaviour (threat/formation)
         enemy->Update(dt, playerFeet, navigationTarget, hasNavigationTarget, *ctx.enemies, propCenters);
+
+        // Animation events (Character Animator) fire as its animation reaches them.
+        animEvents.clear();
+        enemy->CollectAnimEvents(animEvents);
+        if (ctx.playAnimEvent)
+            for (const FiredAnimEvent& fired : animEvents)
+                ctx.playAnimEvent(fired, *enemy);
 
         if (Cyclops* cyclops = enemy->AsCyclops())
         {
@@ -1151,11 +1339,11 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->shape = EliteZoneShape::Disc;
                 zone->status = EliteStatusPayload::Burn;
                 zone->start = event.origin;
-                zone->radius = 70.f;
+                zone->radius = EliteMoves::InfernalPatchRadius();
                 zone->activeRemaining = Elite::kInfernalPatchLifetime;
                 zone->tickInterval = 0.55f;
                 zone->tickRemaining = 0.15f;   // brief grace as the patch ignites
-                zone->damage = 1.f;
+                zone->damage = 10.f;
             }
             spawnHazardFx(event.origin, BossFx::PoisonPool, 2.2f,
                           Elite::kInfernalPatchLifetime, fireOrange);
@@ -1172,13 +1360,13 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->shape = EliteZoneShape::Lane;
                 zone->status = EliteStatusPayload::Burn;
                 zone->start = event.origin;
-                zone->end = Vector2{ event.origin.x + event.direction.x * Elite::kInfernalFissureLength,
-                                     event.origin.y + event.direction.y * Elite::kInfernalFissureLength };
-                zone->radius = Elite::kInfernalFissureWidth;
+                zone->end = Vector2{ event.origin.x + event.direction.x * EliteMoves::InfernalFissureLength(),
+                                     event.origin.y + event.direction.y * EliteMoves::InfernalFissureLength() };
+                zone->radius = EliteMoves::InfernalFissureWidth();
                 zone->activeRemaining = 0.5f;
-                zone->damage = 2.f;
+                zone->damage = 20.f;
             }
-            spawnLaneFx(event.origin, event.direction, Elite::kInfernalFissureLength,
+            spawnLaneFx(event.origin, event.direction, EliteMoves::InfernalFissureLength(),
                         BossFx::ToxicEruption, 4.2f, fireOrange);
             impactFeedback(7.f, 0.18f);
         }
@@ -1188,17 +1376,17 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
         if (event.kind == EliteEventKind::Execute)
         {
             // The direct slam: a heavy disc right in front of the wall.
-            Vector2 slamCentre{ event.origin.x + event.direction.x * 150.f,
-                                event.origin.y + event.direction.y * 150.f };
+            Vector2 slamCentre{ event.origin.x + event.direction.x * EliteMoves::BonechillSlamReach(),
+                                event.origin.y + event.direction.y * EliteMoves::BonechillSlamReach() };
             if (EliteAttackZone* zone = AcquireEliteZone())
             {
                 zone->owner = event.archetype; zone->move = event.move;
                 zone->shape = EliteZoneShape::Disc;
                 zone->status = EliteStatusPayload::Chill;
                 zone->start = slamCentre;
-                zone->radius = 140.f;
+                zone->radius = EliteMoves::BonechillSlamRadius();
                 zone->activeRemaining = 0.35f;
-                zone->damage = 3.f;
+                zone->damage = 30.f;
             }
             spawnFx(slamCentre, BossFx::BulwarkSlam, 6.f, iceBlue);
             impactFeedback(9.f, 0.22f);
@@ -1211,13 +1399,13 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->shape = EliteZoneShape::Lane;
                 zone->status = EliteStatusPayload::Chill;
                 zone->start = event.origin;
-                zone->end = Vector2{ event.origin.x + event.direction.x * Elite::kBonechillLaneLength,
-                                     event.origin.y + event.direction.y * Elite::kBonechillLaneLength };
-                zone->radius = Elite::kBonechillLaneWidth;
+                zone->end = Vector2{ event.origin.x + event.direction.x * EliteMoves::BonechillLaneLength(),
+                                     event.origin.y + event.direction.y * EliteMoves::BonechillLaneLength() };
+                zone->radius = EliteMoves::BonechillLaneWidth();
                 zone->activeRemaining = 0.5f;
-                zone->damage = 1.f;
+                zone->damage = 10.f;
             }
-            spawnLaneFx(event.origin, event.direction, Elite::kBonechillLaneLength,
+            spawnLaneFx(event.origin, event.direction, EliteMoves::BonechillLaneLength(),
                         BossFx::DiveImpact, 3.4f, iceBlue);
         }
         break;
@@ -1232,9 +1420,9 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->shape = EliteZoneShape::Disc;
                 zone->status = EliteStatusPayload::Knockback;
                 zone->start = event.target;
-                zone->radius = Elite::kStormclubImpactRadius;
+                zone->radius = EliteMoves::StormclubImpactRadius();
                 zone->activeRemaining = 0.3f;
-                zone->damage = 3.f;
+                zone->damage = 30.f;
             }
             spawnFx(event.target, BossFx::HeavyStrike, 6.5f, stormGold);
             impactFeedback(10.f, 0.25f);
@@ -1247,13 +1435,13 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->shape = EliteZoneShape::Lane;
                 zone->status = EliteStatusPayload::Shock;
                 zone->start = event.origin;
-                zone->end = Vector2{ event.origin.x + event.direction.x * Elite::kStormclubBranchLength,
-                                     event.origin.y + event.direction.y * Elite::kStormclubBranchLength };
-                zone->radius = Elite::kStormclubBranchWidth;
+                zone->end = Vector2{ event.origin.x + event.direction.x * EliteMoves::StormclubBranchLength(),
+                                     event.origin.y + event.direction.y * EliteMoves::StormclubBranchLength() };
+                zone->radius = EliteMoves::StormclubBranchWidth();
                 zone->activeRemaining = 0.4f;
-                zone->damage = 1.f;
+                zone->damage = 10.f;
             }
-            spawnLaneFx(event.origin, event.direction, Elite::kStormclubBranchLength,
+            spawnLaneFx(event.origin, event.direction, EliteMoves::StormclubBranchLength(),
                         BossFx::DashDust, 3.2f, stormGold);
         }
         break;
@@ -1285,7 +1473,7 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->activeRemaining = 2.6f;
                 zone->tickInterval = 0.55f;
                 zone->tickRemaining = 0.1f;
-                zone->damage = 1.f;
+                zone->damage = 10.f;
             }
             spawnHazardFx(event.origin, BossFx::PoisonPool, 2.4f, 3.0f, fireOrange);
         }
@@ -1308,7 +1496,7 @@ void CombatDirector::SpawnEliteZonesForEvent(const EliteSignatureEvent& event,
                 zone->telegraphRemaining = 0.4f;
                 zone->telegraphDuration = 0.4f;
                 zone->activeRemaining = 0.22f;
-                zone->damage = 1.f;
+                zone->damage = 10.f;
             }
             spawnLaneFx(event.origin, event.direction, 430.f,
                         BossFx::ClawSwipe, 3.6f, Color{ 255, 90, 80, 255 });
@@ -1371,6 +1559,10 @@ void CombatDirector::UpdateEliteZones(const EnemyRuntimeContext& ctx, float dt) 
         if (ctx.player->HasActiveIFrames() || !ctx.player->IsAlive())
             return;
 
+        // The elite's signature attack: its hit and its status are both credited to it.
+        const int owner = (int)zone.owner;
+        const DamageSourceScope zoneScope(*ctx.player, owner < (int)EliteArchetype::Count
+            ? DamageSource::FromEnemy(kEliteArchetypeTypes[owner], true, false) : DamageSource());
         const int damage = (int)std::lround(zone.damage);
         if (damage > 0)
             ctx.player->TakeDamage(damage, zone.start);
@@ -1378,7 +1570,7 @@ void CombatDirector::UpdateEliteZones(const EnemyRuntimeContext& ctx, float dt) 
         switch (zone.status)
         {
         case EliteStatusPayload::Burn:
-            ctx.player->ApplyBurnTicks(0.5f, 2, 0.4f, zone.start);
+            ctx.player->ApplyBurnTicks(0.5f, 2, 4.f, zone.start);
             break;
         case EliteStatusPayload::Chill:
             ctx.player->ApplyChill(2.0f, 0.6f);
@@ -1600,6 +1792,8 @@ void CombatDirector::UpdateEnemyDeaths(const EnemyDeathContext& ctx, float dt) c
             {
                 *ctx.pendingExp += (float)enemy->GetExpValue();
             }
+
+            if (ctx.onEnemySlain) ctx.onEnemySlain(*enemy);
 
             // Snapshot status for relic on-kill synergies before the body clears.
             if (ctx.onEnemyKilled)

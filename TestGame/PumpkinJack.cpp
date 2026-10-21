@@ -1,4 +1,5 @@
 #include "PumpkinJack.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -63,9 +64,9 @@ void PumpkinJack::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health      = 55.f;
-    _maxHealth   = 55.f;
-    _attackPower = 1.f;
+    _health      = 550.f;
+    _maxHealth   = 550.f;
+    _attackPower = 10.f;
     _speed       = _moveSpeed;
     _expValue    = _bossBaseExpValue;
 
@@ -264,7 +265,7 @@ void PumpkinJack::HandleChasing(float dt, Vector2 heroWorldPos)
         _state = State::MeleeAttacking;
         _damageApplied = false;
         SetAnimation(_sharedMeleeAnim, 1.f / 11.f, true);
-        PlaySound(_attackSound);
+        SoundVariation::PlayPitchVaried(_attackSound);
         return;
     }
 
@@ -417,7 +418,7 @@ void PumpkinJack::HandleTeleportIn(float dt)
             _damageApplied = false;
             _meleeCooldown = IsEnraged() ? _meleeCooldownBase * 0.65f : _meleeCooldownBase;
             SetAnimation(_sharedMeleeAnim, 1.f / 11.f, true);
-            PlaySound(_attackSound);
+            SoundVariation::PlayPitchVaried(_attackSound);
         }
         else if (_volleyCooldown <= 1.2f)   // close-enough cooldown counts as ready
         {
@@ -436,7 +437,8 @@ void PumpkinJack::HandleMelee()
 {
     _velocity = Vector2Zero();
 
-    if (!_damageApplied && _frame >= 3 && _target != nullptr)
+    if (!_damageApplied && _target != nullptr &&
+        MeleeWindowLive(kAnimSlotAttack, kBossMeleeHitFrame, kHitThroughLastFrame))
     {
         // Per-animation melee box (Character Animator, slot 2) wins.
         Rectangle attackRec;
@@ -451,12 +453,13 @@ void PumpkinJack::HandleMelee()
             attackRec.height += 40.f;
         }
 
-        if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+        const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+        if (hit)
         {
             _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
             _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
         }
-        _damageApplied = true;
+        _damageApplied = MeleeCheckDone(kAnimSlotAttack, hit);
     }
 
     if (_frame >= _maxFrames - 1)
@@ -812,7 +815,7 @@ void PumpkinJack::SetWaveScale(int wave)
     _maxHealth   = Balance::Boss::kPumpkinJackHealth;
 _enrageThreshold = 0.50f;
     _speed       = _moveSpeed;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 }
 
 // =============================================================================

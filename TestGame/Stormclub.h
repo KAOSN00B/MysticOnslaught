@@ -35,6 +35,10 @@ public:
     int         GetSpawnCost()     const override { return 4; }
     const char* GetTuningName()    const override { return "Stormclub"; }
 
+    // ── Character Animator: special moves ────────────────────────────────────
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
     // Storm identity: every landed melee hit blasts the player backward.
     void OnMeleeHitPlayer(Character* target) override;
 

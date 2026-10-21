@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "raylib.h"
+#include "NineSlice.h"
 #include "InputPrompts.h"
 #include <string>
 #include <vector>
@@ -9,16 +10,16 @@
 // Every value is editable live in the debug Dialogue Box designer (F11 in
 // debug mode), so you can position and resize everything without recompiling.
 //
-// The panel uses the shop's nine-slice border texture and srcCorner/dstCorner
-// values so it matches the existing shop art style.
+// The panel uses the shop's nine-slice border texture (PauseBoarder.png) with
+// whole-number cuts and scale, so it matches the existing shop art style.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct DialogueBox
 {
     // ── Panel ─────────────────────────────────────────────────────────────────
     Rectangle panelRect     = {};      // filled in by ApplyScreenDefaults()
-    float     srcCorner     = 16.f;    // nine-slice source corner size in pixels
-    float     dstCorner     = 28.f;    // nine-slice corner size on screen in pixels
+    NineSliceCuts borderCuts  = { 32, 32, 22, 22 };  // source pixels: top, bottom, left, right
+    int           borderScale = 3;                   // whole-number scale for the border
 
     // ── Portrait (Zeph image, left of panel) ─────────────────────────────────
     // Set showPortrait = true once the animated portrait is ready.

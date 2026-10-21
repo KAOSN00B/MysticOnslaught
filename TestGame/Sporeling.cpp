@@ -1,4 +1,5 @@
 #include "Sporeling.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 
@@ -62,11 +63,11 @@ void Sporeling::ResetForSpawn(Vector2 pos)
     Enemy::ResetForSpawn(pos);
 
     _width  = kSporelingFrameWidth;
-    _scale  = 4.4f;
+    _scale  = Balance::Visual::ScaleForVisibleHeight(MeasureVisibleHeight(_idleAnim, _width), VisualSizeMultiplier());
     _speed  = 115.f;   // slow — the threat is the death cloud, not the chase
-    _health = 4.f;
-    _maxHealth = 4.f;
-    _attackPower = 1.f;
+    _health = Balance::Fodder::kSporelingHealth;
+    _maxHealth = Balance::Fodder::kSporelingHealth;
+    _attackPower = 10.f;
     _expValue = 3;
 
     _capsuleRadius     = 26.f;
@@ -100,15 +101,15 @@ void Sporeling::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue    = 3;
-    _health      = 4.f;
-    _maxHealth   = 4.f;
+    _health      = Balance::Fodder::kSporelingHealth;
+    _maxHealth   = Balance::Fodder::kSporelingHealth;
     _speed       = 115.f;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 }
 
 void Sporeling::PlayAttackSound()
 {
-    float pitch = GetRandomValue(80, 110) / 100.f;
+    float pitch = SoundVariation::VariedPitch(0.950f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.55f);
     PlaySound(_attackSound);

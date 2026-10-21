@@ -1,12 +1,14 @@
 #pragma once
 #include "raylib.h"
-#include "WebGamepad.h"
 #include "Character.h"
 #include "AbilityType.h"
 #include "InputPrompts.h"
 #include "MetaProgression.h"
+#include "GameBalance.h"
 #include <vector>
 #include <string>
+
+struct ShopCheckpoint;
 
 // ── ShopManager ───────────────────────────────────────────────────────────────
 // Owns all Zeph shop state: inventory, NPC position, dialogue, reroll cost.
@@ -75,8 +77,19 @@ public:
     void SetMetaProgression(const MetaProgressionManager* meta) { _meta = meta; }
 
     // Reset shop state and generate fresh inventory for this Store room.
-    // act: 1-indexed act number, used to scale prices for inflation.
+    // act: shop tier (RunProgression::ShopTierForZone), scales prices and stock.
     void Enter(Vector2 npcWorldPos, Character& player, int act = 1);
+    // Move Zeph without restocking (e.g. the village shop building was moved).
+    // Stock, reroll price and reservations stay exactly as they were.
+    void Relocate(Vector2 npcWorldPos) { _npcPos = npcWorldPos; _nearNpc = false; }
+
+    // Reroll price after paying `current`: a free reroll (Arcane Attunement)
+    // is followed by the normal base price, then the usual step.
+    static int NextRerollCost(int current)
+    {
+        return current <= 0 ? Balance::Economy::kRerollBaseCost
+                            : current + Balance::Economy::kRerollStep;
+    }
 
     // ── Per-frame (Store room, GameState::Play) ───────────────────────────
     // Handles NPC collision push and proximity. Returns true if the player
@@ -102,6 +115,25 @@ public:
     void GenerateInventory(const Character& player);
     static const char* GetWareName(ShopWareType type);
     static bool ApplyWare(Character& player, ShopWareType type);
+    // One purchase attempt, exactly as a click/confirm on that card would do
+    // (revalidation, refunds, contract rules). Used by the UI and the tests.
+    enum class PurchaseResult { Purchased, TooExpensive, NoEffect, SlotsFull, ContractPending, Invalid };
+    PurchaseResult TryPurchase(int inventoryIndex, Character& player);
+    bool TryReroll(Character& player);                       // pays the current reroll price
+    bool TryReserve(int inventoryIndex, Character& player);  // Reserve Stock on one card
+    int  GetRerollCost() const { return _rerollCost; }
+    // Read-only view of the stock for tests / telemetry.
+    struct OfferView { bool isAbility, isContract, upgradesAbility, purchased, unavailable; AbilityType ability; ShopWareType ware; int price; };
+    std::vector<OfferView> GetOffers() const
+    {
+        std::vector<OfferView> v;
+        for (const ShopItem& i : _inventory)
+            v.push_back({ i.isAbility, i.isContract, i.upgradesAbility, i.purchased, i.unavailable, i.abilityType, i.wareType, i.price });
+        return v;
+    }
+    // Engine reports whether the run already carries an unfought shop contract,
+    // so reopening the shop or rerolling can't stack a second one.
+    void SetRunContractPending(bool pending) { _runContractPending = pending; }
     ShopContractType ConsumeAcceptedContract()
     {
         ShopContractType accepted = _acceptedContract;
@@ -116,6 +148,11 @@ public:
     void        SetPromptMode(InputPromptMode mode) { _promptMode = mode; }
     bool        PurchasedThisVisit() const { return _purchaseMadeThisVisit; }
 
+    // Mid-run save: the exact stock (cards, prices, bought / reserved, reroll
+    // price), so Continue finds the shop as it was instead of restocking it.
+    void CaptureStock(ShopCheckpoint& out) const;
+    bool RestoreStock(const ShopCheckpoint& stock, int act);   // false = nothing usable saved
+
 private:
     struct ShopItem
     {
@@ -129,7 +166,12 @@ private:
         int         price       = 0;
         bool        purchased   = false;
         bool        reserved    = false;   // Reserve Stock: survives rerolls
+        bool        unavailable = false;   // effect no longer possible (see RefreshOffers)
     };
+
+    // Re-derives ability-card prices and availability from the live kit.
+    void RefreshOffers(const Character& player);
+    bool _runContractPending = false;      // a shop contract already waits for the next fight
 
     // Reroll that honours Reserve Stock: reserved cards survive regeneration.
     void RerollInventory(Character& player);

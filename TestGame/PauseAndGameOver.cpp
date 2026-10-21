@@ -36,9 +36,10 @@ static void DrawScrollingCheckerboard(float sw, float sh, Color dark, Color ligh
     }
 }
 
-// ── Shared helper: draw a textured button, return true if clicked ─────────────
+// ── Shared helper: draw a textured button ─────────────────────────────────────
 // selected=true means the gamepad cursor is on this button (gold bloom + expansion)
-static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color tint, bool selected = false)
+// Drawing only: clicks are read by ButtonClicked from UpdatePause.
+static void DrawButton(Texture2D tex, const char* label, Rectangle btn, Color tint, bool selected = false)
 {
     Vector2 mouse      = GetVirtualMousePos();
     bool    hovered    = CheckCollisionPointRec(mouse, btn);
@@ -77,8 +78,51 @@ static bool DrawButton(Texture2D& tex, const char* label, Rectangle btn, Color t
         (int)(btn.x + btn.width  / 2.f - textW    / 2.f),
         (int)(btn.y + btn.height / 2.f - fontSize / 2.f),
         fontSize, BLACK);
+}
 
-    return hovered && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+// Hit test against the un-expanded rect, matching what DrawButton highlights.
+static bool ButtonClicked(Rectangle btn)
+{
+    return CheckCollisionPointRec(GetVirtualMousePos(), btn) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+}
+
+// ── Pause menu buttons, top to bottom ─────────────────────────────────────────
+// The gamepad cursor walks the same order, so one table maps index -> action.
+static constexpr int kPauseButtonCount = 8;
+static constexpr int kCharacterSheetAction = 8;
+struct PauseButtonDef
+{
+    int         action;            // UpdatePause result code
+    const char* label;
+    const char* runLabel;          // label during a resumable run (nullptr = same)
+    bool        howToPlayTexture;  // HowToPlayButton.png instead of PlayButton.png
+    Color       tint;
+};
+static const PauseButtonDef kPauseButtons[kPauseButtonCount] = {
+    { 1, "Resume",         nullptr,            false, Color{ 100, 210, 120, 255 } },  // green
+    { kCharacterSheetAction, "Character", nullptr, false, Color{ 225, 190, 90, 255 } },  // gold
+    { 2, "How To Play",    nullptr,            true,  WHITE                       },
+    { 7, "Grimoire",       nullptr,            false, Color{ 170, 130, 230, 255 } },  // violet
+    { 4, "Button Mapping", nullptr,            false, Color{ 80, 150, 230, 255 }  },  // blue
+    { 6, "Settings",       nullptr,            false, Color{ 50, 170, 200, 255 }  },  // teal
+    { 5, "Main Menu",      "Save & Main Menu", true,  Color{ 230, 160, 50, 255 }  },  // orange
+    { 3, "Quit Game",      "Save & Quit Game", false, Color{ 230, 80, 80, 255 }   },  // red
+};
+
+// Border editor handle size and positions (corners, then edge midpoints).
+static constexpr float kEditorHandleHalf = 10.f;
+static Vector2 EditorHandlePos(const Rectangle& r, int i)
+{
+    switch (i) {
+        case 0: return { r.x,               r.y                };
+        case 1: return { r.x + r.width,     r.y                };
+        case 2: return { r.x,               r.y + r.height     };
+        case 3: return { r.x + r.width,     r.y + r.height     };
+        case 4: return { r.x + r.width/2.f, r.y                };
+        case 5: return { r.x + r.width/2.f, r.y + r.height     };
+        case 6: return { r.x,               r.y + r.height/2.f };
+        default:return { r.x + r.width,     r.y + r.height/2.f };
+    }
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -106,63 +150,61 @@ void PauseAndGameOver::Unload()
 }
 
 // ── Pause ─────────────────────────────────────────────────────────────────────
-// Returns: 0=nothing  1=resume  2=howtoplay  3=quit
-int PauseAndGameOver::DrawPause(InputPromptMode promptMode)
+PauseAndGameOver::PauseLayout PauseAndGameOver::ComputePauseLayout() const
 {
-    float sw = (float)kVirtualWidth;
-    float sh = (float)kVirtualHeight;
-
-    // Dim overlay
-    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.65f));
+    PauseLayout l{};
+    l.sw = (float)kVirtualWidth;
+    l.sh = (float)kVirtualHeight;
 
     // Panel dimensions
-    const float btnW   = sw * 0.22f;
-    const float btnH   = sh * 0.074f;
-    const float btnGap = sh * 0.018f;
-    const float padV   = sh * 0.045f;
-    const float titleH = sh * 0.075f;
-    const float panelW = btnW + sw * 0.06f;
-    const float panelH = padV + titleH + 5.f * (btnH + btnGap) + padV;
+    l.btnW   = l.sw * 0.22f;
+    l.btnH   = l.sh * 0.058f;   // eight buttons fit the frame
+    l.btnGap = l.sh * 0.016f;
+    l.padV   = l.sh * 0.045f;
+    l.titleH = l.sh * 0.075f;
+    l.panelW = l.btnW + l.sw * 0.06f;
+    l.panelH = l.padV + l.titleH + (float)kPauseButtonCount * (l.btnH + l.btnGap) + l.padV;
+    l.panelX = l.sw / 2.f - l.panelW / 2.f;
 
-    float panelX    = sw / 2.f - panelW / 2.f;
-    float borderPad = sw * 0.03f;
+    const float borderPad = l.sw * 0.03f;
+    const Rectangle naturalBorderRect{ l.sw * 0.3300f, l.sh * 0.0768f, l.sw * 0.3400f, l.sh * 0.8391f };
+    const bool edited = _editorActive && _editorInited;
+    // Border texture is the panel background (slightly oversized for visual frame).
+    l.borderRect  = edited ? _edRect : naturalBorderRect;
+    l.panelY      = edited ? (_edRect.y + borderPad) : (naturalBorderRect.y + borderPad);
+    l.naturalBtnY = l.panelY + l.padV + l.titleH;
+    return l;
+}
 
-    Rectangle naturalBorderRect{ sw * 0.3300f, sh * 0.0768f, sw * 0.3400f, sh * 0.8391f };
-    float naturalPanelY = naturalBorderRect.y + borderPad;
+float PauseAndGameOver::ActivePauseButtonY(const PauseLayout& layout) const
+{
+    return (_editorActive && _btnInited) ? _btnEdY : layout.naturalBtnY;
+}
 
+Rectangle PauseAndGameOver::PauseButtonRect(const PauseLayout& layout, float activeBtnY, int index)
+{
+    // Accumulate like the original stacked layout so positions stay bit-identical.
+    float y = activeBtnY;
+    for (int i = 0; i < index; i++) y += layout.btnH + layout.btnGap;
+    return { layout.sw / 2.f - layout.btnW / 2.f, y, layout.btnW, layout.btnH };
+}
+
+int PauseAndGameOver::UpdatePause()
+{
     // On first editor activation, seed the editor rect from the natural layout.
     if (_editorActive && !_editorInited)
-    { _edRect = naturalBorderRect; _editorInited = true; }
+    { _edRect = ComputePauseLayout().borderRect; _editorInited = true; }
 
-    Rectangle borderRect = _editorActive ? _edRect : naturalBorderRect;
-    // Draw border texture as the panel background (slightly oversized for visual frame)
-    float panelY = _editorActive ? (_edRect.y + borderPad) : naturalPanelY;
+    const PauseLayout layout = ComputePauseLayout();
+    const float sw = layout.sw;
+    const float sh = layout.sh;
+    const float btnW = layout.btnW, btnH = layout.btnH, btnGap = layout.btnGap;
 
-    if (_borderTex.id != 0)
-        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER, borderRect, WHITE);
-    else
-    {
-        DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(BLACK, 0.92f));
-        DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(WHITE, 0.35f));
-    }
-
-    // ── Border editor overlay ─────────────────────────────────────────────────
+    // ── Border editor input ───────────────────────────────────────────────────
     if (_editorActive)
     {
         Vector2 mouse = GetVirtualMousePos();
-        const float hs = 10.f;
-        auto handlePos = [&](int i) -> Vector2 {
-            switch (i) {
-                case 0: return { _edRect.x,                     _edRect.y                      };
-                case 1: return { _edRect.x + _edRect.width,     _edRect.y                      };
-                case 2: return { _edRect.x,                     _edRect.y + _edRect.height     };
-                case 3: return { _edRect.x + _edRect.width,     _edRect.y + _edRect.height     };
-                case 4: return { _edRect.x + _edRect.width/2.f, _edRect.y                      };
-                case 5: return { _edRect.x + _edRect.width/2.f, _edRect.y + _edRect.height     };
-                case 6: return { _edRect.x,                     _edRect.y + _edRect.height/2.f };
-                default:return { _edRect.x + _edRect.width,     _edRect.y + _edRect.height/2.f };
-            }
-        };
+        const float hs = kEditorHandleHalf;
 
         // Mouse input — priority: edge handles > button group > border interior
         float groupH2 = 5.f * (btnH + btnGap);
@@ -176,7 +218,7 @@ int PauseAndGameOver::DrawPause(InputPromptMode promptMode)
             // 1. Edge handles
             for (int i = 0; i < 8; i++)
             {
-                Vector2 h = handlePos(i);
+                Vector2 h = EditorHandlePos(_edRect, i);
                 if (CheckCollisionPointRec(mouse, { h.x - hs, h.y - hs, hs * 2.f, hs * 2.f }))
                 { _edHandle = i; break; }
             }
@@ -216,17 +258,6 @@ int PauseAndGameOver::DrawPause(InputPromptMode promptMode)
             _edRect = r;
         }
 
-        // Draw handles
-        DrawRectangleLinesEx(_edRect, 1.5f, Color{ 255, 220, 0, 180 });
-        for (int i = 0; i < 8; i++)
-        {
-            Vector2 h = handlePos(i);
-            Color hcol = (_edHandle == i) ? Color{ 255, 255, 80, 255 } : Color{ 255, 200, 0, 220 };
-            DrawRectangle((int)(h.x - hs), (int)(h.y - hs), (int)(hs * 2.f), (int)(hs * 2.f), hcol);
-        }
-        DrawText("[F1] close  [S] export", (int)(_edRect.x + 4), (int)(_edRect.y - 18), 14,
-            Color{ 255, 220, 0, 200 });
-
         if (IsKeyPressed(KEY_S))
         {
             TraceLog(LOG_INFO, "=== Pause Border Export ===");
@@ -240,16 +271,14 @@ int PauseAndGameOver::DrawPause(InputPromptMode promptMode)
     }
 
     // Seed the button group Y on first editor activation
-    float naturalBtnY = panelY + padV + titleH;
-    if (_editorActive && !_btnInited) { _btnEdY = naturalBtnY; _btnInited = true; }
-    float activeBtnY = _editorActive ? _btnEdY : naturalBtnY;
+    if (_editorActive && !_btnInited) { _btnEdY = layout.naturalBtnY; _btnInited = true; }
 
     // Button group drag
     if (_editorActive)
     {
         Vector2 mouse = GetVirtualMousePos();
         float groupH = 5.f * (btnH + btnGap);
-        Rectangle groupRect{ sw / 2.f - btnW / 2.f - 8.f, activeBtnY - 8.f,
+        Rectangle groupRect{ sw / 2.f - btnW / 2.f - 8.f, _btnEdY - 8.f,
                               btnW + 16.f, groupH + 16.f };
 
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && _edHandle == -1)
@@ -260,22 +289,8 @@ int PauseAndGameOver::DrawPause(InputPromptMode promptMode)
         if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) _btnDragging = false;
         if (_btnDragging)
             _btnEdY = _btnDragStartY + (mouse.y - _btnDragStartMY);
-        activeBtnY = _btnEdY;
-
-        // Button group outline
-        groupRect.y = activeBtnY - 8.f;
-        DrawRectangleLinesEx(groupRect, 1.f,
-            _btnDragging ? Color{ 100, 255, 160, 220 } : Color{ 80, 220, 120, 120 });
-        DrawText("drag", (int)(groupRect.x + 4), (int)(groupRect.y + 2), 12,
-            Color{ 80, 220, 120, 160 });
     }
-
-    // Title sits above buttons
-    const char* title = "PAUSED";
-    int titleSz  = (int)(sh * 0.055f);
-    int titleWpx = MeasureText(title, titleSz);
-    DrawText(title, (int)(sw / 2.f - titleWpx / 2.f),
-        (int)(activeBtnY - titleH), titleSz, BLACK);
+    const float activeBtnY = ActivePauseButtonY(layout);
 
     // ── Gamepad D-pad / left-stick navigation ─────────────────────────────────
     if (IsGamepadAvailable(0))
@@ -292,169 +307,108 @@ int PauseAndGameOver::DrawPause(InputPromptMode promptMode)
             else                       _gpPauseStickCooldown = 0.f;
         }
 
-        if (moveDown) _gpPauseSelected = (_gpPauseSelected + 1) % 6;
-        if (moveUp)   _gpPauseSelected = (_gpPauseSelected - 1 + 6) % 6;
+        if (moveDown) _gpPauseSelected = (_gpPauseSelected + 1) % kPauseButtonCount;
+        if (moveUp)   _gpPauseSelected = (_gpPauseSelected - 1 + kPauseButtonCount) % kPauseButtonCount;
     }
 
-    float btnX = sw / 2.f - btnW / 2.f;
-    float btnY = activeBtnY;
-    int   result = 0;
+    int result = 0;
 
     // Gamepad A = confirm selection, B / Circle = Resume shortcut
-    bool gpActive = IsGamepadAvailable(0);
-    if (gpActive)
+    if (IsGamepadAvailable(0))
     {
         if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN))
-        {
-            int map[6] = {1, 2, 4, 6, 5, 3};
-            result = map[_gpPauseSelected];
-        }
+            result = kPauseButtons[_gpPauseSelected].action;
         if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT))
             result = 1;
+        if (IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_TRIGGER_1) ||
+            IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_TRIGGER_1))
+            result = kCharacterSheetAction;
     }
 
-    const char* navHint = (promptMode == InputPromptMode::Gamepad)
-        ? "Left Stick / D-Pad: Choose   A: Select   B: Resume"
-        : (promptMode == InputPromptMode::Touch)
-            ? "Tap: Select"
-            : "Click: Select   Esc: Resume";
-    int navFs = 20;
-    int navW = MeasureText(navHint, navFs);
-    DrawText(navHint, (int)(sw / 2.f - navW / 2.f), (int)(activeBtnY + 5.f * (btnH + btnGap) + 16.f), navFs, Fade(BLACK, 0.70f));
+    // Q / E / Tab switch to the Character page, like changing tabs.
+    if (IsKeyPressed(KEY_Q) || IsKeyPressed(KEY_E) || IsKeyPressed(KEY_TAB))
+        result = kCharacterSheetAction;
 
-    // Resume — green
-    if (DrawButton(_btnTex, "Resume", { btnX, btnY, btnW, btnH },
-            Color{ 100, 210, 120, 255 }, gpActive && _gpPauseSelected == 0))
-        result = 1;
-    btnY += btnH + btnGap;
-
-    // How To Play
-    if (DrawButton(_htpBtnTex, "How To Play", { btnX, btnY, btnW, btnH },
-            WHITE, gpActive && _gpPauseSelected == 1))
-        result = 2;
-    btnY += btnH + btnGap;
-
-    // Button Mapping — blue
-    if (DrawButton(_btnTex, "Button Mapping", { btnX, btnY, btnW, btnH },
-            Color{ 80, 150, 230, 255 }, gpActive && _gpPauseSelected == 2))
-        result = 4;
-    btnY += btnH + btnGap;
-
-    // Settings — teal
-    if (DrawButton(_btnTex, "Settings", { btnX, btnY, btnW, btnH },
-            Color{ 50, 170, 200, 255 }, gpActive && _gpPauseSelected == 3))
-        result = 6;
-    btnY += btnH + btnGap;
-
-    // Main Menu — orange
-    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH },
-            Color{ 230, 160, 50, 255 }, gpActive && _gpPauseSelected == 4))
-        result = 5;
-    btnY += btnH + btnGap;
-
-    // Quit — red
-    if (DrawButton(_btnTex, "Quit Game", { btnX, btnY, btnW, btnH },
-            Color{ 230, 80, 80, 255 }, gpActive && _gpPauseSelected == 5))
-        result = 3;
+    // Mouse / touch clicks (a click wins over a same-frame gamepad press, as before).
+    for (int i = 0; i < kPauseButtonCount; i++)
+        if (ButtonClicked(PauseButtonRect(layout, activeBtnY, i)))
+            result = kPauseButtons[i].action;
 
     return result;
 }
 
-// ── Game Over ─────────────────────────────────────────────────────────────────
-// Returns: 0=nothing  1=retry  2=main menu  3=quit
-int PauseAndGameOver::DrawGameOver(InputPromptMode promptMode)
+void PauseAndGameOver::DrawPause(InputPromptMode promptMode, bool runInProgress) const
 {
-    float sw = (float)kVirtualWidth;
-    float sh = (float)kVirtualHeight;
+    const PauseLayout layout = ComputePauseLayout();
+    const float sw = layout.sw;
+    const float sh = layout.sh;
+    const float btnW = layout.btnW, btnH = layout.btnH, btnGap = layout.btnGap;
 
-    DrawScrollingCheckerboard(sw, sh,
-        Color{ 60, 10, 10, 255 },
-        Color{ 90, 20, 20, 255 },
-        18.f, 12.f);
+    // Dim overlay
+    DrawRectangle(0, 0, (int)sw, (int)sh, Fade(BLACK, 0.65f));
 
-    // Panel dimensions — same proportions as pause
-    const float btnW   = sw * 0.22f;
-    const float btnH   = sh * 0.074f;
-    const float btnGap = sh * 0.018f;
-    const float padV   = sh * 0.045f;
-    const float titleH = sh * 0.090f;
-    const float panelW = btnW + sw * 0.06f;
-    const float panelH = padV + titleH + 3.f * (btnH + btnGap) + padV;
-
-    float panelX = sw / 2.f - panelW / 2.f;
-    float panelY = sh / 2.f - panelH / 2.f;
-
-    float borderPad = sw * 0.03f;
     if (_borderTex.id != 0)
-        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER,
-            { panelX - borderPad, panelY - borderPad,
-              panelW + borderPad * 2.f, panelH + borderPad * 2.f }, WHITE);
+        DrawNineSlice(_borderTex, BORDER_SRC_CORNER, BORDER_DST_CORNER, layout.borderRect, WHITE);
     else
     {
-        DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(BLACK, 0.92f));
-        DrawRectangleRoundedLines({ panelX, panelY, panelW, panelH }, 0.08f, 8, Fade(WHITE, 0.35f));
+        const Rectangle panel{ layout.panelX, layout.panelY, layout.panelW, layout.panelH };
+        DrawRectangleRounded(panel, 0.08f, 8, Fade(BLACK, 0.92f));
+        DrawRectangleRoundedLines(panel, 0.08f, 8, Fade(WHITE, 0.35f));
     }
 
-    // Title
-    const char* title = "GAME OVER";
-    int titleSz = (int)(sh * 0.060f);
-    DrawText(title,
-        (int)(sw / 2.f - MeasureText(title, titleSz) / 2.f),
-        (int)(panelY + padV), titleSz, RED);
-
-    // ── Gamepad D-pad / left-stick navigation ─────────────────────────────────
-    if (IsGamepadAvailable(0))
+    // ── Border editor overlay ─────────────────────────────────────────────────
+    if (_editorActive)
     {
-        bool moveDown = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN);
-        bool moveUp   = IsGamepadButtonPressed(0, GAMEPAD_BUTTON_LEFT_FACE_UP);
-
-        _gpGameOverStickCooldown -= GetFrameTime();
-        float stickY = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
-        if (_gpGameOverStickCooldown <= 0.f)
+        const float hs = kEditorHandleHalf;
+        DrawRectangleLinesEx(_edRect, 1.5f, Color{ 255, 220, 0, 180 });
+        for (int i = 0; i < 8; i++)
         {
-            if      (stickY >  0.5f) { moveDown = true; _gpGameOverStickCooldown = 0.22f; }
-            else if (stickY < -0.5f) { moveUp   = true; _gpGameOverStickCooldown = 0.22f; }
-            else                       _gpGameOverStickCooldown = 0.f;
+            Vector2 h = EditorHandlePos(_edRect, i);
+            Color hcol = (_edHandle == i) ? Color{ 255, 255, 80, 255 } : Color{ 255, 200, 0, 220 };
+            DrawRectangle((int)(h.x - hs), (int)(h.y - hs), (int)(hs * 2.f), (int)(hs * 2.f), hcol);
         }
-
-        if (moveDown) _gpGameOverSelected = (_gpGameOverSelected + 1) % 3;
-        if (moveUp)   _gpGameOverSelected = (_gpGameOverSelected - 1 + 3) % 3;
+        DrawText("[F1] close  [S] export", (int)(_edRect.x + 4), (int)(_edRect.y - 18), 14,
+            Color{ 255, 220, 0, 200 });
     }
 
-    // Buttons — all centred
-    float btnX = sw / 2.f - btnW / 2.f;
-    float btnY = panelY + padV + titleH;
-    int   result = 0;
+    const float activeBtnY = ActivePauseButtonY(layout);
 
-    bool gpActive = IsGamepadAvailable(0);
-    if (gpActive && IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN))
+    // Button group outline
+    if (_editorActive)
     {
-        int map[3] = {1, 2, 3};
-        result = map[_gpGameOverSelected];
+        float groupH = 5.f * (btnH + btnGap);
+        Rectangle groupRect{ sw / 2.f - btnW / 2.f - 8.f, activeBtnY - 8.f,
+                              btnW + 16.f, groupH + 16.f };
+        DrawRectangleLinesEx(groupRect, 1.f,
+            _btnDragging ? Color{ 100, 255, 160, 220 } : Color{ 80, 220, 120, 120 });
+        DrawText("drag", (int)(groupRect.x + 4), (int)(groupRect.y + 2), 12,
+            Color{ 80, 220, 120, 160 });
     }
 
-    const char* goHint = (promptMode == InputPromptMode::Gamepad)
-        ? "Left Stick / D-Pad: Choose   A: Select"
+    // Title sits above buttons
+    const char* title = "PAUSED";
+    int titleSz  = (int)(sh * 0.055f);
+    int titleWpx = MeasureText(title, titleSz);
+    DrawText(title, (int)(sw / 2.f - titleWpx / 2.f),
+        (int)(activeBtnY - layout.titleH), titleSz, BLACK);
+
+    const char* navHint = (promptMode == InputPromptMode::Gamepad)
+        ? "A: Select   B: Resume   LB / RB: Character"
         : (promptMode == InputPromptMode::Touch)
             ? "Tap: Select"
-            : "Click: Select";
-    int goFs = 20;
-    int goW = MeasureText(goHint, goFs);
-    DrawText(goHint, (int)(sw / 2.f - goW / 2.f), (int)(btnY + 3.f * (btnH + btnGap) + 14.f), goFs, Fade(RAYWHITE, 0.70f));
+            : "Esc: Resume   Q / E: Character";
+    int navFs = 20;
+    int navW = MeasureText(navHint, navFs);
+    DrawText(navHint, (int)(sw / 2.f - navW / 2.f),
+        (int)(activeBtnY + (float)kPauseButtonCount * (btnH + btnGap) + 4.f), navFs, Fade(BLACK, 0.70f));
 
-    if (DrawButton(_btnTex,    "Retry",     { btnX, btnY, btnW, btnH },
-            Color{ 100, 210, 120, 255 }, gpActive && _gpGameOverSelected == 0))
-        result = 1;
-    btnY += btnH + btnGap;
-
-    if (DrawButton(_htpBtnTex, "Main Menu", { btnX, btnY, btnW, btnH },
-            Color{ 230, 160,  50, 255 }, gpActive && _gpGameOverSelected == 1))
-        result = 2;
-    btnY += btnH + btnGap;
-
-    if (DrawButton(_btnTex,    "Quit Game", { btnX, btnY, btnW, btnH },
-            Color{ 230,  80,  80, 255 }, gpActive && _gpGameOverSelected == 2))
-        result = 3;
-
-    return result;
+    const bool gpActive = IsGamepadAvailable(0);
+    for (int i = 0; i < kPauseButtonCount; i++)
+    {
+        const PauseButtonDef& button = kPauseButtons[i];
+        const char* label = (runInProgress && button.runLabel) ? button.runLabel : button.label;
+        DrawButton(button.howToPlayTexture ? _htpBtnTex : _btnTex, label,
+                   PauseButtonRect(layout, activeBtnY, i), button.tint,
+                   gpActive && _gpPauseSelected == i);
+    }
 }

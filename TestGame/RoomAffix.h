@@ -44,7 +44,7 @@ struct RoomAffixDef
 inline const RoomAffixDef kRoomAffixes[] =
 {
     { "",         "",                                       0,   0,   0,   1.0f, 1.0f, 1.0f, 1.0f, false, false,  0 },
-    { "Swarm",    "Overwhelming numbers - weak but many",   214, 140, 60,  1.6f, 0.7f, 1.0f, 1.0f, false, false, 30 },
+    { "Swarm",    "Overwhelming numbers - weak but many",   214, 140, 60,  1.6f, 1.0f, 0.8f, 1.0f, false, false, 30 },
     { "Cursed",   "Foes hit harder, but hoard riches",      176,  84, 208, 1.0f, 1.0f, 1.25f,1.5f, false, true,  26 },
     { "Volatile", "Slain foes erupt in toxic clouds",       96,  196, 96,  1.0f, 1.0f, 1.0f, 1.0f, true,  false, 24 },
     { "Gilded",   "Foes glitter - triple gold",             232, 202, 72,  1.0f, 1.0f, 1.0f, 3.0f, false, false, 14 },
@@ -52,6 +52,8 @@ inline const RoomAffixDef kRoomAffixes[] =
 
 // Percent chance a Standard room rolls ANY affix (else it stays None).
 inline constexpr int kRoomAffixChancePercent = 40;
+// How long the HUD's affix banner shows when a room with an affix is entered.
+inline constexpr float kRoomAffixBannerSeconds = 3.5f;
 
 inline const RoomAffixDef& GetRoomAffixDef(RoomAffix affix)
 {

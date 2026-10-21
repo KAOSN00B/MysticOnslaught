@@ -70,6 +70,9 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: the melee swing's coded hit window ───────────────
+    bool GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+
 private:
     enum class State
     {
@@ -146,7 +149,7 @@ private:
     static constexpr float _meleeRange          = 200.f;
     static constexpr float _meleeCooldownBase   = 2.0f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 0.5f;
+    static constexpr float _bossDamagePerHit    = 5.f;
     static constexpr float _bossPushSpeed       = 1350.f;
     static constexpr float _novaCastDuration    = 1.1f;
     static constexpr float _novaCooldownBase    = 6.0f;

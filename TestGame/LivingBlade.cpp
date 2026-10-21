@@ -1,4 +1,5 @@
 #include "LivingBlade.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -67,9 +68,9 @@ void LivingBlade::ResetForSpawn(Vector2 pos)
     _width  = kBladeFrameWidth;
     _scale  = 4.2f;
     _speed  = kDashSpeed;
-    _health = 2.f;
-    _maxHealth = 2.f;
-    _attackPower = 1.f;
+    _health = Balance::Fodder::kFragileHealth;
+    _maxHealth = Balance::Fodder::kFragileHealth;
+    _attackPower = 10.f;
     _expValue = 4;
 
     _capsuleRadius     = 20.f;
@@ -329,15 +330,15 @@ void LivingBlade::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue    = 4;
-    _health      = 2.f;
-    _maxHealth   = 2.f;
+    _health      = Balance::Fodder::kFragileHealth;
+    _maxHealth   = Balance::Fodder::kFragileHealth;
     _speed       = kDashSpeed;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 }
 
 void LivingBlade::PlayAttackSound()
 {
-    float pitch = GetRandomValue(120, 165) / 100.f;
+    float pitch = SoundVariation::VariedPitch(1.425f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.55f);
     PlaySound(_attackSound);

@@ -51,9 +51,6 @@
     <ClCompile Include="PauseAndGameOver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Game.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="HealPickup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -67,6 +64,24 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="MetaProgression.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Json.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RunCheckpoint.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RunLog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SaveIds.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SaveStore.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Sha256.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Relic.cpp">
@@ -162,9 +177,6 @@
     <ClCompile Include="CyclopsLaserProjectile.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Leaderboard.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="SpreadProjectile.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -234,25 +246,13 @@
     <ClCompile Include="CombatSeparation.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="MapDirector.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="WorldMapManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="SettingsManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="HUDRenderer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="OverlayRenderer.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="ProjectileSystem.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="RoomDirector.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="RunStateController.cpp">
@@ -296,9 +296,6 @@
     <ClInclude Include="PauseAndGameOver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Game.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="GameBalance.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -321,6 +318,30 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="MetaProgression.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Json.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DamageSource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RunCheckpoint.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RunLog.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SaveFiles.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SaveIds.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SaveStore.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Sha256.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Relic.h">
@@ -422,9 +443,6 @@
     <ClInclude Include="AssetPaths.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Leaderboard.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="KeyBindings.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -503,9 +521,6 @@
     <ClInclude Include="CombatSeparation.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="MapDirector.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="WorldMapManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -521,16 +536,7 @@
     <ClInclude Include="OverlayRenderer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ProjectileSystem.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="RoomDirector.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="RunStateController.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="HUDRenderer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CutsceneAction.h">

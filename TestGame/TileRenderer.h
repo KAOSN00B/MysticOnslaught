@@ -17,6 +17,11 @@ class RoomAssetCatalog;
 class TileRenderer
 {
 public:
+    // Textures are shared through TextureCache; a copy would release them twice.
+    TileRenderer() = default;
+    TileRenderer(const TileRenderer&) = delete;
+    TileRenderer& operator=(const TileRenderer&) = delete;
+
     // groundSheetPath: path to Ground TIles.png, always drawn for tiles flagged fromGround.
     void Init(const char* tilesheetPath, const char* groundSheetPath,
               const char* sharedRewardSheetPath, const TileDefSet& defs);

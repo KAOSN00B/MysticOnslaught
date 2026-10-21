@@ -1,4 +1,6 @@
 #include "Werewolf.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "EncounterPattern.h"
@@ -48,8 +50,8 @@ void Werewolf::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health = 62.f; _maxHealth = 62.f;
-    _attackPower = 1.f;
+    _health = 620.f; _maxHealth = 620.f;
+    _attackPower = 10.f;
     _speed = _moveSpeed;
     _expValue = _bossBaseExpValue;
 
@@ -157,14 +159,14 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             _howledAt66 = true;
             _state = State::Howling; _stateTimer = 0.f;
             SetAnimation(_sharedHowlAnim, _howlDuration / (float)_sheetFrameCount, true);
-            PlaySound(_sharedHowlSound);
+            SoundVariation::PlayPitchVaried(_sharedHowlSound);
         }
         else if (canHowl && !_howledAt33 && _health <= _maxHealth * 0.33f)
         {
             _howledAt33 = true;
             _state = State::Howling; _stateTimer = 0.f;
             SetAnimation(_sharedHowlAnim, _howlDuration / (float)_sheetFrameCount, true);
-            PlaySound(_sharedHowlSound);
+            SoundVariation::PlayPitchVaried(_sharedHowlSound);
         }
 
         bool controlled = IsFrozen() || IsElectroStunned();
@@ -261,7 +263,7 @@ void Werewolf::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                     Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _landingRadius;
                 if (landedHit)
                 {
-                    _target->TakeFractionalDamage(1.0f, _worldPos);
+                    _target->TakeFractionalDamage(10.f, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
                 if (_setPieceStep == SetPieceStep::Pouncing && landedHit)
@@ -342,7 +344,7 @@ void Werewolf::HandleChasing(float dt, Vector2 heroWorldPos)
         _state = State::Combo1;
         _swipeDamageApplied = false;
         SetAnimation(_sharedMeleeAnim, 1.f / (IsFrenzied() ? 15.f : 11.f), true);
-        PlaySound(_attackSound);
+        SoundVariation::PlayPitchVaried(_attackSound);
         return;
     }
 
@@ -375,10 +377,11 @@ void Werewolf::HandleCombo(int step, float dt)
         _velocity = Vector2Zero();
     }
 
-    if (!_swipeDamageApplied && _frame >= 3 && _target != nullptr)
+    // Alternate the authored melee boxes: swipe 1 & 3 use slot 2, swipe 2 slot 3.
+    const int meleeSlot = (step == 2) ? kSwipe2Slot : kAnimSlotAttack;
+    if (!_swipeDamageApplied && _target != nullptr &&
+        MeleeWindowLive(meleeSlot, kBossMeleeHitFrame, kHitThroughLastFrame))
     {
-        // Alternate the authored melee boxes: swipe 1 & 3 use slot 2, swipe 2 slot 3.
-        int meleeSlot = (step == 2) ? 3 : 2;
         Rectangle attackRec;
         if (!GetAnimMeleeRectWorld(meleeSlot, attackRec))
         {
@@ -387,12 +390,13 @@ void Werewolf::HandleCombo(int step, float dt)
             if (_rightLeft < 0.f) attackRec.x -= 100.f;
             attackRec.y -= 20.f; attackRec.height += 40.f;
         }
-        if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+        const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+        if (hit)
         {
             _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
             _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
         }
-        _swipeDamageApplied = true;
+        _swipeDamageApplied = MeleeCheckDone(meleeSlot, hit);
     }
 
     if (_frame >= _maxFrames - 1)
@@ -403,7 +407,7 @@ void Werewolf::HandleCombo(int step, float dt)
             _state = State::Combo2;
             _swipeDamageApplied = false;
             SetAnimation(_sharedMelee2Anim, swingSpeed, true);
-            PlaySound(_attackSound);
+            SoundVariation::PlayPitchVaried(_attackSound);
         }
         else if (step == 2 && GetPhase() >= 1)
         {
@@ -411,7 +415,7 @@ void Werewolf::HandleCombo(int step, float dt)
             _state = State::Combo3;
             _swipeDamageApplied = false;
             SetAnimation(_sharedMeleeAnim, swingSpeed, true);
-            PlaySound(_attackSound);
+            SoundVariation::PlayPitchVaried(_attackSound);
         }
         else
         {
@@ -527,7 +531,7 @@ void Werewolf::UpdateSetPiece(float dt)
             Vector2 laneDirection = EliteSpreadDirection(fanCentre, laneIndex, 3, 80.f * DEG2RAD);
             EmitEliteEvent({ EliteEventKind::Execute, EliteArchetype::Ogre,
                              EliteMove::WerewolfClawLane, 0, _worldPos, {}, laneDirection });
-            PlaySound(_attackSound);
+            SoundVariation::PlayPitchVaried(_attackSound);
 
             _setPieceLanesRemaining--;
             if (_setPieceLanesRemaining > 0)
@@ -802,7 +806,7 @@ void Werewolf::SetWaveScale(int wave)
     (void)wave;
     _expValue = _bossBaseExpValue;
     _health = Balance::Boss::kWerewolfHealth; _maxHealth = Balance::Boss::kWerewolfHealth;
-    _speed = _moveSpeed; _attackPower = 1.f;
+    _speed = _moveSpeed; _attackPower = 10.f;
 }
 
 void Werewolf::EnsureSharedResourcesLoaded()
@@ -817,11 +821,33 @@ void Werewolf::EnsureSharedResourcesLoaded()
     _sharedHowlAnim   = LoadTexture(AssetPath("Bosses/WerewolfHowl.png").c_str());
     _sharedHurtAnim   = LoadTexture(AssetPath("Bosses/WerewolfHurt.png").c_str());
     _sharedDeathAnim  = LoadTexture(AssetPath("Bosses/WerewolfDeath.png").c_str());
-    _sharedAttackSound = LoadSound(AssetPath("Sounds/SwordSwipe2.ogg").c_str());
-    _sharedHurtSound   = LoadSound(AssetPath("Sounds/SmallMonsterDamage.ogg").c_str());
-    _sharedDeathSound  = LoadSound(AssetPath("Sounds/MonsterDeath.ogg").c_str());
-    _sharedHowlSound   = LoadSound(AssetPath("Sounds/OgreChargeHit.ogg").c_str());
+    // Dedicated werewolf voice (Gothic Fantasy SFX pack); the old generic clips
+    // remain the fallback if a file is missing.
+    auto loadOr = [](const char* preferred, const char* fallback)
+    {
+        Sound sound = LoadSound(AssetPath(preferred).c_str());
+        return sound.frameCount > 0 ? sound : LoadSound(AssetPath(fallback).c_str());
+    };
+    _sharedAttackSound = loadOr("Sounds/MysticExpansion/Creatures/Werewolf_Attack_001.wav", "Sounds/SwordSwipe2.ogg");
+    _sharedHurtSound   = loadOr("Sounds/MysticExpansion/Creatures/Werewolf_Pain_001.wav", "Sounds/SmallMonsterDamage.ogg");
+    _sharedDeathSound  = loadOr("Sounds/MysticExpansion/Creatures/Werewolf_Death_001.wav", "Sounds/MonsterDeath.ogg");
+    _sharedHowlSound   = loadOr("Sounds/MysticExpansion/Creatures/Werewolf_Attack_002.wav", "Sounds/OgreChargeHit.ogg");
+    SetSoundVolume(_sharedAttackSound, 0.6f);
+    SetSoundVolume(_sharedHowlSound, 0.7f);
     _sharedResourcesLoaded = true;
+}
+
+void Werewolf::PlayHurtSound()
+{
+    SetSoundVolume(_hurtSound, 0.7f);
+    StopSound(_hurtSound);
+    SoundVariation::PlayPitchVaried(_hurtSound);
+}
+
+void Werewolf::PlayDeathSound()
+{
+    SetSoundVolume(_deathSound, 0.8f);
+    SoundVariation::PlayPitchVaried(_deathSound);
 }
 
 void Werewolf::UnloadSharedResources()
@@ -841,4 +867,44 @@ void Werewolf::UnloadSharedResources()
     _sharedAttackSound = Sound{};    _sharedHurtSound = Sound{};
     _sharedDeathSound = Sound{};     _sharedHowlSound = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: both swipes strike from frame 3; the pounce's landing
+// circle is a special move.
+// =============================================================================
+namespace
+{
+    constexpr const char* kPounceKey = "Werewolf_Pounce";
+    constexpr int kPounceAnimSlot = 4;
+}
+
+bool Werewolf::GetDefaultHitWindow(int slot, int& start, int& end) const
+{
+    if (slot != kAnimSlotAttack && slot != kSwipe2Slot)
+        return false;
+    start = kBossMeleeHitFrame;
+    end   = kHitThroughLastFrame;
+    return true;
+}
+
+int Werewolf::GetEditorMoveCount() const { return 1; }
+
+Enemy::MoveInfo Werewolf::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index != 0)
+        return move;
+    move.key      = kPounceKey;
+    move.name     = "Pounce landing";
+    move.shape    = MoveShape::Circle;
+    move.animSlot = kPounceAnimSlot;
+    move.radius   = kDefaultLandingRadius;
+    move.note     = "Hits around it where it lands.";
+    return move;
+}
+
+void Werewolf::ApplyMoveTuning()
+{
+    _landingRadius = TunedHitRadius(kPounceKey, kDefaultLandingRadius);
 }

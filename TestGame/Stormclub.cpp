@@ -1,4 +1,6 @@
 #include "Stormclub.h"
+#include "EliteMoveDefs.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "AttackTuning.h"
@@ -75,9 +77,9 @@ void Stormclub::ResetForSpawn(Vector2 pos)
     SetIdleAnimation(true);
     _scale = 4.8f;                 // elite-Ogre sized
 
-    _health      = 12.f;
-    _maxHealth   = 12.f;
-    _attackPower = 3.f;            // the club hits hard AND displaces you
+    _health      = 120.f;
+    _maxHealth   = 120.f;
+    _attackPower = 30.f;            // the club hits hard AND displaces you
     _speed       = 160.f;
     _expValue    = 8;
 
@@ -109,9 +111,9 @@ void Stormclub::SetIdleAnimation(bool resetFrame)
 // =============================================================================
 void Stormclub::SetWaveScale(int /*wave*/)
 {
-    _health      = 12.f;
-    _maxHealth   = 12.f;
-    _attackPower = 3.f;
+    _health      = 120.f;
+    _maxHealth   = 120.f;
+    _attackPower = 30.f;
     _speed       = 160.f;
     _expValue    = 8;
 }
@@ -273,7 +275,7 @@ bool Stormclub::UpdateEliteSignature(float deltaTime, Vector2 /*navigationTarget
             PlayAttackSound();
 
             _landedOnPlayer = Vector2Distance(_target->GetFeetWorldPos(), _worldPos)
-                              <= Balance::Elite::kStormclubImpactRadius;
+                              <= EliteMoves::StormclubImpactRadius();
             if (_landedOnPlayer)
                 _eliteSignatureHits++;
 
@@ -335,10 +337,10 @@ void Stormclub::DrawEliteTelegraph() const
     // windup it tracks the player; the lock freezes it.
     const float pulse = 0.75f + 0.25f * sinf((float)GetTime() * 9.f);
     DrawCircleLines((int)_leapTarget.x, (int)_leapTarget.y,
-                    Balance::Elite::kStormclubImpactRadius * pulse,
+                    EliteMoves::StormclubImpactRadius() * pulse,
                     Fade(Color{ 255, 220, 90, 255 }, 0.75f));
     DrawCircleLines((int)_leapTarget.x, (int)_leapTarget.y,
-                    Balance::Elite::kStormclubImpactRadius,
+                    EliteMoves::StormclubImpactRadius(),
                     Fade(Color{ 255, 240, 150, 255 }, 0.45f));
     DrawCircleV(_leapTarget, 10.f, Fade(Color{ 255, 220, 90, 255 }, 0.55f));
 }
@@ -405,7 +407,7 @@ Capsule2D Stormclub::GetCapsule() const
 void Stormclub::PlayAttackSound()
 {
     // Lightning crack on the swing — low pitch so it reads as thunder.
-    float pitch = GetRandomValue(70, 90) / 100.f;
+    float pitch = SoundVariation::VariedPitch(0.800f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.55f);
     PlaySound(_attackSound);
@@ -462,4 +464,28 @@ void Stormclub::UnloadSharedResources()
     _sharedHurtSound   = Sound{};
     _sharedDeathSound  = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: the landing impact and the lightning branches.
+// =============================================================================
+int Stormclub::GetEditorMoveCount() const { return 2; }
+
+Enemy::MoveInfo Stormclub::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    move.animSlot = kAnimSlotAttack;
+    if (index == 0)
+    {
+        move.key = EliteMoves::kStormclubLeapKey; move.name = "Thunder Leap"; move.shape = MoveShape::Circle;
+        move.radius = Balance::Elite::kStormclubImpactRadius;
+        move.note = "The impact where it lands. Timing rows below.";
+    }
+    else if (index == 1)
+    {
+        move.key = EliteMoves::kStormclubBranchesKey; move.name = "Lightning Branches"; move.shape = MoveShape::Lane;
+        move.length = Balance::Elite::kStormclubBranchLength; move.width = Balance::Elite::kStormclubBranchWidth;
+        move.note = "Each branch that splits off the landing.";
+    }
+    return move;
 }

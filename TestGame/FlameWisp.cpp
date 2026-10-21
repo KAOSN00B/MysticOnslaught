@@ -1,4 +1,5 @@
 #include "FlameWisp.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "raymath.h"
@@ -88,9 +89,9 @@ void FlameWisp::ResetForSpawn(Vector2 pos)
     SetIdleAnimation(false);
     _scale = 4.8f;
 
-    _health      = 2.f;
-    _maxHealth   = 2.f;
-    _attackPower = 1.f;
+    _health      = Balance::Fodder::kFragileHealth;
+    _maxHealth   = Balance::Fodder::kFragileHealth;
+    _attackPower = 10.f;
     _speed       = 120.f;   // drift speed — teleports cover real distance
     _expValue    = 4;
 
@@ -454,10 +455,10 @@ void FlameWisp::OnBoltCast()
 void FlameWisp::SetWaveScale(int wave)
 {
     _expValue    = 4;
-    _health      = 2.f;
-    _maxHealth   = 2.f;
+    _health      = Balance::Fodder::kFragileHealth;
+    _maxHealth   = Balance::Fodder::kFragileHealth;
     _speed       = 120.f;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 
     // Later rooms teleport (and therefore attack) more often.
     int tier = (wave - 1) / 5;
@@ -468,7 +469,7 @@ void FlameWisp::SetWaveScale(int wave)
 // =============================================================================
 void FlameWisp::PlayAttackSound()
 {
-    float pitch = GetRandomValue(140, 180) / 100.f;
+    float pitch = SoundVariation::VariedPitch(1.600f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.55f);
     PlaySound(_attackSound);

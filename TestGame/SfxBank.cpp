@@ -81,6 +81,42 @@ namespace
         { SfxId::AbilityLearn,    "Sounds/AbilityLearn.wav" },
         { SfxId::UIConfirm,       "Sounds/UI_Confirm.wav" },
         { SfxId::UISelect,        "Sounds/UI_Select.wav" },
+
+        // Imported library (see Sounds/MysticExpansion/manifest.json for provenance).
+        { SfxId::FootGrassA,      "Sounds/MysticExpansion/Footsteps/Footsteps_Grass_01.wav" },
+        { SfxId::FootGrassB,      "Sounds/MysticExpansion/Footsteps/Footsteps_Grass_02.wav" },
+        { SfxId::FootStoneA,      "Sounds/MysticExpansion/Footsteps/Footsteps_Stone_Tiles_01.wav" },
+        { SfxId::FootStoneB,      "Sounds/MysticExpansion/Footsteps/Footsteps_Stone_Tiles_02.wav" },
+        { SfxId::FootDirtA,       "Sounds/MysticExpansion/Footsteps/Footsteps_Dirt_01.wav" },
+        { SfxId::FootDirtB,       "Sounds/MysticExpansion/Footsteps/Footsteps_Dirt_02.wav" },
+        { SfxId::CoinA,           "Sounds/MysticExpansion/Licensed/Coin_Accessory_A.wav" },
+        { SfxId::CoinB,           "Sounds/MysticExpansion/Licensed/Coin_Accessory_B.wav" },
+        { SfxId::ChestOpen,       "Sounds/MysticExpansion/Interactions/GS2_Treasure_Chest_Open.wav" },
+        { SfxId::DoorOpen,        "Sounds/MysticExpansion/Interactions/GS2_Door_Open_2.wav" },
+        { SfxId::DashA,           "Sounds/MysticExpansion/Licensed/Dash_Whoosh_A.wav" },
+        { SfxId::DashB,           "Sounds/MysticExpansion/Licensed/Dash_Whoosh_B.wav" },
+        { SfxId::ArmorLight,      "Sounds/MysticExpansion/Armor/Armor_Hit_Light_A.wav" },
+        { SfxId::ArmorHeavy,      "Sounds/MysticExpansion/Armor/Armor_Hit_Heavy_A.wav" },
+        { SfxId::RelicReveal,     "Sounds/MysticExpansion/Stingers/Mysterious_Box_001.wav" },
+        { SfxId::RelicGained,     "Sounds/MysticExpansion/Item Tiers/High_Tier_Item_A.wav" },
+        { SfxId::UpgradeBought,   "Sounds/MysticExpansion/Upgrades/Upgrade_High_Tier_Item_A.wav" },
+        { SfxId::ConsumableA,     "Sounds/MysticExpansion/Item Types/Item_Consumable_A.wav" },
+        { SfxId::ConsumableB,     "Sounds/MysticExpansion/Item Types/Item_Consumable_B.wav" },
+        { SfxId::GuiCancel,       "Sounds/MysticExpansion/Licensed/Denied_Cue_A.wav" },
+        { SfxId::HealA,           "Sounds/MysticExpansion/Licensed/Heal_Upgrade_A.wav" },
+        { SfxId::HealB,           "Sounds/MysticExpansion/Licensed/Heal_Upgrade_B.wav" },
+        { SfxId::ReviveDust,      "Sounds/MysticExpansion/Spells/Angel_Dust_001.wav" },
+        { SfxId::BossArrival,     "Sounds/MysticExpansion/Stingers/Drums_Of_Fate_001.wav" },
+        { SfxId::SpellSmite,      "Sounds/MysticExpansion/Spells/Smite_002.wav" },
+        { SfxId::SpellFog,        "Sounds/MysticExpansion/Spells/Fog_Disappear_001.wav" },
+        { SfxId::SpellHexproof,   "Sounds/MysticExpansion/Spells/Hexproof_001.wav" },
+        { SfxId::SpellIntoDarkness,"Sounds/MysticExpansion/Spells/Into_The_Darkness_001.wav" },
+        { SfxId::ShotFate,        "Sounds/MysticExpansion/Combat/Fate_Shot_002.wav" },
+        { SfxId::StrikeDestiny,   "Sounds/MysticExpansion/Combat/Blade_Of_Destiny_002.wav" },
+        { SfxId::KillStompA,      "Sounds/MysticExpansion/Licensed/Kill_Stomp_A.wav" },
+        { SfxId::KillStompB,      "Sounds/MysticExpansion/Licensed/Kill_Stomp_B.wav" },
+        { SfxId::KillStompC,      "Sounds/MysticExpansion/Licensed/Kill_Stomp_C.wav" },
+        { SfxId::KillExecution,   "Sounds/MysticExpansion/Licensed/Kill_Execution_A.wav" },
     };
 }
 
@@ -121,6 +157,31 @@ void SfxBank::Play(SfxId id, float volume, bool pitchJitter)
     float pitch = pitchJitter ? (0.94f + (float)(rand() % 130) / 1000.f) : 1.f;
     SetSoundPitch(*s, pitch);
     PlaySound(*s);
+}
+
+void SfxBank::PlayEither(SfxId a, SfxId b, float volume, SfxId fallback)
+{
+    Sound* first = Find(a);
+    Sound* second = Find(b);
+    if (first && second) { Play(GetRandomValue(0, 1) == 0 ? a : b, volume); return; }
+    if (first)           { Play(a, volume); return; }
+    if (second)          { Play(b, volume); return; }
+    if (fallback != SfxId::None) Play(fallback, volume);
+}
+
+bool SfxBank::PlayFootstep(float volume)
+{
+    SfxId a = SfxId::None, b = SfxId::None;
+    switch (_footSurface)
+    {
+    case FootSurface::Grass: a = SfxId::FootGrassA; b = SfxId::FootGrassB; break;
+    case FootSurface::Stone: a = SfxId::FootStoneA; b = SfxId::FootStoneB; break;
+    case FootSurface::Dirt:  a = SfxId::FootDirtA;  b = SfxId::FootDirtB;  break;
+    default: return false;
+    }
+    if (!Find(a) && !Find(b)) return false;
+    PlayEither(a, b, volume);
+    return true;
 }
 
 // ── Intent helpers ────────────────────────────────────────────────────────────
@@ -207,6 +268,16 @@ void SfxBank::PlayCreatureDeath(CreatureFamily family)
     }
 }
 
+void SfxBank::PlayKillCrunch(bool heavy)
+{
+    const double now = GetTime();
+    if (now - _lastCrunchTime < 0.05) return;
+    _lastCrunchTime = now;
+    const SfxId stomps[] = { SfxId::KillStompA, SfxId::KillStompB, SfxId::KillStompC };
+    Play(stomps[GetRandomValue(0, 2)], heavy ? 0.75f : 0.55f);
+    if (heavy) Play(SfxId::KillExecution, 0.45f);
+}
+
 void SfxBank::PlayCreatureHurt(CreatureFamily family)
 {
     switch (family)
@@ -275,13 +346,14 @@ void SfxBank::PlayAbilityCast(AbilityType a)
     case AbilityType::FanOfKnives: case AbilityType::Eviscerate: Play(SfxId::SkillKnifeThrow, 0.55f); break;
     case AbilityType::Shadowstep:  Play(SfxId::SkillTeleport,  0.6f); break;
     case AbilityType::PoisonVial:  Play(SfxId::SkillVialThrow, 0.6f); break;
-    case AbilityType::Backstab:    Play(SfxId::BasicDagger,    0.7f); break;
-    case AbilityType::SmokeBomb:   Play(SfxId::SkillSmoke,     0.6f); break;
+    case AbilityType::Backstab:    PlayEither(SfxId::StrikeDestiny, SfxId::StrikeDestiny, 0.6f, SfxId::BasicDagger); break;
+    case AbilityType::SmokeBomb:   PlayEither(SfxId::SpellFog, SfxId::SpellFog, 0.55f, SfxId::SkillSmoke); break;
     case AbilityType::DeathMark:   PlayElementCast(SfxElement::Shadow, 0.8f); break;
     case AbilityType::BladeDance:  case AbilityType::RainOfBlades: Play(SfxId::SkillBladeRain, 0.7f); break;
 
     // ── Hunter ─────────────────────────────────────────────────────────────
-    case AbilityType::PiercingShot: case AbilityType::Multishot: case AbilityType::Volley: Play(SfxId::BasicBow, 0.65f); break;
+    case AbilityType::PiercingShot: PlayEither(SfxId::ShotFate, SfxId::ShotFate, 0.6f, SfxId::BasicBow); break;
+    case AbilityType::Multishot: case AbilityType::Volley: Play(SfxId::BasicBow, 0.65f); break;
     case AbilityType::FrostTrap:     Play(SfxId::TrapMagic, 0.6f); break;
     case AbilityType::ExplosiveArrow:Play(SfxId::TrapWood,  0.6f); break;
     case AbilityType::Roll:          Play(SfxId::BuffCast,  0.4f); break;
@@ -289,9 +361,15 @@ void SfxBank::PlayAbilityCast(AbilityType a)
     case AbilityType::Deadeye:       Play(SfxId::BuffCast,  0.6f); break;
 
     // ── Paladin (holy) ─────────────────────────────────────────────────────
-    case AbilityType::Smite: case AbilityType::HolyBolt: case AbilityType::Consecrate:
+    case AbilityType::Smite:
+        PlayEither(SfxId::SpellSmite, SfxId::SpellSmite, 0.55f, SfxId::CastHoly); break;
+    case AbilityType::HolyBolt: case AbilityType::Consecrate:
         PlayElementCast(SfxElement::Holy); break;
-    case AbilityType::ShieldOfFaith: case AbilityType::LayOnHands: case AbilityType::AvengingWrath:
+    case AbilityType::ShieldOfFaith:
+        PlayEither(SfxId::SpellHexproof, SfxId::SpellHexproof, 0.55f, SfxId::BuffCast); break;
+    case AbilityType::LayOnHands:
+        PlayEither(SfxId::HealA, SfxId::HealB, 0.55f, SfxId::BuffCast); break;
+    case AbilityType::AvengingWrath:
         Play(SfxId::BuffCast, 0.6f); break;
     case AbilityType::HammerThrow:   Play(SfxId::SkillAxeThrow, 0.6f); break;
     case AbilityType::DivineStorm: case AbilityType::HammerOfJustice:
@@ -300,7 +378,7 @@ void SfxBank::PlayAbilityCast(AbilityType a)
     // ── Warlock (dark) ─────────────────────────────────────────────────────
     case AbilityType::ShadowBolt: case AbilityType::DrainLife: case AbilityType::SoulSiphon:
         PlayElementCast(SfxElement::Shadow); break;
-    case AbilityType::Curse:          Play(SfxId::SkillCurse,   0.6f); break;
+    case AbilityType::Curse:          PlayEither(SfxId::SpellIntoDarkness, SfxId::SpellIntoDarkness, 0.5f, SfxId::SkillCurse); break;
     case AbilityType::CorruptionPool: Play(SfxId::ZonePoison,   0.6f); break;
     case AbilityType::Hellfire:       Play(SfxId::SkillHellfire, 0.7f); break;
     case AbilityType::DemonForm:      Play(SfxId::WarCryRoar,   0.75f); break;

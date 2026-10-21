@@ -1,4 +1,5 @@
 ﻿#include "BaseCharacter.h"
+#include "SoundVariation.h"
 #include "raymath.h"
 
 BaseCharacter::BaseCharacter()
@@ -169,7 +170,7 @@ void BaseCharacter::PlayFootStepSound()
 
 void BaseCharacter::PlayAttackSound()
 {
-	float pitch = GetRandomValue(40, 70) / 100.f;
+	float pitch = SoundVariation::VariedPitch(0.550f);
 	SetSoundPitch(_attackSound, pitch);
 	SetSoundVolume(_attackSound, 0.85f);
 	PlaySound(_attackSound);
@@ -177,7 +178,7 @@ void BaseCharacter::PlayAttackSound()
 
 void BaseCharacter::PlayHurtSound()
 {
-	float pitch = GetRandomValue(40, 70) / 100.f;
+	float pitch = SoundVariation::VariedPitch(0.550f);
 	SetSoundPitch(_hurtSound, pitch);
 	SetSoundVolume(_hurtSound, 0.15f);
 	PlaySound(_hurtSound);

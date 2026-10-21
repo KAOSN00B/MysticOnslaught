@@ -6,6 +6,7 @@
 #include "Enemy.h"
 #include "VirtualCanvas.h"
 #include "raymath.h"
+#include "VfxGlow.h"
 #include "VirtualCanvas.h"
 
 Texture2D SpreadProjectile::_fireTex{};
@@ -76,6 +77,8 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
     screenPos.x += kVirtualWidth  / 2.f;
     screenPos.y += kVirtualHeight / 2.f;
 
+    Vfx::DrawGlowHalo(screenPos, Balance::Vfx::kBoltHaloRadius, _tint, Balance::Vfx::kBoltHaloStrength);
+
     float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
 
     // Hunter basic shot: a real arrow. The art points north-east, so add 45° to
@@ -112,6 +115,8 @@ void SpreadProjectile::Draw(Vector2 worldOffset) const
 
     DrawTexturePro(*tex, source, dest,
         Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation, _tint);
+    Vfx::Glow().AddSprite(*tex, source, dest, Vector2{ dest.width * 0.5f, dest.height * 0.5f }, rotation,
+                          Fade(_tint, (_tint.a / 255.f) * Balance::Vfx::kGlowSpriteStrength));
 }
 
 void SpreadProjectile::Destroy()

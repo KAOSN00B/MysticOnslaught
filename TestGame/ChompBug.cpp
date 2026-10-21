@@ -1,10 +1,19 @@
 #include "ChompBug.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
 #include "raymath.h"
 #include <algorithm>
 #include <cmath>
+
+namespace
+{
+    // Special move (Character Animator).
+    constexpr const char* kDiveKey = "ChompBug_Dive_Bomb";
+    constexpr int kDiveAnimSlot = 2;   // Chomp
+}
 
 Texture2D ChompBug::_sharedIdleAnim{};
 Texture2D ChompBug::_sharedFlyAnim{};
@@ -45,8 +54,8 @@ void ChompBug::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedFlyAnim, 1.f / 12.f, true);
     _scale = _bossScale;
 
-    _health = 55.f; _maxHealth = 55.f;
-    _attackPower = 1.f;
+    _health = 550.f; _maxHealth = 550.f;
+    _attackPower = 10.f;
     _speed = 260.f;
     _expValue = _bossBaseExpValue;
 
@@ -227,7 +236,7 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _diveTimer = 0.f;
                 _diveHitApplied = false;
                 SetAnimation(_sharedMeleeAnim, _diveTravelDuration / (float)_sheetFrameCount, true);
-                PlaySound(_attackSound);
+                SoundVariation::PlayPitchVaried(_attackSound);
             }
             break;
         }
@@ -239,10 +248,10 @@ void ChompBug::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
             _worldPos = Vector2Lerp(_diveStart, _diveEnd, t);
 
             if (!_diveHitApplied && _target->IsAlive() &&
-                CheckCollisionRecs(GetBodyContactRec(), _target->GetCollisionRec()))
+                CheckCollisionRecs(TunedMoveBox(kDiveKey, GetBodyContactRec()), _target->GetCollisionRec()))
             {
                 _diveHitApplied = true;
-                _target->TakeFractionalDamage(1.0f, _worldPos);
+                _target->TakeFractionalDamage(10.f, _worldPos);
                 _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
             }
 
@@ -544,7 +553,7 @@ void ChompBug::SetWaveScale(int wave)
     _expValue = _bossBaseExpValue;
     _health = Balance::Boss::kChompBugHealth; _maxHealth = Balance::Boss::kChompBugHealth;
 _enrageThreshold = 0.40f;
-    _speed = 260.f; _attackPower = 1.f;
+    _speed = 260.f; _attackPower = 10.f;
 }
 
 void ChompBug::EnsureSharedResourcesLoaded()
@@ -579,4 +588,18 @@ void ChompBug::UnloadSharedResources()
     _sharedAttackSound = Sound{};   _sharedHurtSound = Sound{};
     _sharedDeathSound = Sound{};    _sharedSpitSound = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: the dive's hit box.
+// =============================================================================
+Enemy::MoveInfo ChompBug::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index != 0)
+        return move;
+    move.key = kDiveKey; move.name = "Dive Bomb"; move.shape = MoveShape::Box;
+    move.animSlot = kDiveAnimSlot; move.box = RelativeFacingRight(GetBodyContactRec());
+    move.note = "Hits whatever this box touches during the dive.";
+    return move;
 }

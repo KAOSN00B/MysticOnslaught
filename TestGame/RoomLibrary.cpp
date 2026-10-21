@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
+#include <map>
 #include <random>
 
 namespace
@@ -17,9 +19,19 @@ namespace
 
 void RoomLibrary::Refresh(const std::filesystem::path& root)
 {
+    // Rooms parsed by the previous Refresh of this same root, by path, so an
+    // unchanged file is moved over instead of parsed again.
+    std::map<std::filesystem::path, std::size_t> previous;
+    if (root == _root)
+        for (std::size_t i = 0; i < _paths.size(); ++i) previous.emplace(_paths[i], i);
+    std::vector<RoomBlueprint> previousRooms = std::move(_rooms);
+    std::vector<FileStamp> previousStamps = std::move(_stamps);
+
     _root = root;
     _rooms.clear();
     _paths.clear();
+    _stamps.clear();
+    _parsedOnLastRefresh = 0;
 
     std::error_code ec;
     if (!std::filesystem::exists(_root, ec)) return;
@@ -31,11 +43,30 @@ void RoomLibrary::Refresh(const std::filesystem::path& root)
         const std::filesystem::directory_entry entry = *it;
         it.increment(ec);
         if (!entry.is_regular_file(ec) || entry.path().extension() != ".mroom") continue;
+
+        // A stamp that can't be read never matches, so the file is parsed.
+        std::error_code statEc;
+        FileStamp stamp;
+        stamp.writeTime = entry.last_write_time(statEc);
+        const bool stampKnown = !statEc;
+        stamp.size = entry.file_size(statEc);
+        const auto found = previous.find(entry.path());
+        if (stampKnown && !statEc && found != previous.end() &&
+            previousStamps[found->second].SameAs(stamp))
+        {
+            _rooms.push_back(std::move(previousRooms[found->second]));
+            _paths.push_back(entry.path());
+            _stamps.push_back(stamp);
+            continue;
+        }
+
         std::string error;
         std::optional<RoomBlueprint> room = RoomBlueprint::Load(entry.path(), error);
+        ++_parsedOnLastRefresh;
         if (!room.has_value()) continue;
         _rooms.push_back(std::move(*room));
         _paths.push_back(entry.path());
+        _stamps.push_back((stampKnown && !statEc) ? stamp : FileStamp{});
     }
 }
 
@@ -104,9 +135,81 @@ std::vector<const RoomBlueprint*> RoomLibrary::PlaytestCandidates(
     // a full duplicate Elite art library made an otherwise complete biome
     // impossible to playtest. Prefer authored Elite art when present, then use
     // Standard geometry while preserving the graph node's Elite behavior.
-    if (exact.empty() && fourDoorFallback.empty() && roomType == RoomType::Elite)
+    // Zeph's camp (Store) is likewise a role, not a separate art library: it
+    // reuses Standard geometry and Engine places Zeph on safe floor.
+    if (exact.empty() && fourDoorFallback.empty() &&
+        (roomType == RoomType::Elite || roomType == RoomType::Store))
         collect(RoomType::Standard);
     return exact.empty() ? fourDoorFallback : exact;
+}
+
+void RoomLibrary::CompatibleLayouts(const std::vector<const RoomBlueprint*>& rooms, const LayoutSlot& slot,
+                                    std::vector<const RoomBlueprint*>& exact,
+                                    std::vector<const RoomBlueprint*>& fourDoor)
+{
+    constexpr unsigned char kFourDoors = 1 | 2 | 4 | 8;
+    exact.clear();
+    fourDoor.clear();
+    auto collect = [&](RoomType role)
+    {
+        for (const RoomBlueprint* room : rooms)
+        {
+            if (room == nullptr || room->roomType != role) continue;
+            const unsigned char mask = room->DoorMask();
+            if (mask == slot.doorMask)   exact.push_back(room);
+            else if (mask == kFourDoors) fourDoor.push_back(room);
+        }
+    };
+    collect(slot.role);
+    if (exact.empty() && fourDoor.empty() && (slot.role == RoomType::Elite || slot.role == RoomType::Store))
+        collect(RoomType::Standard);
+}
+
+std::vector<std::string> RoomLibrary::AssignLayouts(const std::vector<const RoomBlueprint*>& rooms,
+                                                    const std::vector<LayoutSlot>& slots,
+                                                    const std::function<int(int)>& randomBelow)
+{
+    std::vector<std::string> ids(slots.size());
+    std::map<std::string, int> uses;
+    std::vector<const RoomBlueprint*> exact, fourDoor, best;
+    auto unusedFrom = [&](const std::vector<const RoomBlueprint*>& from)
+    {
+        for (const RoomBlueprint* room : from)
+            if (uses[room->id] == 0) best.push_back(room);
+    };
+    for (std::size_t i = 0; i < slots.size(); ++i)
+    {
+        CompatibleLayouts(rooms, slots[i], exact, fourDoor);
+        if (exact.empty() && fourDoor.empty()) return {};
+        best.clear();
+        unusedFrom(exact);
+        if (best.empty()) unusedFrom(fourDoor);
+        if (best.empty())
+        {
+            // Every compatible layout is already in this dungeon: repeat the least
+            // used one, exact door shapes first.
+            int fewest = INT_MAX;
+            for (const RoomBlueprint* room : exact)    fewest = std::min(fewest, uses[room->id]);
+            for (const RoomBlueprint* room : fourDoor) fewest = std::min(fewest, uses[room->id]);
+            for (const RoomBlueprint* room : exact)    if (uses[room->id] == fewest) best.push_back(room);
+            if (best.empty())
+                for (const RoomBlueprint* room : fourDoor) if (uses[room->id] == fewest) best.push_back(room);
+        }
+        const int last = (int)best.size() - 1;
+        const RoomBlueprint* chosen = best[(std::size_t)std::clamp(randomBelow((int)best.size()), 0, last)];
+        ids[i] = chosen->id;
+        ++uses[chosen->id];
+    }
+    return ids;
+}
+
+std::vector<std::string> RoomLibrary::AssignDungeonLayouts(Biome biome, const std::vector<LayoutSlot>& slots,
+                                                           const std::function<int(int)>& randomBelow) const
+{
+    std::vector<const RoomBlueprint*> rooms;
+    for (const RoomBlueprint& room : _rooms)
+        if (room.biome == biome) rooms.push_back(&room);
+    return AssignLayouts(rooms, slots, randomBelow);
 }
 
 std::array<int, 16> RoomLibrary::DoorMaskCounts(

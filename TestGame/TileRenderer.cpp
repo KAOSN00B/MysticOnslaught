@@ -1,6 +1,7 @@
 #include "TileRenderer.h"
 #include "RoomAssetCatalog.h"
 #include "RoomCollision.h"
+#include "TextureCache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,11 +11,15 @@ namespace
     // Snap a sprite's destination to integer pixels so adjacent tiles share an
     // EXACT edge (tile A's right = tile B's left). Without this, fractional draw
     // scale leaves a 1px seam that shows whatever is underneath (floor/fall/bg).
+    // The epsilon matters where an edge lands exactly on a pixel (every 7th
+    // column at 68.57 px per cell): float error made tile A's right edge
+    // 959.9999 -> 959 while tile B started at 960, leaving a 1px background seam.
     Rectangle SnapTileDest(float screenX, float screenY, float w, float h)
     {
-        const float x0 = std::floor(screenX);
-        const float y0 = std::floor(screenY);
-        return { x0, y0, std::floor(screenX + w) - x0, std::floor(screenY + h) - y0 };
+        constexpr float kEdgeEpsilon = 1e-3f;
+        const float x0 = std::floor(screenX + kEdgeEpsilon);
+        const float y0 = std::floor(screenY + kEdgeEpsilon);
+        return { x0, y0, std::floor(screenX + w + kEdgeEpsilon) - x0, std::floor(screenY + h + kEdgeEpsilon) - y0 };
     }
 }
 
@@ -39,36 +44,44 @@ namespace
 void TileRenderer::Init(const char* tilesheetPath, const char* groundSheetPath,
                         const char* sharedRewardSheetPath, const TileDefSet& defs)
 {
-    if (_sheet.id != 0)              { UnloadTexture(_sheet);              _sheet = {}; }
-    if (_groundSheet.id != 0)        { UnloadTexture(_groundSheet);        _groundSheet = {}; }
-    if (_sharedRewardSheet.id != 0)  { UnloadTexture(_sharedRewardSheet);  _sharedRewardSheet = {}; }
-    _sheet             = LoadTexture(tilesheetPath);
-    _groundSheet       = LoadTexture(groundSheetPath);
-    _sharedRewardSheet = LoadTexture(sharedRewardSheetPath);
+    // Acquire before releasing so sheets shared with the previous variant
+    // (ground, shared rewards, usually the same tilesheet) never re-upload.
+    TextureCache& cache = TextureCache::Get();
+    Texture2D sheet             = cache.Acquire(tilesheetPath);
+    Texture2D groundSheet       = cache.Acquire(groundSheetPath);
+    Texture2D sharedRewardSheet = cache.Acquire(sharedRewardSheetPath);
+    cache.Release(_sheet);
+    cache.Release(_groundSheet);
+    cache.Release(_sharedRewardSheet);
+    _sheet             = sheet;
+    _groundSheet       = groundSheet;
+    _sharedRewardSheet = sharedRewardSheet;
     _defs = defs;
 }
 
 void TileRenderer::Unload()
 {
-    if (_sheet.id != 0)       { UnloadTexture(_sheet);       _sheet       = {}; }
-    if (_groundSheet.id != 0) { UnloadTexture(_groundSheet); _groundSheet = {}; }
-    if (_sharedRewardSheet.id != 0)
-        { UnloadTexture(_sharedRewardSheet); _sharedRewardSheet = {}; }
+    TextureCache& cache = TextureCache::Get();
+    cache.Release(_sheet);             _sheet = {};
+    cache.Release(_groundSheet);       _groundSheet = {};
+    cache.Release(_sharedRewardSheet); _sharedRewardSheet = {};
     for (LoadedRoomSource& source : _roomSources)
-        if (source.texture.id != 0) UnloadTexture(source.texture);
+        cache.Release(source.texture);
     _roomSources.clear();
 }
 
 void TileRenderer::LoadRoomAssetCatalog(const RoomAssetCatalog& catalog)
 {
-    for (LoadedRoomSource& source : _roomSources)
-        if (source.texture.id != 0) UnloadTexture(source.texture);
-    _roomSources.clear();
+    TextureCache& cache = TextureCache::Get();
+    std::vector<LoadedRoomSource> loaded;
     for (const RoomAssetSource& source : catalog.Sources())
     {
-        Texture2D texture = LoadTexture(source.imagePath.string().c_str());
-        if (texture.id != 0) _roomSources.push_back({ source.stem, texture });
+        Texture2D texture = cache.Acquire(source.imagePath.string());
+        if (texture.id != 0) loaded.push_back({ source.stem, texture });
     }
+    for (LoadedRoomSource& source : _roomSources)
+        cache.Release(source.texture);
+    _roomSources = std::move(loaded);
 }
 
 void TileRenderer::DrawRoom(const RoomLayout& layout, float scaleX, float scaleY,

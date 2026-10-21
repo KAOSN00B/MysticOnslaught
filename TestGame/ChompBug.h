@@ -60,6 +60,11 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: the dive is a special move; no melee box ─────────
+    bool     GetDefaultHitWindow(int, int&, int&) const override { return false; }
+    int      GetEditorMoveCount() const override { return 1; }
+    MoveInfo GetEditorMove(int index) const override;
+
 private:
     enum class State
     {
@@ -106,7 +111,7 @@ private:
     static constexpr float _orbitRadius         = 340.f;
     static constexpr float _orbitSpeed          = 1.7f;    // radians/sec
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 0.5f;
+    static constexpr float _bossDamagePerHit    = 5.f;
     static constexpr float _bossPushSpeed       = 1300.f;
     static constexpr float _diveAimDuration     = 0.7f;
     static constexpr float _diveTravelDuration  = 0.55f;

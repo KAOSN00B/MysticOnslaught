@@ -1,5 +1,7 @@
 #pragma once
 #include "raylib.h"
+#include <algorithm>
+#include <cmath>
 
 // ── 9-Slice (9-patch) texture drawing ────────────────────────────────────────
 //
@@ -111,4 +113,56 @@ inline void DrawNineSliceEx(Texture2D tex,
     DrawTexturePro(tex, srcBL, dstBL, {}, 0.f, tint);
     DrawTexturePro(tex, srcBC, dstBC, {}, 0.f, tint);
     DrawTexturePro(tex, srcBR, dstBR, {}, 0.f, tint);
+}
+
+// ── Whole-pixel nine-slice (pixel art) ───────────────────────────────────────
+// cuts  — source pixels kept on each edge (whole numbers, from the 9-slice editor)
+// scale — one whole-number multiplier for every piece, so the pixels stay square
+// dest  — its edges snap to multiples of scale, so no piece lands on a half pixel
+// ─────────────────────────────────────────────────────────────────────────────
+struct NineSliceCuts
+{
+    int top;
+    int bottom;
+    int left;
+    int right;
+};
+
+inline void DrawNineSliceScaled(Texture2D tex, NineSliceCuts cuts, int scale, Rectangle dest, Color tint)
+{
+    if (tex.id == 0 || scale <= 0) return;
+
+    const float s  = (float)scale;
+    const float tw = (float)tex.width;
+    const float th = (float)tex.height;
+    const float sT = (float)cuts.top,  sB = (float)cuts.bottom;
+    const float sL = (float)cuts.left, sR = (float)cuts.right;
+
+    // Snap the destination's edges to whole multiples of the scale.
+    const float left   = std::round(dest.x / s) * s;
+    const float top    = std::round(dest.y / s) * s;
+    const float right  = std::round((dest.x + dest.width)  / s) * s;
+    const float bottom = std::round((dest.y + dest.height) / s) * s;
+
+    const float dL  = sL * s, dR = sR * s;
+    const float dT  = sT * s, dB = sB * s;
+    const float dmw = std::max(0.f, (right - left) - dL - dR);
+    const float dmh = std::max(0.f, (bottom - top) - dT - dB);
+
+    // Index 0 = start edge, 1 = middle, 2 = end edge.
+    const float srcX[3] = { 0.f,  sL,  tw - sR };
+    const float srcW[3] = { sL,   tw - sL - sR, sR };
+    const float srcY[3] = { 0.f,  sT,  th - sB };
+    const float srcH[3] = { sT,   th - sT - sB, sB };
+    const float dstX[3] = { left, left + dL, left + dL + dmw };
+    const float dstW[3] = { dL,   dmw, dR };
+    const float dstY[3] = { top,  top + dT, top + dT + dmh };
+    const float dstH[3] = { dT,   dmh, dB };
+
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+            DrawTexturePro(tex,
+                           { srcX[col], srcY[row], srcW[col], srcH[row] },
+                           { dstX[col], dstY[row], dstW[col], dstH[row] },
+                           {}, 0.f, tint);
 }

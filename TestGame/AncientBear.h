@@ -65,6 +65,11 @@ public:
     void        PlayEditorAnim(int index) override;
     int         GetCurrentAnimSlot() const override;
 
+    // ── Character Animator: hit window + special moves ───────────────────────
+    bool     GetDefaultHitWindow(int slot, int& start, int& end) const override { return BossHitWindow(slot, start, end); }
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
 private:
     enum class State
     {
@@ -77,6 +82,7 @@ private:
     };
 
     static void EnsureSharedResourcesLoaded();
+    void ApplyMoveTuning() override;
     void SetAnimation(const Texture2D& sheet, float frameTime, bool resetFrame);
     void TryDealContactDamage();
     Rectangle GetBodyContactRec() const;
@@ -100,9 +106,12 @@ private:
     int   _slamVariant = 0;
     int   _slamIndexInChain = 0;
     float _slamWedgeAngle = 0.f;      // radians, wedge centre
-    static constexpr float _slamRingInnerRadius = 200.f;
-    static constexpr float _slamRingOuterRadius = 420.f;
-    static constexpr float _slamWedgeRadius     = 360.f;
+    static constexpr float kDefaultSlamRingInnerRadius = 200.f;
+    float _slamRingInnerRadius = kDefaultSlamRingInnerRadius;   // set per spawn (ApplyMoveTuning)
+    static constexpr float kDefaultSlamRingOuterRadius = 420.f;
+    float _slamRingOuterRadius = kDefaultSlamRingOuterRadius;   // set per spawn (ApplyMoveTuning)
+    static constexpr float kDefaultSlamWedgeRadius = 360.f;
+    float _slamWedgeRadius = kDefaultSlamWedgeRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr float _slamWedgeHalfAngle  = 1.047f;   // 60 degrees each side
     float _stableFrameW = 0.f;
     float _stableFrameH = 0.f;
@@ -113,14 +122,15 @@ private:
     static constexpr float _meleeRange          = 235.f;
     static constexpr float _meleeCooldownBase   = 1.9f;
     static constexpr float _contactCooldownBase = 0.75f;
-    static constexpr float _bossDamagePerHit    = 1.0f;    // heaviest paws in the game
+    static constexpr float _bossDamagePerHit    = 10.f;    // heaviest paws in the game
     static constexpr float _bossPushSpeed       = 1500.f;
     static constexpr float _roarDuration        = 1.2f;
     static constexpr float _roarCooldownBase    = 6.5f;
     static constexpr float _pullRange           = 620.f;
     static constexpr float _pullStrength        = 300.f;   // pushed toward the bear per tick
     static constexpr float _slamWindupDuration  = 0.55f;
-    static constexpr float _slamRadius          = 280.f;
+    static constexpr float kDefaultSlamRadius = 280.f;
+    float _slamRadius = kDefaultSlamRadius;   // set per spawn (ApplyMoveTuning)
     static constexpr float _recoveryDuration    = 0.65f;
     static constexpr int   _bossBaseExpValue    = 15;
 

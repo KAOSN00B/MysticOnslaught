@@ -1,4 +1,6 @@
 #include "Bonechill.h"
+#include "EliteMoveDefs.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "AttackTuning.h"
@@ -76,9 +78,9 @@ void Bonechill::ResetForSpawn(Vector2 pos)
     _scale = 6.2f;                 // its body art is compact, so a higher scale
                                    // is needed to match the Ogre's on-screen mass
 
-    _health      = 14.f;           // tankiest of the bruisers
-    _maxHealth   = 14.f;
-    _attackPower = 2.f;            // the threat is the chill, not raw damage
+    _health      = 140.f;           // tankiest of the bruisers
+    _maxHealth   = 140.f;
+    _attackPower = 20.f;            // the threat is the chill, not raw damage
     _speed       = 130.f;
     _expValue    = 8;
 
@@ -111,9 +113,9 @@ void Bonechill::SetIdleAnimation(bool resetFrame)
 // =============================================================================
 void Bonechill::SetWaveScale(int /*wave*/)
 {
-    _health      = 14.f;
-    _maxHealth   = 14.f;
-    _attackPower = 2.f;
+    _health      = 140.f;
+    _maxHealth   = 140.f;
+    _attackPower = 20.f;
     _speed       = 130.f;
     _expValue    = 8;
 }
@@ -308,9 +310,9 @@ void Bonechill::DrawEliteTelegraph() const
     {
         Vector2 laneDirection = EliteSpreadDirection(_signatureDirection, laneIndex, 3, 56.f * DEG2RAD);
         Vector2 laneEnd = Vector2Add(_worldPos,
-            Vector2Scale(laneDirection, Balance::Elite::kBonechillLaneLength));
+            Vector2Scale(laneDirection, EliteMoves::BonechillLaneLength()));
         Vector2 side{ -laneDirection.y, laneDirection.x };
-        const float halfWidth = Balance::Elite::kBonechillLaneWidth;
+        const float halfWidth = EliteMoves::BonechillLaneWidth();
         Vector2 cornerA = Vector2Add(_worldPos, Vector2Scale(side,  halfWidth));
         Vector2 cornerB = Vector2Add(_worldPos, Vector2Scale(side, -halfWidth));
         Vector2 cornerC = Vector2Add(laneEnd, Vector2Scale(side, -halfWidth));
@@ -321,8 +323,8 @@ void Bonechill::DrawEliteTelegraph() const
         DrawLineEx(cornerA, cornerD, 2.f, Fade(Color{ 170, 225, 255, 255 }, 0.6f));
     }
     // Direct-slam impact disc right in front.
-    Vector2 slamCentre = Vector2Add(_worldPos, Vector2Scale(_signatureDirection, 150.f));
-    DrawCircleLines((int)slamCentre.x, (int)slamCentre.y, 140.f, Fade(Color{ 170, 225, 255, 255 }, 0.6f));
+    Vector2 slamCentre = Vector2Add(_worldPos, Vector2Scale(_signatureDirection, EliteMoves::BonechillSlamReach()));
+    DrawCircleLines((int)slamCentre.x, (int)slamCentre.y, EliteMoves::BonechillSlamRadius(), Fade(Color{ 170, 225, 255, 255 }, 0.6f));
 }
 
 void Bonechill::DebugForceEliteSignature()
@@ -385,7 +387,7 @@ Capsule2D Bonechill::GetCapsule() const
 // =============================================================================
 void Bonechill::PlayAttackSound()
 {
-    float pitch = GetRandomValue(85, 110) / 100.f;
+    float pitch = SoundVariation::VariedPitch(0.975f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.6f);
     PlaySound(_attackSound);
@@ -442,4 +444,28 @@ void Bonechill::UnloadSharedResources()
     _sharedHurtSound   = Sound{};
     _sharedDeathSound  = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: the slam's disc and its three ice lanes.
+// =============================================================================
+int Bonechill::GetEditorMoveCount() const { return 2; }
+
+Enemy::MoveInfo Bonechill::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    move.animSlot = kAnimSlotAttack;
+    if (index == 0)
+    {
+        move.key = EliteMoves::kBonechillSlamKey; move.name = "Permafrost Slam"; move.shape = MoveShape::Circle;
+        move.radius = Balance::Elite::kBonechillSlamRadius; move.forward = Balance::Elite::kBonechillSlamReach;
+        move.note = "The disc right in front of it. Timing rows below.";
+    }
+    else if (index == 1)
+    {
+        move.key = EliteMoves::kBonechillLanesKey; move.name = "Ice Lanes"; move.shape = MoveShape::Lane;
+        move.length = Balance::Elite::kBonechillLaneLength; move.width = Balance::Elite::kBonechillLaneWidth;
+        move.note = "Each of the three lanes it sends out.";
+    }
+    return move;
 }

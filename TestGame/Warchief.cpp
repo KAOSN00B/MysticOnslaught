@@ -1,4 +1,5 @@
 #include "Warchief.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "raymath.h"
@@ -65,9 +66,9 @@ void Warchief::ResetForSpawn(Vector2 pos)
     _width  = kWarchiefFrameWidth;
     _scale  = 4.8f;
     _speed  = 175.f;
-    _health = 6.f;
-    _maxHealth = 6.f;
-    _attackPower = 1.f;
+    _health = Balance::Fodder::kWarchiefHealth;
+    _maxHealth = Balance::Fodder::kWarchiefHealth;
+    _attackPower = 10.f;
     _expValue = 6;   // priority target — rewarded accordingly
 
     _capsuleRadius     = 30.f;
@@ -141,15 +142,15 @@ void Warchief::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue    = 6;
-    _health      = 6.f;
-    _maxHealth   = 6.f;
+    _health      = Balance::Fodder::kWarchiefHealth;
+    _maxHealth   = Balance::Fodder::kWarchiefHealth;
     _speed       = 175.f;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 }
 
 void Warchief::PlayAttackSound()
 {
-    float pitch = GetRandomValue(70, 95) / 100.f;
+    float pitch = SoundVariation::VariedPitch(0.825f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.7f);
     PlaySound(_attackSound);

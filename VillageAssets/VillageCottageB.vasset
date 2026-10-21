@@ -1,0 +1,11 @@
+village_asset 1
+image VillageCottageB.png
+size 64 80
+id VillageCottageB
+category Building
+service None
+cost 0
+required 1
+unique 0
+removable 0
+collider 2.00 33.00 60.00 46.00

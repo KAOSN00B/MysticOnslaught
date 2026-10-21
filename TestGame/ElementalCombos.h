@@ -36,14 +36,14 @@ inline int ResolveElementalCombo(Enemy& enemy, AbilityType element, VFXManager* 
     {
         // Fire shatters the ice — the frozen setup pays off as a burst.
         enemy.ClearFreeze();
-        bonusDamage = 3;
+        bonusDamage = 30;
         comboWord   = "THERMAL SHOCK!";
         comboColor  = Color{ 170, 230, 255, 255 };   // ice-white burst
     }
     else if (isElectric && enemy.IsFrozen())
     {
         // Current conducts through the ice — damage plus the hold is refreshed.
-        bonusDamage = 2;
+        bonusDamage = 20;
         enemy.ApplySlow(enemy.IsBoss() ? 0.96f : 0.78f, 1.2f);
         comboWord   = "SUPERCONDUCT!";
         comboColor  = Color{ 255, 235, 90, 255 };    // electric yellow
@@ -52,7 +52,7 @@ inline int ResolveElementalCombo(Enemy& enemy, AbilityType element, VFXManager* 
     {
         // Ice on burning flesh flashes to scalding steam — a strong lasting slow.
         enemy.ClearBurn();
-        bonusDamage = 1;
+        bonusDamage = 10;
         enemy.ApplySlow(enemy.IsBoss() ? 0.94f : 0.55f, 3.5f);
         comboWord   = "STEAM BURST!";
         comboColor  = Color{ 200, 220, 230, 255 };   // pale vapour grey
@@ -61,7 +61,7 @@ inline int ResolveElementalCombo(Enemy& enemy, AbilityType element, VFXManager* 
     {
         // Charge ignites the flames into an overload burst.
         enemy.ClearElectricCharge();
-        bonusDamage = 3;
+        bonusDamage = 30;
         comboWord   = "OVERLOAD!";
         comboColor  = Color{ 255, 170, 60, 255 };    // burning orange
     }

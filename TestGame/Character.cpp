@@ -4,6 +4,9 @@
 #include "AssetPaths.h"
 #include "VirtualCanvas.h"
 #include "AttackTuning.h"
+#include "RunCheckpoint.h"
+#include "DamagePolicy.h"
+#include "VfxGlow.h"
 
 #include "raymath.h"
 #include "VirtualCanvas.h"
@@ -113,14 +116,19 @@ void Character::Init()
     // pose, so load it separately instead of reusing the weapon attack sheet.
     auto loadAttackSheet = [&]() -> Texture2D {
         Texture2D t{};
+        _attackSheetIsStab = false;
         if (_class == PlayerClass::Rogue || _class == PlayerClass::Warrior)
+        {
             t = LoadTexture(AssetPath(TextFormat("Hero/%s_Stab.png", prefix)).c_str());
+            _attackSheetIsStab = (t.id != 0);
+        }
         if (t.id == 0)
             t = LoadTexture(AssetPath(TextFormat("Hero/%s_Attack.png", prefix)).c_str());
         return t;
     };
     auto loadStaffSheet = [&]() -> Texture2D {
-        Texture2D t = LoadTexture(AssetPath(TextFormat("Hero/%s_Staff.png", prefix)).c_str());
+        const std::string path = AssetPath(TextFormat("Hero/%s_Staff.png", prefix));
+        Texture2D t = FileExists(path.c_str()) ? LoadTexture(path.c_str()) : Texture2D{};
         if (t.id == 0)
             t = LoadTexture(AssetPath("Hero/Hero_Staff.png").c_str());
         if (t.id == 0)
@@ -128,7 +136,8 @@ void Character::Init()
         return t;
     };
     auto loadPushSheet = [&]() -> Texture2D {
-        Texture2D t = LoadTexture(AssetPath(TextFormat("Hero/%s_Push.png", prefix)).c_str());
+        const std::string path = AssetPath(TextFormat("Hero/%s_Push.png", prefix));
+        Texture2D t = FileExists(path.c_str()) ? LoadTexture(path.c_str()) : Texture2D{};
         if (t.id == 0)
             t = LoadTexture(AssetPath("Hero/Hero_003_Push.png").c_str());
         if (t.id == 0)
@@ -157,7 +166,9 @@ void Character::Init()
     case PlayerClass::Rogue:   _attackUpdateTime = 1.f / 19.f; break;   // rapid jabs
     default:                   _attackUpdateTime = 1.f / 14.f; break;
     }
-    _dashAnim   = LoadTexture(AssetPath(TextFormat("Hero/%s_Jump.png", prefix)).c_str());   // each hero's Jump anim, repurposed as the dash
+    const std::string dashPath = AssetPath(TextFormat("Hero/%s_Jump.png", prefix));
+    _dashAnim = LoadTexture(FileExists(dashPath.c_str())
+        ? dashPath.c_str() : AssetPath("Hero/Hero_Dash.png").c_str());
     _deathAnim  = LoadTexture(AssetPath(TextFormat("Hero/%s_Death.png",  prefix)).c_str());
     _takeDamageAnim = LoadTexture(AssetPath(TextFormat("Hero/%s_Hurt.png", prefix)).c_str());
 
@@ -170,11 +181,16 @@ void Character::Init()
 
     _width = 32.f;
     _height = _texture.height;
-    _scale = 6.f;
+    // Same draw size as the village citizens (32 px frame x 4); monsters stay bigger.
+    _scale = Balance::Visual::kPlayerDrawScale;
 
     // Colliders authored in the Character Animator (charactertuning_Player.txt).
     // nullptr when the file doesn't exist → the procedural boxes are used instead.
+    // They were authored at the file's scale; resize them to the hero as drawn,
+    // so a hit looks like a hit (the animator shows them the same way).
     _playerTuning = CharacterTuningStore::Get("Player");
+    _playerBoxScale = (_playerTuning != nullptr && _playerTuning->hasScale && _playerTuning->scale > 0.f)
+                    ? _scale / _playerTuning->scale : 1.f;
 
     // Class base stats define each class's feel before any upgrades.
     const PlayerClassInfo& classInfo = GetPlayerClassInfo(_class);
@@ -218,6 +234,11 @@ void Character::Init()
         _relicOwned[i] = false;
     _relicCount     = 0;
     _killsSinceHeal = 0;
+    _bloodlustTimer = 0.f;
+    _sinceDashEnd = 99.f;
+    _retaliationTimer = 0.f;
+    _recentMoveTimer = 0.f;
+    _dashCooldownTime = kDashCooldownBase;   // Swift Boots is per-run
     _pendingBurnTicks.clear();
     _chillTimer = 0.f; _chillMult = 1.f;
     _poisonTimer = 0.f; _poisonStacks = 0; _poisonDamagePerTick = 0.f; _poisonTickRemaining = 0.f;
@@ -233,9 +254,15 @@ void Character::Init()
     }
     _manaRegenMultiplier = classInfo.manaRegenMult;
     _abilityDamageMultiplier = 1.0f;
-    _armour    = classInfo.startArmour;
-    _maxArmour = kMaxArmour;  // reset max to base each run
-    _attackRangeMultiplier = 1.5f;
+    _eventDamageMult         = 1.f;
+    _relicOverchargePerRelic = 0.f;
+    _defense           = classInfo.startDefense;
+    _ironcladDefense   = 0.f;
+    _rallyDefense      = 0.f;
+    _rallyDefenseTimer = 0.f;
+    _critChance        = Balance::Stats::kBaseCritChance;
+    _critDamage        = Balance::Stats::kBaseCritDamage;
+    _attackRangeMultiplier = kBaseAttackRangeMultiplier;
     _shopWhetstoneHits = 0;
     _shopFreeCasts     = 0;
     _shopWardHits      = 0;
@@ -252,12 +279,12 @@ void Character::Init()
     _fireDamageMult = _iceDamageMult = _electricDamageMult = 1.f;
     _comboBonusMult     = 1.f;
     _rageDecayMult      = 1.f;
-    _rageFullBonus      = 0.5f;
-    _retributionPerStack = 0.12f;
+    _rageFullBonus      = 0.35f;
+    _retributionPerStack = 0.08f;
     _reflectPotency     = 1.f;
     _hunterMarkEvery    = 3;
     _markedBonus        = 0.30f;
-    _cursedBonus        = 0.25f;
+    _cursedBonus        = 0.15f;
     _curseDurationMult  = 1.f;
     _lifestealPotency   = 1.f;
     _maxComboPointsRun  = kMaxComboPoints;
@@ -271,7 +298,9 @@ void Character::Init()
     _telemDamageTaken   = 0.f;
     _telemHealed        = 0.f;
     _damageBuffMult = 1.f; _damageBuffTimer = 0.f;
+    _rallyDefense = 0.f; _rallyDefenseTimer = 0.f;
     _lifestealFraction = 0.f; _lifestealTimer = 0.f;
+    _lifestealFallbackFraction = 0.f; _lifestealFallbackTimer = 0.f;
     _reflectFraction = 0.f; _reflectTimer = 0.f;
     _retributionStacks = 0; _retributionTimer = 0.f;
 
@@ -284,21 +313,16 @@ void Character::Init()
     _rightLeft = 1;
 }
 
-void Character::ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier,
-                                bool fifthAbilitySlot, bool sixthAbilitySlot, int startingArmour)
+void Character::ApplyMetaBonuses(int vitalityBonus, float manaRegenMultiplier, float startingDefense)
 {
-    // Permanent unlocks purchased at the Poe's Altar — applied once per run,
-    // right after Init(), so they stack cleanly with in-run upgrades.
-    _gold += startingGold;
+    // Permanent stat unlocks purchased at Poe's altar — applied once per run,
+    // right after Init(), so they stack cleanly with in-run upgrades. The kit
+    // is fixed at three abilities + one ultimate (slots 0-3); see Engine for
+    // the run-start grants (gold, relic, revive, bonus ability).
     _maxHealth += (float)vitalityBonus;
     _health    += (float)vitalityBonus;
     _manaRegenMultiplier *= manaRegenMultiplier;
-    if (fifthAbilitySlot && _maxAbilitySlots < 5)
-        _maxAbilitySlots = 5;
-    if (sixthAbilitySlot && _maxAbilitySlots < 6)
-        _maxAbilitySlots = 6;
-    if (startingArmour > 0)
-        AddArmour(startingArmour);
+    AddDefense(startingDefense);
 }
 
 // ── Relics ──────────────────────────────────────────────────────────────────
@@ -317,24 +341,22 @@ void Character::AddRelic(RelicType type)
     switch (type)
     {
     case RelicType::StoneSkin:
-        _maxArmour = std::min(6, _maxArmour + 1);
-        AddArmour(1);
+        AddDefense(Balance::Stats::kDefenseMajor);
         break;
     case RelicType::Bulwark:
-        _maxArmour = std::min(6, _maxArmour + 1);
-        AddArmour(1);
-        Heal(3);
+        AddDefense(Balance::Stats::kDefenseMajor);
+        Heal(30);
         break;
     case RelicType::SecondWind:
         _maxHealth = std::ceil(_maxHealth * 1.20f);
         _health    = std::min(_health + _maxHealth * 0.20f, _maxHealth);
         break;
     case RelicType::ThornmailRunes:
-        _maxHealth += 2.f;
-        _health    += 2.f;
+        _maxHealth += 20.f;
+        _health    += 20.f;
         break;
     case RelicType::GlassCannon:
-        _maxHealth = std::max(1.f, _maxHealth - 2.f);
+        _maxHealth = std::max(1.f, _maxHealth - 20.f);
         _health    = std::min(_health, _maxHealth);
         break;
     case RelicType::ArcaneBattery:
@@ -342,14 +364,133 @@ void Character::AddRelic(RelicType type)
         _manaRegenMultiplier *= 1.12f;
         break;
     case RelicType::SwiftBoots:
-        _speed *= 1.08f;
+        _speed *= kSwiftBootsSpeedMult;
+        _dashCooldownTime *= kSwiftBootsDashCooldownMult;
         break;
     case RelicType::Momentum:
         _speed *= 1.10f;
         break;
+    case RelicType::SmolderingBrand: _rageDecayMult *= 0.5f; break;
+    case RelicType::WarlordsCrest:   _rageFullBonus += 0.25f; break;
+    case RelicType::KindlingCore:    _fireDamageMult += 0.20f; break;
+    case RelicType::FrostLens:       _iceDamageMult += 0.20f; break;
+    case RelicType::StormCoil:       _electricDamageMult += 0.20f; break;
+    case RelicType::ResonancePrism:  _comboBonusMult += 0.50f; break;
+    case RelicType::QuarrySigil:     _markedBonus += 0.15f; break;
+    case RelicType::VenomGland:      _poisonPotency += 0.50f; break;
+    case RelicType::ShadowReserve:   _maxComboPointsRun = std::min(7, _maxComboPointsRun + 1); break;
+    case RelicType::RuthlessEdge:    _evisceratePerCombo += 0.10f; break;
+    case RelicType::MirrorPlate:     _reflectPotency += 0.50f; break;
+    case RelicType::ZealotsMark:     _retributionPerStack += 0.06f; break;
+    case RelicType::DarkCovenant:    _cursedBonus += 0.15f; break;
+    case RelicType::HexLantern:      _curseDurationMult += 0.50f; break;
+    case RelicType::BloodChalice:    _lifestealPotency += 0.50f; break;
+    case RelicType::AttunementStone: _classResourceGainMult += 0.25f; break;
+    case RelicType::SpellbladeSigil: _abilityPowerMult += 0.15f; break;
+    case RelicType::HearthCharm:     _healOnRoomClear += 20; break;
+    case RelicType::Stoneheart:
+        _maxHealth = std::ceil(_maxHealth * kStoneheartHealthMult);
+        _speed    *= kStoneheartSpeedMult;
+        break;
     default:
         break;   // on-hit / on-kill relics carry no passive stat change
     }
+}
+
+void Character::RemoveRelic(RelicType type)
+{
+    int idx = (int)type;
+    if (idx < 0 || idx >= (int)RelicType::Count || !_relicOwned[idx])
+        return;
+    _relicOwned[idx] = false;
+    int out = 0;
+    for (int i = 0; i < _relicCount; ++i)
+        if (_relicOrder[i] != type) _relicOrder[out++] = _relicOrder[i];
+    _relicCount = out;
+
+    // Reverse the passive AddRelic applied (on-hit / on-kill relics had none).
+    // Health never rises above the new maximum and never drops to 0.
+    switch (type)
+    {
+    case RelicType::StoneSkin:
+    case RelicType::Bulwark:
+        AddDefense(-Balance::Stats::kDefenseMajor);
+        break;
+    case RelicType::SecondWind:
+        _maxHealth = std::max(1.f, std::floor(_maxHealth / 1.20f));
+        break;
+    case RelicType::ThornmailRunes:
+        _maxHealth = std::max(1.f, _maxHealth - 20.f);
+        break;
+    case RelicType::GlassCannon:
+        _maxHealth += 20.f;
+        break;
+    case RelicType::ArcaneBattery:
+        _maxMana = std::max(1, _maxMana - 8);
+        _mana    = std::min(_mana, _maxMana);
+        _manaRegenMultiplier /= 1.12f;
+        break;
+    case RelicType::SwiftBoots:
+        _speed /= kSwiftBootsSpeedMult;
+        _dashCooldownTime /= kSwiftBootsDashCooldownMult;
+        break;
+    case RelicType::Momentum:
+        _speed /= 1.10f;
+        break;
+    case RelicType::SmolderingBrand: _rageDecayMult /= 0.5f; break;
+    case RelicType::WarlordsCrest:   _rageFullBonus -= 0.25f; break;
+    case RelicType::KindlingCore:    _fireDamageMult -= 0.20f; break;
+    case RelicType::FrostLens:       _iceDamageMult -= 0.20f; break;
+    case RelicType::StormCoil:       _electricDamageMult -= 0.20f; break;
+    case RelicType::ResonancePrism:  _comboBonusMult -= 0.50f; break;
+    case RelicType::QuarrySigil:     _markedBonus -= 0.15f; break;
+    case RelicType::VenomGland:      _poisonPotency -= 0.50f; break;
+    case RelicType::ShadowReserve:   // (a bank already at the cap of 7 gained nothing)
+        _maxComboPointsRun = std::max(kMaxComboPoints, _maxComboPointsRun - 1);
+        _comboPoints = std::min(_comboPoints, _maxComboPointsRun);
+        break;
+    case RelicType::RuthlessEdge:    _evisceratePerCombo -= 0.10f; break;
+    case RelicType::MirrorPlate:     _reflectPotency -= 0.50f; break;
+    case RelicType::ZealotsMark:     _retributionPerStack -= 0.06f; break;
+    case RelicType::DarkCovenant:    _cursedBonus -= 0.15f; break;
+    case RelicType::HexLantern:      _curseDurationMult -= 0.50f; break;
+    case RelicType::BloodChalice:    _lifestealPotency -= 0.50f; break;
+    case RelicType::AttunementStone: _classResourceGainMult -= 0.25f; break;
+    case RelicType::SpellbladeSigil: _abilityPowerMult -= 0.15f; break;
+    case RelicType::HearthCharm:     _healOnRoomClear -= 20; break;
+    case RelicType::Stoneheart:
+        _maxHealth = std::max(1.f, std::floor(_maxHealth / kStoneheartHealthMult));
+        _speed    /= kStoneheartSpeedMult;
+        break;
+    default:
+        break;
+    }
+    _health = std::clamp(_health, 1.f, _maxHealth);
+}
+
+void Character::GrantRallyDefense(float amount, float seconds)
+{
+    // Refreshes rather than stacks: a second roar extends the window.
+    _rallyDefense      = std::max(_rallyDefenseTimer > 0.f ? _rallyDefense : 0.f, amount);
+    _rallyDefenseTimer = std::max(_rallyDefenseTimer, seconds);
+}
+
+void Character::AddIroncladDefense()
+{
+    const float gain = std::min(Balance::Stats::kIroncladDefensePerRoom,
+                                Balance::Stats::kIroncladDefenseMax - _ironcladDefense);
+    if (gain <= 0.f)
+        return;
+    _ironcladDefense += gain;
+    _defense         += gain;
+}
+
+float Character::GetCritChance() const
+{
+    float chance = _critChance;
+    if (HasRelic(RelicType::Deadeye))
+        chance += Balance::Stats::kDeadeyeCritChance;
+    return std::clamp(chance, 0.f, Balance::Stats::kMaxCritChance);
 }
 
 bool Character::HasRelic(RelicType type) const
@@ -365,47 +506,38 @@ RelicType Character::GetRelicAt(int index) const
     return _relicOrder[index];
 }
 
-int Character::ScaleOutgoingDamage(bool targetFrozen, bool targetCharged, bool targetBurning,
-                                   float targetHpFraction, int baseDamage, bool& outCrit) const
+float Character::OutgoingDamageMultiplier(RelicHitContext hit, bool& outCrit) const
 {
-    float mult = 1.f;
+    hit.playerHpFraction = (_maxHealth > 0.f) ? _health / _maxHealth : 1.f;
+    hit.playerGold       = _gold;
+    hit.recentlyDashed   = _sinceDashEnd < kAfterimageWindow;
+    hit.recentlyHurt     = _retaliationTimer > 0.f;
+    hit.playerMoving     = IsRecentlyMoving();
+    hit.bloodlustActive  = _bloodlustTimer > 0.f;
+    float mult = 1.f + RelicDamageBonus(_relicOwned, hit);
+    // Room events: Mutation Altar trades and Relic Forge overcharge scale every hit.
+    mult *= _eventDamageMult * (1.f + _relicOverchargePerRelic * (float)_relicCount);
 
-    // Flat global damage boosts.
-    if (HasRelic(RelicType::KeenEdge))    mult += 0.15f;
-    if (HasRelic(RelicType::Bloodlust))   mult += 0.25f;
-    if (HasRelic(RelicType::GlassCannon)) mult += 0.35f;
-    if (HasRelic(RelicType::Momentum))    mult += 0.10f;
-    if (HasRelic(RelicType::Reaper))      mult += 0.15f;
-
-    // Berserker only while the player is hurting.
-    if (HasRelic(RelicType::Berserker) && _maxHealth > 0.f &&
-        (_health / _maxHealth) < 0.40f)
-        mult += 0.30f;
-
-    // Status synergies.
-    if (targetFrozen  && HasRelic(RelicType::Permafrost)) mult += 0.25f;
-    if (targetBurning && HasRelic(RelicType::EmberHeart)) mult += 0.25f;
-    if (targetCharged && HasRelic(RelicType::Overcharge)) mult += 0.25f;
-
-    // Executioner finisher on low-HP targets.
-    if (HasRelic(RelicType::Executioner) && targetHpFraction <= 0.25f)
-        mult += 0.35f;
-
-    // Deadeye crit — rolled per hit for a controlled burst.
+    // Crit — every hit rolls the crit chance (base, cards, Deadeye).
+    constexpr int kCritRollSteps = 10000;   // 0.01% resolution
     outCrit = false;
-    if (HasRelic(RelicType::Deadeye) && GetRandomValue(1, 100) <= 20)
+    const float roll = (float)GetRandomValue(0, kCritRollSteps - 1) / (float)kCritRollSteps;
+    if (roll < GetCritChance())
     {
         outCrit = true;
-        mult *= 1.5f;
+        mult *= 1.f + _critDamage;
     }
-
-    int scaled = (int)std::ceil((float)baseDamage * mult);
-    return std::max(1, scaled);
+    return mult;
 }
 
 int Character::OnEnemyKilled(bool eliteOrBoss)
 {
     int healAmount = 0;
+
+    if (HasRelic(RelicType::Bloodlust))
+        _bloodlustTimer = kBloodlustDuration;   // each kill (re)opens the window
+    if (HasRelic(RelicType::ManaSiphon))
+        RestoreMana(1);
 
     if (HasRelic(RelicType::Vampirism))
     {
@@ -413,11 +545,11 @@ int Character::OnEnemyKilled(bool eliteOrBoss)
         if (_killsSinceHeal >= 5)
         {
             _killsSinceHeal = 0;
-            healAmount += 1;
+            healAmount += 10;
         }
     }
     if (eliteOrBoss && HasRelic(RelicType::Reaper))
-        healAmount += 4;
+        healAmount += 40;
 
     if (healAmount > 0)
         Heal(healAmount);
@@ -440,7 +572,7 @@ void Character::AddGoldFromDrop(int amount)
     }
     if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
         amount = (int)std::ceil(amount * _wagerRewardMult);
-    if (_contractGoldMult > 1.f)                         // Risk Shrine contract
+    if (_contractGoldMult != 1.f)                        // Risk Shrine contract / Omen Stone
     {
         int before = amount;
         amount = (int)std::ceil(amount * _contractGoldMult);
@@ -523,6 +655,12 @@ float Character::PitFallProgress() const
 
 void Character::Update(float dt)
 {
+    // Recent-movement window (Momentum): last frame's displacement refreshes it.
+    {
+        const float dx = _worldPos.x - _worldPosLastFrame.x, dy = _worldPos.y - _worldPosLastFrame.y;
+        if (dx * dx + dy * dy > 0.25f) _recentMoveTimer = kMomentumWindow;
+        else if (_recentMoveTimer > 0.f) _recentMoveTimer -= dt;
+    }
     _worldPosLastFrame = _worldPos;
 
     // While sinking into a pit the player is frozen — no movement, attacks or
@@ -535,16 +673,29 @@ void Character::Update(float dt)
 
     // Tick down temporary self-buffs (War Cry damage, Rampage lifesteal, etc.).
     if (_damageBuffTimer > 0.f) _damageBuffTimer -= dt;
+    if (_rallyDefenseTimer > 0.f) _rallyDefenseTimer -= dt;
+    if (_bloodlustTimer  > 0.f) _bloodlustTimer  -= dt;
+    if (_retaliationTimer > 0.f) _retaliationTimer -= dt;
+    if (!_isDashing && _sinceDashEnd < 99.f) _sinceDashEnd += dt;
     if (_reflectTimer    > 0.f) _reflectTimer    -= dt;
     if (_retributionTimer > 0.f) { _retributionTimer -= dt; if (_retributionTimer <= 0.f) _retributionStacks = 0; }
     if (_lifestealTimer  > 0.f) _lifestealTimer  -= dt;
+    if (_lifestealFallbackTimer > 0.f) _lifestealFallbackTimer -= dt;
+    if (_lifestealTimer <= 0.f && _lifestealFallbackTimer > 0.f)
+    {
+        // The stronger grant ran out: the longer, weaker one carries on.
+        _lifestealFraction      = _lifestealFallbackFraction;
+        _lifestealTimer         = _lifestealFallbackTimer;
+        _lifestealFallbackTimer = 0.f;
+    }
     if (_basicAttackCdTimer > 0.f) _basicAttackCdTimer -= dt;
 
     // Ability slot cooldowns keep ticking through everything except death —
     // they are wall-clock pacing, not a combat state.
+    const float cooldownDt = HasRelic(RelicType::Hourglass) ? dt * kHourglassCooldownRate : dt;
     for (int i = 0; i < _hardAbilityCap; i++)
         if (_slotCooldownRemaining[i] > 0.f)
-            _slotCooldownRemaining[i] = std::max(0.f, _slotCooldownRemaining[i] - dt);
+            _slotCooldownRemaining[i] = std::max(0.f, _slotCooldownRemaining[i] - cooldownDt);
 
     // Warrior Rage bleeds off slowly, so it rewards STAYING in the fight rather
     // than banking a full bar between rooms.
@@ -591,7 +742,8 @@ void Character::Update(float dt)
         while (_poisonTickRemaining <= 0.f && catchUpGuard++ < 4)
         {
             _poisonTickRemaining += std::max(0.1f, _poisonTickInterval);
-            ApplyBurnTickDamage(_poisonDamagePerTick * (float)_poisonStacks, _worldPos);
+            ApplyBurnTickDamage(_poisonDamagePerTick * (float)_poisonStacks, _worldPos,
+                                DamageSource::FromStatus(DamageNames::kPoison, _poisonAppliedBy));
         }
         if (_poisonTimer <= 0.f)
         {
@@ -660,6 +812,8 @@ void Character::HandleInput()
     // Clamp combined input to unit circle
     if (Vector2Length(_direction) > 1.f)
         _direction = Vector2Normalize(_direction);
+    if (Vector2LengthSqr(_direction) > 0.f)
+        _lastMoveDirection = _direction;
 
     // Combat lock blocks attacks/abilities. Village mode can opt into keeping dash.
     bool canDash = !_combatLocked || _dashAllowedWhileCombatLocked;
@@ -680,6 +834,7 @@ void Character::HandleInput()
         _isDashing = true;
         _dashInvincible = true;
         _dashTimer = _dashDuration;
+        SfxBank::Get().PlayEither(SfxId::DashA, SfxId::DashB, 0.35f);
         _dashCooldown = _dashCooldownTime;
         _velocity = Vector2Zero();
         _texture = _dashAnim;
@@ -720,7 +875,9 @@ void Character::HandleMovement(float dt)
 
         if (_stepTimer <= 0.f)
         {
-            PlayFootStepSound();
+            // Surface footsteps (grass / stone / dirt per biome) when available.
+            if (!SfxBank::Get().PlayFootstep(0.2f))
+                PlayFootStepSound();
             _stepTimer = _stepDelay;
         }
     }
@@ -746,28 +903,10 @@ void Character::HandleAttackInput()
 
     if (!_touchModeEnabled)
     {
-        // Mouse clicks on the bottom ability bar should not also count as melee
-        // attacks. The HUD resolves those clicks into TriggerAbilityCast during
-        // draw, so block the base attack path when the press lands in that UI row.
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
-        {
-            static constexpr float kSlotSize = 80.f;
-            static constexpr float kSlotGap  = 10.f;
-            static constexpr float kBottomPad = 12.f;
-            const int   totalSlots = _maxAbilitySlots;
-            const float totalW     = totalSlots * kSlotSize + (totalSlots - 1) * kSlotGap;
-            const float startX     = kVirtualWidth / 2.f - totalW / 2.f;
-            const float slotY      = (float)kVirtualHeight - kBottomPad - kSlotSize;
-            Rectangle abilityBarBounds{ startX, slotY, totalW, kSlotSize };
-
-            if (CheckCollisionPointRec(GetVirtualMousePos(), abilityBarBounds))
-            {
-                _touchAttackJustPressed = false;
-                return;
-            }
-        }
-
-        attackPressed |= IsMouseButtonPressed(MOUSE_LEFT_BUTTON) ||
+        // A click on the ability bar is a UI click, not a melee swing. The Engine
+        // owns the bar's real geometry and reports it each frame (SetAttackClickConsumed).
+        const bool mouseAttack = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !_attackClickConsumed;
+        attackPressed |= mouseAttack ||
                          (_bindings.attack != KEY_NULL && IsKeyPressed(_bindings.attack));
     }
 
@@ -950,8 +1089,11 @@ void Character::DrawPlayer(Vector2 cameraPos)
     // Status tints: poisoned = sickly green (Venomfang), chilled = icy blue
     // (matches how frozen enemies are tinted). Normal: plain white. Poison wins
     // when both run because its damage is the more urgent read.
+    // First frame of the hurt animation: red, not the white the art opens on.
+    const bool hurtOpening = _texture.id == _takeDamageAnim.id && _frame == 0;
     Color bodyTint = (_poisonTimer > 0.f) ? Color{ 150, 235, 120, 255 }
-                   : (_chillTimer  > 0.f) ? Color{ 150, 205, 255, 255 } : WHITE;
+                   : (_chillTimer  > 0.f) ? Color{ 150, 205, 255, 255 }
+                   : hurtOpening         ? Vfx::kHurtFlashTint : WHITE;
     DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, bodyTint);
     if (_damageBuffTimer > 0.f)
         DrawTexturePro(_texture, source, dest, Vector2{}, 0.f, Fade(Color{ 255, 45, 35, 255 }, 0.38f));
@@ -1071,6 +1213,7 @@ bool Character::Dashing(float dt)
         _dashInvincible = false;
         _playDashParticles = false;
         _dashTimer = 0.f;
+        _sinceDashEnd = 0.f;   // Afterimage window opens
 
         _texture = _idleAnim;
         _frame = 0;
@@ -1126,6 +1269,25 @@ void Character::Revive()
     GrantInvulnerability(1.5f);  // brief i-frames so respawn isn't immediately punished
 }
 
+void Character::ReviveInPlace(float healthFraction)
+{
+    // Second Wind: get back up where you fell. Unlike Revive() this keeps
+    // ability cooldowns and only restores a share of max HP.
+    _dying        = false;
+    _takingDamage = false;
+    _hitTimer     = 0.f;
+    _deathTimer   = 0.4f;
+    _velocity     = Vector2Zero();
+    _pendingBurnTicks.clear();
+    _poisonTimer = 0.f; _poisonStacks = 0; _poisonDamagePerTick = 0.f; _poisonTickRemaining = 0.f;
+    _health = std::max(kReviveMinHealth, std::ceil(_maxHealth * std::clamp(healthFraction, 0.f, 1.f)));
+    _texture = _idleAnim;
+    _frame = 0;
+    _runningTime = 0.f;
+    _maxFrames = _texture.width / _width;
+    GrantInvulnerability(2.0f);
+}
+
 void Character::RefreshForRoomEntry()
 {
     // Revive() minus the heal. Entering a room resets transient combat state
@@ -1148,24 +1310,48 @@ void Character::RefreshForRoomEntry()
     GrantInvulnerability(1.5f);         // brief i-frames so entry isn't punished
 }
 
+DamageSourceScope::DamageSourceScope(Character& target, const DamageSource& source)
+    : _target(target), _previous(target.GetIncomingDamageSource())
+{
+    target.SetIncomingDamageSource(source);
+}
+
+DamageSourceScope::~DamageSourceScope()
+{
+    _target.SetIncomingDamageSource(_previous);
+}
+
+void Character::TakeDamageFrom(const DamageSource& source, int damage, Vector2 attackerPos)
+{
+    const DamageSourceScope scope(*this, source);
+    TakeDamage(damage, attackerPos);
+}
+
+void Character::TakeFractionalDamageFrom(const DamageSource& source, float damage, Vector2 attackerPos)
+{
+    const DamageSourceScope scope(*this, source);
+    TakeFractionalDamage(damage, attackerPos);
+}
+
 void Character::TakeDamage(int damage, Vector2 attackerPos)
 {
+    const DamageRecorder record{ *this, _health, _incomingSource };
     if (_invulnerableLock)
         return;
     if (_hasIFrames || _dashInvincible || _forcedPushActive)
         return;
 
-    // Warrior Rage — getting hit stokes the fire. Triggers even if armour eats
-    // the hit (pain is pain), mirroring how Paladin Retribution counts below.
+    // Warrior Rage — getting hit stokes the fire, however much Defense blocks
+    // (pain is pain), mirroring how Paladin Retribution counts below.
     AddRage(12.f);
 
     // Paladin Faith — standing your ground and taking the blow strengthens
-    // conviction. Same "even if armour absorbs it" rule as Rage/Retribution.
+    // conviction. Same "however much Defense blocks" rule as Rage/Retribution.
     AddFaith(15.f);
 
     // Paladin Retribution — every hit that connects fuels the counter, and Aegis
-    // reflects a fraction back at the attacker. Triggers even if armour eats the
-    // hit (you were still struck). No self-heal anywhere.
+    // reflects a fraction of the hit before Defense back at the attacker (you
+    // were still struck). No self-heal anywhere.
     if (_class == PlayerClass::Paladin)
     {
         AddRetribution(1);
@@ -1180,31 +1366,25 @@ void Character::TakeDamage(int damage, Vector2 attackerPos)
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
 
-    // Armour absorbs the hit: lose one armour slot instead of HP.
-    // If armour is already empty the damage falls through to HP normally.
-    if (_armour > 0)
-    {
-        _armour--;
-        return;
-    }
-
     if (_shopWardHits > 0)
     {
         --_shopWardHits;
-        damage = std::max(0, damage - 1);
+        damage = std::max(0, damage - 10);
         if (damage <= 0)
             return;
     }
 
-    BaseCharacter::TakeDamage(damage, attackerPos);
+    // Defense trims what is left (capped, never below the minimum hit).
+    BaseCharacter::TakeDamage(DamagePolicy::ApplyDefenseToHit(damage, GetDefense()), attackerPos);
 }
 
 void Character::TakePitfallDamage(int damage)
 {
+    const DamageRecorder record{ *this, _health, _incomingSource };
     if (_dying || damage <= 0) return;
     const float healthBefore = _health;
     // Falling is an environmental penalty rather than an enemy hit: it always
-    // costs HP, does not consume armour, and does not trigger Rage/Faith.
+    // costs HP, ignores Defense, and does not trigger Rage/Faith.
     BaseCharacter::TakeDamage(damage, _worldPos);
     _telemDamageTaken += std::max(0.f, healthBefore - _health);
     GrantInvulnerability(1.f);
@@ -1212,6 +1392,7 @@ void Character::TakePitfallDamage(int damage)
 
 void Character::TakeFractionalDamage(float damage, Vector2 attackerPos)
 {
+    const DamageRecorder record{ *this, _health, _incomingSource };
     if (_invulnerableLock)
         return;
     if (_hasIFrames || _dashInvincible || _forcedPushActive)
@@ -1226,20 +1407,16 @@ void Character::TakeFractionalDamage(float damage, Vector2 attackerPos)
     _hasIFrames = true;
     _invincibleTimer = 0.4f;
 
-    // Armour absorbs direct boss contact the same as melee hits.
-    if (_armour > 0)
-    {
-        _armour--;
-        return;
-    }
-
     if (_shopWardHits > 0)
     {
         --_shopWardHits;
-        damage = std::max(0.f, damage - 1.f);
+        damage = std::max(0.f, damage - 10.f);
         if (damage <= 0.f)
             return;
     }
+
+    // Defense trims boss contact the same as melee hits.
+    damage = DamagePolicy::ApplyDefenseToFractionalHit(damage, GetDefense());
 
     _health -= damage;
     _telemDamageTaken += damage;   // balance telemetry (per-room, read by Engine)
@@ -1342,6 +1519,7 @@ void Character::ApplyPoison(float duration, float tickInterval, float damagePerT
 {
     if (_dying || duration <= 0.f)
         return;
+    _poisonAppliedBy = _incomingSource;
     const bool wasPoisoned = (_poisonTimer > 0.f);
     // Refresh, don't extend past the fresh duration; stacks cap so repeated
     // bites are threatening without unlimited unavoidable damage.
@@ -1374,6 +1552,7 @@ void Character::ApplyBurnTicks(float tickDelay, int tickCount, float damagePerTi
     // Lavaball burn is intentionally applied as delayed fractional damage so
     // the boss pressures the player over time instead of front-loading all of
     // its damage into the projectile collision itself.
+    _burnAppliedBy = _incomingSource;
     for (int tickIndex = 0; tickIndex < tickCount; ++tickIndex)
     {
         PendingBurnTick tick;
@@ -1411,7 +1590,7 @@ void Character::UpdatePendingBurns(float dt)
 
         if (tick.timer <= 0.f)
         {
-            ApplyBurnTickDamage(tick.damage, tick.sourcePos);
+            ApplyBurnTickDamage(tick.damage, tick.sourcePos, DamageSource::FromStatus(DamageNames::kBurn, _burnAppliedBy));
             continue;
         }
 
@@ -1421,12 +1600,13 @@ void Character::UpdatePendingBurns(float dt)
     _pendingBurnTicks.resize(writeIndex);
 }
 
-void Character::ApplyBurnTickDamage(float damage, Vector2 sourcePos)
+void Character::ApplyBurnTickDamage(float damage, Vector2 sourcePos, const DamageSource& source)
 {
     // Burn ticks bypass the direct-hit invulnerability gate because they are a
     // follow-up effect from an already-resolved projectile hit. They still use
     // the normal hurt/death feedback so the player can read the extra damage.
     (void)sourcePos;
+    const DamageRecorder record{ *this, _health, source };
     if (_dying || damage <= 0.f)
         return;
 
@@ -1493,6 +1673,155 @@ bool Character::CanCastAbility(AbilityType type) const
 int Character::GetUltimateManaRequired() const
 {
     return (int)std::ceil((float)_maxMana * 0.70f);
+}
+
+namespace
+{
+    void PutRunField(JsonValue& stats, const char* key, float value) { stats.Set(key, JsonValue::MakeFloat(value)); }
+    void PutRunField(JsonValue& stats, const char* key, int value)   { stats.Set(key, JsonValue::MakeInt(value)); }
+    void PutRunField(JsonValue& stats, const char* key, bool value)  { stats.Set(key, JsonValue::MakeBool(value)); }
+
+    // A field missing from the save keeps the fresh character's value; one of
+    // the wrong type fails the reader. Applies only when `apply` is set, so a
+    // first pass can check every field before any is changed.
+    void GetRunField(const JsonReader& stats, const char* key, float& value, bool apply)
+    {
+        if (!stats.Has(key)) return;
+        const float read = stats.Float(key, -(float)RunCheckpointLimits::kMaxStat, (float)RunCheckpointLimits::kMaxStat);
+        if (apply) value = read;
+    }
+    void GetRunField(const JsonReader& stats, const char* key, int& value, bool apply)
+    {
+        if (!stats.Has(key)) return;
+        const int read = (int)stats.Int(key, -(long long)RunCheckpointLimits::kMaxStat, (long long)RunCheckpointLimits::kMaxStat);
+        if (apply) value = read;
+    }
+    void GetRunField(const JsonReader& stats, const char* key, bool& value, bool apply)
+    {
+        if (!stats.Has(key)) return;
+        const bool read = stats.Bool(key);
+        if (apply) value = read;
+    }
+}
+
+// The single list of scalar run fields: every field is either here (saved and
+// restored) or transient by design (timers, animation, statuses, buffs).
+template <typename Fn>
+void Character::VisitRunFields(Fn&& visit)
+{
+    visit("health", _health);                   visit("maxHealth", _maxHealth);
+    visit("attackPower", _attackPower);         visit("speed", _speed);
+    visit("dashSpeed", _dashSpeed);             visit("dashDuration", _dashDuration);
+    visit("dashCooldownTime", _dashCooldownTime); visit("invincibleDuration", _invincibleDuration);
+    visit("attackUpdateTime", _attackUpdateTime); visit("staffCastUpdateTime", _staffCastUpdateTime);
+    visit("rage", _rage);                       visit("faith", _faith);
+    visit("comboPoints", _comboPoints);
+    visit("classResourceGainMult", _classResourceGainMult); visit("comboFraction", _comboFraction);
+    visit("abilityPowerMult", _abilityPowerMult); visit("abilityCostBonus", _abilityCostBonus);
+    visit("fireDamageMult", _fireDamageMult);   visit("iceDamageMult", _iceDamageMult);
+    visit("electricDamageMult", _electricDamageMult); visit("comboBonusMult", _comboBonusMult);
+    visit("rageDecayMult", _rageDecayMult);     visit("rageFullBonus", _rageFullBonus);
+    visit("retributionPerStack", _retributionPerStack); visit("reflectPotency", _reflectPotency);
+    visit("hunterMarkEvery", _hunterMarkEvery); visit("markedBonus", _markedBonus);
+    visit("cursedBonus", _cursedBonus);         visit("curseDurationMult", _curseDurationMult);
+    visit("lifestealPotency", _lifestealPotency); visit("maxComboPointsRun", _maxComboPointsRun);
+    visit("evisceratePerCombo", _evisceratePerCombo); visit("poisonPotency", _poisonPotency);
+    visit("healOnRoomClear", _healOnRoomClear);
+    visit("cellGainMultiplier", _cellGainMultiplier); visit("wagerRewardMult", _wagerRewardMult);
+    visit("contractGoldMult", _contractGoldMult); visit("contractXpMult", _contractXpMult);
+    visit("contractBonusGold", _contractBonusGold); visit("contractBonusXp", _contractBonusXp);
+    visit("exp", _exp);                         visit("gold", _gold);
+    visit("cells", _cells);                     visit("killsSinceHeal", _killsSinceHeal);
+    visit("level", _level);                     visit("expToNextLevel", _expToNextLevel);
+    visit("mana", _mana);                       visit("maxMana", _maxMana);
+    visit("defense", _defense);                 visit("ironcladDefense", _ironcladDefense);
+    visit("critChance", _critChance);           visit("critDamage", _critDamage);
+    visit("attackRangeMultiplier", _attackRangeMultiplier);
+    visit("shopWhetstoneHits", _shopWhetstoneHits); visit("shopFreeCasts", _shopFreeCasts);
+    visit("shopWardHits", _shopWardHits);       visit("shopGoldPickups", _shopGoldPickups);
+    visit("shopCellPickups", _shopCellPickups); visit("shopPressureDebtRooms", _shopPressureDebtRooms);
+    visit("shopWagerArmed", _shopWagerArmed);   visit("shopRareStatBought", _shopRareStatBought);
+    visit("shopBloodPriceUsed", _shopBloodPriceUsed);
+    visit("manaRegenMultiplier", _manaRegenMultiplier);
+    visit("abilityDamageMultiplier", _abilityDamageMultiplier);
+    visit("eventDamageMult", _eventDamageMult); visit("relicOverchargePerRelic", _relicOverchargePerRelic);
+    visit("learnedCount", _learnedCount);       visit("maxAbilitySlots", _maxAbilitySlots);
+}
+
+void Character::CaptureRunState(CharacterCheckpoint& out) const
+{
+    out.cls = _class;
+    out.appearance = _appearancePrefix;
+    out.stats = JsonValue::MakeObject();
+    const_cast<Character*>(this)->VisitRunFields(
+        [&](const char* key, auto& value) { PutRunField(out.stats, key, value); });
+    out.abilities.clear();
+    for (int i = 0; i < _hardAbilityCap; ++i)
+        out.abilities.push_back({ _learnedAbilities[i], _abilityLevels[i] });
+    out.relics.assign(_relicOrder, _relicOrder + _relicCount);
+}
+
+bool Character::RestoreRunState(const CharacterCheckpoint& state)
+{
+    JsonReadErrors errors;
+    const JsonReader stats(state.stats, errors, "character.stats");
+    VisitRunFields([&](const char* key, auto& value) { GetRunField(stats, key, value, false); });
+    if (!errors.Ok())
+    {
+        TraceLog(LOG_WARNING, "Run resume: %s", errors.first.c_str());
+        return false;
+    }
+    VisitRunFields([&](const char* key, auto& value) { GetRunField(stats, key, value, true); });
+
+    // Abilities: content removed since the save is already an empty slot.
+    for (int i = 0; i < _hardAbilityCap; ++i)
+    {
+        const bool saved = i < (int)state.abilities.size();
+        _learnedAbilities[i] = saved ? state.abilities[i].ability : AbilityType::None;
+        _abilityLevels[i] = saved ? std::max(1, state.abilities[i].level) : 1;
+        _slotCooldownRemaining[i] = 0.f;
+        _slotCooldownDuration[i] = 0.f;
+    }
+    _maxAbilitySlots = std::clamp(_maxAbilitySlots, 1, _hardAbilityCap);
+    _learnedCount = std::clamp(_learnedCount, 0, _maxAbilitySlots);
+
+    // Relics in acquisition order; their stat effects are already inside the
+    // saved stats above, so ownership is restored without re-applying them.
+    for (int i = 0; i < (int)RelicType::Count; ++i) _relicOwned[i] = false;
+    _relicCount = 0;
+    for (RelicType relic : state.relics)
+    {
+        const int id = (int)relic;
+        if (_relicCount >= (int)RelicType::Count) break;
+        if (id < 0 || id >= (int)RelicType::Count || _relicOwned[id]) continue;
+        _relicOwned[id] = true;
+        _relicOrder[_relicCount++] = relic;
+    }
+
+    _health = std::clamp(_health, 1.f, std::max(1.f, _maxHealth));
+    _mana = std::clamp(_mana, 0, std::max(0, _maxMana));
+    _defense = std::max(0.f, _defense);
+    _ironcladDefense = std::clamp(_ironcladDefense, 0.f, Balance::Stats::kIroncladDefenseMax);
+    _critChance = std::clamp(_critChance, 0.f, Balance::Stats::kMaxCritChance);
+    _critDamage = std::max(0.f, _critDamage);
+    return true;
+}
+
+bool Character::ReplaceAbility(AbilityType from, AbilityType to)
+{
+    if (from == AbilityType::None || to == AbilityType::None || HasLearnedAbility(to) ||
+        IsUltimateAbility(from) != IsUltimateAbility(to))
+        return false;
+    for (int i = 0; i < _hardAbilityCap; i++)
+    {
+        if (_learnedAbilities[i] != from) continue;
+        _learnedAbilities[i]      = to;
+        _abilityLevels[i]         = 1;
+        _slotCooldownRemaining[i] = 0.f;
+        _slotCooldownDuration[i]  = 0.f;
+        return true;
+    }
+    return false;
 }
 
 bool Character::LearnAbility(AbilityType type)
@@ -1583,8 +1912,27 @@ void Character::GrantLifesteal(float fraction, float duration)
 {
     // Grim Harvest class card strengthens every lifesteal grant (capped so the
     // per-room lifesteal cap stays the real governor).
-    _lifestealFraction = std::min(0.9f, fraction * _lifestealPotency);
-    _lifestealTimer    = std::max(_lifestealTimer, duration);
+    static constexpr float kMaxLifestealFraction = 0.9f;
+    const float granted = std::min(kMaxLifestealFraction, fraction * _lifestealPotency);
+
+    // Overlapping grants: the strongest one applies for its OWN duration, and a
+    // weaker one that lasts longer takes over when it ends (a strike-heal
+    // followed by a lingering siphon). A strong short grant never inherits a
+    // long timer, and a weak grant never cuts a strong one short.
+    struct Grant { float fraction, timer; };
+    Grant grants[3] = { { _lifestealFraction, _lifestealTimer },
+                        { _lifestealFallbackFraction, _lifestealFallbackTimer },
+                        { granted, duration } };
+    Grant active{ 0.f, 0.f };
+    for (const Grant& g : grants)
+        if (g.timer > 0.f && g.fraction > active.fraction) active = g;
+    Grant fallback{ 0.f, 0.f };
+    for (const Grant& g : grants)
+        if (g.timer > active.timer && g.fraction > fallback.fraction) fallback = g;
+    _lifestealFraction         = active.fraction;
+    _lifestealTimer            = active.timer;
+    _lifestealFallbackFraction = fallback.fraction;
+    _lifestealFallbackTimer    = fallback.timer;
 }
 
 void Character::MoveTowardFacing(float distance)
@@ -1603,9 +1951,62 @@ void Character::MoveAlongDirection(Vector2 direction, float distance)
         _rightLeft = direction.x >= 0.f ? 1.f : -1.f;
 }
 
+const CharacterTuning::AnimHit* Character::AuthoredHitWindow() const
+{
+    if (_playerTuning == nullptr)
+        return nullptr;
+    const CharacterTuning::AnimHit& window = _playerTuning->animHit[AttackAnimSlot()];
+    return window.set ? &window : nullptr;
+}
+
 bool Character::CanApplyMeleeDamage() const
 {
-    return _attacking && !_damageApplied && _frame >= 2 && _frame <= 4;
+    if (!_attacking || _damageApplied)
+        return false;
+    // The attack animation's hit window (Character Animator), else frames 2-4.
+    if (const CharacterTuning::AnimHit* window = AuthoredHitWindow())
+        return _frame >= window->start && _frame <= window->end;
+    return _frame >= kMeleeHitStartFrame && _frame <= kMeleeHitEndFrame;
+}
+
+bool Character::MeleeSwingSpent(bool hitAny) const
+{
+    const CharacterTuning::AnimHit* window = AuthoredHitWindow();
+    return hitAny || window == nullptr || _frame >= window->end;
+}
+
+int Character::CurrentEventSlot() const
+{
+    if (_texture.id == _idleAnim.id)   return 0;
+    if (_texture.id == _walkAnim.id)   return 1;
+    if (_texture.id == _attackAnim.id) return AttackAnimSlot();
+    return -1;   // staff, bow, dash and the rest have no animator events
+}
+
+void Character::CollectAnimEvents(std::vector<FiredAnimEvent>& out)
+{
+    const int slot = CurrentEventSlot();
+    if (slot == _eventSlot && _frame == _eventFrame)
+        return;
+    const bool sameAnimation = (slot == _eventSlot);
+    const int  lastFrame = _eventFrame;
+    _eventSlot  = slot;
+    _eventFrame = _frame;
+    if (_playerTuning == nullptr || slot < 0 || slot >= CharacterTuning::kMaxAnims)
+        return;
+    const float facing = (_rightLeft > 0) ? 1.f : -1.f;
+    for (const CharacterTuning::AnimEvent& event : _playerTuning->animEvents[slot])
+    {
+        if (!AnimEvents::Reached(event.frame, sameAnimation, lastFrame, _frame))
+            continue;
+        FiredAnimEvent fired;
+        fired.kind     = event.kind;
+        fired.worldPos = Vector2{ _worldPos.x + event.x * _playerBoxScale * facing,
+                                  _worldPos.y + event.y * _playerBoxScale };
+        fired.size     = event.size;
+        fired.fx       = event.fx;
+        out.push_back(fired);
+    }
 }
 
 void Character::ConsumeMeleeDamageFrame()
@@ -1624,23 +2025,42 @@ Rectangle Character::GetCollisionRec() const
             if (b.set && b.radius > 0.f)
             {
                 float sign = (_rightLeft > 0) ? 1.f : -1.f;
-                float cx = _worldPos.x + sign * b.x;
-                float cy = _worldPos.y + b.y;
-                return Rectangle{ cx - b.radius, cy - b.radius, b.radius * 2.f, b.radius * 2.f };
+                float cx = _worldPos.x + sign * b.x * _playerBoxScale;
+                float cy = _worldPos.y + b.y * _playerBoxScale;
+                const float radius = b.radius * _playerBoxScale;
+                return Rectangle{ cx - radius, cy - radius, radius * 2.f, radius * 2.f };
             }
         }
     }
     return BaseCharacter::GetCollisionRec();
 }
 
-Rectangle Character::GetAttackCollisionRec() const
+// The nearest of eight directions, 45 degrees apart.
+Vector2 Character::SnapToEightWay(Vector2 dir)
 {
-    // Authored melee box (Swing slot) takes precedence — precise, no class scaling.
-    if (_playerTuning && _playerTuning->animMelee[2].set)
+    static constexpr float kDirectionSteps = 8.f;
+    static constexpr float kStepAngle = static_cast<float>(2.0 * PI) / kDirectionSteps;
+    const float snapped = roundf(atan2f(dir.y, dir.x) / kStepAngle) * kStepAngle;
+    return Vector2{ cosf(snapped), sinf(snapped) };
+}
+
+// The swing box for a side (+1 right, -1 left). Authored box takes precedence.
+Rectangle Character::GetSideAttackRec(float side) const
+{
+    // Authored melee box takes precedence — precise, no class scaling: the
+    // attack animation's own (Swing or Stab), else the Swing's.
+    const int meleeSlot = (_playerTuning && _playerTuning->animMelee[AttackAnimSlot()].set)
+                        ? AttackAnimSlot() : kSwingAnimSlot;
+    if (_playerTuning && _playerTuning->animMelee[meleeSlot].set)
     {
-        Rectangle m = _playerTuning->animMelee[2].rect;   // relative, facing right
-        float rx = (_rightLeft > 0) ? (_worldPos.x + m.x)
-                                    : (_worldPos.x - (m.x + m.width));   // mirror when facing left
+        const Rectangle authored = _playerTuning->animMelee[meleeSlot].rect;   // relative, facing right
+        Rectangle m{ authored.x * _playerBoxScale, authored.y * _playerBoxScale,
+                     authored.width * _playerBoxScale, authored.height * _playerBoxScale };
+        // Reach upgrades still lengthen the authored box: it grows outward (away
+        // from the body) by how far the range multiplier has risen above its start.
+        m.width *= _attackRangeMultiplier / kBaseAttackRangeMultiplier;
+        float rx = (side > 0.f) ? (_worldPos.x + m.x)
+                                : (_worldPos.x - (m.x + m.width));   // mirror when facing left
         return Rectangle{ rx, _worldPos.y + m.y, m.width, m.height };
     }
 
@@ -1660,15 +2080,34 @@ Rectangle Character::GetAttackCollisionRec() const
     default: break;   // Mage/Hunter/Warlock fight at range; melee box stays default
     }
 
-    float swordX;
-    if (_rightLeft > 0)
-        swordX = body.x + body.width;
-    else
-        swordX = body.x - attackWidth;
+    float swordX = (side > 0.f) ? body.x + body.width : body.x - attackWidth;
 
     // Keep the box vertically centred on the body box
     float swordY = body.y + (body.height - attackHeight) * 0.5f;
     return Rectangle{ swordX, swordY, attackWidth, attackHeight };
+}
+
+// Melee swings go the way the player last walked, in eight directions. Left, right and
+// diagonal swings use the side box; straight up or down turns it to lie across the body.
+Rectangle Character::GetAttackCollisionRec() const
+{
+    static constexpr float kAxisThreshold = 0.5f;   // |x| above this counts as a side swing
+    static constexpr float kDiagonalShift = 0.5f;   // diagonal boxes move this share of their height
+    const Vector2 dir = SnapToEightWay(_lastMoveDirection);
+    const float facingSide = (_rightLeft > 0) ? 1.f : -1.f;
+
+    if (fabsf(dir.x) >= kAxisThreshold)
+    {
+        Rectangle box = GetSideAttackRec(dir.x > 0.f ? 1.f : -1.f);
+        box.y += dir.y * box.height * kDiagonalShift;
+        return box;
+    }
+
+    const Rectangle side = GetSideAttackRec(facingSide);
+    const Rectangle body = GetCollisionRec();
+    Rectangle box{ body.x + body.width * 0.5f - side.height * 0.5f, 0.f, side.height, side.width };
+    box.y = (dir.y < 0.f) ? body.y - box.height : body.y + body.height;
+    return box;
 }
 
 Vector2 Character::GetCastOrigin() const
@@ -1686,6 +2125,13 @@ Vector2 Character::GetCastOrigin(float forward, float height) const
 Vector2 Character::GetFacingDirection() const
 {
     return Vector2{ (float)_rightLeft, 0.f };
+}
+
+void Character::FaceAimDirection(Vector2 aim)
+{
+    // Straight up or down has no horizontal side, so keep the current facing.
+    if (aim.x > 0.f) _rightLeft = 1;
+    else if (aim.x < 0.f) _rightLeft = -1;
 }
 
 Vector2 Character::GetFeetWorldPos() const
@@ -1719,7 +2165,7 @@ int Character::GetAbilityUpgradeBonus(AbilityType type) const
     if (abilityLevel <= 1)
         return 0;
 
-    return abilityLevel - 1;
+    return (abilityLevel - 1) * Balance::AbilityDamage::kLevelHitBonus;
 }
 
 // All five elemental damage pipelines multiply by the per-element class-card
@@ -1761,7 +2207,7 @@ void Character::AddExp(int amount)
 
     if (_wagerRewardMult > 1.f)                          // Cursed Wager bonus
         amount = (int)std::ceil(amount * _wagerRewardMult);
-    if (_contractXpMult > 1.f)                           // Risk Shrine contract
+    if (_contractXpMult != 1.f)                          // Risk Shrine contract / Omen Stone
     {
         int before = amount;
         amount = (int)std::ceil(amount * _contractXpMult);
@@ -1806,16 +2252,6 @@ void Character::RestoreMana(int amount)
         _mana = _maxMana;
 }
 
-void Character::AddArmour(int amount)
-{
-    // Add armour slots, clamped to the maximum.
-    // Armour gained beyond the cap is simply lost — there is no overflow.
-    _armour += amount;
-    if (_armour > _maxArmour)
-        _armour = _maxArmour;
-    if (_armour < 0)
-        _armour = 0;
-}
 
 void Character::ApplyUpgrade(UpgradeType type)
 {
@@ -1827,36 +2263,42 @@ void Character::ApplyUpgrade(UpgradeType type)
     {
     // ── Common ────────────────────────────────────────────────────────────────
     case UpgradeType::AttackPower:
-        _attackPower += 0.5f;
+        _attackPower += Balance::Stats::kAttackCard;
         break;
     case UpgradeType::AttackRange:
         _attackRangeMultiplier += 0.08f;
         break;
     case UpgradeType::MaxHealth:
-        _maxHealth += 2;
+        _maxHealth += Balance::Stats::kMaxHealthCard;
         break;
     case UpgradeType::MaxMana:
         _maxMana += 4;
         break;
     case UpgradeType::Defense:
-        AddArmour(1);
+        AddDefense(Balance::Stats::kDefenseMinor);
         break;
     case UpgradeType::MoveSpeed:
-        _speed += 12.0f;
+        _speed += Balance::Stats::kSpeedCard;
+        break;
+    case UpgradeType::CritChance:
+        _critChance = std::min(Balance::Stats::kMaxCritChance, _critChance + Balance::Stats::kCritChanceCard);
+        break;
+    case UpgradeType::CritDamage:
+        _critDamage += Balance::Stats::kCritDamageCard;
         break;
     // ── Rare ──────────────────────────────────────────────────────────────────
     case UpgradeType::IronConstitution:
     {
         float oldMax = _maxHealth;
         _maxHealth = std::ceil(_maxHealth * 1.15f);
-        Heal((int)std::max(1.f, _maxHealth - oldMax));
+        Heal((int)std::max(10.f, _maxHealth - oldMax));
         break;
     }
     case UpgradeType::SwiftFeet:
         _speed *= 1.08f;
         break;
     case UpgradeType::Ferocity:
-        _attackPower += std::max(1.0f, _attackPower * 0.10f);
+        _attackPower += std::max(10.f, _attackPower * 0.10f);
         break;
     case UpgradeType::ArcaneMind:
         _maxMana += 8;
@@ -1864,40 +2306,40 @@ void Character::ApplyUpgrade(UpgradeType type)
         _manaRegenMultiplier += 0.10f;
         break;
     case UpgradeType::IronSkin:
-        AddArmour(2);
+        AddDefense(Balance::Stats::kDefenseMajor);
         break;
     case UpgradeType::BladeEdge:
-        _attackPower += 1.0f;
+        _attackPower += 10.f;
         _attackRangeMultiplier += 0.10f;
         break;
     // ── Epic ──────────────────────────────────────────────────────────────────
     case UpgradeType::WarGod:
-        _attackPower += std::max(1.75f, _attackPower * 0.15f);
+        _attackPower += std::max(17.5f, _attackPower * 0.15f);
         _attackRangeMultiplier += 0.12f;
         break;
     case UpgradeType::Resilience:
     {
         float oldMax = _maxHealth;
         _maxHealth = std::ceil(_maxHealth * 1.18f);
-        Heal((int)std::max(2.f, _maxHealth - oldMax));
+        Heal((int)std::max(20.f, _maxHealth - oldMax));
         break;
     }
     case UpgradeType::BladeStorm:
-        _attackPower += 1.5f;
+        _attackPower += 15.f;
         _speed *= 1.08f;
         break;
     case UpgradeType::Juggernaut:
     {
         float oldMax = _maxHealth;
         _maxHealth = std::ceil(_maxHealth * 1.12f);
-        Heal((int)std::max(1.f, _maxHealth - oldMax));
-        AddArmour(2);
+        Heal((int)std::max(10.f, _maxHealth - oldMax));
+        AddDefense(Balance::Stats::kDefenseMajor);
         break;
     }
     case UpgradeType::ArcaneColossus:
         _maxMana += 10;
         _mana = std::min(_mana + 5, _maxMana);
-        _attackPower += 1.5f;
+        _attackPower += 15.f;
         _manaRegenMultiplier += 0.15f;
         break;
     // ── Power Choice additions ────────────────────────────────────────────────
@@ -1931,26 +2373,26 @@ void Character::ApplyUpgrade(UpgradeType type)
         _rageFullBonus         += 0.10f;
         break;
     case UpgradeType::WarriorUnbreakable:
-        AddArmour(1);
-        _maxHealth += 1.f;
+        AddDefense(Balance::Stats::kDefenseMinor);
+        _maxHealth += 10.f;
         break;
     case UpgradeType::WarriorColossus:
-        _maxHealth   += 2.f;
-        _attackPower += 0.5f;
+        _maxHealth   += 20.f;
+        _attackPower += 5.f;
         break;
     case UpgradeType::WarriorWarlordsReach:  _attackRangeMultiplier += 0.10f; break;
-    case UpgradeType::WarriorBattleMeditation: _healOnRoomClear += 1; break;
+    case UpgradeType::WarriorBattleMeditation: _healOnRoomClear += 10; break;
     case UpgradeType::WarriorWeaponMaster:   _abilityPowerMult += 0.08f; break;
     // Hunter
     case UpgradeType::HunterPredatorsRhythm: _hunterMarkEvery = std::max(2, _hunterMarkEvery - 1); break;
     case UpgradeType::HunterQuarry:          _markedBonus += 0.15f; break;
     case UpgradeType::HunterApexPredator:    _markedBonus += 0.30f; break;
-    case UpgradeType::HunterFletcher:        _attackPower += 0.5f;  break;
+    case UpgradeType::HunterFletcher:        _attackPower += 5.f;  break;
     case UpgradeType::HunterTrappersCunning: _abilityPowerMult += 0.10f; break;
     case UpgradeType::HunterSwiftQuiver:     _speed += 12.f; break;
     case UpgradeType::HunterSurvivalist:
-        _maxHealth += 1.f;
-        AddArmour(1);
+        _maxHealth += 10.f;
+        AddDefense(Balance::Stats::kDefenseMinor);
         break;
     case UpgradeType::HunterFocusedBreathing: _manaRegenMultiplier += 0.15f; break;
     // Rogue
@@ -1960,7 +2402,7 @@ void Character::ApplyUpgrade(UpgradeType type)
     case UpgradeType::RogueToxinExpert:      _poisonPotency += 0.5f; break;
     case UpgradeType::RogueMasterPoisoner:   _poisonPotency += 1.0f; break;
     case UpgradeType::RogueFleetFootwork:    _speed += 12.f; break;
-    case UpgradeType::RogueShadowConditioning: _maxHealth += 1.f; break;
+    case UpgradeType::RogueShadowConditioning: _maxHealth += 10.f; break;
     case UpgradeType::RogueOpportunist:
         _classResourceGainMult += 0.25f;
         _evisceratePerCombo    += 0.05f;
@@ -1971,10 +2413,10 @@ void Character::ApplyUpgrade(UpgradeType type)
     case UpgradeType::PaladinZealotsFury:    _retributionPerStack += 0.06f; break;
     case UpgradeType::PaladinMirroredAegis:  _reflectPotency += 0.5f; break;
     case UpgradeType::PaladinDevotion:       _classResourceGainMult += 0.15f; break;
-    case UpgradeType::PaladinCrusadersVitality: _maxHealth += 2.f; break;
+    case UpgradeType::PaladinCrusadersVitality: _maxHealth += 20.f; break;
     case UpgradeType::PaladinSanctuary:
-        AddArmour(2);
-        _healOnRoomClear += 1;
+        AddDefense(Balance::Stats::kDefenseMajor);
+        _healOnRoomClear += 10;
         break;
     case UpgradeType::PaladinDivineConduit:
         _maxMana += 2;
@@ -1986,7 +2428,7 @@ void Character::ApplyUpgrade(UpgradeType type)
     case UpgradeType::WarlockSoulBargain:    _cursedBonus += 0.25f; break;
     case UpgradeType::WarlockLingeringMalice: _curseDurationMult += 0.5f; break;
     case UpgradeType::WarlockVoidAttunement: _manaRegenMultiplier += 0.20f; break;
-    case UpgradeType::WarlockCorruptedVitality: _maxHealth += 2.f; break;
+    case UpgradeType::WarlockCorruptedVitality: _maxHealth += 20.f; break;
     case UpgradeType::WarlockSoulConduit:
         _lifestealPotency  += 0.5f;
         _curseDurationMult += 0.25f;
@@ -2053,9 +2495,10 @@ void Character::ApplyUpgrade(UpgradeType type)
 
 UpgradeRarity Character::GetUpgradeRarity(UpgradeType type) const
 {
-    // Power Choice additions sit after the epic block in the enum, so they need
-    // explicit rarities before the index-range fallbacks below.
+    // Power Choice additions and the crit cards sit after the epic block in the
+    // enum, so they need explicit rarities before the index-range fallbacks below.
     if (type == UpgradeType::ManaFlow)                                          return UpgradeRarity::Common;
+    if (type == UpgradeType::CritChance || type == UpgradeType::CritDamage)     return UpgradeRarity::Common;
     if (type == UpgradeType::ClassAttunement || type == UpgradeType::Overload)  return UpgradeRarity::Rare;
 
     // Class-specific cards: explicit commons/epics, everything else rare.

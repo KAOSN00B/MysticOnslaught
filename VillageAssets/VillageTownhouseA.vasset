@@ -1,0 +1,11 @@
+village_asset 1
+image VillageTownhouseA.png
+size 96 96
+id VillageTownhouseA
+category Building
+service None
+cost 0
+required 1
+unique 0
+removable 0
+collider 2.00 39.00 92.00 55.00

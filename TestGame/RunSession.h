@@ -37,6 +37,18 @@ public:
     int GetWorldZone() const { return (int)_chosenNodeIndices.size(); }
     const std::vector<Biome>& GetCompletedBiomes() const { return _completedBiomes; }
     const std::vector<int>& GetChosenNodeIndices() const { return _chosenNodeIndices; }
+    const std::vector<Biome>& GetChosenBiomes() const { return _chosenBiomes; }
+    // Mid-run resume: reinstate a saved session exactly (active, not paused).
+    void RestoreState(bool worldMapGenerated, std::vector<Biome> completed,
+                      std::vector<Biome> chosen, std::vector<int> chosenNodeIndices)
+    {
+        _active = true;
+        _pausedInVillage = false;
+        _worldMapGenerated = worldMapGenerated;
+        _completedBiomes = std::move(completed);
+        _chosenBiomes = std::move(chosen);
+        _chosenNodeIndices = std::move(chosenNodeIndices);
+    }
 
 private:
     bool _active = false;

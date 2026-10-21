@@ -66,6 +66,20 @@ struct AttackTuning
     float maxTargets = 4.f;
     float moveDistance = 400.f;
     float previewAngle = 0.f;
+
+    // ── Hit area of a boss or elite special move (Character Animator) ───────
+    // Unset = the move's coded size. Circle: hitRadius around the attacker,
+    // hitForward ahead of it; ring: hitInner to hitRadius; lane: hitLength long,
+    // hitWidth to each side; box: hitX/hitY/hitW/hitH (centre-relative, facing
+    // right). Separate from the Attack Library's box_* so neither tool
+    // overwrites the other.
+    bool  hasHitArea = false;
+    float hitRadius  = 0.f;
+    float hitInner   = 0.f;
+    float hitForward = 0.f;
+    float hitLength  = 0.f;
+    float hitWidth   = 0.f;
+    float hitX = 0.f, hitY = 0.f, hitW = 0.f, hitH = 0.f;
 };
 
 // Basic (non-ability) attack tuning key for a class, e.g. "Mage_Basic".
@@ -87,12 +101,26 @@ inline float EliteSignatureValueOr(const AttackTuning* tuning,
     return fallback;
 }
 
+// A special move's saved hit area (Character Animator), or null while the move
+// keeps its coded size. The helpers return the saved value or `fallback`; the
+// move's damage and its warning both read them, so what is warned is what hits.
+const AttackTuning* TunedHitArea(const std::string& key);
+float TunedHitRadius(const std::string& key, float fallback);
+float TunedHitInner(const std::string& key, float fallback);
+float TunedHitForward(const std::string& key, float fallback);
+float TunedHitLength(const std::string& key, float fallback);
+float TunedHitWidth(const std::string& key, float fallback);
+
 namespace AttackTuningStore
 {
     // nullptr = no saved file (use defaults). Results are cached.
     const AttackTuning* Get(const std::string& key);
     void Reload(const std::string& key);   // drop the cache entry after a save
+    void ReloadAll();                      // after TuningFiles::Directory() changes
+    void Parse(const std::string& text, AttackTuning& out);   // a file's text
     // Write a full attacktuning_<key>.txt (only the groups whose has* flag is set),
     // then refresh the cache so the change is live immediately.
     bool Save(const std::string& key, const AttackTuning& t);
+    // The file text Save writes; matching text means the same tuning.
+    std::string Serialize(const AttackTuning& t);
 }

@@ -1,0 +1,303 @@
+{
+  "target": "Jungle",
+  "revision": 1,
+  "source_sha256": "aa82a81d7a77556b361eef59f224314a3b80ab6608c2abba56bf8b82af90d38b",
+  "permitted_sheets": [
+    "Jungle"
+  ],
+  "mappings": {
+    "[\"GROUND\",\"Forest\",\"0\",\"32\",\"16\",\"16\",\"16\"]": {
+      "visual_review": "green grass floor",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            16,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"0\",\"16\",\"16\",\"16\"]": {
+      "visual_review": "green grass floor",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            16,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"16\",\"16\",\"16\",\"16\"]": {
+      "visual_review": "green grass floor",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            16,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"16\",\"0\",\"16\",\"16\"]": {
+      "visual_review": "sand path becomes olive grass path",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            96,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"112\",\"16\",\"16\",\"16\"]": {
+      "visual_review": "dark grass accent floor",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            176,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"16\",\"304\",\"16\",\"16\"]": {
+      "visual_review": "yellow flower cluster",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            304,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"48\",\"304\",\"16\",\"16\"]": {
+      "visual_review": "contrasting teal flower cluster",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            320,
+            576,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"0\",\"416\",\"16\",\"16\"]": {
+      "visual_review": "fence upper left corner",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            352,
+            704,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"0\",\"432\",\"16\",\"16\"]": {
+      "visual_review": "fence left vertical edge",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            352,
+            720,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"0\",\"448\",\"16\",\"16\"]": {
+      "visual_review": "fence lower left corner",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            352,
+            736,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"16\",\"448\",\"16\",\"16\"]": {
+      "visual_review": "fence lower horizontal edge",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            368,
+            736,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"32\",\"448\",\"16\",\"16\"]": {
+      "visual_review": "fence lower right corner",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            384,
+            736,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"32\",\"432\",\"16\",\"16\"]": {
+      "visual_review": "fence right vertical edge",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            384,
+            720,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"32\",\"416\",\"16\",\"16\"]": {
+      "visual_review": "fence upper right corner",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            384,
+            704,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"16\",\"416\",\"16\",\"16\"]": {
+      "visual_review": "fence upper horizontal edge",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            368,
+            704,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"32\",\"0\",\"16\",\"16\"]": {
+      "visual_review": "olive grass path",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            96,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"VISUAL\",\"Forest\",\"0\",\"48\",\"32\",\"16\",\"16\"]": {
+      "visual_review": "grass tuft overlay",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            240,
+            496,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"GROUND\",\"Forest\",\"0\",\"48\",\"0\",\"16\",\"16\"]": {
+      "visual_review": "sand path variation becomes olive grass path",
+      "geometry_review": "Only art rectangle changes; placement/anchor/band preserved; no collision-bearing assets.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "rectangle": [
+            96,
+            544,
+            16,
+            16
+          ]
+        }
+      ]
+    },
+    "[\"TILE_TYPE\",\"Forest\",\"0\"]": {
+      "visual_review": "Logical geometry retained; complete authored floor/wall visuals supply target art.",
+      "geometry_review": "Tile enum is unchanged.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "tile_type": 0
+        }
+      ]
+    },
+    "[\"TILE_TYPE\",\"Forest\",\"2\"]": {
+      "visual_review": "Logical geometry retained; complete authored floor/wall visuals supply target art.",
+      "geometry_review": "Tile enum is unchanged.",
+      "replacements": [
+        {
+          "sheet": "Jungle",
+          "tile_type": 2
+        }
+      ]
+    }
+  },
+  "scope": "Forest nwe.mroom only; no props, animations, custom colliders or falls",
+  "visual_review": "Original Forest.png and Jungle.png visually inspected; see contact.png.",
+  "runtime_status": "Candidate; consult runtime-validation.txt; not enabled in RoomLibrary."
+}

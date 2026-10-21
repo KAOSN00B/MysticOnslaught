@@ -1,0 +1,12 @@
+village_asset 1
+image VillageArmory.png
+size 95 111
+id VillageArmory
+category Building
+service Armory
+cost 0
+required 1
+unique 0
+removable 0
+collider 2.00 46.00 91.00 63.00
+interact 20.00 106.00 56.00 44.00 type=Inspect

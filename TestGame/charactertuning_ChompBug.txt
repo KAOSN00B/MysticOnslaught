@@ -1,6 +1,9 @@
 scale=5.200
-anim_0_body_x=-1.00
-anim_0_body_y=32.00
+hurt_pad_x=0.00
+hurt_pad_y=0.00
+anim_frametime_0=0.1664
+anim_0_body_x=-2.77
+anim_0_body_y=29.73
 anim_0_body_r=105.00
 anim_1_body_x=-3.00
 anim_1_body_y=33.00

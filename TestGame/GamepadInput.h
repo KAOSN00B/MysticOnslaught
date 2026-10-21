@@ -1,6 +1,5 @@
 ﻿#pragma once
 #include "raylib.h"
-#include "WebGamepad.h"
 
 // Remappable gamepad button assignments.
 // Defaults match the standard Xbox / PlayStation layout requested by the user.

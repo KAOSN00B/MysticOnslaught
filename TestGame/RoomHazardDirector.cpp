@@ -228,7 +228,7 @@ void RoomHazardDirector::Update(const RoomHazardContext& ctx)
                 {
                     if (boltsInFlight < Balance::Hazards::kEnvProjectileCap && ctx.spawnFireBolt)
                     {
-                        ctx.spawnFireBolt(hazard.pos, hazard.aimDir, ctx.scaledBoltDamage);
+                        ctx.spawnFireBolt(hazard.pos, hazard.aimDir, ctx.scaledBoltDamage, hazard.type);
                         boltsInFlight++;
                     }
                     hazard.actionTimer = Balance::Hazards::kTotemFireInterval;
@@ -259,7 +259,7 @@ void RoomHazardDirector::Update(const RoomHazardContext& ctx)
                     {
                         hazard.tickAccum -= Balance::Hazards::kHazardTickInterval;
                         if (ctx.damagePlayer)
-                            ctx.damagePlayer(ctx.scaledTickDamage, hazard.pos);
+                            ctx.damagePlayer(ctx.scaledTickDamage, hazard.pos, hazard.type);
                     }
                 }
             }
@@ -277,7 +277,7 @@ void RoomHazardDirector::Update(const RoomHazardContext& ctx)
             {
                 if (boltsInFlight < Balance::Hazards::kEnvProjectileCap && ctx.spawnFireBolt)
                 {
-                    ctx.spawnFireBolt(hazard.pos, hazard.fireDir, ctx.scaledBoltDamage);
+                    ctx.spawnFireBolt(hazard.pos, hazard.fireDir, ctx.scaledBoltDamage, hazard.type);
                     boltsInFlight++;
                 }
                 hazard.actionTimer = Balance::Hazards::kTorchFireInterval;

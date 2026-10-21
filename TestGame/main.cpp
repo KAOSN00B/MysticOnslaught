@@ -1,27 +1,17 @@
 #include "Engine.h"
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/emscripten.h>
-#endif
-
-#ifdef __EMSCRIPTEN__
-static void RunWebFrame(void* arg)
-{
-    Engine* engine = static_cast<Engine*>(arg);
-    engine->RunFrame();
-}
-#endif
-
 int main()
 {
-	Engine engine;
-
-#ifdef __EMSCRIPTEN__
-	emscripten_set_main_loop_arg(RunWebFrame, &engine, 0, true);
-#else
-	engine.Run();
+#if !MO_DEV_TOOLS && !MO_ITCH_DEMO
+    // Resolve packaged assets even when launched from a shortcut elsewhere.
+    ChangeDirectory(GetApplicationDirectory());
 #endif
 
-	CloseAudioDevice();   // AFTER engine destroyed
-	return 0;
+	{
+	Engine engine;
+	engine.Run();
+	} // Engine members release resources before the devices close
+	if (IsAudioDeviceReady()) CloseAudioDevice();
+	if (IsWindowReady()) CloseWindow();
+	return Engine::ProcessExitCode();   // non-zero only when the dev flow self-test failed
 }	

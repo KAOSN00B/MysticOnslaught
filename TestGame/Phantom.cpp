@@ -1,4 +1,5 @@
 #include "Phantom.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -66,9 +67,9 @@ void Phantom::ResetForSpawn(Vector2 pos)
     _width  = kPhantomFrameWidth;
     _scale  = 4.4f;
     _speed  = kDriftSpeed;
-    _health = 2.f;
-    _maxHealth = 2.f;
-    _attackPower = 1.f;
+    _health = Balance::Fodder::kFragileHealth;
+    _maxHealth = Balance::Fodder::kFragileHealth;
+    _attackPower = 10.f;
     _expValue = 4;
 
     _capsuleRadius     = 24.f;
@@ -338,15 +339,15 @@ void Phantom::SetWaveScale(int wave)
 {
     (void)wave;
     _expValue    = 4;
-    _health      = 2.f;
-    _maxHealth   = 2.f;
+    _health      = Balance::Fodder::kFragileHealth;
+    _maxHealth   = Balance::Fodder::kFragileHealth;
     _speed       = kDriftSpeed;
-    _attackPower = 1.f;
+    _attackPower = 10.f;
 }
 
 void Phantom::PlayAttackSound()
 {
-    float pitch = GetRandomValue(60, 85) / 100.f;
+    float pitch = SoundVariation::VariedPitch(0.725f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.5f);
     PlaySound(_attackSound);

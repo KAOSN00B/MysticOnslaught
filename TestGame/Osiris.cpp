@@ -1,4 +1,5 @@
 #include "Osiris.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "EncounterPattern.h"
@@ -46,8 +47,8 @@ void Osiris::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health = 58.f; _maxHealth = 58.f;
-    _attackPower = 1.f;
+    _health = 580.f; _maxHealth = 580.f;
+    _attackPower = 10.f;
     _speed = _moveSpeed;
     _expValue = _bossBaseExpValue;
 
@@ -216,7 +217,7 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _state = State::MeleeAttacking;
                 _damageApplied = false;
                 SetAnimation(_sharedMeleeAnim, 1.f / 11.f, true);
-                PlaySound(_attackSound);
+                SoundVariation::PlayPitchVaried(_attackSound);
                 break;
             }
 
@@ -271,7 +272,7 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         case State::MeleeAttacking:
             _velocity = Vector2Zero();
-            if (!_damageApplied && _frame >= 3)
+            if (!_damageApplied && MeleeWindowLive(kAnimSlotAttack, kBossMeleeHitFrame, kHitThroughLastFrame))
             {
                 Rectangle attackRec;
                 if (!GetAnimMeleeRectWorld(2, attackRec))
@@ -281,12 +282,13 @@ void Osiris::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                     if (_rightLeft < 0.f) attackRec.x -= 100.f;
                     attackRec.y -= 20.f; attackRec.height += 40.f;
                 }
-                if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+                const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+                if (hit)
                 {
                     _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
-                _damageApplied = true;
+                _damageApplied = MeleeCheckDone(kAnimSlotAttack, hit);
             }
             if (_frame >= _maxFrames - 1)
             {
@@ -902,7 +904,7 @@ void Osiris::SetWaveScale(int wave)
     _expValue = _bossBaseExpValue;
     _health = Balance::Boss::kOsirisHealth; _maxHealth = Balance::Boss::kOsirisHealth;
 _enrageThreshold = 0.50f;
-    _speed = _moveSpeed; _attackPower = 1.f;
+    _speed = _moveSpeed; _attackPower = 10.f;
 }
 
 void Osiris::EnsureSharedResourcesLoaded()

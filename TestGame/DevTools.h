@@ -12,3 +12,11 @@
 #ifndef MO_DEV_TOOLS
 #define MO_DEV_TOOLS 1
 #endif
+
+// MO_ITCH_DEMO gates the bounded public demo loop (Class select -> Forest ->
+// village/Zeph -> Caverns -> demo-complete, no tutorial). Only the PublicDemo
+// configuration defines it to 1; every other build compiles the demo flow out
+// and keeps the full game.
+#ifndef MO_ITCH_DEMO
+#define MO_ITCH_DEMO 0
+#endif

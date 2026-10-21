@@ -4,6 +4,7 @@
 #include "AnimationUtils.h"
 #include "AttackTuning.h"
 #include "raymath.h"
+#include "VfxGlow.h"
 
 #include <algorithm>
 
@@ -64,6 +65,11 @@ void EnemyProjectile::Draw(Vector2 worldOffset) const
     Vector2 screenPos = Vector2Add(_worldPos, worldOffset);
     screenPos.x += kVirtualWidth  / 2.f;
     screenPos.y += kVirtualHeight / 2.f;
+
+    const Color glow = (_kind == EnemyProjectileKind::Spit)      ? Vfx::kSpitGlow :
+                       (_kind == EnemyProjectileKind::FireBolt)  ? Vfx::kFireGlow :
+                                                                   Vfx::kArrowGlow;
+    Vfx::DrawGlowHalo(screenPos, Balance::Vfx::kBoltHaloRadius, glow, Balance::Vfx::kBoltHaloStrength);
 
     float rotation = atan2f(_direction.y, _direction.x) * RAD2DEG;
 

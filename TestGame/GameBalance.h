@@ -7,6 +7,11 @@
 // real teeth and a first clear is an achievement, but it's fair. All *extra*
 // difficulty lives in the Ascension ladder (see Ascension.h), NOT here.
 //
+// NUMBER SCALE (2026-10-18): HP, damage and healing were multiplied by 10 so
+// hits have room for crits and stat-based tuning (heroes 60-100 HP, opening
+// hits ~20-40, late hits into the high hundreds). Multipliers, chances,
+// durations, XP and prices did not change.
+//
 // RULE: gameplay code must READ these constants, never hardcode the number
 // beside them. If you find yourself typing a balance literal in a .cpp, add it
 // here instead. Everything is constexpr, so it inlines at zero runtime cost.
@@ -44,13 +49,55 @@ namespace Balance::Levelling
     inline constexpr int kBossRoomClearExp     = 30;
 }
 
+// ── Player stats: Defense, crits and the stat cards ──────────────────────────
+// PLACEHOLDERS (2026-10-18) until the gear/formula pass. Defense replaced the
+// old armour pips: a hit is multiplied by K / (K + Defense), the reduction is
+// capped so a stacked build still takes real damage, and a landed hit always
+// deals at least 1 (DamagePolicy.h). Defense applies to hits only; burn,
+// poison and other ticks ignore it. Every player hit rolls the crit chance and
+// a crit adds the crit damage on top.
+namespace Balance::Stats
+{
+    inline constexpr float kDefenseK            = 60.f;    // was 100: a 10-damage grunt hit lost ~1 at Defense 10
+    inline constexpr float kMaxDefenseReduction = 0.60f;   // reached at 90 Defense
+    inline constexpr int   kMinHitDamage        = 1;
+
+    inline constexpr float kBaseCritChance    = 0.05f;
+    inline constexpr float kBaseCritDamage    = 0.50f;     // a crit deals +50%
+    inline constexpr float kMaxCritChance     = 1.f;
+    inline constexpr float kDeadeyeCritChance = 0.20f;     // Deadeye relic
+
+    // Defense sources. The old pips converted as: one spent pip -> minor; two
+    // pips or a permanent armour slot -> major.
+    inline constexpr float kClassStartDefense = 10.f;      // Warrior, Paladin
+    inline constexpr float kDefenseMinor      = 5.f;       // Defense card, Unbreakable, Survivalist, Iron Case
+    inline constexpr float kDefenseMajor      = 10.f;      // Iron Skin, Juggernaut, Sanctuary, Stone Skin,
+                                                           // Bulwark, Fortify, Iron Hide, Arcane Graft, Ironroot Tonic
+    inline constexpr float kIroncladDefensePerRoom = 3.f;
+    inline constexpr float kIroncladDefenseMax     = 15.f;
+    inline constexpr float kRallyDefense        = 20.f;    // War Cry / Shield of Faith, timed
+    inline constexpr float kRallyDefenseSeconds = 6.f;
+
+    // Stat cards.
+    inline constexpr float kAttackCard     = 5.f;
+    inline constexpr float kMaxHealthCard  = 20.f;
+    inline constexpr float kSpeedCard      = 6.f;          // movement grows only a little
+    inline constexpr float kCritChanceCard = 0.03f;
+    inline constexpr float kCritDamageCard = 0.15f;
+}
+
 // ── Ability damage ───────────────────────────────────────────────────────────
 namespace Balance::AbilityDamage
 {
-    inline constexpr float kSpreadBase     = 1.0f;
-    inline constexpr float kSpreadBurnBase = 1.0f;
-    inline constexpr float kBoltBase       = 3.0f;   // 3x spread per shot
-    inline constexpr float kBoltBurnBase   = 2.0f;
+    inline constexpr float kSpreadBase     = 10.0f;
+    inline constexpr float kSpreadBurnBase = 10.0f;
+    inline constexpr float kBoltBase       = 50.0f;
+    inline constexpr float kUltimateBase   = 60.0f;
+    // Instant Mage spreads (Frost Nova, lightning dash) hit once, so they deal
+    // double spread damage; Flame Wall keeps x1 because it ticks ~11 times.
+    inline constexpr int   kInstantSpreadMult = 2;
+    inline constexpr float kBoltBurnBase   = 20.0f;
+    inline constexpr int   kLevelHitBonus  = 10;     // elemental spell damage per ability level above 1
     inline constexpr float kUpgradeBonus   = 0.25f;  // _abilityDamageMultiplier per upgrade
 
     // Class-ability damage per ability level above 1 (Engine dmgVal). Level 3
@@ -82,20 +129,47 @@ namespace Balance::Curve
 }
 
 // ── Grunt (basic enemy) base profile at power level 1 ────────────────────────
+// OPENING RULE: no class kills a standard enemy with one basic attack at the
+// start of a run. The strongest opening basic hit is the Warrior's 40 (see
+// PlayerClass.cpp) and the strongest opening ability hit is 50 (see
+// ClassAbilityBalance.h), so every standard enemy starts at 60+ HP. That also
+// covers a swing on a Cleave-vulnerable target (40 x 1.25 = 50).
+// OpeningBalanceTests.cpp enforces this against the class table.
+// Deliberate one-hit pops are exempt: Bomber Imp (explodes on death) and the
+// small slimes a big slime splits into.
+namespace Balance::PlayerBasic
+{
+    // Ranged basics (Mage / Hunter / Warlock) deal this fraction of attack power:
+    // 2/3 of the opening attack 30 is a 20-damage shot.
+    inline constexpr float kRangedScale = 2.f / 3.f;
+}
+
 namespace Balance::Grunt
 {
     inline constexpr int   kBaseExpValue    = 3;
-    inline constexpr float kBaseHealth      = 4.f;
-    inline constexpr float kBaseAttack      = 1.f;
+    inline constexpr float kBaseHealth      = 60.f;
+    inline constexpr float kBaseAttack      = 10.f;
     inline constexpr float kBaseSpeed       = 185.f;
     inline constexpr float kBaseAttackDelay = 1.5f;
+}
+
+// ── Standard enemy HP at power level 1 (the ladder above the grunt) ──────────
+namespace Balance::Fodder
+{
+    inline constexpr float kFragileHealth      = 60.f;  // archers, phantoms, wisps, blades
+    inline constexpr float kSporelingHealth    = 60.f;
+    inline constexpr float kBigSlimeHealth     = 60.f;
+    inline constexpr float kSmallSlimeHealth   = 10.f;  // split fragment (exempt)
+    inline constexpr float kShieldbearerHealth = 80.f;  // tank
+    inline constexpr float kWarchiefHealth     = 80.f;  // support
+    inline constexpr float kBomberImpHealth    = 10.f;  // explodes on death (exempt)
 }
 
 // ── Elite minibosses (Ogre / Cyclops) base HP at power level 1 ───────────────
 namespace Balance::Elite
 {
-    inline constexpr float kOgreHealth    = 10.f;
-    inline constexpr float kCyclopsHealth = 7.f;
+    inline constexpr float kOgreHealth    = 100.f;
+    inline constexpr float kCyclopsHealth = 70.f;
 
     // ── Elite signature kits (shared) ────────────────────────────────────────
     // Health stays on the existing 2.5x elite conversion — fight length comes
@@ -121,6 +195,7 @@ namespace Balance::Elite
     inline constexpr float kInfernalBurstRecoveryP2 = 1.35f; // longer exhausted window after OVERHEATED
     inline constexpr float kInfernalFissureLength  = 420.f;
     inline constexpr float kInfernalFissureWidth   = 58.f;   // half-width; gaps between the 3 fissures stay walkable
+    inline constexpr float kInfernalPatchRadius    = 70.f;   // each flame patch the march leaves
     inline constexpr float kInfernalSignatureCooldown = 5.0f;
     inline constexpr float kInfernalPhaseMeleeMult = 0.85f;  // slightly faster melee cadence in phase two
 
@@ -129,6 +204,8 @@ namespace Balance::Elite
     inline constexpr float kBonechillSlamTelegraph = 0.80f;
     inline constexpr float kBonechillSlamActive    = 0.30f;
     inline constexpr float kBonechillSlamRecovery  = 0.85f;
+    inline constexpr float kBonechillSlamReach     = 150.f;  // the slam disc lands this far in front
+    inline constexpr float kBonechillSlamRadius    = 140.f;
     inline constexpr float kBonechillLaneLength    = 460.f;
     inline constexpr float kBonechillLaneWidth     = 52.f;
     inline constexpr float kBonechillSignatureCooldown = 5.5f;
@@ -163,7 +240,7 @@ namespace Balance::Elite
     inline constexpr int   kPoisonStackCap   = 3;
     inline constexpr float kPoisonDuration   = 4.0f;
     inline constexpr float kPoisonTickInterval = 0.8f;
-    inline constexpr float kPoisonDamagePerTick = 0.5f;   // per stack, fractional accumulates
+    inline constexpr float kPoisonDamagePerTick = 5.f;    // per stack
 }
 
 // ── Bosses — unified role model ──────────────────────────────────────────────
@@ -171,12 +248,12 @@ namespace Balance::Elite
 // smooth spread instead of ad-hoc numbers. Bosses are then power-scaled by the
 // curve above at the depth they actually spawn, so a tanky boss met late is
 // genuinely tanky. To make ALL bosses tankier/squishier, change kBaseHealth.
-//   First boss (Caverns) is a gentle intro; the final boss (Demon's Insides) is
-//   the wall. The eight middle bosses can appear at any zone 1-4, so they share
-//   the mid budget and differ only by combat role.
+//   The first domain is always the Forest (Werewolf); the final boss is the
+//   Molarbeast in Demon's Insides, the wall. The other bosses can appear at any
+//   zone 1-4, so they share the mid budget and differ only by combat role.
 namespace Balance::Boss
 {
-    inline constexpr float kBaseHealth = 46.f;   // "standard mid-boss" budget
+    inline constexpr float kBaseHealth = 460.f;  // "standard mid-boss" budget
 
     // Role multipliers.
     inline constexpr float kRoleFirst    = 0.55f;  // tutorial first boss
@@ -189,16 +266,16 @@ namespace Balance::Boss
     inline constexpr float kRoleFinal    = 1.55f;  // final boss
 
     // Per-boss resolved HP (base x role). Bosses read THESE in SetWaveScale.
-    inline constexpr float kMolarbeastHealth  = kBaseHealth * kRoleFirst;    // ~25
-    inline constexpr float kChompBugHealth    = kBaseHealth * kRoleGlass;    // ~37
-    inline constexpr float kWerewolfHealth    = kBaseHealth * kRoleFast;     // ~39
-    inline constexpr float kOsirisHealth      = kBaseHealth * kRoleCaster;   // ~44
-    inline constexpr float kPumpkinJackHealth = kBaseHealth * kRoleStandard; // ~46
-    inline constexpr float kToxicVerminHealth = kBaseHealth * kRoleStandard; // ~46
-    inline constexpr float kAncientBearHealth = kBaseHealth * kRoleHeavy;    // ~53
-    inline constexpr float kMinotaurHealth    = kBaseHealth * kRoleTank;     // ~58
-    inline constexpr float kTitanGuardHealth  = kBaseHealth * kRoleTank;     // ~58
-    inline constexpr float kAbyssSlimeHealth  = kBaseHealth * kRoleFinal;    // ~71
+    inline constexpr float kMolarbeastHealth  = kBaseHealth * kRoleFinal;    // ~713, the final boss
+    inline constexpr float kChompBugHealth    = kBaseHealth * kRoleGlass;    // ~368
+    inline constexpr float kWerewolfHealth    = kBaseHealth * kRoleFast;     // ~391
+    inline constexpr float kOsirisHealth      = kBaseHealth * kRoleCaster;   // ~437
+    inline constexpr float kPumpkinJackHealth = kBaseHealth * kRoleStandard; // ~460
+    inline constexpr float kToxicVerminHealth = kBaseHealth * kRoleStandard; // ~460
+    inline constexpr float kAncientBearHealth = kBaseHealth * kRoleHeavy;    // ~529
+    inline constexpr float kMinotaurHealth    = kBaseHealth * kRoleTank;     // ~575
+    inline constexpr float kTitanGuardHealth  = kBaseHealth * kRoleTank;     // ~575
+    inline constexpr float kAbyssSlimeHealth  = kBaseHealth * kRoleStandard; // ~460, the Caverns boss
 }
 
 // ── Sustain ──────────────────────────────────────────────────────────────────
@@ -210,7 +287,7 @@ namespace Balance::Sustain
 {
     inline constexpr float kBossClearHealFraction = 0.40f;  // partial breath after a boss, not a reset
     inline constexpr int   kMaxHealDropsPerRoom   = 2;      // chance + timed heal pickups combined
-    inline constexpr int   kLifestealCapPerRoom   = 6;      // HP returned by lifesteal per room
+    inline constexpr int   kLifestealCapPerRoom   = 60;     // HP returned by lifesteal per room
     inline constexpr float kManaRegenPerSecond    = 0.25f;  // base regen (was 0.2) — compensates the
                                                             // removed +5 mana per level
 }
@@ -222,7 +299,49 @@ namespace Balance::Economy
     inline constexpr int   kRerollBaseCost        = 45;
     inline constexpr int   kRerollStep            = 35;    // added per reroll
     inline constexpr int   kReserveStockCost      = 15;    // lock one card through rerolls
-    inline constexpr float kActPriceInflation     = 0.25f; // +25% shop prices per act
+    // Shop tier = RunProgression::ShopTierForZone (one tier per world-map domain).
+    inline constexpr float kActPriceInflation     = 0.25f; // +25% ability prices per shop tier
+    inline constexpr float kWareTierInflation     = 0.15f; // +15% ware prices per shop tier
+    inline constexpr int   kAbilityUpgradeBase    = 110;   // level 1 -> 2
+    inline constexpr int   kAbilityUpgradeStep    = 70;    // each further level
+    // Domain bounty paid on every domain-boss clear: 50, 100, ... 250 gold, so
+    // income keeps pace with the per-domain shop tiers (Engine::CompleteDomain).
+    inline constexpr int   kDomainBountyBase      = 50;
+    inline constexpr int   kDomainBountyStep      = 50;
+    // One-time gift when a brand-new profile first speaks with Zeph, so the
+    // village shop does something on the very first visit (one ware).
+    inline constexpr int   kNewProfileWelcomeGold = 60;
+}
+
+// ── Domain pacing ────────────────────────────────────────────────────────────
+// Every domain (one dungeon) must clear in 15 minutes or less. The planned
+// seconds below include walking between rooms and are PLANNING estimates, not
+// measurements: replace them with the median clear time per room kind from the
+// room telemetry (F1/F10 panel) and re-check the plans. DungeonGenEntranceTests
+// enforces PlannedDomainSeconds(...) <= kDomainMaxSeconds for every domain.
+namespace Balance::Pacing
+{
+    inline constexpr float kDomainMaxSeconds           = 900.f;   // 15 minutes
+    // Planning prices per room kind. Standard and treasure rooms share the first
+    // value; elite and boss rooms are priced by their fight length. ALL FOUR ARE
+    // ESTIMATES until the per-room telemetry from real runs replaces them.
+    inline constexpr float kPlannedSecondsPerRoom      = 60.f;
+    inline constexpr float kPlannedSecondsPerEliteRoom = 90.f;
+    inline constexpr float kPlannedSecondsPerBossRoom  = 150.f;
+
+    // Room counts per domain (index 0 = first domain, last = final domain).
+    inline constexpr int kRoomsByDomain[6]     = { 8, 9, 10, 11, 12, 12 };
+    inline constexpr int kElitesByDomain[6]    = { 1, 1,  2,  2,  2,  2 };
+    inline constexpr int kTreasuresByDomain[6] = { 1, 1,  1,  2,  2,  2 };
+
+    // Planned clear time for one domain: one boss room, elites at their own rate,
+    // and every other room (standard and treasure) at the base rate.
+    constexpr float PlannedDomainSeconds(int rooms, int elites)
+    {
+        return (float)(rooms - elites - 1) * kPlannedSecondsPerRoom
+             + (float)elites * kPlannedSecondsPerEliteRoom
+             + kPlannedSecondsPerBossRoom;
+    }
 }
 
 // ── Room / spawn structure ───────────────────────────────────────────────────
@@ -230,6 +349,10 @@ namespace Balance::Rooms
 {
     inline constexpr int kRoomsPerAct      = 6;   // 5 normal + 1 boss
     inline constexpr int kMaxActiveEnemies = 16;
+    // Special rooms per domain (rest site and decision rooms together).
+    inline constexpr int kSpecialsEarly         = 1;   // domains before kSpecialsLateFromZone
+    inline constexpr int kSpecialsLate          = 2;
+    inline constexpr int kSpecialsLateFromZone  = 2;   // zone index: domain 3 is index 2
 }
 
 // ── Pickup spawn timing ──────────────────────────────────────────────────────
@@ -246,15 +369,6 @@ namespace Balance::BossSupport
     inline constexpr float kMinPlayerDistance = 520.f;
 }
 
-// ── Game feel / juice ────────────────────────────────────────────────────────
-namespace Balance::Feel
-{
-    // Damage is single-digit internally; floating combat numbers are multiplied
-    // by this for display only (balance untouched). Bump for bigger, juicier
-    // numbers. 25 turns an 8-damage hit into "200".
-    inline constexpr int kDamageNumberScale = 25;
-}
-
 // ── Enemy facing & directional combat ────────────────────────────────────────
 // Facing commitment stops enemies flipping toward the player every frame, which
 // made shield fronts unbeatable and backstabs impossible. Front/rear checks use
@@ -262,6 +376,9 @@ namespace Balance::Feel
 // left/right), not a raw x-comparison.
 namespace Balance::Facing
 {
+    // Ranged classes turn to face their shot, then fire after this window, so the
+    // shot leaves the side of the sprite the player is now facing.
+    inline constexpr float kRangedTurnSeconds = 0.08f;
     // cos-space cone edges: dot(facing, toAttacker) >= kFrontConeDot counts as
     // "in front" (0.25 ≈ a 150° shielded arc); dot <= -kRearConeDot counts as
     // "behind" (a matching 150° rear arc). The sides belong to neither.
@@ -276,6 +393,21 @@ namespace Balance::Facing
     inline constexpr float kAttackRecoveryFacingLock = 0.35f;
     // Rogue Backstab: damage multiplier applied ONLY when the rear check passes.
     inline constexpr float kBackstabRearMult = 2.2f;
+}
+
+// ── Shieldbearer guard (placeholder values) ─────────────────────────────────
+// The raised shield blocks hits arriving from the front, but every blocked hit
+// fills a guard meter. A full meter breaks the guard: that hit lands, the
+// Shieldbearer staggers with its shield down, then raises it with an empty
+// meter. It also lowers the shield to swing and raises it a moment after.
+// Damage over time (poison, bleed, burns, ground fire) always gets through.
+namespace Balance::ShieldGuard
+{
+    inline constexpr float kBreakAtMaxHpFraction   = 1.0f;   // blocked damage that breaks the guard, x its max HP
+    inline constexpr float kBreakStaggerSeconds    = 2.0f;   // shield down, no moving or attacking
+    inline constexpr float kRecoverDelaySeconds    = 1.5f;   // seconds without a block before the meter drains
+    inline constexpr float kRecoverPerSecond       = 0.25f;  // meter drained per second, as a share of a full meter
+    inline constexpr float kRaiseAfterSwingSeconds = 0.35f;  // shield stays down this long after a swing ends
 }
 
 // ── Room pressure budget ─────────────────────────────────────────────────────
@@ -409,7 +541,7 @@ namespace Balance::DamageNumbers
     inline constexpr int   kVisibleCap      = 32;
     inline constexpr int   kMinFontSize     = 20;
     inline constexpr int   kMaxFontSize     = 42;
-    inline constexpr float kDamageReference = 12.f;
+    inline constexpr float kDamageReference = 120.f;
     inline constexpr float kRiseSpeed       = 92.f;
     inline constexpr float kLifetime        = 0.90f;
     inline constexpr float kOutline         = 2.f;
@@ -426,7 +558,7 @@ namespace Balance::Hazards
     inline constexpr float kDisabledSeconds    = 4.f;    // downtime after the player disables one
     inline constexpr float kFirstActionGrace   = 1.5f;   // no firing right as the player enters
     inline constexpr int   kEnvProjectileCap   = 10;     // hard cap on environmental shots in flight
-    inline constexpr int   kHazardTickDamage   = 1;
+    inline constexpr int   kHazardTickDamage   = 10;
     inline constexpr float kHazardTickInterval = 0.5f;
     // Fraction of COMBAT rooms that roll a hazard, by tier.
     inline constexpr float kRoomFrequencyByTier[3] = { 0.38f, 0.58f, 0.72f };
@@ -446,7 +578,7 @@ namespace Balance::Hazards
     inline constexpr float kTotemFireInterval = 3.2f;   // seconds between shots
     inline constexpr float kTotemAimSeconds   = 0.9f;   // telegraph line duration
     inline constexpr float kTotemAimLock      = 0.35f;  // aim freezes this long before firing (dodge window)
-    inline constexpr int   kTotemBoltDamage   = 1;      // BASE damage (scaled by power level)
+    inline constexpr int   kTotemBoltDamage   = 10;     // BASE damage (scaled by power level)
     inline constexpr float kTotemHealth       = 3.f;    // player hits to destroy
     inline constexpr float kTotemScale        = 5.5f;   // 16x32 sprite -> world size
 
@@ -458,11 +590,244 @@ namespace Balance::Hazards
     // Fireball Torch: wall-anchored lane launcher on a learnable rhythm.
     inline constexpr float kTorchFireInterval = 2.6f;   // lane shot cadence
     inline constexpr float kTorchPrefireFlash = 0.5f;   // bright flash before each shot
-    inline constexpr int   kTorchBoltDamage   = 1;
+    inline constexpr int   kTorchBoltDamage   = 10;
     inline constexpr float kTorchHealth       = 3.f;
     inline constexpr float kTorchScale        = 5.f;    // 16x16 emitter sprite
     // Keep the lane clear of the east/west door band (door sits at mid-height).
     inline constexpr float kTorchDoorBandHalf = 170.f;
+
+    // Elite "Arena Pressure" volleys (CombatDirector): the shots come out of the
+    // room's walls. Each launch point glows on the wall first (an ember that
+    // grows and points where it will fly), then fires. One of three patterns:
+    //   barrage  a row along one wall, all flying straight across, launched as a ripple
+    //   fan      a spread from the corner farthest from the player
+    //   salvo    a few points on the far wall, each aimed at the player
+    // Size matches an enemy fire bolt: the same 52 px hitbox, and the lava art
+    // drawn at 1.5x so it shows 45-66 px across, like a fire bolt's 46-64
+    // (at 2x it showed up to 88 px and looked bigger than what hits).
+    inline constexpr float kVolleyDrawScale       = 1.5f;
+    inline constexpr float kVolleyHitSize         = 52.f;   // = an enemy fire bolt's hitbox
+    inline constexpr float kVolleyWindupSeconds   = 0.7f;   // the ember's glow before the shot leaves
+    inline constexpr float kVolleyRippleSeconds   = 0.09f;  // a barrage or fan launches shot by shot, this far apart
+    inline constexpr float kVolleySalvoGapSeconds = 0.2f;   // aimed salvo shots, this far apart
+    inline constexpr float kVolleyWallInset       = 28.f;   // launch points sit this far inside the wall face
+    inline constexpr float kVolleyCornerInset     = 60.f;   // fan origin, this far in from the corner on each axis
+    inline constexpr float kVolleyAimSpreadDeg    = 8.f;    // salvo: each shot off the player by up to this
+    inline constexpr float kVolleyFanArcDeg       = 50.f;   // fan: the whole spread
+    inline constexpr float kVolleyMinPlayerDist   = 360.f;  // never launch this close to the player
+    // A launch point on a wall tile, a prop, or under the HUD panel slides
+    // toward the room centre in these steps until it is clear, or is dropped.
+    inline constexpr float kVolleyLaunchSlideStep = 24.f;
+    inline constexpr int   kVolleyLaunchSlideMax  = 6;
+    inline constexpr int   kVolleyPatternWeights[3] = { 40, 30, 30 };   // barrage, fan, salvo
+    // The ember (virtual px): grows from kVolleyEmberStartShare of its radius,
+    // with a dark rim so it reads on bright floors, a pointer toward where the
+    // shot will fly, and a warning ring that closes in on it: when the ring
+    // reaches the ember, the shot leaves.
+    inline constexpr float kVolleyEmberRadius     = 22.f;
+    inline constexpr float kVolleyEmberStartShare = 0.5f;
+    inline constexpr float kVolleyEmberCoreShare  = 0.45f;  // white-hot core, share of the ember
+    inline constexpr float kVolleyEmberRim        = 4.f;    // dark rim width
+    inline constexpr float kVolleyEmberRimAlpha   = 0.6f;
+    inline constexpr float kVolleyEmberPulseHz    = 9.f;
+    inline constexpr float kVolleyEmberPulseDepth = 0.25f;  // brightness swing of the pulse
+    inline constexpr float kVolleyWarnRingStart   = 76.f;   // ring radius as the ember lights
+    inline constexpr float kVolleyWarnRingWidth   = 4.f;
+    inline constexpr float kVolleyPointerLength   = 44.f;   // from the ember's edge
+    inline constexpr float kVolleyPointerWidth    = 8.f;
+    inline constexpr float kVolleyAuraRadius      = 56.f;   // soft light around the ember
+    inline constexpr float kVolleyAuraStrength    = 0.30f;
+}
+
+// ── Visual effects: halos and glow (VfxGlow.h) ──────────────────────────────
+// Radii are in virtual pixels; strengths are the halo's alpha (0 = none, 1 = full).
+namespace Balance::Vfx
+{
+    inline constexpr int   kHaloTextureSize   = 128;
+    inline constexpr float kBoltHaloRadius    = 40.f;   // enemy and player projectiles
+    inline constexpr float kBoltHaloStrength  = 0.60f;
+    inline constexpr float kPickupHaloRadius  = 30.f;   // gold, heal orbs, cells
+    inline constexpr float kPickupHaloStrength = 0.45f;
+    inline constexpr float kDeathHaloRadius   = 80.f;   // kill burst, scaled by the flash
+    inline constexpr float kDeathHaloStrength = 0.90f;
+
+    // Glow (bloom). false = the old flat halos, nothing else glows.
+    inline constexpr bool  kGlowEnabled         = true;
+    inline constexpr int   kGlowBufferDivisor   = 2;      // light buffer is 1/2 of the canvas
+    // How much each blur level adds: tight (1/2 size), mid (1/4), wide (1/8).
+    // Raise wide for softer, bigger glow; raise tight for hotter cores.
+    inline constexpr float kGlowTightWeight     = 0.15f;  // high values wash out the sprite itself
+    inline constexpr float kGlowMidWeight       = 0.60f;
+    inline constexpr float kGlowWideWeight      = 1.20f;
+    inline constexpr int   kGlowWideBlurPasses  = 2;      // extra blurs of the 1/8 level spread it further
+    inline constexpr float kGlowIntensity       = 1.00f;  // overall brightness of all glow
+    inline constexpr float kGlowHaloCoreScale   = 0.70f;  // halo light core vs. the old halo radius
+    inline constexpr float kGlowSpriteStrength  = 0.60f;  // spells, bolts and hit effects
+    inline constexpr float kGlowHazardStrength  = 0.30f;  // lingering ground pools (acid, poison)
+    inline constexpr float kGlowShockwaveStrength = 0.80f; // kill flash and ring
+    inline constexpr float kGlowSlashStrength   = 0.90f;  // melee contact slashes
+    inline constexpr int   kGlowRingSegments    = 40;
+
+    // Pixel-art effects (VfxPixel.h): every effect shape and particle snaps to a
+    // grid of these squares (virtual px; one art pixel at sprite scale).
+    inline constexpr int   kFxPixelSize         = 4;
+    inline constexpr float kGlowShapeStrength   = 0.60f;  // ability rings/lines, auras' rims, motes, orbs
+    inline constexpr float kGlowTelegraphStrength = 0.35f; // aim previews and danger warnings: readable, not blinding
+    // The aim line stops this far from the player (virtual px; ~1.5 inch at 96 dpi).
+    // The ground-area preview still uses the full target.
+    inline constexpr float kAimLineMaxLength      = 144.f;
+    inline constexpr float kAuraLightBoost      = 3.0f;   // faked-glow disc alpha x this = its light strength
+
+    // Particles (Enter the Gungeon style): chunky square pixels in short streaks
+    // that run white-hot -> own colour -> dark ember (see Vfx::HeatRamp).
+    inline constexpr float kSparkStreakSeconds  = 0.10f;  // streak length = speed x this (drag shortens it)
+    inline constexpr float kSparkMaxLength      = 40.f;   // virtual px
+    inline constexpr float kSparkTailAgeLead    = 0.30f;  // tail pixels look this much older (cooler)
+    inline constexpr float kGlowSparkStrength   = 0.55f;
+    inline constexpr float kSparkGlowWidth      = 2.5f;   // glow line thickness, in spark pixels
+    inline constexpr float kHeatWhiteFraction   = 0.20f;  // share of a life spent white-hot
+    inline constexpr float kHeatEmberDarken     = 0.45f;  // ember = own colour x this
+    inline constexpr float kSmokeGrowPixels     = 2.f;    // a smoke puff grows by this many pixels
+    // Melee impact burst: Hit03 redrawn by the silhouette shader along HeatRamp.
+    inline constexpr float kMeleeImpactScale     = 3.f;
+    inline constexpr float kMeleeImpactFrameTime = 1.f / 24.f;
+    // Muzzle flash where a shot leaves: a small Hit03 burst in the shot's colour
+    // plus a few sparks kicked forward (spells with their own cast sprite get
+    // only the sparks).
+    inline constexpr float kMuzzleFlashScale     = 2.f;
+    inline constexpr float kMuzzleFlashFrameTime = 1.f / 30.f;
+    inline constexpr int   kMuzzleSparkCount     = 4;
+    inline constexpr float kMuzzleSparkSpeed     = 260.f;
+    inline constexpr float kMuzzleSparkSpread    = 0.35f;  // radians either side of the shot
+    // Dash dust: a burst of pixel puffs at the feet when a dash starts, then a
+    // trail of single puffs drifting back against the dash.
+    inline constexpr int   kDashDustBurstPuffs   = 6;
+    inline constexpr float kDashDustTrailInterval = 0.035f; // seconds between trail puffs
+    inline constexpr float kDashDustSpeed        = 60.f;
+    inline constexpr float kDashDustDrift        = 90.f;   // backward drift against the dash
+}
+
+// ── Time of day (DayNight.h, VfxNight.h) ─────────────────────────────────────
+// The clock always runs while you play (village and dungeon, indoors or out)
+// and never shows on screen. Only outdoor places take the look of the hour:
+// the village and the outdoor biomes (DayNight::IsOutdoorBiome). Indoor biomes
+// keep their own art. No night art: the look recolours the art as drawn.
+namespace Balance::DayNight
+{
+    inline constexpr float kDayLengthSeconds = 20.f * 60.f;  // one full day in real play time
+    inline constexpr float kHoursPerDay      = 24.f;
+    inline constexpr float kStartHour        = 8.f;          // a new profile starts in the morning
+
+    // The look at set hours; between two of them it blends smoothly.
+    //   tint        multiplies the scene (255 = unchanged)
+    //   saturation  1 = the art's colours, 0 = grey
+    //   lights      how strongly fire, spells and the player's light show (0 by day)
+    //   haze        a colour laid over everything, by hazeAmount
+    // Keep the hours in order; the last one blends into the first after midnight.
+    struct Rgb { unsigned char r, g, b; };
+    struct Keyframe
+    {
+        float hour;
+        Rgb   tint;
+        float saturation;
+        float lights;
+        Rgb   haze;
+        float hazeAmount;
+    };
+    inline constexpr Keyframe kLooks[] = {
+        //  hour    tint               sat    lights   haze               haze amount
+        {  0.0f, { 105, 120, 185 },  0.60f,  1.00f,  {  20,  30,  70 },  0.00f },   // night
+        {  4.5f, { 105, 120, 185 },  0.60f,  1.00f,  {  20,  30,  70 },  0.00f },   // night ends
+        {  6.0f, { 205, 165, 175 },  0.80f,  0.60f,  { 255, 180, 150 },  0.06f },   // dawn: pink
+        {  7.5f, { 255, 230, 195 },  0.92f,  0.15f,  { 255, 215, 160 },  0.06f },   // morning: soft gold haze
+        {  9.5f, { 255, 255, 255 },  1.00f,  0.00f,  {   0,   0,   0 },  0.00f },   // day: the art as drawn
+        { 16.5f, { 255, 255, 255 },  1.00f,  0.00f,  {   0,   0,   0 },  0.00f },   // day ends
+        { 18.5f, { 255, 195, 150 },  0.95f,  0.25f,  { 255, 140, 100 },  0.06f },   // evening: orange
+        { 20.0f, { 175, 135, 190 },  0.80f,  0.70f,  { 120,  70, 140 },  0.04f },   // dusk: purple
+        { 21.5f, { 105, 120, 185 },  0.60f,  1.00f,  {  20,  30,  70 },  0.00f },   // night
+    };
+
+    // Light (virtual px). Everything that glows (VfxGlow.h) also lights the
+    // ground around the spot it is on right now, in its own colour, so a
+    // fireball carries its light with it and leaves no lit trail.
+    inline constexpr float kLightSizeFromGlow   = 3.0f;   // light radius = the glow's own radius x this
+    inline constexpr float kMinLightRadius      = 48.f;
+    inline constexpr float kMaxLightRadius      = 260.f;
+    inline constexpr float kGlowLightStrength   = 0.8f;   // x the glow's own strength
+    inline constexpr float kLineLightSpacing    = 120.f;  // beams and slashes: one light per this much length
+    inline constexpr int   kMaxLightsPerLine    = 4;
+    inline constexpr Rgb   kWhiteLightColor     { 255, 214, 165 };   // glows drawn in white (a sprite's own colours) light warm
+    inline constexpr unsigned char kWhiteLightMin = 230;  // a glow with every channel at least this counts as white
+    inline constexpr float kPlayerLightRadius   = 230.f;  // a soft light around the player, so they never get lost
+    inline constexpr float kPlayerLightStrength = 0.55f;
+    inline constexpr Rgb   kPlayerLightColor    { 255, 225, 180 };
+    // Light brings the art back toward its daytime colours (never brighter).
+    inline constexpr float kLightGain           = 1.6f;   // soft knee: how lit = 1 - exp(-light x this)
+    inline constexpr float kLightTint           = 0.50f;  // how much a light's colour tints what it lights
+    inline constexpr int   kLightBands          = 4;      // stepped, pixel-art light; 0 = smooth
+    // The light buffer has one texel per effect pixel (Balance::Vfx::kFxPixelSize),
+    // so light falls on the same square grid as the effects.
+
+    // Debug fast-forward (juice panel, J in debug mode).
+    inline constexpr float kMaxDebugClockSpeed  = 600.f;  // x real time: a 20-minute day in 2 seconds
+    inline constexpr float kDebugClockSpeedStep = 10.f;
+    inline constexpr float kDebugHourStep       = 0.25f;
+}
+
+// ── Animation events (Character Animator): how a fired event plays ──────────
+namespace Balance::AnimEvents
+{
+    inline constexpr float kDefaultFxSize  = 4.f;          // FX sheet draw scale when an event sets none
+    inline constexpr float kFxFrameSeconds = 1.f / 24.f;   // same pace as the boss FX
+    inline constexpr float kDefaultShake   = 6.f;          // shake strength when an event sets none
+    inline constexpr float kShakeSeconds   = 0.12f;
+    inline constexpr int   kFxCellSize     = 64;           // FX_*.png sheets are 64 px cells
+}
+
+// ── Enemy size: standard enemies match the player's visible art height ─────
+// The hero's art is 19 px tall inside its 32 px frame (measured), drawn at x4, so
+// it shows as 76 px. Each standard enemy is sized by its visible art height, which
+// Enemy::MeasureVisibleHeight reads from its sheet, so sheet padding doesn't matter.
+// Bosses keep their authored scale.
+namespace Balance::Visual
+{
+    inline constexpr float kPlayerDrawScale     = 4.f;    // the hero's 32 px frames, same as the village citizens
+    inline constexpr float kPlayerVisibleHeight = 76.f;   // hero art 19 px x draw scale 4
+    inline constexpr float kEliteSizeMult       = 1.15f;  // Ogre, Cyclops: a little bigger
+    inline constexpr float kMushroomSizeMult    = 0.90f;  // Sporeling: a little smaller
+
+    // Sprite scale that makes an enemy's visible art visibleHeight px tall x mult.
+    inline constexpr float ScaleForVisibleHeight(float visibleHeight, float mult)
+    {
+        return visibleHeight > 0.f ? kPlayerVisibleHeight * mult / visibleHeight : 1.f;
+    }
+}
+
+// ── Boss intro (Werewolf first): drop-in, roar, name banner, then the fight ──
+// The room is frozen and the player stays idle for the whole intro. The fight
+// starts (and the boss track begins) when it ends. Skippable after the first
+// viewing by holding attack.
+namespace Balance::BossIntro
+{
+    inline constexpr float kDropHeight        = 420.f;  // px above the room the boss starts from
+    inline constexpr float kDropSeconds       = 0.8f;   // falls and lands
+    inline constexpr float kLandShake         = 8.f;    // shake strength on landing
+    inline constexpr float kLandShakeSeconds  = 0.2f;
+    inline constexpr float kRoarAt            = 1.0f;   // roar starts here (intro clock)
+    inline constexpr float kRoarShake         = 14.f;
+    inline constexpr float kRoarShakeSeconds  = 0.35f;
+    inline constexpr float kBannerSeconds     = 1.0f;   // name banner on screen after the roar
+    inline constexpr float kSkipHoldSeconds   = 1.0f;   // hold attack this long to skip
+
+    // Banner and skip prompt layout (virtual px).
+    inline constexpr float kBannerFadeSeconds = 0.25f;
+    inline constexpr float kBannerBandY       = 0.38f;  // fraction of the screen height
+    inline constexpr float kBannerBandHeight  = 120.f;
+    inline constexpr int   kBannerTitleSize   = 64;
+    inline constexpr float kSkipRingInner     = 16.f;
+    inline constexpr float kSkipRingOuter     = 22.f;
+    inline constexpr float kSkipMargin        = 40.f;
+    inline constexpr int   kSkipTextSize      = 20;
 }
 
 // ── Timings / miscellaneous ──────────────────────────────────────────────────

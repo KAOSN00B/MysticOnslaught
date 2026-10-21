@@ -3,6 +3,8 @@
 #include "AttackEditor.h"
 #include "AbilityType.h"
 #include "AttackTuning.h"
+#include "TuningFiles.h"
+#include "EliteMoveDefs.h"
 #include "GameBalance.h"
 #include "SpreadProjectile.h"
 #include "AssetPaths.h"
@@ -63,63 +65,14 @@ namespace
         return out;
     }
 
-    // ── Elite signature moves ────────────────────────────────────────────────
-    // Defaults mirror the live values in Balance::Elite so the editor shows
-    // exactly what an untuned move does. Travel applies only to movement moves.
-    struct EliteMoveDef
-    {
-        const char* owner; const char* name;
-        float telegraph, active, recovery, cooldown, travel, phaseSpeed, phaseCooldown;
-    };
-    const std::vector<EliteMoveDef>& EliteMoveTable()
-    {
-        namespace Elite = Balance::Elite;
-        static const std::vector<EliteMoveDef> table = {
-            { "Infernal",  "Cinder March",    Elite::kInfernalMarchTelegraph, Elite::kInfernalMarchActive,
-              Elite::kInfernalMarchRecovery,  Elite::kInfernalSignatureCooldown, 0.f, 1.f, 1.f },
-            { "Infernal",  "Furnace Burst",   Elite::kInfernalBurstTelegraph, Elite::kInfernalBurstActive,
-              Elite::kInfernalBurstRecovery,  Elite::kInfernalSignatureCooldown, 0.f, 1.f, 1.f },
-            { "Bonechill", "Permafrost Slam", Elite::kBonechillSlamTelegraph, Elite::kBonechillSlamActive,
-              Elite::kBonechillSlamRecovery,  Elite::kBonechillSignatureCooldown, 0.f,
-              Elite::kBonechillPhaseSpeed,    Elite::kBonechillPhaseCooldownMult },
-            { "Stormclub", "Thunder Leap",    Elite::kStormclubLeapTelegraph, 0.f,
-              Elite::kStormclubHitRecovery,   Elite::kStormclubSignatureCooldown,
-              Elite::kStormclubLeapRange, 1.f, 1.f },
-            { "Venomfang", "Venom Pounce",    Elite::kVenomfangPounceTelegraph, 0.f,
-              Elite::kVenomfangPounceRecovery, Elite::kVenomfangSignatureCooldown,
-              Elite::kVenomfangPounceRange, 1.f, 1.f },
-        };
-        return table;
-    }
-    const EliteMoveDef* FindEliteMoveDef(const std::string& key)
-    {
-        for (const EliteMoveDef& moveDef : EliteMoveTable())
-            if (Sanitise(std::string(moveDef.owner) + "_" + moveDef.name) == key)
-                return &moveDef;
-        // The Ogre's charge lives in the boss table (it doubles as a boss-support
-        // add) but is elite-tunable through the same signature fields.
-        static const EliteMoveDef ogreCharge{ "Ogre", "Charge", 3.0f, 0.f, 0.70f, 6.0f, 0.f, 1.f, 1.f };
-        if (key == "Ogre_Charge")
-            return &ogreCharge;
-        return nullptr;
-    }
+    // Elite signature moves: defaults, row masks and row specs are shared with
+    // the Character Animator (EliteMoveDefs.h).
+    using EliteMoveDef = EliteMoves::MoveDef;
+    inline const std::vector<EliteMoveDef>& EliteMoveTable() { return EliteMoves::Table(); }
+    inline const EliteMoveDef* FindEliteMoveDef(const std::string& key) { return EliteMoves::Find(key); }
+    inline unsigned EliteSupportedRowMask(const std::string& key) { return EliteMoves::SupportedRowMask(key); }
 
-    // Which signature rows this move's RUNTIME actually reads — unsupported
-    // rows are hidden entirely so the editor never appears to work while
-    // gameplay ignores the value. Bit i = row i (see kSignatureRows order:
-    // telegraph, active, recovery, cooldown, travel, p2 speed, p2 cooldown).
-    unsigned EliteSupportedRowMask(const std::string& key)
-    {
-        if (key == "Ogre_Charge")               return 0b0001101;  // telegraph, recovery(stun), cooldown
-        if (key == "Infernal_Cinder_March")     return 0b0001011;  // telegraph, active(march time), cooldown
-        if (key == "Infernal_Furnace_Burst")    return 0b0001101;  // telegraph, recovery, cooldown
-        if (key == "Bonechill_Permafrost_Slam") return 0b1101101;  // + both phase-two multipliers
-        if (key == "Stormclub_Thunder_Leap")    return 0b0011101;  // + travel (leap range)
-        if (key == "Venomfang_Venom_Pounce")    return 0b0011101;  // + travel (pounce range)
-        return 0b1111111;
-    }
-
-    std::string TuningPath(const std::string& key) { return "attacktuning_" + key + ".txt"; }
+    std::string TuningPath(const std::string& key) { return TuningFiles::Path("attacktuning_" + key + ".txt"); }
 
     void ForwardBox(bool& circle, float& x, float& y, float& w, float& h, float length, float height)
     {
@@ -901,18 +854,9 @@ void AttackEditor::DrawEdit()
 // ── Elite signature timing rows ──────────────────────────────────────────────
 namespace
 {
-    struct SignatureRowSpec { const char* label; float perPixel; float minValue; float maxValue; };
-    // Row order matches _signatureValues: telegraph, active, recovery,
-    // cooldown, travel, phase-two speed x, phase-two cooldown x.
-    constexpr SignatureRowSpec kSignatureRows[7] = {
-        { "Telegraph (s)",    0.01f, 0.10f,  6.f },
-        { "Active (s)",       0.01f, 0.00f,  6.f },
-        { "Recovery (s)",     0.01f, 0.10f,  4.f },
-        { "Cooldown (s)",     0.02f, 0.50f, 20.f },
-        { "Travel (px)",      1.00f, 0.00f, 1400.f },
-        { "P2 Speed x",       0.005f, 0.50f, 2.f },
-        { "P2 Cooldown x",    0.005f, 0.30f, 2.f },
-    };
+    // Row order matches _signatureValues (EliteMoveDefs.h).
+    using SignatureRowSpec = EliteMoves::RowSpec;
+    constexpr const SignatureRowSpec* kSignatureRows = EliteMoves::kRows;
     Rectangle SignatureRowRect(int rowIndex)
     {
         return Rectangle{ (float)kVirtualWidth - 420.f, 90.f + rowIndex * 46.f, 400.f, 40.f };

@@ -35,6 +35,10 @@ public:
     int         GetSpawnCost()     const override { return 3; }
     const char* GetTuningName()    const override { return "Venomfang"; }
 
+    // ── Character Animator: special moves ────────────────────────────────────
+    int      GetEditorMoveCount() const override;
+    MoveInfo GetEditorMove(int index) const override;
+
     // Poison identity: every landed bite applies REAL stacking poison.
     void OnMeleeHitPlayer(Character* target) override;
 

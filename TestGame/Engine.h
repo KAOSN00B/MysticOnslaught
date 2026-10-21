@@ -2,7 +2,12 @@
 #pragma once
 
 #include "raylib.h"
+#include "DevTools.h"   // MO_DEV_TOOLS / MO_ITCH_DEMO build gates
 #include "GameTypes.h"
+#include "CombatPresentation.h"
+#include "JourneyTransition.h"
+#include "RunProgression.h"
+#include <stdexcept>
 #include "KeyBindings.h"
 #include "Character.h"
 #include "Prop.h"
@@ -10,6 +15,7 @@
 #include "Cyclops.h"
 #include "Ogre.h"
 #include "Molarbeast.h"
+#include "Grimoire.h"
 #include "SkeletonArcher.h"
 #include "FlameWisp.h"
 #include "SlimeEnemy.h"
@@ -64,6 +70,7 @@
 #include "WorldMapManager.h"
 #include "SettingsManager.h"
 #include "MetaProgression.h"
+#include "RunLog.h"
 #include "Ascension.h"
 #include "RoomAffix.h"
 #include "VirtualCanvas.h"
@@ -88,6 +95,7 @@
 #include <unordered_map>
 #include <functional>
 
+struct RunCheckpoint;   // RunCheckpoint.h
 
 class Engine
 {
@@ -97,8 +105,71 @@ public:
 
     void Run();
     void RunFrame();
+    // Process exit code (0 unless the dev flow self-test reported failures).
+    static int ProcessExitCode() { return s_processExitCode; }
 
 private:
+    static int s_processExitCode;
+
+    // ── Automated end-to-end flow self-test (EngineFlowSelfTest.cpp) ─────────
+    // Dev builds only; enabled by MO_FLOW_SELFTEST=1 (play-through) or =2
+    // (relaunch checks), with MO_PROFILE_DIR pointing at a sandbox folder.
+    struct FlowSelfTest
+    {
+        int phase = 0, step = 0, subStep = 0, checks = 0, failures = 0;
+        float stepTime = 0.f;
+        std::string report;
+        int boughtWare = -1; float defenseBefore = 0.f;
+        int bankedBeforeRun = 0, bankedBeforeCamp = 0, bankedBeforeDeath = 0, carriedCells = 0;
+        int goldBeforeExit = 0;
+        float hpBeforeExit = 0.f;
+        std::string expectBuilding;
+        int expectBuildingCount = 0, expectWallet = 0;
+        int levelUpsAnswered = 0;
+        int armoryStarter = -1;   // AbilityType chosen at the Armory (phase 1 -> 2)
+        int pathBoon = -1;        // the crossroads reward taken (phase 1 -> camp checks)
+        int goldAtCrossroads = 0;
+        int crossroadsBiomes[3] = { -1, -1, -1 };   // phase 6: doors before save & resume
+        std::string savedCheckpoint;                 // phase 5: a live checkpoint's bytes, put back after death
+        int injectedSaveFailures = 0;                // checkpoint writes a phase failed on purpose
+        int peakEnemyProjectiles = 0;                // phase 7: busiest moment of a stress group
+        float noonBrightness = 0.f;                  // phases 1, 3: a place by day, against its night
+        float clockBefore = 0.f;                     // phase 1: the hour to put back after the night shot
+        std::string tuningFilesBefore;               // phase 8: the tuning files, to prove none was written
+    };
+    FlowSelfTest _flowTest;
+#if MO_DEV_TOOLS
+    static bool FlowSelfTestRequested();
+    void InitFlowSelfTest();
+    void UpdateFlowSelfTest(float dt);
+    void UpdateFlowSelfTestPhase1();
+    void UpdateFlowSelfTestPhase2();
+    void UpdateFlowSelfTestPhase3();   // biome tour: every domain's authored rooms + screenshots
+    void UpdateFlowSelfTestPhase4();   // mid-run save: build up a run, Save & Main Menu
+    void UpdateFlowSelfTestPhase5();   // relaunch: Continue resumes it exactly; death ends it
+    void UpdateFlowSelfTestPhase6();   // room events: generation rules and every event's effects
+    void UpdateFlowSelfTestPhase7();   // combat stress: 10 / 25 / 50 enemies (on demand, not in the gate)
+    void UpdateFlowSelfTestPhase8();   // Character Animator: every character, size, undo, prompt, lineup
+    void FlowLog(const std::string& line);
+    void FlowCheck(bool ok, const std::string& what);
+    void FlowNextStep();
+    void FinishFlowSelfTest(bool aborted);
+    void FlowKillAllEnemies();
+    bool FlowTravelSettled() const;
+    void FlowScreenshot(const std::string& name);
+    float FlowCanvasBrightness() const;   // average brightness (0-1) of the last drawn frame
+
+    // Combat frame timing: CPU time of Update and Draw for each presented live
+    // dungeon frame, bucketed by active enemy count, kept apart from the frame
+    // interval (vsync / target-FPS pacing). Flow-test work and journey loading
+    // are excluded. Logged as FRAMETIME lines on shutdown.
+    struct FrameTimingSample { float updateMs, drawMs, intervalMs; };
+    static constexpr int kFrameTimingBucketCount = 5;   // 0, 1-9, 10-24, 25-49, 50+ enemies
+    std::vector<FrameTimingSample> _frameTiming[kFrameTimingBucketCount];
+    void RecordFrameTiming(float updateMs, float drawMs, float intervalMs);
+    void LogFrameTimingSummary() const;
+#endif
+
     // Draws the custom sword mouse cursor on the real window, and hides the OS
     // cursor, for all normal game screens. Editors (tile mapper, 9-slice, touch
     // layout, HUD/map/hitbox/dialogue editors) keep the normal OS cursor.
@@ -109,14 +180,17 @@ private:
     void Init();
 
     void Update(float dt);
+    // onFailure restores a valid source state if a stage throws; defaults to the main menu.
+    bool QueueJourney(const std::string& label, std::vector<JourneyTransition::Step> steps,
+                      std::function<void()> onFailure = nullptr);
+    void DrawJourneyOverlay() const;
+    JourneyTransition _journey;
+    bool _journeyExecuting = false;
     void Draw();
     void UpdateInputPromptMode();
     InputPromptMode GetPromptModeForUi() const;
 
-    void UpdateGamePlay(float dt);
-    void SpawnWave();
     void SpawnEnemies();
-    void HandleCollisions();
     void UpdateEnemyCount(float dt);
     Enemy* SpawnBasicEnemy(Vector2 pos);
     Enemy* SpawnCyclops(Vector2 pos);
@@ -141,6 +215,20 @@ private:
 
     // Class select + run start
     void StartMainRun();                       // ResetRunState + enter Forest
+    // Run lifecycle (one-wallet loop). The next run's character is prepared on
+    // village arrival so purchases made there ride along; one-shot run-start
+    // grants happen at the gate; carried Echoes bank on a safe return/victory.
+    void PrepareNextRun();
+    void GrantRunStartBonuses();
+    void BankCarriedEchoes();
+    void AbandonRunToMenu();                   // pause/death-screen "main menu"
+    bool _nextRunPrepared = false;
+    AbilityType _preparedStarter = AbilityType::None;   // starter the prepared character holds
+    unsigned int _runSeed = 0;                 // RNG seed of the current run (telemetry)
+    float _victoryInputLock = 0.f;             // victory screen ignores input briefly
+    static constexpr float kVictoryInputLockSeconds = 1.0f;
+    std::string _victoryUnlockLine;            // "NEW CLASS UNLOCKED: ..." shown on victory
+    static std::string DescribeNewClassUnlocks(unsigned mask);
     void StartSelectedGameMode();
     void StartPrologue();
     void UpdateClassSelect();
@@ -179,18 +267,73 @@ private:
     float   _deathReviveTypeT     = 0.f;  // typewriter reveal progress (phase 1)
     int     _deathReviveLostGold  = 0;    // captured at death for the loss animation
     int     _deathReviveLostCells = 0;
+    int     _deathReviveSalvagedEchoes = 0;   // half the carried Echoes, banked by Poe
     Vector2 _deathReviveWorldPos{};       // player world pos at death (mote origin)
 
-    // ── Boss-clear choice (every boss): return to village vs double-or-nothing ──
-    // Return -> EnterVillage keeping hauled gold (run ends; spend at the build
-    // menu, restart via the gate). Push onward -> full heal + bonus gold + the
-    // cursed wager unlocks (only path it appears on), then continue this run.
-    void OpenBossChoice();
-    void UpdateBossChoice();
-    void DrawBossChoice();
-    int   _bossChoiceCursor    = 0;      // 0 = return to village, 1 = push onward
-    float _bossChoiceOpenTimer = 0.f;    // brief input lock after the screen opens
-    bool  _wagerAccessGranted  = false;  // set by "push onward"; gates the cursed wager
+    // ── Domain completion (Hades-style run) ─────────────────────────────────────
+    // Every boss exit: breather heal + depth-scaled bounty, then the world map;
+    // the next domain opens at Zeph's camp (shop, Poe's altar, Echo banking,
+    // wager shrine). The village is reached only after death or victory.
+    void CompleteDomain();
+    // Player actions with their UI wrappers stripped off, so the UI and the
+    // flow self-test drive exactly the same code.
+    void CommitWorldMapChoice(Biome selectedBiome, int selectedTierIdx);
+    void FinishVillageIntro();
+    void ConfirmDeathRevive();
+    bool ConfirmClassSelection(PlayerClass selectedClass);
+    void ConfirmRelicChoice(int choiceIndex);
+    void ConfirmLevelUpCard(bool ultimateRow, int index);
+    void LeaveVictoryScreen();
+    void CommitShopContract();   // leaving Zeph's shop arms an accepted contract
+    bool BuyVillageObject(int defIndex, int cellCol, int cellRow);
+    bool RemoveVillageObject(int placedIndex);
+    // Village Armory: the class starter, then the class's other regular
+    // abilities; option N opens at class mastery rank N.
+    std::vector<AbilityType> GetArmoryOptions(PlayerClass cls) const;
+    bool IsArmoryOptionUnlocked(PlayerClass cls, int index) const;
+    AbilityType GetRunStarterAbility(PlayerClass cls) const;   // saved choice, validated
+    bool ConfirmArmoryChoice(int index);
+    // Core town: authored buildings on fixed plots, shown once unlocked.
+    static bool IsVillageCoreBuilding(const std::string& name);
+    bool IsVillageCoreBuildingUnlocked(const std::string& name) const;
+    void SyncVillageCoreBuildings();
+    void AnnounceVillageUnlocks();   // one-time notice per newly opened building
+    // ── Mid-run save (suspend & resume) — EngineRunSave.cpp ───────────────────
+    bool IsRunSaveable() const;     // a real main run in a resumable place (dungeon / world map)
+    // Room entry, room clear, world map, Save & Quit. False only when a write
+    // was needed and failed; the run is then untouched in memory.
+    bool SaveRunCheckpoint();
+    void EndRunCheckpoint();        // death / victory / abandon / New Game: nothing to resume
+    bool HasResumableRun() const;
+    bool ReadSuspendedRun(RunCheckpoint& out) const;   // the checkpoint, if the profile's active run
+    bool ResumeSavedRun();          // Continue: back into the suspended run
+    bool SaveAndQuitRunToMenu();    // pause "Save & Main Menu" (not a death); false = save failed, still paused
+    bool _runCheckpointEnded = false;
+    long long _runId = 0;           // this main run's id in the profile (0 = none)
+    // "Couldn't save" notice after a failed checkpoint write (pause quit, Save &
+    // Quit, closing the window). The first window close after a failed write
+    // is refused with the notice; the next one quits even if saving still fails.
+    static constexpr float kRunSaveFailedNoticeSeconds = 6.f;
+    float _runSaveFailedTimer = 0.f;
+    bool  _closeRefusedForFailedSave = false;
+    int   _runCheckpointWriteFailures = 0;   // this session (flow checks expect only injected ones)
+    void NotifyRunSaveFailed();
+    void DrawRunSaveFailedNotice() const;
+    int  _shopStockZone = -1;   // the domain whose camp stocked Zeph's current wares (-1 none)
+    std::string DescribeSuspendedRun() const;   // menu caption, "" when no run waits
+    std::string _menuRunCaption;
+    bool        _menuRunCaptionFresh = false;
+    bool _campNeedsRestock   = false;   // after a resume Zeph's camp restocks once (no reheal/rebank)
+    // Guards against falling back into the retired legacy loops (act map, wave
+    // mode, old game-over, boss choice): recover into the run or the village.
+    static bool IsRetiredGameState(GameState state);
+    void RecoverFromRetiredState();
+    void ApplyPauseAction(int pauseResult);   // pause-menu choice, applied from Update only
+    GameState _shopReturnState = GameState::Village;   // where Zeph's shop returns on leave
+    Vector2 _campZephPos{ 960.f, 453.6f };     // camp anchors, re-placed on safe floor per camp
+    Vector2 _campAltarPos{ 576.f, 453.6f };
+    Vector2 _campShrinePos{ 1344.f, 453.6f };
+    bool  _wagerAccessGranted  = false;  // true at Zeph's camps after the Forest; gates the cursed wager
 
     bool _secondWindAvailable = false;          // meta unlock: one free revive per run
     float _secondWindToastTimer = 0.f;          // "SECOND WIND!" banner countdown
@@ -269,6 +412,7 @@ private:
         bool  active        = false;    // false = armed/pending, true = applying now
         int   roomsRemaining = 1;       // combat rooms it covers once active
         ShopContractType shopContract = ShopContractType::Count;
+        bool  curse         = false;    // Cursed Cache: lifts when it ends instead of paying out
     };
     std::vector<RunModifier> _runModifiers;
     static constexpr int kMaxAcceptedModifiers = 2;   // accepted-danger cap (A4)
@@ -303,7 +447,9 @@ private:
 
     // Per-ability HUD/card icons for non-elemental abilities (PowerUps/Ability_*.png).
     Texture2D _abilityIcons[(int)AbilityType::Count]{};
-    Texture2D* GetAbilityIcon(AbilityType type);   // nullptr => use procedural/element fallback
+    const Texture2D* GetAbilityIcon(AbilityType type) const;   // nullptr => use procedural/element fallback
+    Texture2D* GetAbilityIcon(AbilityType type)
+    { return const_cast<Texture2D*>(static_cast<const Engine&>(*this).GetAbilityIcon(type)); }
 
     // Per-ability animated in-world FX strips (PowerUps/FX_*.png, 64px cells).
     Texture2D _abilityFx[(int)AbilityType::Count]{};
@@ -314,6 +460,13 @@ private:
     std::vector<Texture2D> _bossFx;
     std::vector<int>       _bossFxFrames;
     void SpawnBossFx(Vector2 worldPos, int fxId);
+    // Animation events (Character Animator): FX sheets load by name on first
+    // use; `enemy` null = the player's event.
+    void PlayAnimEvent(const FiredAnimEvent& fired, Enemy* enemy);
+    void PlayPlayerAnimEvents();
+    struct EventFxSheet { Texture2D texture{}; int frames = 0; };
+    std::unordered_map<std::string, EventFxSheet> _eventFxSheets;
+    std::vector<FiredAnimEvent> _playerAnimEvents;
     // Elite signature art (BossFx strips with caller scale/tint): one-shot
     // impact and lingering hazard decal. See CombatDirector's zone routing.
     void SpawnEliteFx(Vector2 worldPos, int fxId, float scale, Color tint);
@@ -380,6 +533,7 @@ private:
         bool required = false;               // service/quest asset, not optional decor
         bool uniqueInVillage = false;        // only one allowed in the real village
         bool removable = true;               // can be removed/refunded after placement
+        bool coreTown = false;               // core town building: fixed authored plot, never player-placed
         std::string serviceName;             // Shop, Relic, Wardrobe, etc. for future dispatch
         VillageService service = VillageService::None;      // typed form of serviceName, .vasset-backed entries only
         std::vector<VAssetMarker> markers;                   // named anchors (Zeph/Poe/Respawn/NPCSpawn/...)
@@ -402,6 +556,7 @@ private:
         std::string defName;                 // persisted identity (catalog order can change)
         int defIndex = -1;                   // runtime-resolved catalog index
         int cellCol = 0, cellRow = 0;
+        bool placedThisVisit = false;        // full refund only for same-visit undo
     };
     void EnterVillage();                      // main-game hub (saves, graveyard respawn, gate)
     void EnterVillageShared();
@@ -415,7 +570,6 @@ private:
     void DrawVillageRuntimeObject(const VillageRuntimeObjectDef& def, int cellCol, int cellRow, Vector2 worldOffset, Color tint, VillageObjectLayer layer) const;
     bool VillagePlaygroundCanPlace(int defIndex, int cellCol, int cellRow) const;
     Rectangle VillagePlacedObjectWorldRect(const VillagePlacedObject& placed, const VillageRuntimeSolid* solid) const;
-    bool VillageObjectHasSolidAt(const VillageRuntimeObjectDef& def, int localCol, int localRow) const;
     static bool VillageObjectIsOneTimeService(const VillageRuntimeObjectDef& def);
     static bool VillageObjectIsPermanentService(const VillageRuntimeObjectDef& def);
     static const char* VillageObjectRuleLabel(const VillageRuntimeObjectDef& def);
@@ -424,13 +578,28 @@ private:
     Rectangle VillageDoorWorldRect(const VillagePlacedObject& placed, const VillageRuntimeDoor& door) const;
     bool VillageDoorIsOpen(const VillagePlacedObject& placed, const VillageRuntimeDoor& door) const;
     void RefreshVillageShopNpc();
+    void PlaceVillageZeph(Vector2 npcPos);   // restock once per visit, else just move him
+    int  GetShopTier() const;                // RunProgression shop tier for the current context
+    int  _villageVisitId = 0;
+    int  _villageShopStockVisit = -1;
     void UpdateVillagePlacedObjectServices(float dt);   // press-E service dispatch (Training->MetaShop, ...)
+    int  VillageServiceInRange() const;   // placed index of the service the player stands at, -1 if none
     void TriggerVillageDungeonGate();   // start/resume a run; shared by the fixed approach-rect check and the DungeonGate service
     int FindVillageObjectDefIndex(const std::string& defName) const;
     void DrawVillageField(Vector2 worldOffset) const;   // forest floor + wall border ring
     void DrawVillagePlacementGhost(Vector2 worldOffset, Vector2 mouseWorld);
-    void SaveVillageLayout() const;   // village_layout.txt — main-game village only, tester never writes
-    void LoadVillageLayout();
+    bool SaveVillageLayout() const;
+    void ExportVillageLayout();   // F9 in build mode: writes the placed layout for hardcoding   // writes the layout into the profile (with the wallet)
+    void LoadVillageLayout();         // profile -> legacy file (migrated once) -> authored default
+    // Persists the layout and the village wallet together after any building
+    // purchase/refund/move, in ONE atomic profile write.
+    void CommitVillageEconomy();
+    std::vector<MetaProgressionManager::VillagePlacement> BuildVillagePlacements() const;
+    bool _villageLayoutLoaded = false;                // layout is read from disk once per session
+    bool _villageUseAuthoredLayout = false;           // after New Game: authored default, no legacy import
+    struct VillageCorePlot { std::string defName; int cellCol = 0, cellRow = 0; };
+    std::vector<VillageCorePlot> _villageCorePlots;   // reserved even before the building opens
+    mutable bool _villageLayoutSavePending = false;   // last save failed; retried on next arrival
 
     // Citizen NPCs — ambient wanderers; more appear as the village grows.
     struct VillageCitizen
@@ -443,29 +612,44 @@ private:
         float chatCooldown = 0.f;        // seconds before this citizen may chat again
         bool facingLeft = false;
         float walkBobPhase = 0.f;        // placeholder-sprite walk animation
-        Color tint{};                    // per-citizen clothing colour (placeholder art)
+        Color tint{};                    // per-citizen clothing colour (fallback art)
+        int skin = 0;                    // index into the resident sprite sheets
+        float animTime = 0.f;
+        float barkTimer = 0.f;           // seconds the speech bubble stays up
+        float barkCooldown = 0.f;        // seconds before this resident speaks again
+        int barkLine = 0;
     };
+    std::vector<Texture2D> _villageResidentIdle;   // Hero sheets reused as villagers
+    std::vector<Texture2D> _villageResidentWalk;
     bool VillageCitizenSpotIsClear(Vector2 position) const;
 
     Vector2 VillageRandomStandablePoint() const;
 
     void SyncVillageCitizenCount();      // citizen count follows placed building count (capped)
     void UpdateVillageCitizens(float deltaTime);
-    void DrawVillageCitizens(Vector2 worldOffset) const;
+    void DrawVillageCitizenSprite(const VillageCitizen& c, Vector2 worldOffset) const;
+    void DrawVillageCitizenBubbles(Vector2 worldOffset) const;   // speech, drawn above everything
     // Placeholder building interior ("interior_default") reached through doors
     void EnterVillageInterior(const std::string& interiorName, Vector2 villageReturnPos);
     void ExitVillageInterior();
     void UpdateVillageInterior(float dt);
     void DrawVillageInterior();
     // -- Poison clouds (Sporeling deaths + ToxicVermin pools) ----------------
-    void SpawnPoisonCloud(Vector2 pos, float radius);
+    void SpawnPoisonCloud(Vector2 pos, float radius, const DamageSource& source);
     void UpdatePoisonClouds(float dt);
     void DrawPoisonClouds(Vector2 worldOffset) const;
 
     // -- Relics ---------------------------------------------------------------
     // Scales a player hit by the owned damage relics, reading the target's
     // status. Every enemy->TakeDamage call from the player routes through this.
-    int  ScalePlayerHit(const Enemy& target, int baseDamage, bool& outCrit) const;
+    // Combines every per-hit modifier in float and rounds once (DamagePolicy.h).
+    int  ScalePlayerHit(const Enemy& target, float baseDamage, bool& outCrit);
+    float _hitDamageCarry = 0.f;   // fractional damage carried to the next hit (per run)
+    // Carry computed by the last ScalePlayerHit, committed by RegisterHitFx only
+    // when that target actually lost HP (blocked/invulnerable hits never touch it).
+    float         _stagedHitCarry  = 0.f;
+    std::uint64_t _stagedHitTarget = 0;
+    bool          _hitCarryStaged  = false;
     // Fires on-kill relic effects (lifesteal, corpse explosions). Called from
     // the enemy-death path with the dead enemy's status snapshot.
     void ApplyRelicOnKill(Vector2 pos, bool wasBurning, bool wasFrozen,
@@ -473,8 +657,14 @@ private:
     void ApplyPendingReflect();                   // Paladin Aegis: reflect damage to attacker
 
     // ── Juice ──────────────────────────────────────────────────────────────────
+    CombatImpactGate _combatImpactGate;
     float _hitStopTimer = 0.f;   // > 0 = gameplay frozen for a few frames (impact)
-    void  RequestHitStop(float seconds) { if (seconds > _hitStopTimer) _hitStopTimer = seconds; }
+    // Scaled by Settings > Comfort > Hit-Stop (reduced halves it, off skips it).
+    void  RequestHitStop(float seconds)
+    {
+        seconds *= _settingsMgr.Get().HitStopScale();
+        if (seconds > _hitStopTimer) _hitStopTimer = seconds;
+    }
 
     // Slow-mo (crit + boss death): scales gameplay dt while active.
     float _slowMoTimer = 0.f;
@@ -505,6 +695,7 @@ private:
     float _displayCells   = 0.f;
     float _displayHpPct   = 1.f;
     float _displayManaPct = 1.f;
+    float _hudCoverAlpha  = 1.f;   // HUD panel opacity: lower while something is under it
 
     // ── Live juice tuning (debug panel: J in debug mode) ────────────────────────
     // Runtime copies of the feel constants so they can be nudged while playing.
@@ -512,14 +703,14 @@ private:
     float _juiceCritSlowScale = 0.40f;
     float _juiceBossSlowDur    = 0.80f;
     float _juiceBossSlowScale  = 0.30f;
-    float _juiceKillHitStop    = 0.07f;
+    float _juiceKillHitStop    = 0.065f;   // kills freeze a touch longer: the payoff beat
     // Every landed (non-kill) hit now gets a brief freeze so strikes "bite" instead
     // of passing through. Scaled by the fraction of the target's max HP removed, so
     // a chunky blow freezes longer than chip damage — and huge-HP bosses barely
     // stutter. Clamped to [min, max].
-    float _juiceHitStopMin     = 0.022f;   // floor: even a tiny tick registers
-    float _juiceHitStopMax     = 0.060f;   // cap on a normal (non-kill) hit
-    float _juiceShakeMult      = 1.00f;
+    float _juiceHitStopMin     = 0.016f;   // floor: even a tiny tick registers
+    float _juiceHitStopMax     = 0.042f;   // cap on a normal (non-kill) hit
+    float _juiceShakeMult      = 1.15f;    // a little more shake everywhere
     float _juiceCritFocus      = 0.55f;
     bool  _juiceForceCrit      = false;   // debug: every player hit crits
     bool  _juicePanelOpen      = false;
@@ -527,6 +718,15 @@ private:
     float _juiceNudgeCd        = 0.f;
     void  UpdateJuicePanel();
     void  DrawJuicePanel();
+
+    // -- Time of day (EngineDayNight.cpp, DayNight.h, VfxNight.h) -------------
+    float _clockHours    = Balance::DayNight::kStartHour;   // 0-24; runs while you play, saved in the profile
+    float _dayClockSpeed = 1.f;                             // x real time; debug fast-forward (juice panel)
+    void  UpdateDayNightClock(float dt);
+    // Draws the look of the hour over the world drawn so far when `outdoors`;
+    // playerScreen (may be null) gets the player's own light. Call after the
+    // world and before the glow composite and the HUD.
+    void  ApplyTimeOfDay(bool outdoors, const Vector2* playerScreen) const;
 
     // Central hit feedback: floating number (pop on crit), impact sparks, and on
     // crit → slow-mo + focus, on kill → hit-stop (boss kill → cinematic slow-mo).
@@ -538,20 +738,62 @@ private:
     // Big floating boss-state word (ENRAGED / PHASE SHIFT) on a state transition.
     void  ShowBossCallout(Vector2 enemyPos, const char* text);
     void GrantRelic(RelicType type);              // adds relic + shows a toast
+    bool TryLastStand();                          // Last Stand relic: survive a lethal hit once per room
+    bool _lastStandUsedThisRoom = false;
+    void ApplySpikedPauldrons();                  // Spiked Pauldrons relic: hurt the ring around you
     RelicType RollRandomRelic() const;            // weighted by rarity, unowned
-    void DrawOwnedRelics() const;                 // HUD strip
+    void DrawOwnedRelics(float startX, float startY) const;   // HUD relic row (EngineHud.cpp)
     void UpdateCyclopsLasers(float dt);
     void UpdateLavaBallProjectiles(float dt);
     void TriggerScreenShake(float strength, float duration);
     void DrawCyclopsLasers(Vector2 worldOffset);
-    void DrawHUD(bool villageMode = false);
+    void DrawHUD(bool villageMode = false) const;
+    bool IsHudDrawnThisFrame() const;              // mirrors every DrawHUD call site
+    void UpdateHudPresentation(float frameDt);     // counters, toasts, HUD editor input
     void DebugStartRun();
-    void DebugRestartRoomAs(RoomType type);
     void DebugRestartDungeonRoomAs(RoomType type);
-    void DebugSetEliteMechanic(int mechanic);
+    // Trailer / showcase debug helpers (dev builds only; act only when _debug is active).
+    void DebugApplyClass(PlayerClass cls, bool randomizeAbilities);
+    void DebugLoadBiome(Biome biome);
+    void DebugCycleVariantTier();
+    bool DebugChromeVisible() const { return _debug.IsActive() && !_debugChromeHidden; }
     void DrawHowToPlay();
-    void DrawAbilityBar();   // unified 1-2-3-4 slot HUD
-    void DrawWaveIntro();
+    void UpdateHowToPlayMouse(float dt);
+    void UpdateAbilityBarInput();
+    // One source for the ability slots' geometry: drawing, slot clicks and the
+    // "this click was a UI click, not a melee swing" check all use it.
+    Rectangle AbilitySlotRect(int slot) const;
+    bool ClickLandsOnAbilityBar() const;
+
+    // -- Top-left HUD panel (EngineHud.cpp) -----------------------------------
+    struct HudPanelLayout
+    {
+        float barX = 0.f;            // left edge of the bar column
+        float hpY = 0.f, mpY = 0.f, classY = 0.f;   // bar row tops
+        float valueX = 0.f;          // bar value text
+        float slotsY = 0.f;          // ability slot art top
+        float rightX = 0.f;          // gold / Echoes / level column
+        Rectangle panel{};           // the panel's bounds (relics and the hover name sit beside it)
+        Rectangle relics{};          // the owned-relic row beside it (no size with no relics)
+        bool  hasClassRow = false;   // Warrior/Rogue/Hunter/Paladin mechanic bar
+        bool  hasSlots = false;      // false in touch mode (its own ability arc)
+    };
+    HudPanelLayout GetHudPanelLayout() const;
+    bool HudHasClassMechanicRow() const;
+    void LoadHudArt();
+    void UnloadHudArt();
+    void DrawHudPanel() const;
+    void DrawHudClassMechanic(float barX, float y, float valueX) const;
+    void DrawHudAbilitySlots(const HudPanelLayout& layout) const;
+    void DrawHudFrame(Rectangle bounds, float alpha) const;   // the pack's frame, dashed edges repeated
+    // Fades the panel and relics while the hero, an enemy or an enemy shot is
+    // under them (called from UpdateHudPresentation).
+    void UpdateHudCover(float frameDt);
+    struct HudArt
+    {
+        Texture2D starBar{}, hpFill{}, mpFill{}, classFill{}, slot{}, frame{}, xpBar{}, xpFill{}, gold{}, echo{};
+    };
+    HudArt _hudArt;
     void HandlePlayerMeleeDamage();
     Vector2 GetTreasureChestWorldPos() const;
     void SetTreasureChestTile(TileType type);
@@ -568,35 +810,48 @@ private:
         float width = 0.f;
         float moveScale = 1.f;
     };
-    struct PendingAbilityAim
+    // The aim line: drawn every frame for the first learned ability that takes an aim.
+    struct AbilityAimPreview
     {
         bool active = false;
-        int slot = -1;
         AbilityType ability = AbilityType::None;
         Vector2 direction{ 1.f, 0.f };
         Vector2 target{};
-        bool commitOnMouseRelease = false;
+        bool showArea = false;   // a held ability past the tap time shows its area
     };
     AbilityAimProfile GetAbilityAimProfile(AbilityType ability) const;
     void BeginAbilityInput(int slot);
     void UpdateAbilityAiming();
-    void CommitAbilityAim();
-    void CancelAbilityAim();
+    void ResolveAbilityAim(AbilityType ability, Vector2 fallbackDir, Vector2& direction, Vector2& target) const;
     void DrawAbilityAimPreview() const;
-    Vector2 GetCurrentAimWorldPoint() const;
-    PendingAbilityAim _pendingAbilityAim{};
+    Vector2 GetCurrentAimWorldPoint(float range, Vector2 fallbackDir) const;
+    // Basic attacks: which device aimed last (keyboard presses don't change it).
+    enum class AimSource { None, Mouse, Stick };
+    AimSource _aimSource = AimSource::None;
+    Vector2   _lastStickAim{ 1.f, 0.f };
+    Vector2   GetBasicAimDirection() const;
+    AbilityAimPreview _abilityAimPreview{};
+    // A press-and-hold aimed ability: a quick tap fires on release; holding past the tap
+    // time shows its area, and release fires it where the aim points.
+    struct AbilityHold
+    {
+        bool        active  = false;
+        int         slot    = -1;
+        AbilityType ability = AbilityType::None;
+        float       time    = 0.f;
+        bool        fromBar = false;   // started by clicking the ability bar
+    };
+    AbilityHold _abilityHold{};
+    void ReleaseAbilityHold();
     Vector2 _committedAimDirection{ 1.f, 0.f };
     Vector2 _committedAimTarget{};
     AbilityType _committedAimAbility = AbilityType::None;
 
-    void SpawnSpreadBurst(AbilityType element);
-    void SpawnBolt(AbilityType element);
     void SpawnUltimateBurst(AbilityType element);
     void UpdateUltimateBlasts(float dt);
     void DrawUltimateBlasts(Vector2 worldOffset);
 
     // Cinematic ultimate sequence
-    void TriggerUltimateSequence(AbilityType element);
     void UpdateUltimateSequence(float dt);
     void DrawUltimateSequence();
     void ApplyUltimateImpact();
@@ -625,10 +880,14 @@ private:
     void CastMageSpell(AbilityType ability, Vector2 direction, Vector2 target);
     void UpdateMageSpells(float dt);
     void DrawMageSpells(Vector2 cameraRef) const;
+    // arrivalPos: where the hit comes from when that is not the hero (a shot's
+    // direction, a blast's centre, a chain's last target); shields judge it.
+    // Damage-over-time ticks (ground fire) are never blocked.
     bool DamageMageEnemy(Enemy& enemy, int damage, AbilityType element,
-                         bool burn, bool chill, bool shock);
+                         bool burn, bool chill, bool shock, bool damageOverTime = false,
+                         const Vector2* arrivalPos = nullptr);
     void DamageMageArea(Vector2 centre, float radius, int damage, AbilityType element,
-                        bool burn, bool chill, bool shock);
+                        bool burn, bool chill, bool shock, bool damageOverTime = false);
 
     // ── Class abilities (Warrior kit, and future non-elemental classes) ─────────
     void HandleClassAbilityCast(AbilityType ability);
@@ -717,6 +976,7 @@ private:
     RoomTelemetry _roomTelemetry[kTelemetryHistory]{};
     int    _roomTelemetryCount = 0;      // total records written (ring index derives)
     double _roomEnterTime = 0.0;         // GetTime() stamp on room entry
+    float  _roomCombatSeconds = 0.f;     // active fight time in this room (contracts, telemetry)
     int    _roomEnterGold = 0;           // wallet snapshot on room entry
     void   DrawRoomTelemetry() const;    // debug-panel companion overlay
     void GenerateStartingAbilityOptions();
@@ -727,18 +987,21 @@ private:
     void RefreshHandcraftedRooms();
     bool GenerateHandcraftedDungeon(Biome biome,
                                     std::vector<std::string>& roomIds,
-                                    int maxAttempts = 600);
+                                    int maxAttempts = 600,
+                                    bool zephCampEntrance = false);   // entrance becomes Zeph's camp
     Vector2 GetDungeonEntranceSpawnPos() const;
     void EnterDungeonShopIfNeeded(const DungeonRoom& room);
     void UpdateSpreadProjectiles(float dt);
     void SpawnEnemyDrop(Vector2 worldPos, bool isOgre, bool isBoss);
-    void SpawnTimedPickup();
 
     // -- Meta progression (Echoes / Poe's Altar) ----------------------
     Vector2 GetPoeAltarPos() const;         // world pos of the altar in Zeph's room
     void    HandlePlayerDeathMetaPenalty();    // gold retention + lose carried cells
     void    UpdateMetaShop(float dt);          // GameState::MetaShop input handling
     void    DrawMetaShop();                    // GameState::MetaShop rendering
+    void    DrawMetaJournal();                 // altar Journal page: class mastery + biome first clears
+    void    UpdateArmory(float dt);            // GameState::Armory input handling
+    void    DrawArmory();                      // GameState::Armory rendering
     void SpawnBossSupportAdds();
     void UpdateBossSupportRespawns(float dt);
     void ClearBossSupportAdds();
@@ -749,32 +1012,21 @@ private:
     int  GetDungeonVisualVariantForRoom(int roomIdx) const;
     void LoadDungeonVisualVariantAssets(int variantIdx, TileDefSet& defs, TileRenderer& renderer);
     void ApplyBiome(Biome biome);
-    void PopulatePropsForBiome(Biome biome);
-    void UpdateBiomeTransition(float dt);
-    float GetBiomeTransitionAlpha() const;
 
     void DrawLevelUpChoice();
+    void UpdateLevelUpChoiceInput();
+    void UpdateStartingAbilityChoiceInput();
     void GenerateLevelUpOptions(LevelUpOfferContext context = LevelUpOfferContext::NormalLevel);
     void GenerateTreasureChestOptions(); // mixed upgrade + ability cards for treasure room chest
     void DrawAbilityChoice();
+    void UpdateAbilityChoiceInput();
+    void FinishAbilityChoice();
     void GenerateAbilityChoiceOptions();
     void ResetRunState();
-
-
-    // -- EXP Tally screen -----------------------------------------------------
-    void UpdateExpTally(float dt);
-    void DrawExpTally();
 
     // -- Demo end screen -------------------------------------------------------
     void DrawDemoEnd();
 
-    // -- Room-based run progression --------------------------------------------
-    void StartNextRoom(RoomType type);    // internal setup helper (biome + wave intro)
-    void GenerateActMap();                // builds the full act node graph
-    void EnterMapRoom(int nodeIdx);       // called when the player clicks a map node
-    void CompleteCurrentMapNode();        // marks the current node complete and unlocks next nodes
-    void HandleRoomContinueAction();      // shared continue path for cleared/completed rooms
-    void DrawMap();                       // Slay-the-Spire�style act map screen
     std::vector<Vector2> GetCyclopsLaserEndpoints(const CyclopsLaserProjectile& laser) const;
     bool SegmentHitsRect(Vector2 start, Vector2 end, float thickness, const Rectangle& rect) const;
 
@@ -793,53 +1045,36 @@ private:
 
     // Touch-mode helpers
     void UpdateTouchControls();
-    void DrawTouchAbilityArc();
+    void DrawTouchAbilityArc() const;
     void ScanAbilityArcTaps();
     void EnterTouchButtonMapping();
-    int  DrawTouchButtonMapping();     // returns 0=none 1=save 2=back 3=default
+    int  UpdateTouchButtonMapping();   // returns 0=none 1=save 2=back 3=default
+    void ApplyTouchButtonMappingAction(int action);
+    void DrawTouchButtonMapping() const;
     void ApplyTouchCustomLayout();
     float GetTouchMappingRadius(int idx) const;
     Rectangle GetDebugToggleTabRect() const;
     bool HandleDebugToggleTabInput();
-    void DrawDebugToggleTab();
+    void DrawDebugToggleTab() const;
     void SaveKeybindings();
     void LoadKeybindings();
     int GetActiveEnemyCount() const;
     bool IsBossFightActive() const;
-    bool TryGetPooledEnemySpawn(Vector2 pos);
-    bool TryGetPooledCyclopsSpawn(Vector2 pos);
-    bool TryGetPooledOgreSpawn(Vector2 pos);
     bool TryGetPooledMolarbeastSpawn(Vector2 pos);
-    int GetCyclopsSpawnCountForWave(int wave) const;
-    int GetOgreSpawnCountForWave(int wave) const;
-    int GetEnemyPowerLevelForWave(int wave) const;
+    int GetRunPowerLevel() const;   // RunProgression policy: one level per world-map domain
     void ConfigureSpawnedEnemy(Enemy& enemy);
 
-    Vector2 GetRandomPropPosition();
     bool IsSpawnPositionValid(Vector2 pos);
-    void RespawnOutOfBoundsEnemies();
     bool TryGetFarSpawnPosition(Vector2& pos, float minPlayerDistance);
 
 private:
-    // -- Act map node � one room on the Slay-the-Spire�style map --------------
-    struct MapNode
-    {
-        int      row       = 0;               // 0 = entry, 5 = boss
-        float    normX     = 0.5f;            // 0�1 horizontal position in row
-        RoomType type      = RoomType::Standard;
-        bool     completed = false;           // player has cleared this room
-        bool     available = false;           // player can click this node now
-        std::vector<int> nextNodes;           // indices into _actMap
-        Vector2  drawPos{};                   // screen-space position (computed in GenerateActMap)
-    };
-
     // -- Virtual canvas + settings ---------------------------------------------
     RenderTexture2D _virtualCanvas{};
     Texture2D       _settingsBorderTex{};
     SettingsManager _settingsMgr;
     GameState       _stateBeforeSettings = GameState::Menu;
     // Settings screen UI state
-    int   _settingsTab          = 0;   // 0=Display  1=Audio  2=Keybindings
+    int   _settingsTab          = 0;   // 0=Display  1=Audio  2=Keybindings  3=Comfort
     int   _settingsDragSlider   = -1;  // -1=none  0=master  1=music  2=sfx
     float _settingsDragStartX   = 0.f;
     float _settingsDragStartVal = 0.f;
@@ -874,6 +1109,13 @@ private:
     bool _ascensionRecorded = false;
     AscensionModifiers _ascensionMods;
     float _poeAltarBobTimer    = 0.f;    // altar orb floating animation
+    bool  _metaShopJournal        = false;  // altar page: false = unlock cards, true = mastery journal
+    bool  _metaShopTrophyHall     = false;  // opened from the Trophy Hall: journal page only
+    int   _armoryCursor           = 0;
+    float _armoryNavCooldown      = 0.f;
+    float _armoryOpenTimer        = 0.f;    // input lock so the opening press isn't consumed
+    std::string _armoryMessage;
+    float _armoryMessageTimer     = 0.f;
     int   _metaShopCursor         = 0;      // keyboard/gamepad cursor into the unlock grid
     float _metaShopNavCooldown    = 0.f;    // gamepad d-pad repeat cooldown
     int   _poeGreetingIdx         = 0;      // which of Poe's lines shows this visit
@@ -902,6 +1144,7 @@ private:
     int  _bossesDefeated     = 0;  // how many Molarbeasts have been killed this run
     bool _demoCompleted      = false; // true after 2 boss kills OR secret code � unlocks debug
 
+    float _shakeDuration = 0.f;
     float _shakeTimer = 0.f;
     float _shakeStrength = 0.f;
     float _gameTimer = 0.f;
@@ -913,14 +1156,25 @@ private:
     const int _windowWidth = 1920;
     const int _windowHeight = 1080;
 
-    float _waveIntroTimer = 0.f;
-    float _waveIntroDuration = 2.5f;
 
     float _gameOverTimer  = 0.f;
     float _gameOverDelay  = 2.f;
     float _fadeInTimer    = 0.f;
     float _fadeInDuration = 2.f;  // set alongside _fadeInTimer; controls fade speed
     float _bossWarningTimer = 0.f;
+    // Boss intro (see Balance::BossIntro). While active the room is frozen.
+    bool   _bossIntroActive    = false;
+    float  _bossIntroTimer     = 0.f;
+    float  _bossIntroSkipHold  = 0.f;
+    bool   _bossIntroSeen      = false;   // the Werewolf intro has played this session
+    bool   _bossIntroLanded    = false;
+    bool   _bossIntroRoared    = false;
+    Enemy* _bossIntroBoss      = nullptr;
+    Vector2 _bossIntroRest{};
+    void StartBossIntro(Enemy& boss);
+    void UpdateBossIntro(float dt);
+    void EndBossIntro();
+    void DrawBossIntro() const;
     float _levelUpOpenTimer = 0.f;  // blocks card clicks briefly after panel opens
 
     // -- Act / room progression ------------------------------------------------
@@ -943,16 +1197,8 @@ private:
     // EXP tally state
     float _pendingExp             = 0.f;   // EXP accumulated during combat, drained during tally
     float _expTallyAccum          = 0.f;   // fractional drain accumulator
-    bool  _expTallyDone           = false; // bar fully drained � show dismiss hint
-    int   _tallyStartLevel        = 1;     // player level when tally begins, to count level-ups
     int   _tallyLevelUpsRemaining = 0;     // level-up choices still to show after tally
-    bool  _tallyChoiceChaining    = false; // true once player pressed Continue to start chain
 
-    // Act map state (Slay-the-Spire�style node graph)
-    std::vector<MapNode> _actMap;
-    int   _currentMapNodeIdx  = -1;         // index of the node currently in / last completed
-    int   _mapKeySelectedIdx  = -1;         // keyboard-highlighted node on the map screen (-1 = none)
-    float _mapOpenTimer       = 0.f;        // brief block after the map opens to prevent accidental clicks
     bool  _startBiomeDungeon  = true;       // fallback only; sequence takes precedence
     static constexpr int kTotalActs = 5;
     std::vector<Biome> _biomeSequence;      // 5 randomly chosen biomes per run
@@ -965,100 +1211,55 @@ private:
     std::vector<int>      _worldChosenNodeIndices; // 0/1/2 tierIdx chosen at each completed tier
     int                   _worldMapPreparedZone = -1;
 
-    // -- Map screen right-panel debug editor -------------------------------
-    bool  _mapEditorActive  = false;
-    int   _mapEditorSelIdx  = 0;
-    float _mapJourneyX      = 0.725f;  // 0  right panel X as fraction of sw
-    float _mapPad           = 21.f;    // 1  padding inside journey panel
-    float _mapTitleFs       = 43.f;    // 2  "JOURNEY" title font
-    float _mapRoomsFs       = 44.f;    // 3  Rooms / Gold row font
-    float _mapNoRoomsFs     = 30.f;    // 4  "No rooms cleared yet" font
-    float _mapBiomeTitleFs  = 43.f;    // 5  "BIOMES" label font
-    float _mapBiomeLabelFs  = 0.350f;  // 6  diamond text size as fraction of half-size
-    float _mapSqSz          = 96.f;    // 7  visited-room square size
-    float _mapSqGap         = 33.f;    // 8  gap between visited-room squares
-    float _mapIconSz        = 87.f;    // 9  map node icon size
-    float _mapDiamondSz     = 56.f;    // 10 biome diamond half-size in pixels
-    float _mapHeaderX       = 0.525f;  // 11 top Act header center X as fraction of sw
-    float _mapHeaderY       = 10.f;    // 12 top Act header Y
-    float _mapHeaderFs      = 55.f;    // 13 top Act header font size
-    float _mapSubX          = 0.535f;  // 14 subtitle center X as fraction of sw
-    float _mapSubY          = 61.f;    // 15 subtitle Y
-    float _mapSubFs         = 30.f;    // 16 subtitle font size
-    float _mapHintY         = 35.f;    // 17 bottom hint distance from screen bottom
-    float _mapHintFs        = 34.f;    // 18 bottom hint font size
-
     // -- In-game HUD debug editor ------------------------------------------
     struct HUDConfig
     {
-        // HP / MP bars (0�4)
-        float barW         = 534.f;   // 0  bar width
-        float barH         = 30.f;    // 1  bar height
-        float barGap       = 28.f;    // 2  gap between HP and MP bars
-        float barTopPad    = 16.f;    // 3  Y of HP bar from top
-        float barLabelFs   = 15.f;    // 4  font inside bars
-        // Gold label (5�7)
-        float goldX        = 21.f;    // 5  gold X
-        float goldY        = 16.f;    // 6  gold Y
-        float goldFs       = 48.f;    // 7  gold font size
-        // Enemies left (8�10)
-        float enemiesX     = 22.f;    // 8  enemies label X
-        float enemiesY     = 90.f;    // 9  enemies label Y
-        float enemiesFs    = 45.f;    // 10 enemies label font size
-        // Act / Room label (11�13)
-        float actOffsetX   = 42.f;    // 11 offset from right edge
-        float actY         = 30.f;    // 12 act label Y
-        float actFs        = 43.f;    // 13 act label font size
-        // Minimap (14�22)
-        float miniX        = 16.f;    // 14 minimap origin X
-        float miniY        = 164.f;   // 15 minimap origin Y
-        float miniW        = 271.f;   // 16 minimap width (height auto-derived)
-        float miniDotBoss  = 6.f;     // 17 boss dot base radius
-        float miniDotElite = 2.f;     // 18 cyclops/ogre dot base radius
-        float miniDotEnemy = 0.f;     // 19 regular enemy dot base radius
-        float miniDotProp  = 3.f;     // 20 prop dot base radius
-        float miniDotPickup= 2.f;     // 21 pickup dot base radius
-        float miniDotPlayer= 4.f;     // 22 player dot base radius
-        // PC ability bar (23�27)
-        float slotSz       = 103.f;   // 23 ability slot size (square)
-        float slotGap      = 108.f;    // 24 gap between slots
-        float slotBotPad   = 19.f;    // 25 slot Y from bottom
-        float slotKeyFs    = 15.f;    // 26 keybind label font size
-        float slotNameFs   = 21.f;    // 27 ability name font size
-        // Touch buttons (28�38)
-        float touchJoyR       = 90.f;   // 28 joystick radius
-        float touchAtkR       = 113.f;  // 29 ATK button radius
-        float touchDashR      = 111.f;  // 30 DASH button radius
-        float touchAtkPadR    = 176.f;  // 31 ATK centre from right
-        float touchAtkPadB    = 214.f;  // 32 ATK centre from bottom
-        float touchDashOffset = 302.f;  // 33 DASH left-offset from ATK (ATK.x - DASH.x)
-        float touchDashBotPad = 214.f;  // 33b DASH centre Y from bottom (-1 = share ATK pad)
-        float touchPauseW     = 130.f;  // 34 pause button width
-        float touchPauseH     = 67.f;   // 35 pause button height
-        float touchPausePad   = 85.f;   // 36 pause button edge padding
-        float touchAtkFs      = 46.f;   // 37 ATK button text size
-        float touchDashFs     = 57.f;   // 38 DASH button text size
-        // Touch ability slots (39�42)
-        float touchSlotSz      = 130.f;  // 39 ability slot square size
-        float touchSlotGap     = 20.f;   // 40 gap between slots
-        float touchSlotRightPad= 27.f;   // 41 right-edge padding for slot row
-        float touchSlotYOff    = 29.f;   // 42 gap between slot bottom and ATK top
-        // EXP bar (43-45)
-        float expBarH    = 27.f;   // 43 height of the EXP bar
-        float expBarGap  = 19.f;   // 44 gap between MP bar bottom and EXP bar top
-        float expLabelFs = 16.f;   // 45 font size of the level / exp label
-        // HP / MP orbs (46-50)
-        float hpOrbX     = 513.f;  // 46 HP orb centre X
-        float hpOrbY     = 999.f;  // 47 HP orb centre Y
-        float mpOrbX     = 1408.f; // 48 MP orb centre X
-        float mpOrbY     = 992.f;  // 49 MP orb centre Y
-        float statOrbR   = 64.f;   // 50 shared HP/MP orb radius
-        // Armour icons (51-53)
-        float armourX    = 590.f;  // 51 first armour icon X
-        float armourY    = 853.f;  // 52 armour icon Y
-        float armourSize = 55.f;   // 53 armour icon height
+        // Top-left HUD panel (0-1); its contents lay out from here (EngineHud.cpp)
+        float panelX       = 8.f;     // 0  panel left edge
+        float panelY       = 8.f;     // 1  panel top edge
+        // Act / Room label (2-4)
+        float actOffsetX   = 42.f;    // 2  offset from right edge
+        float actY         = 30.f;    // 3  act label Y
+        float actFs        = 43.f;    // 4  act label font size
+        // Minimap (5-13)
+        float miniX        = 16.f;    // 5  minimap origin X
+        float miniY        = 164.f;   // 6  minimap origin Y
+        float miniW        = 271.f;   // 7  minimap width (height auto-derived)
+        float miniDotBoss  = 6.f;     // 8  boss dot base radius
+        float miniDotElite = 2.f;     // 9  cyclops/ogre dot base radius
+        float miniDotEnemy = 0.f;     // 10 regular enemy dot base radius
+        float miniDotProp  = 3.f;     // 11 prop dot base radius
+        float miniDotPickup= 2.f;     // 12 pickup dot base radius
+        float miniDotPlayer= 4.f;     // 13 player dot base radius
+        // Touch buttons (14-24)
+        float touchJoyR       = 90.f;   // 14 joystick radius
+        float touchAtkR       = 113.f;  // 15 ATK button radius
+        float touchDashR      = 111.f;  // 16 DASH button radius
+        float touchAtkPadR    = 176.f;  // 17 ATK centre from right
+        float touchAtkPadB    = 214.f;  // 18 ATK centre from bottom
+        float touchDashOffset = 302.f;  // 19 DASH left-offset from ATK (ATK.x - DASH.x)
+        float touchDashBotPad = 214.f;  // (not in the editor) DASH centre Y from bottom (-1 = share ATK pad)
+        float touchPauseW     = 130.f;  // 20 pause button width
+        float touchPauseH     = 67.f;   // 21 pause button height
+        float touchPausePad   = 85.f;   // 22 pause button edge padding
+        float touchAtkFs      = 46.f;   // 23 ATK button text size
+        float touchDashFs     = 57.f;   // 24 DASH button text size
+        // Touch ability slots (25-28)
+        float touchSlotSz      = 130.f;  // 25 ability slot square size
+        float touchSlotGap     = 20.f;   // 26 gap between slots
+        float touchSlotRightPad= 27.f;   // 27 right-edge padding for slot row
+        float touchSlotYOff    = 29.f;   // 28 gap between slot bottom and ATK top
+        // Touch-mode EXP bar (29-31); the PC panel has its own XP slider
+        float expBarH    = 27.f;   // 29 height of the EXP bar
+        float expBarGap  = 19.f;   // 30 gap between the touch slots and the EXP bar
+        float expLabelFs = 16.f;   // 31 font size of the level / exp label
     };
     HUDConfig _hudCfg;
+    // HUD editor rows: the label shown in the panel and the HUDConfig field
+    // that row nudges. Shared by the editor input (Update) and its panel (Draw).
+    struct HudEditorField { const char* label; float HUDConfig::* value; };
+    static constexpr int kHudEditorFieldCount = 32;
+    static const HudEditorField kHudEditorFields[kHudEditorFieldCount];
     bool  _hudEditorActive  = false;
     int   _hudEditorSelIdx  = 0;
 
@@ -1104,7 +1305,7 @@ private:
     int         _startingAbilityPickCount = 0;
     bool        _starterAbilityGiftClaimed = false;
 
-    // -- Elite-room state (all reset in StartNextRoom) ---------------------
+    // -- Elite-room state (reset in ResetEliteRoomRuntime) -----------------
     // Active modifier index (matches EliteModifier): 0=Cage, 1=GuardLinks,
     // 2=Enrage, 3=ArenaPressure; -1=none. The legacy Leap modifier is gone —
     // movement is part of each elite's own signature kit now.
@@ -1115,6 +1316,9 @@ private:
     float   _eliteCageDamageTimer     = 0.f;
     float   _eliteEnrageWarningTimer  = 0.f;
     float   _eliteHazardSpawnTimer    = 0.f;
+    // Arena Pressure: shots glowing on the walls before they launch
+    // (CombatDirector queues and launches them; DrawVolleyWindups shows them).
+    std::vector<VolleyWindup> _volleyWindups;
 
     // -- Elite constants ---------------------------------------------------
     static constexpr float kEliteCageRadius             = 500.f;
@@ -1160,7 +1364,7 @@ private:
     static constexpr float kWastelandHazardInterval  = 2.8f;
     static constexpr float kWastelandWarningDuration = 1.8f;
     static constexpr float kWastelandExplosionRadius = 75.f;
-    static constexpr int   kWastelandDamage          = 1;
+    static constexpr int   kWastelandDamage          = 10;
     static constexpr float kWastelandActiveDuration  = 0.80f;
     static constexpr float kLostCityBeamLength       = 340.f;
     static constexpr float kLostCityBeamWidth        = 10.f;
@@ -1198,20 +1402,12 @@ private:
     Sound _buttonPressSound{};
 
     Texture2D _map{};
-    Texture2D _treeTex{};
-    Texture2D _smallTreeTex{};
-    Texture2D _rockTex{};
-    Texture2D _bigRockTex{};
-    Vector2 _mapPos{};
     // Map scale is now computed by _worldConfig � do not set this by hand.
     // Read/write it through _worldConfig.Recalculate() and GetScale().
     float      _mapScale    = 3.f;
     WorldConfig _worldConfig;          // owns all map-scale and camera logic
     int _maxActiveEnemies = 16;
 
-    Texture2D _pillarTex{};
-    Texture2D _torchTex{};       // Torch.png � 256x29, 8 frames of 32x29
-    Texture2D _pillarTorchTex{}; // PillarTorch.png � 290x52, 8 frames of 32x52 (content offset x=17)
     Texture2D _fireballCastTex{};
     Texture2D _fireballHitTex{};
     Texture2D _genericHitTex{};   // Hit03.png � melee hit splat + electric impact sprite
@@ -1271,6 +1467,19 @@ private:
 
     std::vector<UltimateBlast>       _ultimateBlasts;
     std::vector<SpreadProjectile>    _spreadProjectiles;
+    // Ranged basic shot waiting for the turn to finish (Balance::Facing::kRangedTurnSeconds).
+    struct PendingRangedShot
+    {
+        bool active = false;
+        float timer = 0.f;
+        Vector2 aim{};
+        AbilityType element = AbilityType::FireSpread;
+        Color tint{};
+        bool arrow = false;
+        const AttackTuning* tuning = nullptr;
+    };
+    PendingRangedShot _pendingRangedShot;
+    void FirePendingRangedShot();
     VFXManager     _vfx;
     DamageNumberManager _damageNumbers;
     std::uint64_t _nextCombatTargetId = 1;
@@ -1292,6 +1501,7 @@ private:
         // ring — a tick-down-then-explode telegraph instead of appearing
         // instantly on death. See Balance::Rhythm::kPoisonCloudArmDelaySeconds.
         float   armDelay = 0.f;
+        DamageSource source;   // who left it (run log cause of death)
     };
     std::vector<PoisonCloud> _poisonClouds;
     float _poisonDamageCooldown = 0.f;
@@ -1320,9 +1530,6 @@ private:
 
     Biome _currentBiome = Biome::Caverns;
     Biome _pendingBiome = Biome::Caverns;
-    bool  _biomeTransitionActive = false;
-    bool  _biomeTransitionSwapped = false;
-    float _biomeTransitionTimer = 0.f;
     bool     _demoEndTouchHeld = false;
     bool     _isMainGameRun   = false; // true when started via "Start Game" (not Dungeon Run)
     PrologueController _prologue;
@@ -1334,6 +1541,15 @@ private:
     float _prologueLastHealth = 0.f;
     bool _villageIntroDialogueActive = false;
     int  _villageIntroDialogueLine = 0;
+
+    // In-dungeon action-gated tutorial (replaces the scripted prologue). Armed on
+    // the first real dungeon of a run when onboarding is unfinished (or always in
+    // the itch.io demo); each step clears when the player performs that action.
+    enum class DungeonTutStep : unsigned char { Move, Attack, Dash, Ability, Done };
+    DungeonTutStep _dungeonTutStep   = DungeonTutStep::Done;
+    float          _dungeonTutFlash  = 0.f;   // brief highlight when a step clears
+    void UpdateDungeonTutorial();
+    void DrawDungeonTutorial() const;
     AudioManager _audio;
     CombatDirector _combatDirector;
     OverlayRenderer _overlayRenderer;
@@ -1348,6 +1564,10 @@ private:
     std::vector<int> _abilityTapSeenIds;
 
     DebugPanel      _debug;
+    // Trailer capture: '\' hides every "debug is active" overlay so footage stays clean.
+    bool            _debugChromeHidden     = false;
+    // -1 = normal zone-based enemy recolour; 0..3 forces that colour-variant tier.
+    int             _debugForcedVariantTier = -1;
     TileMapper      _tileMapper;
     NineSliceEditor _nineSliceEditor;
     CharacterAnimator _charAnimator;
@@ -1367,7 +1587,8 @@ private:
     bool _villageInsideInterior = false;       // player is inside a building interior
     std::string _villageInteriorName;          // which interior (e.g. "interior_default")
     Vector2 _villageInteriorReturnPos{};       // village world pos restored on exit
-    bool _villageBuildMode = false;            // B toggles: build (catalog+ghost) vs walk (doors/NPCs)
+    bool _villageBuildMode = false;
+    bool _villageDragArmed = false;            // a catalog row was pressed; a release on the map drops it            // B toggles: build (catalog+ghost) vs walk (doors/NPCs)
     GameState _classSelectReturnState = GameState::Menu;   // where ESC from ClassSelect goes (Menu or Village)
     std::vector<VillageCitizen> _villageCitizens;
     TileDefSet _villageTileDefs;               // Forest tile assignments for the village field
@@ -1415,6 +1636,7 @@ private:
     {
         std::string type;
         Vector2     pos{};
+        float       healthFraction = 1.f;   // leaving a room no longer heals its survivors
     };
     // Environmental hazards persist per room: destroyed ones stay destroyed,
     // live ones are rebuilt on re-entry (lava even in cleared rooms — terrain
@@ -1444,7 +1666,19 @@ private:
         bool specialClaimed          = false;   // player chose an option or left
         int  specialChoice           = -1;      // chosen card index, -1 = none/left
         int  specialOptions[3]       = { -1, -1, -1 }; // option-table indices offered
+
+        // Combat affix rolled on the first visit and kept until the room is
+        // cleared (not in the run checkpoint: a resumed run rolls it again once).
+        RoomAffix affix              = RoomAffix::None;
+        bool affixRolled             = false;
     };
+    // Decision-room events (EngineRoomEvents.cpp; the Risk Shrine stays in Engine.cpp).
+    void TagRoomSpecial(DungeonRoomState& st, RoomSpecialType type);   // event + its seeded offer
+    void BuildRoomEventCards(const DungeonRoomState& st);              // fills _decisionScreen
+    bool ApplyRoomEventChoice(const DungeonRoomState& st, int card);   // false = nothing happened
+    void ApplyDecisionChoice(int card);         // spend the current decision room on `card`
+    AbilityType FindWeakestUpgradableAbility() const;   // Train / Silver Case / Untouched
+    int  RoomEventGold(int base) const;         // event gold and prices, +25% per domain
 
     // ── Dungeon HUD polish (intro banner / badge / modifier stack / map) ───────
     // Normal gameplay HUD only shows exceptions: standard rooms draw no label;
@@ -1455,12 +1689,17 @@ private:
     std::string _roomIntroSub;                // condition line ("Room Hazards")
     static constexpr float kRoomIntroDuration = 2.6f;
     void QueueRoomIntroBanner();              // builds title/sub for the room just entered
-    void DrawRoomIntroBanner();               // temporary top-center announcement
+    void DrawRoomIntroBanner() const;         // temporary top-center announcement
     void DrawRoomBadge() const;               // compact persistent badge (special rooms only)
     void DrawModifierStack() const;           // top-right pills: affix / wager / future curses
     // Minimap: visited rooms remember their type icon, unvisited show "?"
     // (boss + shop always shown). Cartographer's Echo reveals everything.
     void DrawDungeonMiniMap(float originX, float originY, float cellPx, bool overlay) const;
+    // The dungeon map shows while its key or controller button is held; there
+    // is no corner minimap, so nothing covers the room. Read in UpdateHudPresentation.
+    static constexpr KeyboardKey   kDungeonMapKey       = KEY_TAB;
+    static constexpr GamepadButton kDungeonMapPadButton = GAMEPAD_BUTTON_MIDDLE_LEFT;   // Select / View
+    bool _dungeonMapHeld = false;
 
     // Dungeon run sub-state
     enum class DungeonView { Graph, Room, Play };
@@ -1628,15 +1867,117 @@ private:
     // Lock / unlock the Store room's north exit door tile directly.
     void SetStoreDoorTiles(TileType doorType);
 
-    // World map (biome selection after each boss clear)
+    // World map (biome selection after each boss clear). The run no longer
+    // shows it: OpenWorldMap now leads to the crossroads (or victory), and the
+    // map remains only behind the debug editor.
     void UpdateWorldMap(float dt);
     void DrawWorldMap();
-    void OpenWorldMap();   // generates the map and switches state
+    void OpenWorldMap();   // after a domain: the crossroads, or victory after the last
+
+    // ── Crossroads (EngineCrossroads.cpp) ─────────────────────────────────────
+    // After each boss the player walks into a quiet room whose west / north /
+    // east doors lead to three unplayed domains, each signed with its guardian
+    // and an arrival reward. Before the final domain only the north door opens.
+    enum class PathBoon { Relic, Gold, Echoes, Vigor, Count };
+    struct CrossroadsDoor
+    {
+        Biome    biome = Biome::Caverns;
+        PathBoon boon  = PathBoon::Count;
+        bool     open  = false;
+    };
+    CrossroadsDoor _crossroadsDoors[3];            // 0 = west, 1 = north, 2 = east
+    int      _crossroadsGateway[3] = { -1, -1, -1 };   // graph room behind each door
+    bool     _atCrossroads      = false;
+    std::string _domainClearedLine;                  // the crossroads banner's "+gold +HP" line
+    bool     _crossroadsLeaving = false;             // a door was taken: ignore the rest
+    PathBoon _pendingPathBoon   = PathBoon::Count;   // paid on arriving in the chosen domain
+    // ── Run summary (EngineRunSummary.cpp) ───────────────────────────────────
+    // Shown when a main run ends, before Poe's revive scene or the victory
+    // screen; each one is also appended to run_history.cfg.
+    struct RunSummary
+    {
+        bool victory = false;
+        PlayerClass cls = PlayerClass::Warrior;
+        int  ascension = 0;
+        int  domainReached = 1;            // 1..6
+        std::vector<Biome> domains;        // in order; the last is where the run ended
+        int  roomsCleared = 0, enemiesKilled = 0, elitesSlain = 0, bossesDefeated = 0;
+        int  level = 1;
+        float seconds = 0.f;
+        int  gold = 0, echoes = 0;         // carried when the run ended
+        std::vector<RelicType> relics;
+        std::string ending;                // "Fell to the Minotaur in Ancient Castle"
+    };
+    RunSummary _runSummary;
+    float _runSummaryOpenTimer = 0.f;
+    int   _runRoomsCleared = 0;            // combat rooms cleared this run
+    int   _runElitesSlain = 0;
+    float _runTimer = 0.f;                 // time spent in the run's dungeons
+    void CaptureRunSummary(bool victory);
+    void OpenRunSummary();
+    void UpdateRunSummary(float dt);
+    void LeaveRunSummary();                // victory screen, or Poe after a death
+    void DrawRunSummary() const;
+    // ── Run log (Saves/runlog.mosave, RunLog.h) and cause of death ──────────
+    // Domains finished this run, and where the current one started (rooms
+    // cleared and run time at its entrance); saved with the run checkpoint.
+    std::vector<RunLogDomain> _runDomainLog;
+    int   _domainStartRooms = 0;
+    float _domainStartSeconds = 0.f;
+    RunLogDeath _runDeath;                     // filled at the moment of death
+    DamageSource DamageSourceOf(Enemy& enemy); // an enemy's stable name and rank
+    RunLogDomain CurrentDomainProgress(bool bossDefeated) const;
+    void RecordDomainEnd(bool bossDefeated);   // a domain boss fell: log the domain
+    void RecordDeathMoment();                  // cause, statuses and situation
+    void AppendRunLog(RunOutcome outcome, const std::string& ending);
+
+    // ── Grimoire (EngineGrimoire.cpp) ─────────────────────────────────────────
+    struct ChronicleRow
+    {
+        bool victory = false;
+        PlayerClass cls = PlayerClass::Warrior;
+        int domain = 1, rooms = 0, relics = 0;
+        float seconds = 0.f;
+        std::string ending;
+    };
+    int       _grimoireTab = 0;              // 0 relics, 1 bestiary, 2 chronicle, 3 feats
+    int       _grimoireCursor = 0;
+    float     _grimoireOpenTimer = 0.f;
+    GameState _grimoireReturnState = GameState::Pause;
+    std::vector<ChronicleRow> _chronicle;    // read from run_history.cfg on opening
+    int       _chronicleRuns = 0, _chronicleWins = 0;
+    std::string _featToastText;
+    float     _featToastTimer = 0.f;
+    bool GrimoireCounts() const;             // discoveries and feats count in real runs only
+    void RecordRelicFound(RelicType type);
+    void RecordCreatureSlain(Enemy& enemy);
+    void EarnFeat(Feat feat);
+    void CheckRunFeats();                    // the threshold feats (gold, kills, elites, relics, Echoes)
+    void OpenGrimoire(GameState returnTo);
+    void UpdateGrimoire(float dt);
+    void DrawGrimoire() const;
+    void DrawFeatToast() const;
+
+    // ── Character sheet (EngineCharacterSheet.cpp): the second pause screen ───
+    float     _characterSheetOpenTimer = 0.f;
+    GameState _characterSheetReturnState = GameState::Pause;
+    void OpenCharacterSheet(GameState returnTo);
+    void UpdateCharacterSheet(float dt);
+    void DrawCharacterSheet() const;
+
+    void RollCrossroadsDoors();
+    void OpenCrossroads();                           // build the room from _crossroadsDoors, enter it
+    void ChooseCrossroadsDoor(int door);
+    void ApplyPendingPathBoon();
+    void EnterFinalDomain();
+    void DrawCrossroadsSigns(Vector2 worldOffset) const;
+    static int         PathBoonAmount(PathBoon boon, int domainIndex);
+    static std::string DescribePathBoon(PathBoon boon, int domainIndex);
+    static const char* GetBiomeGuardianName(Biome biome);
 
     // Dungeon run
     void UpdateDungeonRun(float dt);
     void RollRoomAffix(int roomIdx, RoomType type);  // pick this room's affix (or None)
-    void DrawRoomAffixBanner();                       // HUD banner when an affix is active
     void UpdateDreamFlicker(float dt);
     void InitBiomeModifierRoom();
     void UpdateBiomeModifiers(float dt);
@@ -1680,6 +2021,12 @@ private:
                                          float worldWidth, float worldHeight);
     // Rolls (or restores) a modifier COMPATIBLE with this elite archetype.
     int       GetCompatibleEliteMechanicForRoom(int roomIdx, EliteArchetype archetype);
+    // Arena Pressure: the open floor inside the room's walls; whether a volley
+    // may launch from a point (open floor, not under the HUD panel); and the
+    // glowing embers themselves.
+    Rectangle GetArenaFloorRect() const;
+    bool      IsVolleyLaunchPointClear(Vector2 pos) const;
+    void      DrawVolleyWindups(Vector2 worldOffset) const;
 
     // Door state helpers for tile-dungeon rooms.
     void ApplyDungeonRoomDoorState(RoomLayout& layout, int roomIdx, DungeonDoorSide entryDoorSide) const;

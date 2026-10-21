@@ -5,10 +5,13 @@
 #include "Relic.h"
 #include "PlayerClass.h"
 #include "CharacterTuning.h"
+#include "DamageSource.h"
 #include "GameBalance.h"
 #include <algorithm>
 #include <vector>
 #include <string>
+
+struct CharacterCheckpoint;
 
 enum class UpgradeRarity { Common, Rare, Epic };
 
@@ -21,16 +24,16 @@ enum class UpgradeType
     // the old comments advertised bigger numbers than the code ever gave).
     IronConstitution,  // +15% max HP (heals the gained HP)
     SwiftFeet,         // +8% move speed
-    Ferocity,          // +10% attack power (min +1)
+    Ferocity,          // +10% attack power (min +10)
     ArcaneMind,        // +8 max mana (+4 now), +10% mana regen
-    IronSkin,          // +2 armour
-    BladeEdge,         // +1 attack power, +0.10x attack range
+    IronSkin,          // +10 Defense
+    BladeEdge,         // +10 attack power, +0.10x attack range
     // ── Epic ──────────────────────────────────────────────────────────────────
-    WarGod,            // +15% attack power (min +1.75), +0.12x attack range
+    WarGod,            // +15% attack power (min +17.5), +0.12x attack range
     Resilience,        // +18% max HP (heals the gained HP)
-    BladeStorm,        // +1.5 attack power, +8% move speed
-    Juggernaut,        // +12% max HP (heals gained), +2 armour
-    ArcaneColossus,    // +10 max mana (+5 now), +1.5 attack power, +15% mana regen
+    BladeStorm,        // +15 attack power, +8% move speed
+    Juggernaut,        // +12% max HP (heals gained), +10 Defense
+    ArcaneColossus,    // +10 max mana (+5 now), +15 attack power, +15% mana regen
     // ── Power Choice additions (level-up pool; build-shaping, not raw stats) ──
     ManaFlow,          // common: +1 max mana, +15% mana regen — tempo, not a pool dump
     ClassAttunement,   // rare: +25% class resource gain (Rage / Faith / Combo Points)
@@ -46,19 +49,19 @@ enum class UpgradeType
     WarriorSmolderingFury,   // Rage decays 50% slower
     WarriorFuriousMight,     // full-Rage damage bonus +20%
     WarriorBattleTrance,     // Rage gain +25% AND full-Rage bonus +10%
-    WarriorUnbreakable,      // +1 armour, +1 max HP
-    WarriorColossus,         // +2 max HP, +0.5 attack
+    WarriorUnbreakable,      // +5 Defense, +10 max HP
+    WarriorColossus,         // +20 max HP, +5 attack
     WarriorWarlordsReach,    // +0.10x attack range
-    WarriorBattleMeditation, // heal 1 HP on room clear
+    WarriorBattleMeditation, // heal 10 HP on room clear
     WarriorWeaponMaster,     // class abilities +8%
     // Hunter - marks and arrows
     HunterPredatorsRhythm,   // mark every 2nd shot instead of 3rd
     HunterQuarry,            // +15% damage vs marked
     HunterApexPredator,      // +30% damage vs marked
-    HunterFletcher,          // +0.5 attack
+    HunterFletcher,          // +5 attack
     HunterTrappersCunning,   // class abilities +10%
     HunterSwiftQuiver,       // +12 move speed
-    HunterSurvivalist,       // +1 max HP, +1 armour
+    HunterSurvivalist,       // +10 max HP, +5 Defense
     HunterFocusedBreathing,  // +15% mana regen
     // Rogue - combo and venom
     RogueDeepReserves,       // +1 max combo point (cap 7)
@@ -67,7 +70,7 @@ enum class UpgradeType
     RogueToxinExpert,        // poison ticks +50%
     RogueMasterPoisoner,     // poison ticks +100%
     RogueFleetFootwork,      // +12 move speed
-    RogueShadowConditioning, // +1 max HP
+    RogueShadowConditioning, // +10 max HP
     RogueOpportunist,        // combo gain +25% AND Eviscerate +5%/point
     // Paladin - faith and holy might
     PaladinHolyMight,        // holy (class ability) damage +10%
@@ -75,8 +78,8 @@ enum class UpgradeType
     PaladinZealotsFury,      // Retribution +6% per stack (base 12%)
     PaladinMirroredAegis,    // reflects 50% stronger
     PaladinDevotion,         // Faith gain +15%
-    PaladinCrusadersVitality,// +2 max HP
-    PaladinSanctuary,        // +2 armour AND heal 1 on room clear
+    PaladinCrusadersVitality,// +20 max HP
+    PaladinSanctuary,        // +10 Defense AND heal 10 on room clear
     PaladinDivineConduit,    // +2 max mana, +15% mana regen
     // Warlock - curses and hunger
     WarlockGrimHarvest,      // lifesteal 50% stronger
@@ -84,7 +87,7 @@ enum class UpgradeType
     WarlockSoulBargain,      // +25% damage vs cursed
     WarlockLingeringMalice,  // curses last +50% longer
     WarlockVoidAttunement,   // +20% mana regen
-    WarlockCorruptedVitality,// +2 max HP
+    WarlockCorruptedVitality,// +20 max HP
     WarlockSoulConduit,      // lifesteal +50% AND curses +25% longer
     WarlockOccultPower,      // class abilities +8%
     // ── Ability unlocks (5th-wave ability screen only) ─────────────────────────
@@ -120,6 +123,11 @@ enum class UpgradeType
     LearnSoulSiphon, LearnCataclysm, LearnDemonForm, LearnShadowNova,
     UpgradeShadowBolt, UpgradeDrainLife, UpgradeCurse, UpgradeCorruptionPool, UpgradeHellfire,
     UpgradeSoulSiphon, UpgradeCataclysm, UpgradeDemonForm, UpgradeShadowNova,
+    // ── Crit stat cards (common) ───────────────────────────────────────────────
+    // Appended rather than grouped with the commons: saved shop stock stores
+    // upgrades by index, so earlier values must keep their numbers.
+    CritChance,        // +3% crit chance
+    CritDamage,        // +15% crit damage
     Count   // keep last
 };
 
@@ -129,6 +137,20 @@ AbilityType AbilityForLearnType(UpgradeType type);    // None if not a Learn car
 AbilityType AbilityForUpgradeType(UpgradeType type);  // None if not an Upgrade card
 UpgradeType LearnTypeForAbility(AbilityType ability);
 UpgradeType UpgradeTypeForAbility(AbilityType ability);
+
+class Character;
+
+class DamageSourceScope
+{
+public:
+    DamageSourceScope(Character& target, const DamageSource& source);
+    ~DamageSourceScope();
+    DamageSourceScope(const DamageSourceScope&) = delete;
+    DamageSourceScope& operator=(const DamageSourceScope&) = delete;
+private:
+    Character& _target;
+    DamageSource _previous;
+};
 
 class Character : public BaseCharacter
 {
@@ -167,11 +189,28 @@ public:
     void TakeDamage(int damage, Vector2 attackerPos) override;
     void TakeFractionalDamage(float damage, Vector2 attackerPos);
     void TakePitfallDamage(int damage);
+
+    // ── What hurt the player (run log cause of death) ────────────────────────
+    // Whoever damages the player names itself: the *From calls below, or a
+    // DamageSourceScope held around an enemy's turn. A status applied while a
+    // source is named (burn, poison) credits its ticks to that source.
+    // GetLastDamageSource is the most recent hit that actually took HP: after
+    // a death, what killed the player.
+    void TakeDamageFrom(const DamageSource& source, int damage, Vector2 attackerPos);
+    void TakeFractionalDamageFrom(const DamageSource& source, float damage, Vector2 attackerPos);
+    void SetIncomingDamageSource(const DamageSource& source) { _incomingSource = source; }
+    const DamageSource& GetIncomingDamageSource() const { return _incomingSource; }
+    const DamageSource& GetLastDamageSource() const { return _lastDamageSource; }
+    void ClearLastDamageSource() { _lastDamageSource = DamageSource(); }
+    bool  IsBurning() const { return !_pendingBurnTicks.empty(); }
+    float GetSecondsSinceDash() const { return _sinceDashEnd; }
     virtual void Death() override;
 
     // Lightweight revive — resets HP, dying/hit state, and push state without reloading assets.
     // Used on true respawns (death -> village); fully heals.
     void Revive();
+    void ReviveInPlace(float healthFraction);   // Second Wind: same spot, share of max HP
+    static constexpr float kReviveMinHealth = 10.f;   // Last Stand's "back up" floor
     // Room-entry state reset WITHOUT healing — HP carries between rooms so
     // mistakes matter beyond a single fight (sustain rework, Phase 4).
     void RefreshForRoomEntry();
@@ -231,6 +270,9 @@ public:
     void SetTouchDirection(Vector2 dir)  { _touchMoveDir = dir; }
     void SetTouchAttack()                { _touchAttackJustPressed = true; }
     void SetTouchDash()                  { _touchDashJustPressed   = true; }
+    // Set by the Engine before every Update: true when this frame's mouse click
+    // landed on the HUD ability bar, so that click never also swings a melee attack.
+    void SetAttackClickConsumed(bool consumed) { _attackClickConsumed = consumed; }
     // Engine sets this once when starting a run so HandleAttackInput knows to
     // suppress the mouse melee path even when no real touches are present.
     void SetTouchModeEnabled(bool on)    { _touchModeEnabled = on; }
@@ -239,6 +281,21 @@ public:
     // Learns an ability if not already known and a slot is free.
     // Returns true if successfully learned.
     bool LearnAbility(AbilityType type);
+
+    // ── Mid-run save (suspend & resume) ────────────────────────────────────────
+    // Captures / restores every run-scoped field (RunCheckpoint.h): build stats
+    // from cards and relics, abilities and their levels, relics, resources, HP,
+    // mana, Defense, crits and Zeph's run effects. Transient state (timers, animation,
+    // statuses, temporary buffs) is deliberately left out. RestoreRunState
+    // expects SetClass/SetAppearance + Init() for the saved class first; it
+    // checks every field before applying any, and returns false (changing
+    // nothing) when one has the wrong type. A field missing from the save
+    // keeps the fresh character's value.
+    void CaptureRunState(CharacterCheckpoint& out) const;
+    bool RestoreRunState(const CharacterCheckpoint& state);
+private:
+    template <typename Fn> void VisitRunFields(Fn&& visit);   // the one list of saved scalars
+public:
     bool HasLearnedAbility(AbilityType type) const;
     void RemoveUltimateIfPresent();   // ensures at most one ultimate is held
     AbilityType GetLearnedAbility(int slot) const;
@@ -281,6 +338,7 @@ public:
     float GetClassDamageMult() const;
     bool  IsLifestealActive() const { return _lifestealTimer > 0.f; }
     float GetLifestealFraction() const { return _lifestealTimer > 0.f ? _lifestealFraction : 0.f; }
+    float GetLifestealTimeLeft() const { return std::max(0.f, _lifestealTimer); }
     void  GrantDamageBuff(float mult, float duration);
     void  GrantLifesteal(float fraction, float duration);
 
@@ -430,7 +488,20 @@ public:
 
     bool CanApplyMeleeDamage() const;
     void ConsumeMeleeDamageFrame();
+    // Whether this swing is over after a check that hit (or not): a coded
+    // swing resolves at once; a hit window authored in the Character Animator
+    // stays live until it connects or its last frame.
+    bool MeleeSwingSpent(bool hitAny) const;
+    // Animation events (Character Animator) reached since the last call.
+    void CollectAnimEvents(std::vector<FiredAnimEvent>& out);
+    // The animator's Player animations: 2 Swing, 3 Stab (Warrior/Rogue use the stab).
+    static constexpr int kSwingAnimSlot = 2;
+    static constexpr int kStabAnimSlot  = 3;
+    static constexpr int kMeleeHitStartFrame = 2;   // coded swing: frames 2-4
+    static constexpr int kMeleeHitEndFrame   = 4;
     Rectangle GetAttackCollisionRec() const;
+    Rectangle GetSideAttackRec(float side) const;
+    static Vector2 SnapToEightWay(Vector2 dir);
     // Hurt/body box — uses the authored charactertuning_Player.txt when present.
     Rectangle GetCollisionRec() const override;
     float GetAttackWidthAdjust()   const { return _attackWidthAdjust; }
@@ -442,7 +513,10 @@ public:
     // forward offset flips with facing; height is applied straight down/up.
     Vector2 GetCastOrigin(float forward, float height) const;
     Vector2 GetFacingDirection() const;
+    // Turns the sprite to face a horizontal aim (ranged classes face their shot).
+    void FaceAimDirection(Vector2 aim);
     Vector2 GetMoveDirection() const { return _direction; }
+    Vector2 GetLastMoveDirection() const { return _lastMoveDirection; }
     Vector2 GetFeetWorldPos() const;
     int ConsumeHealEffectRequests();
     float GetDashCooldownPercent() const { return (_dashCooldownTime > 0.f) ? 1.f - (_dashCooldown / _dashCooldownTime) : 1.f; }
@@ -464,26 +538,60 @@ public:
     // Cursed Wager: bonus gold/XP/Echoes for the wagered biome (1.0 = no wager).
     void  SetWagerRewardMult(float m) { _wagerRewardMult = (m < 1.f) ? 1.f : m; }
     float GetWagerRewardMult() const  { return _wagerRewardMult; }
-    // Risk Shrine contracts: separate gold / XP multipliers for the contracted
-    // room (1.0 = none). The bonus portion is accumulated for the resolve toast.
-    void SetContractGoldMult(float m) { _contractGoldMult = (m < 1.f) ? 1.f : m; }
-    void SetContractXpMult(float m)   { _contractXpMult   = (m < 1.f) ? 1.f : m; }
+    // Risk Shrine contracts and Omen Stones: separate gold / XP multipliers for
+    // the contracted room (1.0 = none; an omen can go below 1). The difference is
+    // accumulated for the resolve toast.
+    void SetContractGoldMult(float m) { _contractGoldMult = (m < 0.f) ? 0.f : m; }
+    void SetContractXpMult(float m)   { _contractXpMult   = (m < 0.f) ? 0.f : m; }
     int  TakeContractBonusGold()      { int v = _contractBonusGold; _contractBonusGold = 0; return v; }
     int  TakeContractBonusXp()        { int v = _contractBonusXp;   _contractBonusXp   = 0; return v; }
+    // Applies an active Risk Shrine XP contract to room-clear XP at the moment
+    // the room clears (the contract's multiplier resets right after).
+    int  ApplyContractXpBonus(int amount)
+    {
+        if (_contractXpMult == 1.f || amount <= 0) return amount;
+        const int boosted = (int)std::ceil(amount * _contractXpMult);
+        _contractBonusXp += boosted - amount;
+        return boosted;
+    }
     void ScaleMaxHealth(float mult);     // Cursed Shrine pacts (blessing/curse)
+
+    // ── Room events (Mutation Altar, Relic Forge, Rest Site) ─────────────────
+    // Run-scoped and saved with the run (see VisitRunFields).
+    void  ScaleEventDamage(float mult)        { _eventDamageMult *= mult; }   // Mutation Altar
+    float GetEventDamageMult() const          { return _eventDamageMult; }
+    void  AddRelicOvercharge(float perRelic)  { _relicOverchargePerRelic += perRelic; }   // Relic Forge
+    float GetRelicOverchargePerRelic() const  { return _relicOverchargePerRelic; }
+    void  ScaleMoveSpeed(float mult)          { _speed *= mult; }
+    void  ScaleDashCooldown(float mult)       { _dashCooldownTime *= mult; }
+    void  ScaleManaRegen(float mult)          { _manaRegenMultiplier *= mult; }
+    void  AddMaxMana(int amount)              { _maxMana = std::max(1, _maxMana + amount); _mana = std::clamp(_mana + std::max(0, amount), 0, _maxMana); }
     int  GetCells()      const { return _cells; }
     int  TakeCells()           { int taken = _cells; _cells = 0; return taken; }
 
     // ── Relics (per-run build-defining passives) ─────────────────────────────
     void      AddRelic(RelicType type);            // marks owned + applies passive
     bool      HasRelic(RelicType type) const;
+    void      RemoveRelic(RelicType type);         // Relic Forge: undoes AddRelic's passive
     int       GetRelicCount() const { return _relicCount; }
     RelicType GetRelicAt(int index) const;         // for HUD iteration
 
-    // Scales one outgoing hit by every damage-affecting relic the player owns,
-    // reading the target's status. Sets outCrit when Deadeye triggers.
-    int  ScaleOutgoingDamage(bool targetFrozen, bool targetCharged, bool targetBurning,
-                             float targetHpFraction, int baseDamage, bool& outCrit) const;
+    // Damage multiplier for one outgoing hit (1.0 = no bonus), reading the
+    // target's status. Rolls the crit (GetCritChance) and sets outCrit; a crit
+    // multiplies by 1 + GetCritDamage().
+    // Engine::ScalePlayerHit combines it with the other per-hit multipliers and
+    // rounds once (DamagePolicy.h).
+    // `hit` carries the target-side facts (statuses, HP, elite, fight timing);
+    // the player-side ones (own HP, movement, gold, dash, recent hurt) are
+    // filled in here.
+    float OutgoingDamageMultiplier(RelicHitContext hit, bool& outCrit) const;
+    // The player just lost HP (Engine's single hurt detector): Retaliation window.
+    void  NotifyHurt() { if (HasRelic(RelicType::Retaliation)) _retaliationTimer = kRetaliationDuration; }
+    bool  IsRetaliationActive() const { return _retaliationTimer > 0.f; }
+    // True while the player moved within the last kMomentumWindow seconds.
+    // A window (not "this frame") so classes whose swings or casts root them
+    // still benefit from moving into position (Momentum relic).
+    bool  IsRecentlyMoving() const { return _recentMoveTimer > 0.f; }
 
     // Called by Engine when an enemy dies; returns HP to heal from kill relics
     // (Vampirism cadence + Reaper elite/boss heal).
@@ -495,10 +603,9 @@ public:
     bool WantsStormsReach()   const { return HasRelic(RelicType::StormsReach); }
     int  GetHealDropBonusPercent() const;          // Scavenger
 
-    // Applies the permanent meta-progression bonuses at run start.
-    // Called by Engine right after Init() when a new run begins.
-    void ApplyMetaBonuses(int startingGold, int vitalityBonus, float manaRegenMultiplier,
-                          bool fifthAbilitySlot, bool sixthAbilitySlot = false, int startingArmour = 0);
+    // Applies the permanent meta-progression stat bonuses for a new run.
+    // Called by Engine right after Init().
+    void ApplyMetaBonuses(int vitalityBonus, float manaRegenMultiplier, float startingDefense = 0.f);
 
     int  GetLevel()    const { return _level; }
     int  GetMaxLevel() const { return _maxLevel; }
@@ -509,6 +616,9 @@ public:
     bool CanUpgradeAbility(AbilityType type) const;
     void UpgradeAbility(AbilityType type);
     void RemoveAbilityAtSlot(int slot);
+    // Swaps a learned ability for another of the same tier in the same slot
+    // (level 1, cooldown cleared). Used by the Armory before a run starts.
+    bool ReplaceAbility(AbilityType from, AbilityType to);
 
     // Mana
     void  RestoreMana(int amount);
@@ -523,13 +633,25 @@ public:
     float GetManaRegenPerSecond() const { return kManaRegenBase * _manaRegenMultiplier; }
 
     // Zeph wares are limited-use preparation, not permanent stat growth.
-    void  GrantShopWhetstone(int hits = 6) { _shopWhetstoneHits = std::min(12, _shopWhetstoneHits + hits); }
+    static constexpr int kShopWhetstoneCap   = 12;
+    static constexpr int kShopFreeCastCap    = 2;
+    static constexpr int kShopWardCap        = 2;
+    static constexpr int kShopPickupBoostCap = 10;
+    void  GrantShopWhetstone(int hits = 6) { _shopWhetstoneHits = std::min(kShopWhetstoneCap, _shopWhetstoneHits + hits); }
     float GetShopBasicDamageMultiplier() const { return (_shopWhetstoneHits > 0) ? 1.15f : 1.f; }
     void  ConsumeShopWhetstoneHit() { if (_shopWhetstoneHits > 0) --_shopWhetstoneHits; }
-    void  GrantShopFreeCast(int casts = 1) { _shopFreeCasts = std::min(2, _shopFreeCasts + casts); }
-    void  GrantShopWard(int hits = 1) { _shopWardHits = std::min(2, _shopWardHits + hits); }
-    void  GrantShopGoldCompass(int pickups = 5) { _shopGoldPickups = std::min(10, _shopGoldPickups + pickups); }
-    void  GrantShopEchoSatchel(int pickups = 5) { _shopCellPickups = std::min(10, _shopCellPickups + pickups); }
+    void  GrantShopFreeCast(int casts = 1) { _shopFreeCasts = std::min(kShopFreeCastCap, _shopFreeCasts + casts); }
+    void  GrantShopWard(int hits = 1) { _shopWardHits = std::min(kShopWardCap, _shopWardHits + hits); }
+    void  GrantShopGoldCompass(int pickups = 5) { _shopGoldPickups = std::min(kShopPickupBoostCap, _shopGoldPickups + pickups); }
+    void  GrantShopEchoSatchel(int pickups = 5) { _shopCellPickups = std::min(kShopPickupBoostCap, _shopCellPickups + pickups); }
+    // True when one of the three regular ability slots (0-2) is empty. The
+    // learned count also includes the ultimate slot, so it cannot answer this.
+    bool  HasFreeRegularAbilitySlot() const
+    {
+        for (int i = 0; i < 3; i++)
+            if (_learnedAbilities[i] == AbilityType::None) return true;
+        return false;
+    }
     int   GetShopWhetstoneHits() const { return _shopWhetstoneHits; }
     int   GetShopFreeCasts() const { return _shopFreeCasts; }
     int   GetShopWardHits() const { return _shopWardHits; }
@@ -564,17 +686,14 @@ public:
     // Rare Stat shelf: ONE permanent stat purchase from Zeph per run, total.
     bool HasShopRareStatBought() const { return _shopRareStatBought; }
     void MarkShopRareStatBought()      { _shopRareStatBought = true; }
-    // Blood Price: once per run; the max-HP cost can never drop the cap below 4.
+    // Blood Price: once per run; the max-HP cost can never drop the cap below 40.
     bool HasUsedBloodPrice() const { return _shopBloodPriceUsed; }
     void MarkBloodPriceUsed()      { _shopBloodPriceUsed = true; }
     void SacrificeMaxHealth(int amount)
     {
-        _maxHealth = std::max(4.f, _maxHealth - (float)amount);
+        _maxHealth = std::max(40.f, _maxHealth - (float)amount);
         _health    = std::min(_health, _maxHealth);
     }
-    // Armour absorbs one direct hit before HP is affected (0–3 slots).
-    static constexpr int kMaxArmour = 3;
-
     // Passive mana regen — flat rate scaled only by the regen multiplier.
     // Higher regen should always feel faster, regardless of current mana.
     // _manaRegenMultiplier scales via upgrades and (eventually) the store.
@@ -582,10 +701,16 @@ public:
     // removed +5-mana-per-level auto gain).
     static constexpr float kManaRegenBase = Balance::Sustain::kManaRegenPerSecond;
 
-    // Armour
-    int  GetArmour()    const { return _armour; }
-    int  GetMaxArmour() const { return _maxArmour; }
-    void AddArmour(int amount);
+    // Defense (replaced the armour pips) trims every direct hit; see
+    // DamagePolicy::DefenseReduction. Rally Defense is War Cry / Shield of
+    // Faith's timed bonus; Ironclad adds a capped amount per cleared room.
+    float GetDefense() const { return _defense + (_rallyDefenseTimer > 0.f ? _rallyDefense : 0.f); }
+    void  AddDefense(float amount) { _defense = std::max(0.f, _defense + amount); }
+    void  GrantRallyDefense(float amount, float seconds);
+    void  AddIroncladDefense();
+    // Crits: every player hit rolls GetCritChance(); a crit deals +GetCritDamage().
+    float GetCritChance() const;
+    float GetCritDamage() const { return _critDamage; }
     void ApplyUpgrade(UpgradeType type);
 
     // Combat damage accessors -------------------------------------------------
@@ -608,7 +733,20 @@ private:
     void HandleAttackInput();
     bool HandleForcedPush(float dt);
     void UpdatePendingBurns(float dt);
-    void ApplyBurnTickDamage(float damage, Vector2 sourcePos);
+    void ApplyBurnTickDamage(float damage, Vector2 sourcePos, const DamageSource& source);
+    // Records the named source when the hit it guards actually takes HP, on
+    // whichever path the hit returns by.
+    struct DamageRecorder
+    {
+        Character& self;
+        float healthBefore;
+        DamageSource source;
+        ~DamageRecorder() { if (self._health < healthBefore) self._lastDamageSource = source; }
+    };
+    DamageSource _incomingSource;
+    DamageSource _lastDamageSource;
+    DamageSource _burnAppliedBy;     // the last source that set the player burning
+    DamageSource _poisonAppliedBy;   // the last source that poisoned the player
     int GetAbilityUpgradeBonus(AbilityType type) const;
 
     void HandleAnimation(float dt);
@@ -621,12 +759,14 @@ private:
                           // (traps use the appearance's own attack animation)
 
     Vector2 _direction{};
+    Vector2 _lastMoveDirection{ 1.f, 0.f };   // last non-zero walk direction
     Vector2 _dashDirection{};
     Vector2 _forcedPushDirection{};
 
     // Touch-input state set by Engine before Character::Update
     Vector2 _touchMoveDir{};
     bool    _touchAttackJustPressed = false;
+    bool    _attackClickConsumed    = false;   // see SetAttackClickConsumed
     bool    _touchDashJustPressed   = false;
     bool    _touchModeEnabled       = false;
 
@@ -676,7 +816,12 @@ private:
     float _dashTimer = 0.f;
 
     float _dashCooldown = 0.f;
-    float _dashCooldownTime = 1.3f;
+    static constexpr float kDashCooldownBase = 1.3f;
+    float _dashCooldownTime = kDashCooldownBase;   // reset every run (Swift Boots shortens it)
+    float _bloodlustTimer = 0.f;                   // Bloodlust relic window after a kill
+    float _sinceDashEnd = 99.f;                    // Afterimage: seconds since the last dash ended
+    float _retaliationTimer = 0.f;                 // Retaliation relic window after being hit
+    float _recentMoveTimer = 0.f;                  // Momentum: time left in the recent-movement window
 
     // Sanctuary biome debuff zone — set each frame by Engine while player is inside a zone
     bool  _biomeDashLocked = false;
@@ -714,12 +859,12 @@ private:
     float _electricDamageMult = 1.f;
     float _comboBonusMult     = 1.f;
     float _rageDecayMult      = 1.f;
-    float _rageFullBonus      = 0.5f;   // +50% ability dmg at full Rage (base)
-    float _retributionPerStack = 0.12f; // Paladin counter dmg per stack (base)
+    float _rageFullBonus      = 0.35f;  // +35% ability dmg at full Rage (base)
+    float _retributionPerStack = 0.08f; // Paladin counter dmg per stack (base)
     float _reflectPotency     = 1.f;
     int   _hunterMarkEvery    = 3;      // every Nth landed shot marks (base 3)
     float _markedBonus        = 0.30f;  // Hunter dmg bonus vs marked (base)
-    float _cursedBonus        = 0.25f;  // Warlock dmg bonus vs cursed (base)
+    float _cursedBonus        = 0.15f;  // Warlock dmg bonus vs cursed (base)
     float _curseDurationMult  = 1.f;
     float _lifestealPotency   = 1.f;
     int   _maxComboPointsRun  = kMaxComboPoints;   // Rogue bank depth (cap 7)
@@ -728,6 +873,8 @@ private:
     int   _healOnRoomClear    = 0;
     float _lifestealFraction = 0.f;  // fraction of damage dealt returned as HP
     float _lifestealTimer    = 0.f;
+    float _lifestealFallbackFraction = 0.f;   // a weaker, longer grant waiting
+    float _lifestealFallbackTimer    = 0.f;   // for the active one to end
 
     // Paladin Retribution / Aegis reflect.
     static constexpr int   kRetributionMaxStacks = 5;
@@ -750,6 +897,12 @@ private:
     int   _contractBonusGold  = 0;            // gold gained beyond base while contracted
     int   _contractBonusXp    = 0;            // XP gained beyond base while contracted
     const CharacterTuning* _playerTuning = nullptr;   // authored hit/hurt colliders
+    float _playerBoxScale = 1.f;   // authored scale -> the hero as drawn (boxes, event spots)
+    bool _attackSheetIsStab = false;
+    int  _eventSlot = -1, _eventFrame = -1;     // where events last fired
+    int  AttackAnimSlot() const { return _attackSheetIsStab ? kStabAnimSlot : kSwingAnimSlot; }
+    const CharacterTuning::AnimHit* AuthoredHitWindow() const;
+    int  CurrentEventSlot() const;
 
     int _exp  = 0;
     int _gold = 0;
@@ -757,6 +910,8 @@ private:
 
     // ── Relic loadout (reset each run in Init) ───────────────────────────────
     bool _relicOwned[(int)RelicType::Count] = {};
+    float _eventDamageMult         = 1.f;   // Mutation Altar damage trades (reset each run)
+    float _relicOverchargePerRelic = 0.f;   // Relic Forge: +damage per relic carried (reset each run)
     RelicType _relicOrder[(int)RelicType::Count] = {};   // acquisition order for HUD
     int  _relicCount    = 0;
     int  _killsSinceHeal = 0;   // Vampirism cadence counter
@@ -767,8 +922,13 @@ private:
     int   _mana    = 0;
     int   _maxMana = 10;
     float _ultimateManaWarningTimer = 0.f;
-    int   _armour    = 0;   // current armour slots filled
-    int   _maxArmour = kMaxArmour;  // can be raised by upgrades; hard-capped at kMaxArmour
+    float _defense           = 0.f;   // class start, cards, relics, wares, Ironclad
+    float _ironcladDefense   = 0.f;   // the part Ironclad added (capped)
+    float _rallyDefense      = 0.f;   // War Cry / Shield of Faith (transient)
+    float _rallyDefenseTimer = 0.f;
+    float _critChance = Balance::Stats::kBaseCritChance;
+    float _critDamage = Balance::Stats::kBaseCritDamage;
+    static constexpr float kBaseAttackRangeMultiplier = 1.5f;   // every run starts here
     float _attackRangeMultiplier = 1.f;
 
     int _shopWhetstoneHits = 0;
@@ -815,9 +975,9 @@ private:
     float _abilityDamageMultiplier = 1.0f;   // reserved for future global spell mods
 
     // Base ability damage values
-    static constexpr float _spreadBaseDamage     = 1.0f;
-    static constexpr float _spreadBurnBaseDamage = 1.0f;
-    static constexpr float _boltBaseDamage       = 3.0f;   // single shot, 3× spread
-    static constexpr float _boltBurnBaseDamage   = 2.0f;
-    static constexpr float _ultimateBaseDamage   = 4.0f;
+    static constexpr float _spreadBaseDamage     = Balance::AbilityDamage::kSpreadBase;
+    static constexpr float _spreadBurnBaseDamage = Balance::AbilityDamage::kSpreadBurnBase;
+    static constexpr float _boltBaseDamage       = Balance::AbilityDamage::kBoltBase;
+    static constexpr float _boltBurnBaseDamage   = Balance::AbilityDamage::kBoltBurnBase;
+    static constexpr float _ultimateBaseDamage   = Balance::AbilityDamage::kUltimateBase;
 };

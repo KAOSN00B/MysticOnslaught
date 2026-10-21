@@ -1,4 +1,5 @@
 #include "SlimeEnemy.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 
@@ -96,9 +97,9 @@ void SlimeEnemy::ResetForSpawn(Vector2 pos)
         _width  = kBigSlimeFrameWidth;
         _scale  = 5.2f;
         _speed  = 135.f;
-        _health = 5.f;
-        _maxHealth = 5.f;
-        _attackPower = 1.f;
+        _health = Balance::Fodder::kBigSlimeHealth;
+        _maxHealth = Balance::Fodder::kBigSlimeHealth;
+        _attackPower = 10.f;
         _expValue = 3;
         // Big slime body is wide — larger capsule so it feels solid.
         _capsuleRadius     = 34.f;
@@ -110,9 +111,9 @@ void SlimeEnemy::ResetForSpawn(Vector2 pos)
         _width  = kSmallSlimeFrameWidth;
         _scale  = 4.6f;
         _speed  = 265.f;
-        _health = 1.f;
-        _maxHealth = 1.f;
-        _attackPower = 1.f;
+        _health = Balance::Fodder::kSmallSlimeHealth;
+        _maxHealth = Balance::Fodder::kSmallSlimeHealth;
+        _attackPower = 10.f;
         _expValue = 1;
         _capsuleRadius     = 20.f;
         _capsuleHalfHeight = 0.f;
@@ -170,26 +171,25 @@ void SlimeEnemy::SetWaveScale(int wave)
     if (_size == SlimeSize::Big)
     {
         _expValue    = 3;
-        _health      = 5.f;
-        _maxHealth   = 5.f;
+        _health      = Balance::Fodder::kBigSlimeHealth;
+        _maxHealth   = Balance::Fodder::kBigSlimeHealth;
         _speed       = 135.f;
-        _attackPower = 1.f;
+        _attackPower = 10.f;
     }
     else
     {
         _expValue    = 1;
-        _health      = 1.f;
-        _maxHealth   = 1.f;
+        _health      = Balance::Fodder::kSmallSlimeHealth;
+        _maxHealth   = Balance::Fodder::kSmallSlimeHealth;
         _speed       = 265.f;
-        _attackPower = 1.f;
+        _attackPower = 10.f;
     }
 }
 
 // =============================================================================
 void SlimeEnemy::PlayAttackSound()
 {
-    float pitch = GetRandomValue(_size == SlimeSize::Big ? 70 : 130,
-                                 _size == SlimeSize::Big ? 95 : 170) / 100.f;
+    float pitch = SoundVariation::VariedPitch(_size == SlimeSize::Big ? 0.825f : 1.5f);
     SetSoundPitch(_attackSound, pitch);
     SetSoundVolume(_attackSound, 0.6f);
     PlaySound(_attackSound);

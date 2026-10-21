@@ -51,6 +51,7 @@ enum class RoomSpecialType
     LockedArmory,   // pay to open cases
     MutationAltar,  // reshape the build with a drawback
     RelicForge,     // salvage / reroll / overcharge relics
+    RestSite,       // rest, train or fortify (one per domain from the second on)
     Count,
 };
 
@@ -95,6 +96,10 @@ enum class GameState
     DeathRevive,          // Zelda-style death beat + Poe's revive dialogue -> class/look select
     BossChoice,           // after every boss: return to village vs push onward (double-or-nothing)
     CosmeticShop,         // village Mirror/Tailor: change the player's look (skin), gold sink later
+    Armory,               // village Armory: choose the class's starting ability (mastery-gated)
+    RunSummary,           // end of a run (death or victory): how it went, then Poe / the victory screen
+    Grimoire,             // relics, bestiary, run chronicle and feats (from the pause menu)
+    CharacterSheet,       // the second pause screen: current stats and relics carried
 };
 
 enum class MusicCue
@@ -102,25 +107,23 @@ enum class MusicCue
     None,
     Title,
     Pause,
-    Dungeon,       // ruins/underground biomes (Caverns, Lost City, Wastelands)
-    Forest,        // nature biomes (Forest, Jungle)
-    BiomeDark,     // dark/evil biomes (Demon's Insides, Graveyard)
-    BiomeGrand,    // grand/holy biomes (Ancient Castle, The Sanctuary)
-    BiomeEthereal, // dreamlike biomes (Dream Realm)
+    Dungeon,       // Caverns (the original dungeon theme)
+    Forest,        // Forest
+    BiomeDark,     // Demon's Insides
+    BiomeGrand,    // Ancient Castle
+    BiomeEthereal, // Dream Realm
     BossBattle,
     Shop,
     BattleVictory,
     BossVictory,
     GameOver,
-};
-
-struct MapNode
-{
-    int row = 0;
-    float normX = 0.5f;
-    RoomType type = RoomType::Standard;
-    bool completed = false;
-    bool available = false;
-    std::vector<int> nextNodes;
-    Vector2 drawPos{};
+    // Every biome has its own theme (appended so earlier values stay stable).
+    BiomeJungle,
+    BiomeLostCity,
+    BiomeWastelands,
+    BiomeGraveyard,
+    BiomeSanctuary,
+    Village,       // the home village
+    WorldMap,      // choosing the next domain
+    FinalBoss,     // the final domain's boss
 };

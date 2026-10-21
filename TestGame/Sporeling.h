@@ -14,6 +14,7 @@ class Sporeling : public Enemy
 public:
     Sporeling(Vector2 pos);
     CreatureFamily GetCreatureFamily() const override { return CreatureFamily::Plant; }
+    float VisualSizeMultiplier() const override { return Balance::Visual::kMushroomSizeMult; }
     ~Sporeling() override;
 
     void Init();

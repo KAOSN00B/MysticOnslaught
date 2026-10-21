@@ -1,4 +1,5 @@
 #include "DungeonGen.h"
+#include "GameBalance.h"
 
 #include <cassert>
 #include <algorithm>
@@ -115,8 +116,49 @@ int main()
     combatEntrance.Generate();
     assert(!combatEntrance.GetRooms()[(std::size_t)combatEntrance.GetStartIndex()].startsEmpty);
 
-    // Exercise many natural rolls as a guard against disconnected branches.
+    // Domain plans: dungeons grow from the first domain to the final one, hold
+    // more elites and treasure as they grow, never pass the size cap, and every
+    // room stays inside the grid the corner minimap draws.
     SetRandomScript({});
+    {
+        int previousRooms = 0;
+        for (int domain = 0; domain <= 5; ++domain)
+        {
+            const DungeonGen::Plan plan = DungeonGen::PlanForDomain(domain);
+            assert(plan.rooms >= previousRooms);
+            assert(plan.rooms >= DungeonGen::kMinRooms && plan.rooms <= DungeonGen::kMaxRooms);
+            // Every domain must fit the 15-minute pacing budget, priced per room kind.
+            assert(Balance::Pacing::PlannedDomainSeconds(plan.rooms, plan.elites) <= Balance::Pacing::kDomainMaxSeconds);
+            assert(DungeonGen::kMaxRooms * 4 <= DungeonGen::kGridSize * DungeonGen::kGridSize);
+            previousRooms = plan.rooms;
+            for (int iteration = 0; iteration < 120; ++iteration)
+            {
+                DungeonGen sized;
+                sized.SetPlan(plan);
+                sized.Generate();
+                const auto& rooms = sized.GetRooms();
+                assert((int)rooms.size() == plan.rooms);
+                int elites = 0, treasures = 0, bosses = 0;
+                for (const DungeonRoom& r : rooms)
+                {
+                    assert(r.row >= 0 && r.row < DungeonGen::kGridSize && r.col >= 0 && r.col < DungeonGen::kGridSize);
+                    elites += r.type == RoomType::Elite;
+                    treasures += r.type == RoomType::Treasure;
+                    bosses += r.type == RoomType::Boss;
+                    if (r.type == RoomType::Elite || r.type == RoomType::Treasure)
+                        assert(r.depth >= 2);
+                }
+                assert(bosses == 1 && elites == plan.elites && treasures == plan.treasures);
+                assert(sized.GetKeyIndex() >= 0 && sized.GetKeyIndex() != sized.GetBossIndex());
+                AssertAllRoomsReachable(sized);
+            }
+        }
+        assert(DungeonGen::PlanForDomain(0).rooms < DungeonGen::PlanForDomain(5).rooms);
+        assert(DungeonGen::PlanForDomain(99).rooms == DungeonGen::PlanForDomain(5).rooms);   // clamps
+        assert(DungeonGen::PlanForDomain(-3).rooms == DungeonGen::PlanForDomain(0).rooms);
+    }
+
+    // Exercise many natural rolls as a guard against disconnected branches.
     for (int iteration = 0; iteration < 200; ++iteration)
     {
         DungeonGen rolled;

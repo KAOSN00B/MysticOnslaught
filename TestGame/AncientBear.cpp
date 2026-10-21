@@ -1,4 +1,6 @@
 #include "AncientBear.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -45,8 +47,8 @@ void AncientBear::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health = 75.f; _maxHealth = 75.f;
-    _attackPower = 1.f;
+    _health = 750.f; _maxHealth = 750.f;
+    _attackPower = 10.f;
     _speed = _moveSpeed;
     _expValue = _bossBaseExpValue;
 
@@ -180,7 +182,7 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _state = State::MeleeAttacking;
                 _damageApplied = false;
                 SetAnimation(_sharedMeleeAnim, 1.f / 10.f, true);
-                PlaySound(_attackSound);
+                SoundVariation::PlayPitchVaried(_attackSound);
                 break;
             }
 
@@ -193,7 +195,7 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         case State::MeleeAttacking:
             _velocity = Vector2Zero();
-            if (!_damageApplied && _frame >= 3)
+            if (!_damageApplied && MeleeWindowLive(kAnimSlotAttack, kBossMeleeHitFrame, kHitThroughLastFrame))
             {
                 Rectangle attackRec;
                 if (!GetAnimMeleeRectWorld(2, attackRec))
@@ -203,12 +205,13 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                     if (_rightLeft < 0.f) attackRec.x -= 130.f;
                     attackRec.y -= 30.f; attackRec.height += 60.f;
                 }
-                if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+                const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+                if (hit)
                 {
                     _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
-                _damageApplied = true;
+                _damageApplied = MeleeCheckDone(kAnimSlotAttack, hit);
             }
             if (_frame >= _maxFrames - 1)
             {
@@ -270,7 +273,7 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _state = State::Slamming; _stateTimer = 0.f;
                 _slamDamageApplied = false;
                 _impactShakeRequested = true;
-                PlaySound(_attackSound);
+                SoundVariation::PlayPitchVaried(_attackSound);
             }
             break;
 
@@ -304,7 +307,7 @@ void AncientBear::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 }
                 if (playerInsideShape)
                 {
-                    _target->TakeFractionalDamage(1.5f, _worldPos);
+                    _target->TakeFractionalDamage(15.f, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
             }
@@ -429,7 +432,7 @@ void AncientBear::TryDealContactDamage()
     if (_contactCooldown > 0.f) return;
     if (!CheckCollisionRecs(GetBodyContactRec(), _target->GetCollisionRec())) return;
 
-    _target->TakeFractionalDamage(0.5f, _worldPos);
+    _target->TakeFractionalDamage(5.f, _worldPos);
     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
     _contactCooldown = _contactCooldownBase;
 }
@@ -605,7 +608,7 @@ void AncientBear::SetWaveScale(int wave)
     _expValue = _bossBaseExpValue;
     _health = Balance::Boss::kAncientBearHealth; _maxHealth = Balance::Boss::kAncientBearHealth;
     _enrageThreshold = 0.35f;   // runes ignite below this HP fraction
-    _speed = _moveSpeed; _attackPower = 1.f;
+    _speed = _moveSpeed; _attackPower = 10.f;
 }
 
 void AncientBear::EnsureSharedResourcesLoaded()
@@ -640,4 +643,48 @@ void AncientBear::UnloadSharedResources()
     _sharedAttackSound = Sound{};   _sharedHurtSound = Sound{};
     _sharedDeathSound = Sound{};    _sharedRoarSound = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: special moves (the three slam shapes).
+// =============================================================================
+namespace
+{
+    constexpr const char* kSlamDiscKey  = "AncientBear_Crushing_Slam";
+    constexpr const char* kSlamRingKey  = "AncientBear_Slam_Ring";
+    constexpr const char* kSlamWedgeKey = "AncientBear_Slam_Wedge";
+    constexpr int kSlamAnimSlot = 2;
+}
+
+int AncientBear::GetEditorMoveCount() const { return 3; }
+
+Enemy::MoveInfo AncientBear::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    move.animSlot = kSlamAnimSlot;
+    if (index == 0)
+    {
+        move.key = kSlamDiscKey; move.name = "Crushing Slam (disc)"; move.shape = MoveShape::Circle;
+        move.radius = kDefaultSlamRadius; move.note = "Safe outside the circle.";
+    }
+    else if (index == 1)
+    {
+        move.key = kSlamRingKey; move.name = "Crushing Slam (ring)"; move.shape = MoveShape::Ring;
+        move.inner = kDefaultSlamRingInnerRadius; move.radius = kDefaultSlamRingOuterRadius;
+        move.note = "Safe close in or far out.";
+    }
+    else if (index == 2)
+    {
+        move.key = kSlamWedgeKey; move.name = "Crushing Slam (wedge)"; move.shape = MoveShape::Circle;
+        move.radius = kDefaultSlamWedgeRadius; move.note = "How far the wedge reaches (its angle stays coded).";
+    }
+    return move;
+}
+
+void AncientBear::ApplyMoveTuning()
+{
+    _slamRadius          = TunedHitRadius(kSlamDiscKey, kDefaultSlamRadius);
+    _slamRingInnerRadius = TunedHitInner(kSlamRingKey, kDefaultSlamRingInnerRadius);
+    _slamRingOuterRadius = TunedHitRadius(kSlamRingKey, kDefaultSlamRingOuterRadius);
+    _slamWedgeRadius     = TunedHitRadius(kSlamWedgeKey, kDefaultSlamWedgeRadius);
 }

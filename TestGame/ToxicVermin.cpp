@@ -1,4 +1,6 @@
 #include "ToxicVermin.h"
+#include "AttackTuning.h"
+#include "SoundVariation.h"
 #include "VirtualCanvas.h"
 #include "AssetPaths.h"
 #include "Character.h"
@@ -47,8 +49,8 @@ void ToxicVermin::ResetForSpawn(Vector2 pos)
     SetAnimation(_sharedIdleAnim, 1.f / 8.f, true);
     _scale = _bossScale;
 
-    _health = 66.f; _maxHealth = 66.f;
-    _attackPower = 1.f;
+    _health = 660.f; _maxHealth = 660.f;
+    _attackPower = 10.f;
     _speed = _surfaceSpeed;
     _expValue = _bossBaseExpValue;
 
@@ -198,7 +200,7 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _state = State::MeleeAttacking;
                 _damageApplied = false;
                 SetAnimation(_sharedMeleeAnim, 1.f / 11.f, true);
-                PlaySound(_attackSound);
+                SoundVariation::PlayPitchVaried(_attackSound);
                 break;
             }
             if (_spitCooldown <= 0.f && dist > 240.f)
@@ -217,7 +219,8 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
 
         case State::MeleeAttacking:
             _velocity = Vector2Zero();
-            if (!_damageApplied && _frame >= 3)
+            if (bool firstCheck = false;
+                !_damageApplied && MeleeWindowLive(kAnimSlotAttack, kBossMeleeHitFrame, kHitThroughLastFrame, firstCheck))
             {
                 Rectangle attackRec;
                 if (!GetAnimMeleeRectWorld(2, attackRec))
@@ -227,13 +230,14 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                     if (_rightLeft < 0.f) attackRec.x -= 90.f;
                     attackRec.y -= 20.f; attackRec.height += 40.f;
                 }
-                if (CheckCollisionRecs(attackRec, _target->GetCollisionRec()))
+                const bool hit = CheckCollisionRecs(attackRec, _target->GetCollisionRec());
+                if (hit)
                 {
                     _target->TakeFractionalDamage(_bossDamagePerHit, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
-                if (GetPhase() >= 2) { _pendingPoisonPool = true; _poisonPoolPos = _worldPos; }   // bite fouls the ground
-                _damageApplied = true;
+                if (firstCheck && GetPhase() >= 2) { _pendingPoisonPool = true; _poisonPoolPos = _worldPos; }   // bite fouls the ground
+                _damageApplied = MeleeCheckDone(kAnimSlotAttack, hit);
             }
             if (_frame >= _maxFrames - 1)
             {
@@ -305,7 +309,7 @@ void ToxicVermin::Update(float dt, Vector2 heroWorldPos, Vector2, bool,
                 _eruptDamageApplied = true;
                 if (Vector2Distance(_worldPos, _target->GetFeetWorldPos()) < _eruptRadius)
                 {
-                    _target->TakeFractionalDamage(1.0f, _worldPos);
+                    _target->TakeFractionalDamage(10.f, _worldPos);
                     _target->StartForcedPush(GetPushDirectionToPlayer(), _bossPushSpeed);
                 }
                 // Every eruption fouls the ground.
@@ -568,7 +572,7 @@ void ToxicVermin::SetWaveScale(int wave)
     _expValue = _bossBaseExpValue;
     _health = Balance::Boss::kToxicVerminHealth; _maxHealth = Balance::Boss::kToxicVerminHealth;
 _enrageThreshold = 0.40f;
-    _speed = _surfaceSpeed; _attackPower = 1.f;
+    _speed = _surfaceSpeed; _attackPower = 10.f;
 }
 
 void ToxicVermin::EnsureSharedResourcesLoaded()
@@ -607,4 +611,31 @@ void ToxicVermin::UnloadSharedResources()
     _sharedAttackSound = Sound{};    _sharedHurtSound = Sound{};
     _sharedDeathSound = Sound{};     _sharedBurrowSound = Sound{};
     _sharedResourcesLoaded = false;
+}
+
+// =============================================================================
+// Character Animator: special moves.
+// =============================================================================
+namespace
+{
+    constexpr const char* kEruptionKey = "ToxicVermin_Eruption";
+    constexpr int kEruptAnimSlot = 5;
+}
+
+int ToxicVermin::GetEditorMoveCount() const { return 1; }
+
+Enemy::MoveInfo ToxicVermin::GetEditorMove(int index) const
+{
+    MoveInfo move;
+    if (index != 0)
+        return move;
+    move.key = kEruptionKey; move.name = "Eruption"; move.shape = MoveShape::Circle;
+    move.animSlot = kEruptAnimSlot; move.radius = kDefaultEruptRadius;
+    move.note = "Hits around the spot it surfaces.";
+    return move;
+}
+
+void ToxicVermin::ApplyMoveTuning()
+{
+    _eruptRadius = TunedHitRadius(kEruptionKey, kDefaultEruptRadius);
 }

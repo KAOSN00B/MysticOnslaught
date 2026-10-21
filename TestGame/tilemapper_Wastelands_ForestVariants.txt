@@ -1,0 +1,22 @@
+PROPV3 "prop_0" "Wastelands big" "Wastelands_ForestVariants" 0 0 64 48 10 15 45 33
+PROPV3 "prop_1" "Wastelands mid" "Wastelands_ForestVariants" 64 0 32 48 0 15 32 33
+PROPV3 "prop_2" "Wastelands small" "Wastelands_ForestVariants" 96 0 16 32 0 9 16 23
+PROPV3 "prop_3" "Wastelands small2" "Wastelands_ForestVariants" 112 0 16 32 0 11 16 21
+PROPV3 "prop_4" "Wastelands rock" "Wastelands_ForestVariants" 128 0 32 32 2 3 29 29
+PROPV3 "prop_5" "Wastelands rock2" "Wastelands_ForestVariants" 160 0 32 32 2 2 28 30
+PROPV3 "prop_168711230338000_18" "Wastelands tall" "Wastelands_ForestVariants" 192 0 16 32 0 0 16 32
+PROPV3 "prop_168713593038100_19" "Wastelands tall2" "Wastelands_ForestVariants" 208 0 16 32 0 0 16 32
+PROPV3 "prop_173392298448400_1" "Wastelands pebble" "Wastelands_ForestVariants" 224 0 16 16 0 0 16 16
+PROPV3 "prop_173393896656300_2" "Wastelands pebble2" "Wastelands_ForestVariants" 240 0 16 16 0 0 16 16
+PROPV3 "prop_173395190463900_3" "Wastelands pebble3" "Wastelands_ForestVariants" 256 0 16 16 0 0 16 16
+PROPV3 "prop_173396521756000_4" "Wastelands pebble" "Wastelands_ForestVariants" 272 0 16 16 0 0 16 16
+DECORV3 "decor_0" "Wastelands decor" "Wastelands_ForestVariants" 288 0 32 32
+DECORV3 "decor_1" "Wastelands decor" "Wastelands_ForestVariants" 320 0 32 32
+DECORV3 "decor_2" "Wastelands decor" "Wastelands_ForestVariants" 352 0 48 16
+DECORV3 "decor_3" "Wastelands decor" "Wastelands_ForestVariants" 400 0 16 16
+DECORV3 "decor_4" "Wastelands decor" "Wastelands_ForestVariants" 416 0 16 16
+DECORV3 "decor_5" "Wastelands decor" "Wastelands_ForestVariants" 432 0 16 16
+DECORV3 "decor_6" "Wastelands decor" "Wastelands_ForestVariants" 448 0 16 16
+DECORV3 "decor_7" "Wastelands decor" "Wastelands_ForestVariants" 464 0 16 16
+DECORV3 "decor_8" "Wastelands decor" "Wastelands_ForestVariants" 480 0 16 16
+ANIMDECORV3 "anim_decor_0" "Wastelands animated decor" "Wastelands_ForestVariants" 0 4 4 496 0 16 16 0 48 16 16 16 48 16 16 32 48 16 16

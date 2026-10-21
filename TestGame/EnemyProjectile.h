@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DamageSource.h"
 #include "raylib.h"
 #include <string>
 
@@ -36,17 +37,21 @@ public:
     Vector2   GetWorldPos()     const { return _worldPos; }
     Rectangle GetCollisionRec() const;
     EnemyProjectileKind GetKind() const { return _kind; }
+    // Who fired it (the run log's cause of death when it lands).
+    void SetSource(const DamageSource& source) { _source = source; }
+    const DamageSource& GetSource() const { return _source; }
 
     static void UnloadSharedResources();
 
 private:
     static void EnsureTexturesLoaded();
 
+    DamageSource _source;
     Vector2 _worldPos{};
     Vector2 _direction{ 1.f, 0.f };
     std::string _tuningKey;
     EnemyProjectileKind _kind = EnemyProjectileKind::Arrow;
-    int   _damage      = 1;
+    int   _damage      = 10;
     float _scaleMult   = 1.f;
     float _speed       = 700.f;
     float _lifeTimer   = 0.f;

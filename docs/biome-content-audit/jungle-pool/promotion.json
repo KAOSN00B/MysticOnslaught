@@ -1,0 +1,31 @@
+{
+  "originals_preserved": 55,
+  "variants": 23,
+  "files": {
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_4wayroom_jungle.mroom": "772ee29e06c361b68d3b2510a3dce890c4ad1ddd80131610df97688f9b95daed",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_basic_room_jungle.mroom": "c5649022fc6c4ce91068d0c7075d2e1e14287db031317b0a756fae336490153e",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_basicroom3_jungle.mroom": "46bd81bb1e32e69119d1e20bda68f50fad79b572455ed9d81ba54cc68e7c6436",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_e_jungle.mroom": "5370104e07003fced7ec04c4035670e2165ff2c57bb8fc03ce8d0c05414edb5d",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_east_west_jungle.mroom": "0c2cef67ce35e5598322a442895ec89501fce6bc90d53f75f57a8c487611b81e",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_n_jungle.mroom": "8d5297bfd3dcd1daaac8a3de14db35be1398a09f2d3e2826c1f3a4343d353541",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_ne_jungle.mroom": "74c50efdfd8a9d9136a8fe02f3457911d51a6a7f84a99f61b97a06bb696a97e4",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_ns_jungle.mroom": "55b55cfe050febd2a264a48910956f77c5bd58c45cd02680dfd5dab91a5f9c63",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nse_jungle.mroom": "76a7193f18783be213b4f0b98a94ed87c832e438637117c3bd224f3fe90addc3",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nse3_jungle.mroom": "6fe1f377339901ee421f389c58f1030cbf4ade279bf24f520ba300e5eb2e80be",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nse_copy_jungle.mroom": "9dc6c5b8f8753ed024feb53c1d2ced0c03347820768b9fccb597af8bb3a3c319",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nsw_jungle.mroom": "b850ee169669ec46a36136c2809ff870f5c9851e8e82cea4a076cde1fbfcda0f",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nsw3_jungle.mroom": "da9c0fdb8511849b1bdc5a634d33c6e49b76ad7db15cd53a5e12451a7eb2e1ed",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nsw_copy_jungle.mroom": "947113e5450dfb9e7512b7d44cb5b995e90886d323cc2e90dc824bf3b0ffb293",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nw_jungle.mroom": "1e38a2f51bd52a021a9043df1d72e75f3f46003d6bc22dacc421deb8728563bd",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nwe_jungle.mroom": "061b3d1e73a00b8474c9fe12266eed9b4bd7ae89dcecf2111797e5320819622d",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nwe2_jungle.mroom": "2839bb9ae8465db881e9130324a4ad348555cf6b5d4462d87cc0f990eebeb595",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_nwe3_jungle.mroom": "3121ecc89f19cc331ffeaf09311dc4da286de1591f89400f31e739f909ad9d25",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_s_jungle.mroom": "42ec8b0060d1ae33dd732050e328969e684a7896cf9eb1a1bcd7891d43dcf513",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_se_jungle.mroom": "de152ad6349a256ce2308e16d2a131cf302550b06c479032b6fd842a840939cb",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_sew_jungle.mroom": "719602dae2828ed234ecc41eb78490f0298cef289b40d1d69db390833cd1ab6d",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_sw_jungle.mroom": "08a98ea087d835a3299bda8c08227adf78b2e52c5be4249bf3e1a1755f8c68a8",
+    "TestGame\\Rooms\\Generated\\Jungle\\forest_variants\\forest_w_jungle.mroom": "a596a7fbf677f42073acec99831e18d54adf49fddad0f1097ba463aecbad03a5",
+    "MapTilesets\\Jungle_ForestVariants.png": "c3fe2f179631cd01a1082408ee2a96bddf42267e597d229211d768a8195930aa",
+    "TestGame\\tilemapper_Jungle_ForestVariants.txt": "811b7b14900577e56a196075c8b435e5070a46a439224d3795290d66d0cd8e28"
+  }
+}

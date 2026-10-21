@@ -16,13 +16,22 @@ int main()
     VillageLayout layout = VillageLayoutLoader::Load("VillageAssets/VillageLayout.vlayout");
     assert(layout.width == 1920);
     assert(layout.height == 1080);
-    assert(layout.objects.size() == 3);
+    assert(layout.objects.size() == 9);
     assert(layout.objects[0].assetName == "VillageGraveyard");
     assert(layout.objects[1].assetName == "ZephsShop");
     assert(layout.objects[2].assetName == "VillageGate");
-    assert(layout.objects[0].permanent);
-    assert(layout.objects[1].permanent);
-    assert(layout.objects[2].permanent);
+    const char* coreTown[] = { "VillageTownhouseA", "VillageTownhouseB", "VillageCottageA",
+                               "VillageCottageB", "VillageTrophyHall", "VillageArmory" };
+    for (int i = 0; i < 6; ++i)
+    {
+        const VillageLayoutObject& object = layout.objects[3 + i];
+        assert(object.assetName == coreTown[i]);
+        // Core plots are converted to 48px village cells: keep them exact.
+        assert(std::fmod(object.worldOrigin.x, 48.f) == 0.f);
+        assert(std::fmod(object.worldOrigin.y, 48.f) == 0.f);
+    }
+    for (const VillageLayoutObject& object : layout.objects)
+        assert(object.permanent);
     assert(layout.spawnAssetName == "VillageGraveyard");
     assert(layout.spawnMarkerName == "Respawn");
 

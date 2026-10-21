@@ -119,6 +119,7 @@ namespace
         if (EqualsIgnoreCase(text, "TrophyHall"))  return VillageService::TrophyHall;
         if (EqualsIgnoreCase(text, "DungeonGate")) return VillageService::DungeonGate;
         if (EqualsIgnoreCase(text, "Relic"))       return VillageService::Relic;
+        if (EqualsIgnoreCase(text, "Armory"))      return VillageService::Armory;
         return VillageService::None;
     }
 
@@ -500,6 +501,7 @@ const char* VillageAssetLoader::ToString(VillageService service)
     case VillageService::TrophyHall:   return "TrophyHall";
     case VillageService::DungeonGate:  return "DungeonGate";
     case VillageService::Relic:        return "Relic";
+    case VillageService::Armory:       return "Armory";
     }
     return "None";
 }

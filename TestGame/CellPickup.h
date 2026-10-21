@@ -33,7 +33,7 @@ private:
     static void EnsureTexturesLoaded();
 
     CellDenomination _denomination = CellDenomination::Single;
-    float            _bobTimer     = 0.f;   // gentle floating motion
+    float            _bobPhase     = 0.f;   // offset into the gentle floating cycle
 
     static Texture2D _texSingle;
     static Texture2D _texFive;
